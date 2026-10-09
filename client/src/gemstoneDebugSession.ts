@@ -11,18 +11,12 @@ import {
   Variable,
 } from '@vscode/debugadapter';
 import { DebugProtocol } from '@vscode/debugprotocol';
-import type * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from './sessionManager';
 import { OOP_NIL } from './gciConstants';
 import * as debug from './debugQueries';
-import { BreakpointManager } from './breakpointManager';
 import { logInfo, logError } from './gciLog';
 
 const THREAD_ID = 1;
-/** Why a breakpoint on a frame with no method source of its own is refused. */
-const UNBREAKABLE_SOURCE =
-  'Breakpoints can only be set in the source of a compiled method. ' +
-  'Ad-hoc executed code cannot be broken at — set the breakpoint in the method instead.';
 const MAX_PRINT_STRING = 1024;
 
 // Variable reference kinds
@@ -44,14 +38,8 @@ export class GemStoneDebugSession extends DebugSession {
   private methodToSourceRef = new Map<string, number>(); // methodOop.toString() → sourceRef
   private nextSourceRef = 1;
 
-  private breakpointManager?: BreakpointManager;
-
-  constructor(
-    private sessionManager: SessionManager,
-    breakpointManager?: BreakpointManager,
-  ) {
+  constructor(private sessionManager: SessionManager) {
     super();
-    this.breakpointManager = breakpointManager;
   }
 
   // ── Allocators ──────────────────────────────────────────
@@ -142,98 +130,6 @@ export class GemStoneDebugSession extends DebugSession {
     }
     this.sendResponse(response);
     this.sendEvent(new TerminatedEvent());
-  }
-
-  // ── Breakpoints ────────────────────────────────────────
-
-  protected setBreakpointsRequest(
-    response: DebugProtocol.SetBreakpointsResponse,
-    args: DebugProtocol.SetBreakpointsArguments,
-  ): void {
-    const breakpoints: DebugProtocol.Breakpoint[] = [];
-
-    if (!this.session || !args.breakpoints) {
-      response.body = { breakpoints };
-      this.sendResponse(response);
-      return;
-    }
-
-    const requestedLines = args.breakpoints.map((bp) => bp.line);
-    // DAP carries an optional column for an inline breakpoint; forwarding it is what
-    // lets a breakpoint mid-line resolve to the step point the developer clicked
-    // rather than the leftmost one on the line.
-    const requestedColumns = args.breakpoints.map((bp) => bp.column);
-
-    // Try to resolve from source path (gemstone:// URI) if available
-    if (args.source.path && this.breakpointManager) {
-      try {
-        // Parse the path as a URI
-        const parsed = args.source.path.match(/^gemstone:\/\/(\d+)(\/[^?]*?)(?:\?(.*))?$/);
-        if (parsed) {
-          // A partial, hand-built Uri: breakpointManager only reads scheme/path/query
-          // (parseMethodUri) and toString() (tracking key). The path is kept *encoded*
-          // on purpose — parseMethodUri decodeURIComponent's it — so a real
-          // vscode.Uri.parse (which decodes .path) would double-decode. Cast honestly.
-          const actualUri = {
-            scheme: 'gemstone',
-            authority: parsed[1],
-            path: parsed[2],
-            query: parsed[3] || '',
-            toString: () => args.source.path!,
-          } as unknown as vscode.Uri;
-          const results = this.breakpointManager.setBreakpointsForSource(
-            this.session,
-            actualUri,
-            requestedLines,
-            requestedColumns,
-          );
-          for (let i = 0; i < results.length; i++) {
-            breakpoints.push({
-              verified: results[i].verified,
-              line: results[i].actualLine,
-              id: i + 1,
-              // Set when the manager refused rather than merely failed to
-              // resolve — the developer can act on the reason.
-              ...(results[i].message
-                ? { reason: 'failed' as const, message: results[i].message }
-                : {}),
-            });
-          }
-          response.body = { breakpoints };
-          this.sendResponse(response);
-          return;
-        }
-      } catch (e) {
-        logError(this.session.id, `setBreakpoints path error: ${e}`);
-      }
-    }
-
-    // No gemstone:// path means the frame is not a saved, compiled method the
-    // developer can point at: either an ad-hoc execution ('Executed Code') or a
-    // method whose class is not bound in the symbol list. Neither has anything
-    // durable to arm — a doit's compiled method is gone once the execution ends,
-    // so a breakpoint here could never be hit again. Refuse it out loud rather
-    // than report a verified breakpoint that silently never fires.
-    //
-    // VS Code does not offer the gutter here: `contributes.breakpoints` names
-    // gemstone-method, and this document resolves to gemstone-smalltalk (see
-    // `sourceRequest`). This stays as the backstop for the ways a request can
-    // still arrive — `debug.allowBreakpointsEverywhere`, or a client that is not
-    // VS Code.
-    if (args.source.sourceReference && args.source.sourceReference > 0) {
-      for (let i = 0; i < requestedLines.length; i++) {
-        breakpoints.push({
-          verified: false,
-          reason: 'failed',
-          line: requestedLines[i],
-          id: i + 1,
-          message: UNBREAKABLE_SOURCE,
-        });
-      }
-    }
-
-    response.body = { breakpoints };
-    this.sendResponse(response);
   }
 
   // ── Threads ─────────────────────────────────────────────

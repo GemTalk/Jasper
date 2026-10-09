@@ -2,18 +2,11 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
-vi.mock('../browserQueries', () => ({
-  getSourceOffsets: vi.fn(() => [0, 12]),
-  setBreakAtStepPoint: vi.fn(),
-  clearBreakAtStepPoint: vi.fn(),
-  clearAllBreaks: vi.fn(),
-}));
-
 // Factory defaults for the mocks that individual tests override with sticky
 // mockReturnValue/mockImplementation. Shared (via vi.hoisted, so it's available
 // inside the hoisted vi.mock factory) with the global beforeEach below, which
 // re-applies them before every test. Without that restore, a sticky override in
-// one test (e.g. setBreakpointsRequest's getMethodSource) leaks into later tests
+// one test (e.g. a getMethodSource override) leaks into later tests
 // under sequence.shuffle and produces order-dependent failures.
 const mockDefaults = vi.hoisted(() => ({
   getMethodSource: () => '/ aNumber\n  ^ self _primitiveDivide: aNumber',
@@ -75,9 +68,7 @@ vi.mock('../debugQueries', () => ({
 
 import { GemStoneDebugSession } from '../gemstoneDebugSession';
 import { SessionManager } from '../sessionManager';
-import { BreakpointManager } from '../breakpointManager';
 import * as debugQueries from '../debugQueries';
-import * as browserQueries from '../browserQueries';
 import { OOP_NIL } from '../gciConstants';
 
 // Capture DAP messages sent by the debug session
@@ -90,7 +81,7 @@ interface DapMessage {
   message?: string;
 }
 
-function createTestSession(breakpointManager?: BreakpointManager) {
+function createTestSession() {
   const sent: DapMessage[] = [];
 
   const mockSessionManager = {
@@ -101,7 +92,7 @@ function createTestSession(breakpointManager?: BreakpointManager) {
     onDidChangeSelection: vi.fn(() => ({ dispose: () => {} })),
   } as unknown as SessionManager;
 
-  const session = new GemStoneDebugSession(mockSessionManager, breakpointManager);
+  const session = new GemStoneDebugSession(mockSessionManager);
 
   // Intercept DAP output by overriding sendResponse and sendEvent
   (session as unknown as Record<string, unknown>).sendResponse = vi.fn((resp: DapMessage) => {
@@ -654,197 +645,6 @@ describe('GemStoneDebugSession', () => {
       expect(response.body).toMatchObject({
         supportsConfigurationDoneRequest: true,
       });
-    });
-  });
-
-  describe('setBreakpointsRequest', () => {
-    beforeEach(() => {
-      vi.mocked(browserQueries.getSourceOffsets).mockReset();
-      vi.mocked(browserQueries.setBreakAtStepPoint).mockReset();
-      vi.mocked(browserQueries.clearAllBreaks).mockReset();
-      vi.mocked(browserQueries.getSourceOffsets).mockReturnValue([0, 12]);
-    });
-
-    it('returns empty breakpoints when no session is attached', () => {
-      const { session } = createTestSession();
-      const response = makeResponse('setBreakpoints');
-      callRequest(session, 'setBreakpointsRequest', response, {
-        source: { path: 'gemstone://1/Globals/Array/instance/accessing/at%3A' },
-        breakpoints: [{ line: 1 }],
-      });
-
-      const body = response.body as { breakpoints: unknown[] };
-      expect(body.breakpoints).toHaveLength(0);
-    });
-
-    /**
-     * A breakpoint the manager refused on a real method — a GCI failure while
-     * arming, or an editor with unsaved edits. The manager produces the reason;
-     * this is the only thing that carries it out to the developer, so without a
-     * test here the reasons could stop arriving and nothing would fail.
-     */
-    function managerReturning(results: unknown[]): BreakpointManager {
-      return {
-        setBreakpointsForSource: vi.fn(() => results),
-      } as unknown as BreakpointManager;
-    }
-
-    const attached = (manager: BreakpointManager) => {
-      const { session } = createTestSession(manager);
-      callRequest(session, 'attachRequest', makeResponse('attach'), {
-        sessionId: 1,
-        gsProcess: '12345',
-      });
-      return session;
-    };
-
-    const METHOD_PATH = 'gemstone://1/Globals/Array/instance/accessing/at%3A';
-
-    it("relays the manager's refusal reason for a method the developer pointed at", () => {
-      const session = attached(
-        managerReturning([
-          {
-            stepPoint: 0,
-            actualLine: 2,
-            verified: false,
-            message: 'Could not set the breakpoint at step point 2: GCI error 2010',
-          },
-        ]),
-      );
-
-      const response = makeResponse('setBreakpoints');
-      callRequest(session, 'setBreakpointsRequest', response, {
-        source: { path: METHOD_PATH },
-        breakpoints: [{ line: 2 }],
-      });
-
-      const body = response.body as {
-        breakpoints: { verified: boolean; reason?: string; message?: string; line: number }[];
-      };
-      expect(body.breakpoints[0]).toMatchObject({ verified: false, reason: 'failed', line: 2 });
-      expect(body.breakpoints[0].message).toContain('GCI error 2010');
-    });
-
-    it('says nothing extra for a breakpoint that was accepted', () => {
-      // `reason: 'failed'` is only for a refusal. An ordinary verified
-      // breakpoint must not carry one, or every breakpoint would look refused.
-      const session = attached(managerReturning([{ stepPoint: 1, actualLine: 1, verified: true }]));
-
-      const response = makeResponse('setBreakpoints');
-      callRequest(session, 'setBreakpointsRequest', response, {
-        source: { path: METHOD_PATH },
-        breakpoints: [{ line: 1 }],
-      });
-
-      const body = response.body as { breakpoints: Record<string, unknown>[] };
-      expect(body.breakpoints[0]).toMatchObject({ verified: true, line: 1 });
-      expect(body.breakpoints[0]).not.toHaveProperty('reason');
-      expect(body.breakpoints[0]).not.toHaveProperty('message');
-    });
-
-    it('forwards the column of an inline breakpoint, so it aims at the right step point', () => {
-      const manager = managerReturning([{ stepPoint: 3, actualLine: 2, verified: true }]);
-      const session = attached(manager);
-
-      const response = makeResponse('setBreakpoints');
-      callRequest(session, 'setBreakpointsRequest', response, {
-        source: { path: METHOD_PATH },
-        breakpoints: [{ line: 2, column: 14 }],
-      });
-
-      const forwarded = vi.mocked(manager.setBreakpointsForSource).mock.calls[0];
-      expect(forwarded[2]).toEqual([2]);
-      expect(forwarded[3]).toEqual([14]);
-    });
-
-    // A frame with no gemstone:// path is an ad-hoc execution ('Executed Code')
-    // or a method whose class is not in the symbol list. Neither is a saved,
-    // compiled method the developer can point at, so the request is refused with
-    // a reason rather than reported as a verified breakpoint that never fires.
-    it('refuses a breakpoint on a frame that has no method source of its own', () => {
-      vi.mocked(debugQueries.getMethodSource).mockReturnValue('at: index\n  ^ self basicAt: index');
-      vi.mocked(debugQueries.getMethodInfo).mockReturnValue({
-        className: 'Array',
-        selector: 'at:',
-      });
-
-      const { session } = createTestSession();
-      callRequest(session, 'attachRequest', makeResponse('attach'), {
-        sessionId: 1,
-        gsProcess: '12345',
-      });
-      // Trigger stackTrace to populate sourceRefMap
-      callRequest(session, 'stackTraceRequest', makeResponse('stackTrace'), { threadId: 1 });
-
-      const response = makeResponse('setBreakpoints');
-      callRequest(session, 'setBreakpointsRequest', response, {
-        source: { sourceReference: 1 },
-        breakpoints: [{ line: 1 }, { line: 2 }],
-      });
-
-      const body = response.body as {
-        breakpoints: Array<{ verified: boolean; line: number; reason?: string; message?: string }>;
-      };
-      expect(body.breakpoints).toHaveLength(2);
-      for (const bp of body.breakpoints) {
-        expect(bp.verified).toBe(false);
-        expect(bp.reason).toBe('failed');
-        expect(bp.message).toMatch(/compiled method/i);
-      }
-      // The marker stays where the developer put it, so the refusal is legible.
-      expect(body.breakpoints.map((bp) => bp.line)).toEqual([1, 2]);
-
-      // Nothing is armed in the gem, and nothing already armed is cleared.
-      expect(browserQueries.clearAllBreaks).not.toHaveBeenCalled();
-      expect(browserQueries.setBreakAtStepPoint).not.toHaveBeenCalled();
-    });
-
-    it('refuses rather than answering nothing when the sourceReference is unknown', () => {
-      const { session } = createTestSession();
-      callRequest(session, 'attachRequest', makeResponse('attach'), {
-        sessionId: 1,
-        gsProcess: '12345',
-      });
-
-      const response = makeResponse('setBreakpoints');
-      callRequest(session, 'setBreakpointsRequest', response, {
-        source: { sourceReference: 999 },
-        breakpoints: [{ line: 1 }],
-      });
-
-      // One answer per request: a silent empty list leaves VS Code showing a
-      // solid marker as though the breakpoint had been accepted.
-      const body = response.body as { breakpoints: Array<{ verified: boolean; reason?: string }> };
-      expect(body.breakpoints).toHaveLength(1);
-      expect(body.breakpoints[0].verified).toBe(false);
-      expect(body.breakpoints[0].reason).toBe('failed');
-    });
-
-    it('delegates to breakpointManager for gemstone:// path', () => {
-      const mockBPManager = {
-        setBreakpointsForSource: vi.fn(() => [
-          { stepPoint: 1, actualLine: 1, verified: true },
-          { stepPoint: 2, actualLine: 3, verified: true },
-        ]),
-      } as unknown as BreakpointManager;
-
-      const { session } = createTestSession(mockBPManager);
-      callRequest(session, 'attachRequest', makeResponse('attach'), {
-        sessionId: 1,
-        gsProcess: '12345',
-      });
-
-      const response = makeResponse('setBreakpoints');
-      callRequest(session, 'setBreakpointsRequest', response, {
-        source: { path: 'gemstone://1/Globals/Array/instance/accessing/at%3A' },
-        breakpoints: [{ line: 1 }, { line: 2 }],
-      });
-
-      const body = response.body as { breakpoints: Array<{ verified: boolean; line: number }> };
-      expect(body.breakpoints).toHaveLength(2);
-      expect(body.breakpoints[0]).toMatchObject({ verified: true, line: 1 });
-      expect(body.breakpoints[1]).toMatchObject({ verified: true, line: 3 });
-      expect(mockBPManager.setBreakpointsForSource).toHaveBeenCalledTimes(1);
     });
   });
 });

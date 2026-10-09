@@ -265,35 +265,6 @@ describe('BreakpointManager', () => {
     });
   });
 
-  describe('setBreakpointsForSource', () => {
-    it("converts the debug adapter's 1-based columns to 0-based characters", () => {
-      mockGetMethodSource.mockReturnValue('m\nx := self foo');
-      mockGetSourceOffsets.mockReturnValue([8, 13]);
-
-      // DAP column 11 == character 10 == offset 12 on line 2 => step point 2.
-      const results = makeManager().setBreakpointsForSource(
-        session(),
-        Uri.parse(METHOD_URI),
-        [2],
-        [11],
-      );
-      expect(results[0].stepPoint).toBe(2);
-    });
-
-    it('treats a missing column as a whole-line request', () => {
-      mockGetMethodSource.mockReturnValue('m\nx := self foo');
-      mockGetSourceOffsets.mockReturnValue([8, 13]);
-
-      const results = makeManager().setBreakpointsForSource(
-        session(),
-        Uri.parse(METHOD_URI),
-        [2],
-        [undefined],
-      );
-      expect(results[0].stepPoint).toBe(1);
-    });
-  });
-
   describe('appliedFor', () => {
     it('reports the step points now set on a method, with their enabled state', () => {
       mockGetMethodSource.mockReturnValue('foo\n^1');
@@ -328,9 +299,8 @@ describe('BreakpointManager', () => {
 
   // The gutter is offered in a compiled method's editor alone —
   // `contributes.breakpoints` names gemstone-method, and that is the only
-  // document given the language. This refusal is what backstops the routes that
-  // bypass the contribution: `allowBreakpointsEverywhere`, and DAP clients that
-  // are not VS Code.
+  // document given the language. This refusal is what backstops the route that
+  // bypasses the contribution: `allowBreakpointsEverywhere`.
   describe('a breakpoint set outside a method editor', () => {
     function fireAdded(added: unknown[]): void {
       const manager = makeManager();
@@ -687,31 +657,6 @@ describe('BreakpointManager', () => {
       fireDocumentChanged(DIRTY_DOC);
 
       expect(mockSetBreakAtStepPoint).not.toHaveBeenCalled();
-    });
-
-    it('reports the gem as it stands, without arming, on the debug adapter path', () => {
-      // A live debug session re-sends the whole list for a source. Anything
-      // already armed stays verified; a new one is refused with the reason.
-      workspace.textDocuments = [CLEAN_DOC];
-      const manager = makeManager();
-      manager.applyToUri(session(), Uri.parse(METHOD_URI), [{ line: 1, enabled: true }]);
-      mockClearAllBreaks.mockClear();
-      mockSetBreakAtStepPoint.mockClear();
-
-      workspace.textDocuments = [DIRTY_DOC];
-      const results = manager.setBreakpointsForSource(
-        session(),
-        Uri.parse(METHOD_URI),
-        [1, 2],
-        [undefined, undefined],
-      );
-
-      expect(mockClearAllBreaks).not.toHaveBeenCalled();
-      expect(mockSetBreakAtStepPoint).not.toHaveBeenCalled();
-      expect(results[0].verified).toBe(true);
-      expect(results[0].message).toBeUndefined();
-      expect(results[1].verified).toBe(false);
-      expect(results[1].message).toContain('unsaved edits');
     });
 
     it('applies normally when the editor has no unsaved edits', () => {
@@ -1349,7 +1294,7 @@ describe('BreakpointManager', () => {
       mockGetSourceOffsets.mockReturnValue([1, 13]);
     });
 
-    it('says so out loud, and carries the reason back for the debug adapter', () => {
+    it('says so out loud, and records the reason in the result', () => {
       // An unverified marker on its own is unreadable: it looks exactly like a
       // breakpoint on a line with no step point.
       mockSetBreakAtStepPoint.mockImplementation(() => {

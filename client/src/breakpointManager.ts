@@ -19,7 +19,7 @@ export interface VerifiedBreakpoint {
   stepPoint: number;
   actualLine: number;
   verified: boolean;
-  /** Why an unverified breakpoint was refused, for the debug adapter to relay. */
+  /** Why an unverified breakpoint was refused. */
   message?: string;
 }
 
@@ -167,8 +167,7 @@ export class BreakpointManager {
 
   /**
    * Push every VS Code breakpoint on `uri` to the gem, replacing whatever the
-   * method had. Returns one verified result per requested line, in order, for
-   * the debug adapter's `setBreakpoints` response.
+   * method had. Returns one verified result per requested line, in order.
    *
    * `requests` carries the raw line/column pairs. When omitted, they are read
    * from `vscode.debug.breakpoints` — the absolute model: whatever is in VS
@@ -277,8 +276,8 @@ export class BreakpointManager {
     /**
      * Refuse one step point, out loud. The marker going hollow is not enough on
      * its own: an unverified marker looks exactly like a breakpoint on a line
-     * with no step point, so the reason has to be both said to the developer and
-     * carried back in the result for the debug adapter to relay.
+     * with no step point, so the reason has to be said to the developer, and it is
+     * recorded in the result too.
      */
     const refuse = (stepPoint: number, reason: string): void => {
       failures.push(reason);
@@ -369,34 +368,6 @@ export class BreakpointManager {
   }
 
   /**
-   * The debug adapter's entry point: apply breakpoints given as lines (and
-   * optional columns), which is all the Debug Adapter Protocol carries.
-   */
-  setBreakpointsForSource(
-    session: ActiveSession,
-    uri: vscode.Uri,
-    lines: number[],
-    columns?: (number | undefined)[],
-  ): VerifiedBreakpoint[] {
-    // Held still while the editor has unsaved edits — see `holdWhileDirty`.
-    // Report what the gem already holds instead of arming anything: a
-    // breakpoint set before the edits is still armed and still verified, and a
-    // new one is refused with the reason.
-    if (isDirty(uri)) return this.frozenResults(uri, lines, columns);
-
-    return this.applyToUri(
-      session,
-      uri,
-      lines.map((line, i) => ({
-        line,
-        // DAP columns are 1-based; our resolver takes a 0-based character.
-        character: columns?.[i] === undefined ? undefined : Math.max(columns[i] - 1, 0),
-        enabled: true,
-      })),
-    );
-  }
-
-  /**
    * Take back a breakpoint set somewhere a breakpoint cannot mean anything.
    *
    * A GemStone breakpoint is a step point in a compiled method, so only a
@@ -405,12 +376,12 @@ export class BreakpointManager {
    * only a compiled method's source is given that language (see
    * client/src/languageIds.ts) — so in VS Code this is now a backstop rather
    * than the everyday path. It still has work to do: `allowBreakpointsEverywhere`
-   * puts the gutter back on every document, and a DAP client that is not VS Code
-   * never consulted the contribution in the first place.
+   * puts the gutter back on every document, including the debugger's read-only
+   * frame source.
    *
-   * Whatever the route, such a breakpoint would otherwise be dropped on the
-   * floor: the dot stays in the gutter, arms nothing, and says nothing, which is
-   * indistinguishable from a breakpoint that simply never gets hit.
+   * Such a breakpoint would otherwise be dropped on the floor: the dot stays in
+   * the gutter, arms nothing, and says nothing, which is indistinguishable from a
+   * breakpoint that simply never gets hit.
    */
   private refuseOutsideMethodSource(added: readonly vscode.Breakpoint[]): void {
     const stray = added.filter(
@@ -452,37 +423,6 @@ export class BreakpointManager {
 
     vscode.debug.removeBreakpoints(rejected);
     vscode.window.showWarningMessage(DIRTY_REFUSAL);
-  }
-
-  /**
-   * The gem's state for a method being held still, phrased as breakpoint
-   * results — verified for what is actually armed, refused for anything else.
-   */
-  private frozenResults(
-    uri: vscode.Uri,
-    lines: number[],
-    columns?: (number | undefined)[],
-  ): VerifiedBreakpoint[] {
-    this.frozen.add(uri.toString());
-
-    const method = parseMethodUri(uri);
-    const session = this.sessionForUri(uri);
-    const applied = this.applied.get(uri.toString()) ?? [];
-    const info = method && session ? this.stepPoints.fetch(session, uri, method) : null;
-
-    return lines.map((line, i) => {
-      const column = columns?.[i];
-      // DAP columns are 1-based; our resolver takes a 0-based character.
-      const character = column === undefined ? undefined : Math.max(column - 1, 0);
-      const resolved = info ? resolveStepPoint(info, line, character) : null;
-      const armed = resolved !== null && applied.some((a) => a.stepPoint === resolved.stepPoint);
-      return {
-        stepPoint: resolved?.stepPoint ?? 0,
-        actualLine: resolved?.line ?? line,
-        verified: armed,
-        message: armed ? undefined : DIRTY_REFUSAL,
-      };
-    });
   }
 
   /**
