@@ -49,20 +49,24 @@ const filesUnder = (dir: string, extension: string): string[] =>
 
 const read = (relative: string): string => fs.readFileSync(path.join(CLIENT_SRC, relative), 'utf8');
 
+/** `file` relative to client/src, with forward slashes on every platform. */
+const relativeName = (file: string): string =>
+  path.relative(CLIENT_SRC, file).split(path.sep).join('/');
+
 /** A host module and the panel script it loads. Found by scanning, so a new panel is covered. */
 const PANEL_HOSTS: [string, string][] = filesUnder(CLIENT_SRC, '.ts').flatMap((file) => {
   const source = fs.readFileSync(file, 'utf8');
   const script = PANEL_SCRIPTS.map((s) => path.basename(s)).find((name) =>
     new RegExp(`read(?:Webview|PreviewPanel)Script\\(\\s*'${name}'`).test(source),
   );
-  return script ? [[path.relative(CLIENT_SRC, file), script]] : [];
+  return script ? [[relativeName(file), script]] : [];
 });
 
 describe('where the held-Enter guard lives', () => {
   it('is defined in exactly one script', () => {
     const defining = filesUnder(CLIENT_SRC, '.js')
       .filter((file) => fs.readFileSync(file, 'utf8').includes(`${ARMING_HANDLER} = function`))
-      .map((file) => path.relative(CLIENT_SRC, file));
+      .map(relativeName);
 
     expect(defining).toEqual(['webview/enterToApply.js']);
   });
