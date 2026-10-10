@@ -13,9 +13,9 @@ import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { StartIvarPreview, IvarPreviewPage, IvarApplyResult } from './instVarStructurePreview';
 import { renderIvarPanelHtml, renderIvarCards } from './instVarStructurePanelHtml';
-import { readWebviewScript } from '../webviewAssets';
+import { readPreviewPanelScript } from '../webviewAssets';
 
-const panelJs = readWebviewScript('renameMethodPanelView.js', 'refactoring');
+const panelJs = readPreviewPanelScript('renameMethodPanelView.js', 'refactoring');
 
 export interface IvarApplyOptions {
   migrateInstances: boolean;

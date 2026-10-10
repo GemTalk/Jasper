@@ -265,6 +265,15 @@ describe('sendersOf', () => {
     expect(code).toMatch(/sendersOf: #'size'\) at: 1/s);
   });
 
+  it('answers a list of selectors in one query, each method once', () => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+    sendersOf(execute, ['at:', "it's"]);
+    expect(execute).toHaveBeenCalledTimes(1);
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain("#(#'at:' #'it''s') do:");
+    expect(code).toContain('methods := IdentitySet new');
+  });
+
   it('propagates environmentId to both the query and the serialization', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     sendersOf(execute, 'x', 3);

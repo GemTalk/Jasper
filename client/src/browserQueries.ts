@@ -2248,7 +2248,12 @@ export function searchMethodSource(
   return sharedSearchMethodSource(defaultQueryExecutorUsing(session), term, ignoreCase, mode);
 }
 
-export function sendersOf(session: ActiveSession, selector: string, environmentId: number = 0) {
+// No default environment: a caller that forgot one would silently search environment 0 only.
+export function sendersOf(
+  session: ActiveSession,
+  selector: string | readonly string[],
+  environmentId: number,
+) {
   return sharedSendersOf(defaultQueryExecutorUsing(session), selector, environmentId);
 }
 

@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { renderInlinePanelHtml, renderInlineCards } from '../inlineMethodPanelHtml';
 import { InlineChange } from '../inlineMethodPreview';
+import '../../webview/enterToApply.js';
 
 // The inline-method panel reuses the shared rename-method view JS for its DOM
 // behaviour (checkboxes, pagination, apply), so wire that up in jsdom and verify

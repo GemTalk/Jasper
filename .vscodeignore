@@ -97,6 +97,7 @@ client/src/**
 !client/src/browserColumnResize.js
 !client/src/webview/evaluatePane.js
 !client/src/webview/millerColumns.js
+!client/src/webview/enterToApply.js
 !client/src/basicInspector/basicInspectorView.js
 !client/src/refactoring/renameInstVarPanelView.js
 !client/src/refactoring/renameMethodEditorView.js

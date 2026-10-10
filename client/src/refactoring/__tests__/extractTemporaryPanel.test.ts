@@ -7,6 +7,7 @@ import {
   renderExtractTemporaryCards,
 } from '../extractTemporaryPanelHtml';
 import { ExtractTemporaryChange } from '../extractTemporaryPreview';
+import '../../webview/enterToApply.js';
 
 // The extract-temporary panel reuses the shared rename-method view JS for its DOM
 // behaviour (diff toggle, pagination, apply), so wire that up in jsdom and verify

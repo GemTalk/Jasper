@@ -81,7 +81,7 @@ describe('safe-delete reference scans (integration)', () => {
     it('finds the sender of a method', () => {
       defineFixture();
 
-      const senders = q.sendersOf(session(), 'readsBalance');
+      const senders = q.sendersOf(session(), 'readsBalance', 0);
 
       expect(selectorsIn(senders)).toContain(`${CALLER}>>callsIt`);
     });
@@ -89,7 +89,7 @@ describe('safe-delete reference scans (integration)', () => {
     it('finds nothing for a selector nobody sends', () => {
       defineFixture();
 
-      const senders = q.sendersOf(session(), 'mentionsBalance');
+      const senders = q.sendersOf(session(), 'mentionsBalance', 0);
 
       expect(selectorsIn(senders)).not.toContain(`${CALLER}>>callsIt`);
     });

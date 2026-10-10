@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { renderMethodPanelHtml, renderMethodCards } from '../renameMethodPanelHtml';
 import { MethodRenameChange } from '../renameMethodPreview';
+import '../../webview/enterToApply.js';
 
 beforeAll(() => {
   const source = fs.readFileSync(path.resolve(__dirname, '../renameMethodPanelView.js'), 'utf8');
@@ -193,8 +194,9 @@ describe('paginated rename-method panel', () => {
   // The editor's Enter opens the preview; the preview's Enter applies it. Without this the flow
   // stopped dead at the panel, which offers no other keyboard route to its primary action.
   describe('Enter applies, so a refactoring can be driven Enter-to-Enter', () => {
-    // A real, deliberate Enter: the key goes down and comes back up. `release` alone is what
-    // arms the panel -- a held Enter carried over from an earlier step never releases.
+    // A real, deliberate Enter: the key goes down and comes back up. A release (or the panel
+    // being open a moment) arms it -- a held Enter carried over from an earlier step never
+    // releases.
     const release = (): void => {
       document.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
     };

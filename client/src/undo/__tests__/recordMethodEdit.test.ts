@@ -63,6 +63,44 @@ describe('beginMethodEdit', () => {
     expect(peekUndoEntry(session.id)).toBe(entry);
   });
 
+  it('records every captured slot, paired with its before and after states', () => {
+    vi.mocked(captureMethodSlots).mockReturnValue([
+      present('balance ^1', 'accessing'),
+      present('deposit: n ^n', 'accessing'),
+    ]);
+    const slots = [slot('balance'), slot('deposit:')];
+    const recording = beginMethodEdit(session, slots);
+
+    const entry = recording?.commit('Save 2 methods', [
+      present('balance ^2', 'accessing'),
+      present('deposit: n ^n + 1', 'private'),
+    ]);
+
+    expect(entry).toMatchObject({
+      kind: 'methodEdit',
+      sessionId: session.id,
+      label: 'Save 2 methods',
+      slots,
+      before: [present('balance ^1', 'accessing'), present('deposit: n ^n', 'accessing')],
+      after: [present('balance ^2', 'accessing'), present('deposit: n ^n + 1', 'private')],
+    });
+  });
+
+  it('keeps a slot the edit left unchanged, so the undo knows to leave it alone', () => {
+    // Add Accessors skips an accessor that already exists, and Save leaves every slot but the
+    // compiled one as it was. Both record those slots unchanged on purpose.
+    vi.mocked(captureMethodSlots).mockReturnValue([ABSENT, present('name ^name', 'accessing')]);
+    const slots = [slot('name:'), slot('name')];
+    const recording = beginMethodEdit(session, slots);
+
+    const entry = recording?.commit('Add accessors', [
+      present('name: x name := x', 'accessing'),
+      present('name ^name', 'accessing'),
+    ]);
+
+    expect(entry).toMatchObject({ slots, before: [ABSENT, present('name ^name', 'accessing')] });
+  });
+
   it('records nothing when the edit left every slot exactly as it found it', () => {
     vi.mocked(captureMethodSlots).mockReturnValue([present('balance ^1', 'accessing')]);
     const recording = beginMethodEdit(session, [slot('balance')]);

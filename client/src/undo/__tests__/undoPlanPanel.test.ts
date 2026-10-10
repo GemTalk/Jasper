@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
-vi.mock('../../webviewAssets', () => ({ readWebviewScript: vi.fn(() => '') }));
+vi.mock('../../webviewAssets', () => ({ readPreviewPanelScript: vi.fn(() => '') }));
 
 import * as vscode from 'vscode';
 import { showUndoPlanPanel } from '../undoPlanPanel';

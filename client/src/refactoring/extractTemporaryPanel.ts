@@ -15,9 +15,9 @@ import {
   renderExtractTemporaryPanelHtml,
   renderExtractTemporaryCards,
 } from './extractTemporaryPanelHtml';
-import { readWebviewScript } from '../webviewAssets';
+import { readPreviewPanelScript } from '../webviewAssets';
 
-const panelJs = readWebviewScript('renameMethodPanelView.js', 'refactoring');
+const panelJs = readPreviewPanelScript('renameMethodPanelView.js', 'refactoring');
 
 export interface ExtractTemporaryPanelHandlers {
   loadPage: (offset: number) => Promise<PreviewPage>;

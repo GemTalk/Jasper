@@ -411,12 +411,15 @@ export default tseslint.config(
     // the shared column-strip model (webview/millerColumns.js) and `EvaluatePane`
     // the shared evaluate-pane behaviour (webview/evaluatePane.js); each is
     // injected as its own <script> tag ahead of the scripts that use it, so they
-    // are globals to them in exactly the same way.
+    // are globals to them in exactly the same way. `GsEnterToApply` (the preview
+    // panels' held-Enter guard, webview/enterToApply.js) is prepended to its
+    // panel's script for the same effect.
     languageOptions: {
       globals: {
         ...globals.browser,
         acquireVsCodeApi: 'readonly',
         EvaluatePane: 'readonly',
+        GsEnterToApply: 'readonly',
         MillerColumns: 'readonly',
       },
     },

@@ -7,6 +7,7 @@ import {
   renderInlineTemporaryCards,
 } from '../inlineTemporaryPanelHtml';
 import { InlineTemporaryChange } from '../inlineTemporaryPreview';
+import '../../webview/enterToApply.js';
 
 // The inline-temporary panel reuses the shared rename-method view JS for its DOM
 // behaviour (diff toggle, pagination, apply), so wire that up in jsdom and verify

@@ -12,7 +12,7 @@
  */
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
-import { readWebviewScript } from '../webviewAssets';
+import { readPreviewPanelScript } from '../webviewAssets';
 import {
   BaseMethodChange,
   RelocationApplyResult,
@@ -20,7 +20,7 @@ import {
   StartRelocationPreview,
 } from './methodRelocationPreview';
 
-const panelJs = readWebviewScript('renameMethodPanelView.js', 'refactoring');
+const panelJs = readPreviewPanelScript('renameMethodPanelView.js', 'refactoring');
 
 export interface MethodRelocationPanelHandlers<C extends BaseMethodChange> {
   /** Fetch the page starting at `offset` (1-based). */

@@ -12,9 +12,9 @@ import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { UndoPlan } from './undoPlan';
 import { renderUndoPlanHtml } from './undoPlanPanelHtml';
-import { readWebviewScript } from '../webviewAssets';
+import { readPreviewPanelScript } from '../webviewAssets';
 
-const panelJs = readWebviewScript('undoPlanPanelView.js', 'undo');
+const panelJs = readPreviewPanelScript('undoPlanPanelView.js', 'undo');
 
 /**
  * The plan panel currently open, if any.

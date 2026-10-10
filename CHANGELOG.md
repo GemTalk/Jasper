@@ -6,6 +6,7 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ### Changed
 
+- **Removing several methods at once no longer scans the image once per method.** Checking what still sends the selected methods used to run one whole-image search per method in every method environment, each under its own progress notification, before the confirmation appeared. It is now one search for the whole selection, under one notification. The search covers environment 0 only, because that is the only environment Remove Method deletes from; callers in other environments use their own copy of the method and are not affected. This also applies when removing a single method. ([#708](https://github.com/GemTalk/Jasper/issues/708))
 - **Usage events now say which editor app Jasper runs in** — VS Code, VS Code Insiders, or a fork such as Cursor. Forks report the VS Code version they are built on, so this is the only way to tell them apart when deciding which VS Code versions Jasper still needs to support. See [USAGE_DATA.md](USAGE_DATA.md).
 
 ## [1.14.0] - 2026-10-06

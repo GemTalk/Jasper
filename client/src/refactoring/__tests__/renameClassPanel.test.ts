@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { renderClassPanelHtml, renderClassCards } from '../renameClassPanelHtml';
 import { ClassRenameChange } from '../renameClassPreview';
+import '../../webview/enterToApply.js';
 
 beforeAll(() => {
   const source = fs.readFileSync(path.resolve(__dirname, '../renameMethodPanelView.js'), 'utf8');

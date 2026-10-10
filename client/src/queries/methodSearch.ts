@@ -274,14 +274,26 @@ ${methodSerialization(0)}`;
   return parseMethodSearchResults(execute(code));
 }
 
+// A list of selectors is answered in one round trip, each method once however many of them it
+// sends -- so removing several methods scans the image once per environment, not once per
+// selector per environment.
 export function sendersOf(
   execute: QueryExecutor,
-  selector: string,
+  selector: string | readonly string[],
   environmentId: number = 0,
 ): MethodSearchResult[] {
-  const code = `| methods stream limit classDict sl |
-methods := (${classOrganizerExpr(environmentId)}
-  sendersOf: #'${escapeString(selector)}') at: 1.
+  const selectors = typeof selector === 'string' ? [selector] : selector;
+  const symbols = selectors.map((s) => `#'${escapeString(s)}'`);
+  const collect =
+    symbols.length === 1
+      ? `methods := (${classOrganizerExpr(environmentId)}
+  sendersOf: ${symbols[0]}) at: 1.`
+      : `organizer := ${classOrganizerExpr(environmentId)}.
+methods := IdentitySet new.
+#(${symbols.join(' ')}) do: [:each | methods addAll: ((organizer sendersOf: each) at: 1)].
+methods := methods asArray.`;
+  const code = `| organizer methods stream limit classDict sl |
+${collect}
 ${methodSerialization(environmentId)}`;
 
   return parseMethodSearchResults(execute(code));
