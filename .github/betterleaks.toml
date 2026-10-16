@@ -1,0 +1,69 @@
+# Betterleaks configuration for the secret scan (health-check.yml, `secret-scan` job).
+#
+# Separate from .gitleaks.toml on purpose. That file predicts Open VSX's
+# verdict on the packaged .vsix, so it deliberately flags GemStone's public
+# default password. This one looks for real credentials across the repo's
+# git history, where that password appears legitimately in tests, scripts
+# and docs.
+#
+# Written in the Gitleaks v8 / Betterleaks v1 schema. Betterleaks v2 rejects
+# `[[allowlists]]` and needs these rewritten as `filter` expressions; see its
+# docs/v2_migration.md before bumping the image past v1.
+#
+# Every allowlist names the rules it silences. One without `targetRules`
+# applies to all rules, so a token or key landing in the same place would be
+# suppressed along with the noise.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = """
+GemStone's out-of-the-box SystemUser/DataCurator password. It is published in
+GemTalk's own installation docs and works only against a stone nobody has
+secured, so it grants nothing. Matched as a whole word rather than anchored,
+because shell defaults capture it with surrounding syntax, as in
+`${SYSTEMUSER_PW:-swordfish}`, while a real password that merely starts
+with it (`swordfishProd7Q`) must still be reported.
+"""
+targetRules = ["generic-password"]
+regexTarget = "secret"
+regexes = ['''\bswordfish\b''']
+
+[[allowlists]]
+description = """
+Placeholder passwords in tests (`hunter2`, `wrongPassword`, `plain-now`,
+`secret123`). Betterleaks' generic-password rule fires on any
+`password: '<literal>'`, which is how every login fixture is written.
+
+Limited to placeholder-shaped values (letters, an optional hyphenated word,
+up to three trailing digits) so a real password pasted into a test, which
+usually has a symbol, a digit mid-word or a year (`Summer2024`), is still
+reported. An all-letters passphrase gets through; that is the price of not
+listing every placeholder by hand.
+"""
+targetRules = ["generic-password"]
+condition = "AND"
+paths = ['''(^|/)__tests__/''', '''^acceptance/''']
+regexTarget = "secret"
+regexes = ['''^[A-Za-z]+(-[A-Za-z]+)?\d{0,3}$''']
+
+[[allowlists]]
+description = """
+GemTalk's GCI headers, vendored verbatim. Their comments and enum names
+mention passwords (`password: instead.`, `GCI_JWT_PASSWORD`) and are never
+edited here, so no finding in them could be acted on. They lived under
+docs/<version>/ before moving to vendor/, and the history scan still sees
+those commits.
+"""
+targetRules = ["generic-password"]
+paths = ['''^vendor/gci-headers/''', '''^docs/3\.[0-9.]+/gc[^/]*$''']
+
+[[allowlists]]
+description = """
+The release how-to quotes a split PEM header (`"-----BEGIN PRIVATE KEY-----\\n"
++ "MIIEv..."`) to explain why .gitleaks.toml separates header and key-material
+rules. It is prose about the pattern, not a key.
+"""
+targetRules = ["private-key"]
+paths = ['''^docs/how-to/publishing-a-release\.md$''']
