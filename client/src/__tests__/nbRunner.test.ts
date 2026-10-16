@@ -45,6 +45,7 @@ function makeSession(pollResults: { result: number; err?: unknown }[]) {
     GciTsCallInProgress: vi.fn(() => ({ result: 0, err: noErr })),
     GciTsNbResult: vi.fn(() => ({ result: 0, err: noErr })),
     GciTsClearStack: vi.fn(() => ({ success: true, err: noErr })),
+    logout: vi.fn(() => true),
   };
   const handle = { h: 1 };
   return { session: fakeActiveSession({ id: 1, handle, gci }), gci, handle };
@@ -865,5 +866,78 @@ describe('a session that goes away mid-call', () => {
         { suppressNotification: true },
       ),
     ).rejects.toThrow(/session not logged in/);
+  });
+
+  it('settles when the session is logged out while the call is outstanding', async () => {
+    const { session } = makeSession([{ result: 0 }]);
+    const run = runNbCall(
+      session,
+      () => ({ success: true, err: noErr as never }),
+      () => 'never',
+      { suppressNotification: true },
+    );
+
+    session.logout();
+
+    await expect(run).rejects.toThrow('The GemStone session is logged out.');
+  });
+
+  it('rejects rather than throws when the session is already logged out', async () => {
+    const { session } = makeSession([]);
+    session.logout();
+
+    const run = () =>
+      runNbCall(
+        session,
+        () => session.GciTsNbExecute('3 + 4', 0n, 0n, 0n, 0, 0),
+        () => 'never',
+        { suppressNotification: true },
+      );
+
+    await expect(run()).rejects.toThrow('The GemStone session is logged out.');
+  });
+
+  it('settles a cancel that arrives after the session was logged out', async () => {
+    const { session } = makeSession([{ result: 0 }]);
+    let cancel: (() => void) | undefined;
+    const run = runNbCall(
+      session,
+      () => ({ success: true, err: noErr as never }),
+      () => 'never',
+      { suppressNotification: true, onStart: (c) => (cancel = c) },
+    );
+    session.logout();
+
+    cancel!();
+
+    await expect(run).rejects.toThrow('The GemStone session is logged out.');
+  });
+
+  it('settles a hard break that goes out after the session was logged out', async () => {
+    vi.useFakeTimers();
+    try {
+      const { session } = makeSession([{ result: 0 }]);
+      let cancel: (() => void) | undefined;
+      const run = runNbCall(
+        session,
+        () => ({ success: true, err: noErr as never }),
+        () => 'never',
+        { suppressNotification: true, onStart: (c) => (cancel = c) },
+      );
+      const outcome = run.then(
+        () => 'resolved',
+        (e: Error) => e.message,
+      );
+      cancel!();
+      cancel!();
+      session.logout();
+
+      await vi.advanceTimersByTimeAsync(PAST_HARD_BREAK_GAP_MS);
+
+      expect(await outcome).toBe('The GemStone session is logged out.');
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
   });
 });

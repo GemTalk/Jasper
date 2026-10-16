@@ -2,7 +2,14 @@ import koffi from 'koffi';
 import * as fs from 'fs';
 import * as path from 'path';
 import { setTimeout as sleep } from 'timers/promises';
-import { GCI_LOGIN_QUIET, OOP_FALSE, OOP_ILLEGAL, OOP_NIL, OOP_TRUE } from './gciConstants';
+import {
+  GCI_ERR_OP_IN_PROGRESS,
+  GCI_LOGIN_QUIET,
+  OOP_FALSE,
+  OOP_ILLEGAL,
+  OOP_NIL,
+  OOP_TRUE,
+} from './gciConstants';
 import { GciLibraryError } from './gciLibraryError';
 import { escapeString } from './queries/util';
 import type { NotPromise } from './syncTypes';
@@ -2183,16 +2190,20 @@ export class GciLibrary {
 
   /**
    * Logs out `session`. Failures are logged via `console.warn` rather than
-   * thrown — the session is gone regardless, and a teardown error would
-   * obscure real test failures above it.
+   * thrown, because a teardown error would obscure real test failures above
+   * it.
    *
    * @param session - The GemStone session to log out.
+   * @returns Whether `session` is gone. A failed logout frees it too: a gem
+   *   the stone already stopped answers 4059 and the handle is gone (the next
+   *   call answers 4100). Only a refusal because a call is still in progress
+   *   on another thread leaves it usable. Other failures count as freed, so an
+   *   unforeseen one costs a live session rather than a call on a freed handle.
    */
-  public logout(session: unknown) {
+  public logout(session: unknown): boolean {
     const { success, err } = this.GciTsLogout(session);
-    // Warn rather than throw — the session is gone regardless, and a
-    // teardown error would obscure real test failures above it.
     if (!success) console.warn(`GciTsLogout failed [${err.number}]: ${err.message}`);
+    return success || err.number !== GCI_ERR_OP_IN_PROGRESS;
   }
 
   /**

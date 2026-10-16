@@ -40,7 +40,9 @@ vi.mock('../gciLibrary', () => ({
     GciTsCommit() {
       return ok;
     }
-    GciTsLogout() {}
+    logout() {
+      return true;
+    }
     supportsNonBlockingLogin() {
       return false;
     }

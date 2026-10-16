@@ -54,7 +54,7 @@ const gciTsFetchSize = vi.fn((..._args: unknown[]) => ({
   result: pingErrNumber ? -1n : 0n,
   err: { number: pingErrNumber, message: pingErrNumber ? 'boom' : '' },
 }));
-const gciTsLogout = vi.fn((..._args: unknown[]) => undefined);
+const gciLogout = vi.fn((..._args: unknown[]) => true);
 // login() aborts once after setup to drop the session-method-policy's spurious
 // write; capture those calls so tests can assert on them.
 const gciTsBegin = vi.fn((..._args: unknown[]) => ({
@@ -120,8 +120,8 @@ vi.mock('../gciLibrary', () => ({
     GciTsCommit(...args: unknown[]) {
       return gciTsCommit(...(args as []));
     }
-    GciTsLogout(...args: unknown[]) {
-      return gciTsLogout(...(args as []));
+    logout(...args: unknown[]) {
+      return gciLogout(...(args as []));
     }
     supportsNonBlockingLogin() {
       return supportsNb;
@@ -655,7 +655,7 @@ describe('SessionManager', () => {
       manager.logout(third.id);
 
       expect(manager.getSelectedSession()?.id).toBe(second.id);
-      expect(gciTsLogout).toHaveBeenCalledTimes(1);
+      expect(gciLogout).toHaveBeenCalledTimes(1);
       expect(gciTsFetchSize).not.toHaveBeenCalled();
       expect(executeAndFetchStringMock).not.toHaveBeenCalled();
       expect(gciTsAbort).not.toHaveBeenCalled();
@@ -669,7 +669,7 @@ describe('SessionManager', () => {
 
       manager.logout(first.id);
 
-      expect(gciTsLogout).toHaveBeenCalledTimes(1);
+      expect(gciLogout).toHaveBeenCalledTimes(1);
       expect(gciTsFetchSize).not.toHaveBeenCalled();
       expect(executeAndFetchStringMock).not.toHaveBeenCalled();
     });

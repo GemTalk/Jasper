@@ -354,15 +354,14 @@ function resolveClassUtf8(session: ActiveSession): bigint {
 // correctly regardless of their original encoding and are not capped at a
 // single fixed-size buffer.
 export function executeFetchString(session: ActiveSession, code: string): string {
-  // Check if session is busy with an async operation (e.g., Display It)
-  const { result: inProgress } = session.GciTsCallInProgress();
-  if (inProgress !== 0) {
-    const msg = 'Session is busy with another operation. Please wait or use a different session.';
-    logError(session.id, msg);
-    throw new BrowserQueryError(msg);
-  }
-
   try {
+    // Check if session is busy with an async operation (e.g., Display It)
+    const { result: inProgress } = session.GciTsCallInProgress();
+    if (inProgress !== 0) {
+      throw new Error(
+        'Session is busy with another operation. Please wait or use a different session.',
+      );
+    }
     return session.executeAndFetchString(code);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

@@ -401,7 +401,7 @@ export class SessionManager {
       session: transient,
       logout: () => {
         try {
-          transient.GciTsLogout();
+          transient.logout();
         } catch {
           /* already gone */
         }
@@ -441,7 +441,7 @@ export class SessionManager {
     if (!s) return;
     logInfo(`[Session ${id}] Logging out: ${s.login.gs_user}@${s.login.gem_host}/${s.login.stone}`);
     try {
-      s.GciTsLogout();
+      s.logout();
     } catch {
       // Session may already be dead — remove it regardless
     }
@@ -646,7 +646,7 @@ export class SessionManager {
   dispose(): void {
     for (const s of this.sessions.values()) {
       try {
-        s.GciTsLogout();
+        s.logout();
       } catch {
         /* ignore */
       }
