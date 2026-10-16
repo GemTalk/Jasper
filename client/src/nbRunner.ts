@@ -362,6 +362,16 @@ export function pollNbToCompletion<T>(
       finishProgress();
       fn();
     };
+    // Every session call throws once the session is logged out, and the
+    // callbacks below run from timers and cancel callbacks, where an escaped
+    // throw would leave the run unsettled for good. Each one goes through this.
+    const settleOnThrow = (callback: () => void) => (): void => {
+      try {
+        callback();
+      } catch (e) {
+        settle(() => reject(e));
+      }
+    };
 
     // Lets the notification's Cancel report progress text; null until/unless the
     // ~2s notification is showing (an external cancel can fire before then).
@@ -370,7 +380,7 @@ export function pollNbToCompletion<T>(
     // Soft-then-hard break, shared by the notification's Cancel and any external
     // canceller handed out via opts.onStart. First call asks the gem to stop at a
     // safe point; a second interrupts now and gives up on the call.
-    const sendHardBreak = (): void => {
+    const sendHardBreak = settleOnThrow(() => {
       if (settled) return;
       // Before the break, not after: a worker thread answers it within a
       // millisecond, and onReady must already see the run as abandoned then.
@@ -396,9 +406,9 @@ export function pollNbToCompletion<T>(
         );
       }
       settle(() => reject(new NbCancelledError()));
-    };
+    });
 
-    const requestCancel = (): void => {
+    const requestCancel = settleOnThrow(() => {
       if (settled) {
         logInfo(`[Session ${session.id}] Break requested, but the call had already settled.`);
         return;
@@ -432,10 +442,10 @@ export function pollNbToCompletion<T>(
         hardBreakScheduled = true;
         setTimeout(sendHardBreak, MIN_HARD_BREAK_GAP_MS - waited);
       }
-    };
+    });
     if (opts.onStart) opts.onStart(requestCancel);
 
-    const doPoll = (): void => {
+    const doPoll = settleOnThrow(() => {
       if (settled) return;
       const { result: pollResult, err: pollErr } = pollNbResultReady(session);
 
@@ -443,14 +453,7 @@ export function pollNbToCompletion<T>(
         // Don't settle until onReady's (possibly async) work finishes — a
         // transcript-forwarding settle loop may keep the server running well
         // past this first ready signal, and Cancel must stay live throughout.
-        let ready: T | Promise<T>;
-        try {
-          ready = onReady(abandoned.signal);
-        } catch (e) {
-          settle(() => reject(e));
-          return;
-        }
-        reading = Promise.resolve(ready);
+        reading = Promise.resolve(onReady(abandoned.signal));
         reading.then(
           (value) => settle(() => resolve(value)),
           (e) => settle(() => reject(e)),
@@ -493,7 +496,7 @@ export function pollNbToCompletion<T>(
       pollIndex++;
 
       setTimeout(doPoll, interval);
-    };
+    });
 
     // On a wall-clock timer from the start of the call, NOT from inside the poll
     // loop above. The loop stops the moment the call first reports ready and
@@ -539,7 +542,7 @@ export function pollNbToCompletion<T>(
  *              start rejects without polling.
  * @param onReady see {@link pollNbToCompletion}.
  */
-export function runNbCall<T>(
+export async function runNbCall<T>(
   session: ActiveSession,
   start: () => { success: boolean; err: GciError },
   onReady: (signal: AbortSignal) => T | Promise<T>,
@@ -559,8 +562,8 @@ export function runNbCall<T>(
   // itself knows when the session is really free, so wait on it. Bounded by
   // DRAIN_ATTEMPTS (or ABANDONED_READ_WAIT_MS), so it always resolves.
   const pending = draining.get(session.id);
-  if (pending) return pending.then(() => beginNbCall(session, start, onReady, opts));
-  return beginNbCall(session, start, onReady, opts);
+  if (pending) return await pending.then(() => beginNbCall(session, start, onReady, opts));
+  return await beginNbCall(session, start, onReady, opts);
 }
 
 function beginNbCall<T>(

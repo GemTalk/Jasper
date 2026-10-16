@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { GemStoneLogin } from '../loginTypes';
+import { ActiveSession } from '../activeSession';
 import { fakeActiveSession, sessionOn } from './fakeActiveSession';
 
 const login: GemStoneLogin = {
@@ -20,7 +21,7 @@ function libraryWhoseLoginAnswers(result: {
 }) {
   return {
     GciTsLogin: vi.fn(() => result),
-    GciTsLogout: vi.fn((_session: unknown) => ({ success: true, err: { number: 0, message: '' } })),
+    logout: vi.fn((_session: unknown) => true),
   };
 }
 
@@ -52,10 +53,10 @@ describe('a transient login', () => {
 
     const transient = session.transientLogin(systemUser).session!;
     // Logging out is the only way left to observe which handle the session holds.
-    transient.GciTsLogout();
+    transient.logout();
 
     expect(transient.id).toBe(-1);
-    expect(gci.GciTsLogout.mock.calls[0][0]).toBe(newHandle);
+    expect(gci.logout.mock.calls[0][0]).toBe(newHandle);
     expect(transient.login).toBe(systemUser);
     expect(transient.stoneVersion).toBe(session.stoneVersion);
   });
@@ -71,24 +72,117 @@ describe('a transient login', () => {
   });
 });
 
+const noError = { number: 0, message: '' };
+
+/** A fake GCI library that records every call and answers whether a logout freed the session. */
+function recordingLibrary() {
+  const calls: string[] = [];
+  const gci = new Proxy(
+    {},
+    {
+      get:
+        (_target, name) =>
+        (..._args: unknown[]) => {
+          calls.push(String(name));
+          return name === 'logout' ? true : undefined;
+        },
+    },
+  );
+  return { gci, calls };
+}
+
+const libraryLevelMembers = [
+  'constructor',
+  'transientLogin',
+  'GciTsOopIsSpecial',
+  'GciTsVersion',
+  'isAvailable',
+];
+const membersThatNeedTheSession = Object.getOwnPropertyNames(ActiveSession.prototype).filter(
+  (name) => !libraryLevelMembers.includes(name),
+);
+
 describe('logging a session out', () => {
-  it('logs out its own handle with the raw GCI call', () => {
+  it('logs out its own handle', () => {
     const handle = {};
-    const gci = { GciTsLogout: vi.fn() };
-    const session = fakeActiveSession({ gci, handle });
-
-    session.GciTsLogout();
-
-    expect(gci.GciTsLogout.mock.calls[0][0]).toBe(handle);
-  });
-
-  it('logs out its own handle through the library logout that warns on failure', () => {
-    const handle = {};
-    const gci = { logout: vi.fn() };
+    const gci = { logout: vi.fn((_session: unknown) => true) };
     const session = fakeActiveSession({ gci, handle });
 
     session.logout();
 
     expect(gci.logout.mock.calls[0][0]).toBe(handle);
+  });
+
+  it('refuses calls once the logout frees the session', () => {
+    const { gci, calls } = recordingLibrary();
+    const session = sessionOn(gci);
+    session.logout();
+    calls.length = 0;
+
+    const fetch = () => session.GciTsFetchSize(1n);
+
+    expect(fetch).toThrow('The GemStone session is logged out.');
+    expect(calls).toEqual([]);
+  });
+
+  it('keeps the session usable when the logout leaves it alive', () => {
+    const gci = {
+      logout: vi.fn((_session: unknown) => false),
+      GciTsFetchSize: vi.fn((_session: unknown, _obj: bigint) => 3n),
+    };
+    const session = sessionOn(gci);
+    session.logout();
+
+    const size = session.GciTsFetchSize(1n);
+
+    expect(size).toBe(3n);
+  });
+
+  it.each(membersThatNeedTheSession)(
+    'refuses a call that needs the session once it is logged out (%s)',
+    async (name) => {
+      const { gci, calls } = recordingLibrary();
+      const session = sessionOn(gci);
+      session.logout();
+      calls.length = 0;
+
+      const call = async () => (session as unknown as Record<string, () => unknown>)[name]();
+
+      await expect(call()).rejects.toThrow('The GemStone session is logged out.');
+      expect(calls).toEqual([]);
+    },
+  );
+
+  it('rejects instead of throwing for a call that answers a promise', async () => {
+    const session = sessionOn(recordingLibrary().gci);
+    session.logout();
+
+    const continued = session.GciTsContinueWithAsync(1n, 1n, null, 0);
+
+    await expect(continued).rejects.toThrow('The GemStone session is logged out.');
+  });
+
+  it('still answers library-level calls once logged out', () => {
+    const { gci, calls } = recordingLibrary();
+    const session = sessionOn(gci);
+    session.logout();
+    calls.length = 0;
+
+    session.GciTsOopIsSpecial(1n);
+    session.GciTsVersion();
+    // eslint-disable-next-line no-restricted-syntax -- the pass-through itself is under test, not a capability skip
+    session.isAvailable('GciTsNbPoll');
+
+    expect(calls).toEqual(['GciTsOopIsSpecial', 'GciTsVersion', 'isAvailable']);
+  });
+
+  it('can still open a transient login once logged out', () => {
+    const gci = libraryWhoseLoginAnswers({ session: {}, err: noError });
+    const session = sessionOn(gci);
+    session.logout();
+
+    const transient = session.transientLogin(login);
+
+    expect(transient.session).toBeDefined();
   });
 });

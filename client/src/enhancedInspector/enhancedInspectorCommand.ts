@@ -96,7 +96,7 @@ async function performInstall(
     );
   } finally {
     try {
-      sys.GciTsLogout();
+      sys.logout();
     } catch {
       // The transient session is being discarded regardless.
     }

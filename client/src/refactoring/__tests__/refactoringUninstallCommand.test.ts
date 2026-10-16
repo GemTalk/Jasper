@@ -38,12 +38,12 @@ import { ActiveSession, SessionManager } from '../../sessionManager';
 import { uninstallRefactoringFeature } from '../refactoringUninstallCommand';
 import { fakeActiveSession } from '../../__tests__/fakeActiveSession';
 
-const logout = vi.fn();
+const logout = vi.fn(() => true);
 function createBaseSession(): ActiveSession {
   return fakeActiveSession({
     id: 1,
     login: { stone: 'demo' },
-    gci: { GciTsLogout: logout },
+    gci: { logout },
     rbSupportAvailable: true,
   });
 }
@@ -55,7 +55,7 @@ const uninstall = (base: ActiveSession, interactive: boolean) =>
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.obtainSystemUserSession.mockResolvedValue(
-    fakeActiveSession({ gci: { GciTsLogout: logout }, handle: {} }),
+    fakeActiveSession({ gci: { logout }, handle: {} }),
   );
   mocks.refreshWorkingSession.mockResolvedValue(true);
   mocks.uninstallSupport.mockResolvedValue({
