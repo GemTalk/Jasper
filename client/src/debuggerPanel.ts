@@ -1576,9 +1576,8 @@ export class DebuggerPanel {
    * nothing cancellable is running.
    */
   private activeNbCancel: (() => void) | undefined;
-  /** How many times Cancel was clicked for the current op (1 = soft break, 2+ = stop
-   *  waiting now). Reset to 0 when a cancellable op begins; drives the acknowledgement wording. */
-  private cancelClicks = 0;
+  /** Cancel was clicked for the current op; later clicks do nothing. */
+  private cancelRequested = false;
   /** Set in dispose() so an in-flight Nb op's continuation skips touching a dead panel. */
   private disposed = false;
 
@@ -2812,8 +2811,8 @@ export class DebuggerPanel {
     this.nbBusy = true;
     // Reset here, not only in onStart: the blocking frame-setup inside
     // evaluateInFrameNb can fail BEFORE polling starts (so onStart never fires), and
-    // a stale count from a prior cancelled op would mislabel that error as cancelled.
-    this.cancelClicks = 0;
+    // a stale flag from a prior cancelled op would mislabel that error as cancelled.
+    this.cancelRequested = false;
     // The eval runs non-blocking so a runaway expression doesn't freeze the panel
     // and CAN be cancelled. The in-panel overlay owns cancel (suppressNotification),
     // and onStart marks it cancellable + captures the handle the Cancel button hits.
@@ -2829,7 +2828,7 @@ export class DebuggerPanel {
       });
     } catch (e: unknown) {
       const raw = e instanceof Error ? e.message : String(e);
-      if (this.cancelClicks > 0) {
+      if (this.cancelRequested) {
         // The user interrupted this eval. Show a clean header plus the gem's own
         // answer for context, in the eval-result area below the bar (no top-banner
         // error). NbCancelledError means the runner stopped waiting, so the gem
@@ -2888,15 +2887,10 @@ export class DebuggerPanel {
 
   /** Webview Cancel button → stop the active nb op (see activeNbCancel). */
   private cancelActiveOp(): void {
-    if (!this.activeNbCancel) return;
-    this.cancelClicks += 1;
-    // Acknowledge the click so it visibly registers — the break is asynchronous
-    // (the gem stops at a safe point), so without this the Cancel feels unheard.
-    this.flash(
-      this.cancelClicks === 1
-        ? 'Break sent — waiting for the gem to stop…'
-        : 'Stopped waiting — the gem is still finishing it.',
-    );
+    if (!this.activeNbCancel || this.cancelRequested) return;
+    this.cancelRequested = true;
+    // Acknowledged, since the gem answers the break asynchronously.
+    this.flash('Break sent — waiting for the gem to stop…');
     this.activeNbCancel();
   }
 
@@ -3593,7 +3587,7 @@ export class DebuggerPanel {
       return;
     }
     this.nbBusy = true;
-    this.cancelClicks = 0; // reset before the op (onStart may not fire if start fails)
+    this.cancelRequested = false; // reset before the op (onStart may not fire if start fails)
     // Hand the op nb options that (a) suppress the 2s toast — the in-panel overlay
     // owns cancel for debugger ops — and (b) wire the in-panel Cancel button: when
     // the op forwards these to its nb call, onStart fires and we mark it cancellable

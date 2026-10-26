@@ -3674,7 +3674,7 @@ describe('DebuggerPanel', () => {
     });
 
     it('does not mislabel a later eval setup error as cancelled after a prior cancel', async () => {
-      // First eval: cancelled, so cancelClicks is bumped to 1.
+      // First eval: cancelled, so the cancel flag is set.
       let rejectFirst: (e: Error) => void = () => {};
       vi.mocked(debug.evaluateInFrameNb).mockImplementationOnce((...args: unknown[]) => {
         const opts = args[4] as { onStart?: (c: () => void) => void };
@@ -3686,13 +3686,13 @@ describe('DebuggerPanel', () => {
       const panel = openPanel();
       sendMessage(panel, { command: 'evalInFrame', level: 3, expr: 'first' });
       await tick();
-      sendMessage(panel, { command: 'cancelOp' }); // cancelClicks → 1
+      sendMessage(panel, { command: 'cancelOp' });
       rejectFirst(new Error('interrupted'));
       await tick();
 
       // Second eval whose blocking SETUP fails before polling starts → onStart never
-      // fires, so cancelClicks isn't reset there. The reset-at-entry guard must keep
-      // the stale 1 from mislabeling this real error as a cancellation.
+      // fires, so the flag isn't reset there. The reset-at-entry guard must keep the
+      // stale flag from mislabeling this real error as a cancellation.
       vi.mocked(debug.evaluateInFrameNb).mockRejectedValueOnce(
         new Error('cannot create expression string'),
       );
@@ -4312,7 +4312,7 @@ describe('DebuggerPanel', () => {
       );
     });
 
-    it('a step marks the op cancellable, Cancel breaks it, and a second Cancel stops waiting', async () => {
+    it('a step marks the op cancellable, and one Cancel breaks it; a second click does nothing', async () => {
       const cancelSpy = vi.fn();
       vi.mocked(debug.stepOverNb).mockImplementationOnce((...args: unknown[]) => {
         const opts = args[3] as { onStart?: (c: () => void) => void };
@@ -4330,8 +4330,7 @@ describe('DebuggerPanel', () => {
       expect(lastPosted(panel, 'flash').text).toMatch(/break sent/i); // click acknowledged
 
       sendMessage(panel, { command: 'cancelOp' });
-      expect(cancelSpy).toHaveBeenCalledTimes(2);
-      expect(lastPosted(panel, 'flash').text).toMatch(/stopped waiting/i); // second click
+      expect(cancelSpy).toHaveBeenCalledTimes(1);
     });
 
     it('Restart Frame on the top frame shows an in-panel notice and does not trim (GemStone cannot reset the TOS IP)', async () => {
