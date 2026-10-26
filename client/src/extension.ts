@@ -4393,13 +4393,8 @@ export function activate(context: vscode.ExtensionContext) {
     // that a silent pause reads as a click that did nothing.
     //
     // The probing and the wait around it are awaited, not blocking, so the
-    // editor stays usable for the part that can run to ten seconds. The one
-    // exception is the logout itself: `GciTsLogout` is a synchronous FFI call
-    // on the extension host, once per session on this database. Against a
-    // healthy stone that is milliseconds; against an unresponsive one it
-    // blocks, and there is no non-blocking logout in the GciTs API to use
-    // instead. Moving it off the main thread is a session-lifecycle change
-    // well beyond this path, so it is left as it is and named here.
+    // editor stays usable for the part that can run to ten seconds; the logouts
+    // don't wait for their gems either.
     return await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
@@ -5386,7 +5381,7 @@ export function activate(context: vscode.ExtensionContext) {
             await sessionManager.logout(sessionId);
           },
           stopStone: async () => {
-            // GciTsLogout returns before the stone finishes deregistering our gem,
+            // The logout returns before the stone finishes deregistering our gem,
             // so stopstone (which logs in itself to request shutdown) can still see
             // our just-closed session and refuse with "Other users logged in" (exit
             // 13). Retry briefly to ride out that deregistration lag; a genuine

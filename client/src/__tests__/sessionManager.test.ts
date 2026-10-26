@@ -654,8 +654,8 @@ describe('SessionManager', () => {
     // logged in" is answered from the manager's own session map, not by asking
     // the stone — a liveness ping (GciTsFetchSize, what `ping()` uses) would put
     // a network round trip per candidate in the middle of a logout, on the path
-    // that Display It and a notebook cell are waiting on. The logout's own
-    // GciTsLogout is the one call that has to happen.
+    // that Display It and a notebook cell are waiting on. The logout itself is
+    // the one call that has to happen.
     it('promotes without a round trip to any gem', async () => {
       const [, second, third] = loginN(3);
       manager.selectSession(second.id);

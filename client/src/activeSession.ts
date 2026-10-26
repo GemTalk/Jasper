@@ -38,7 +38,7 @@ export class ActiveSession {
 
   /**
    * Answers the native session handle, or throws a GciLibraryError once a logout has
-   * freed it, which a failed logout usually does too (see `logout`). `GciTsLogout`
+   * freed it, which a failed logout usually does too (see `logout`). A logout
    * frees the native session, and any GCI call on
    * a freed handle is undefined behavior, SEGV included; a logout swaps this
    * for a thrower, so no call can reach the library with a freed handle.
