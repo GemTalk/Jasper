@@ -24,8 +24,6 @@ export function runTestMethodCode(className: string, selector: string, dictName?
   // The TestFailure-vs-other-Exception kind discriminates failed/error.
   //
   // tearDown resumes any Break, so a stop never cuts the test's cleanup short.
-  // That holds for the runner's own hard break too: sent after a soft break, a
-  // hard break arrives as another soft one (measured on 3.6.2 and 3.7.5).
   //
   // Output is built through a String-class WriteStream (which widens
   // transparently for non-ASCII codepoints) and converted to Utf8 once at

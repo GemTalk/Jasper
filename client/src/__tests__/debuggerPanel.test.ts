@@ -3591,7 +3591,7 @@ describe('DebuggerPanel', () => {
       expect(cancelSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('a cancelled eval shows "Evaluation Cancelled", the break kind, and the raw error', async () => {
+    it('a cancelled eval shows "Evaluation Cancelled" and the gem\'s own answer', async () => {
       let rejectEval: (e: Error) => void = () => {};
       vi.mocked(debug.evaluateInFrameNb).mockImplementationOnce((...args: unknown[]) => {
         const opts = args[4] as { onStart?: (c: () => void) => void };
@@ -3610,12 +3610,12 @@ describe('DebuggerPanel', () => {
 
       const res = lastPosted(panel, 'evalResult');
       expect(res.value).toContain('Evaluation Cancelled');
-      expect(res.value).toContain('soft break');
       expect(res.value).toContain('the operation was interrupted'); // raw error kept
+      expect(res.value).not.toMatch(/hard break|soft break/);
       expect(res.isError).toBe(true);
     });
 
-    it('labels an eval cancel that ended in a hard break "(hard break)", even after one click', async () => {
+    it('says the gem is still finishing an eval the runner stopped waiting for', async () => {
       let rejectEval: (e: Error) => void = () => {};
       vi.mocked(debug.evaluateInFrameNb).mockImplementationOnce((...args: unknown[]) => {
         const opts = args[4] as { onStart?: (c: () => void) => void };
@@ -3628,11 +3628,13 @@ describe('DebuggerPanel', () => {
       sendMessage(panel, { command: 'evalInFrame', level: 3, expr: '[true] whileTrue' });
       await tick();
 
-      sendMessage(panel, { command: 'cancelOp' }); // one click; the runner forces the stop itself
+      sendMessage(panel, { command: 'cancelOp' }); // one click; the runner then stops waiting
       rejectEval(new NbCancelledError());
       await tick();
 
-      expect(lastPosted(panel, 'evalResult').value).toContain('hard break');
+      expect(lastPosted(panel, 'evalResult').value).toBe(
+        'Evaluation Cancelled — the gem is still finishing it',
+      );
     });
 
     it('ignores a second eval while one is already running (busy)', async () => {
@@ -4310,7 +4312,7 @@ describe('DebuggerPanel', () => {
       );
     });
 
-    it('a step marks the op cancellable, and Cancel breaks it', async () => {
+    it('a step marks the op cancellable, Cancel breaks it, and a second Cancel stops waiting', async () => {
       const cancelSpy = vi.fn();
       vi.mocked(debug.stepOverNb).mockImplementationOnce((...args: unknown[]) => {
         const opts = args[3] as { onStart?: (c: () => void) => void };
@@ -4329,7 +4331,7 @@ describe('DebuggerPanel', () => {
 
       sendMessage(panel, { command: 'cancelOp' });
       expect(cancelSpy).toHaveBeenCalledTimes(2);
-      expect(lastPosted(panel, 'flash').text).toMatch(/forc/i); // second click → force
+      expect(lastPosted(panel, 'flash').text).toMatch(/stopped waiting/i); // second click
     });
 
     it('Restart Frame on the top frame shows an in-panel notice and does not trim (GemStone cannot reset the TOS IP)', async () => {

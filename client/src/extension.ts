@@ -678,8 +678,8 @@ async function loadRowanFromDirectory(
 
   // Runs over the non-blocking execute: big projects load for minutes, and the
   // nb runner keeps the extension responsive and shows a cancellable progress
-  // notification. Cancelling hard-breaks the gem, and the query aborts its own
-  // transaction on error, so nothing partial is committed.
+  // notification. The load commits only at its end, so a cancelled load commits
+  // nothing, though what it loaded so far stays uncommitted in the session.
   let result;
   try {
     result = await queries.loadRowanProjectNb(session, spec.path, dir, `Loading ${spec.name}…`);

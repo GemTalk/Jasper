@@ -1202,7 +1202,7 @@ function performStepNb(
       }
       return { completed: true, resultOop: result };
     },
-    // No `disposableProcess`: a hard break here stops the process the debugger
+    // No `disposableProcess`: a break here stops the process the debugger
     // is showing, and clearing it would unwind the stack the panel still offers
     // to step. The step's caller resumes or terminates it instead.
     opts,

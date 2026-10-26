@@ -1571,13 +1571,13 @@ export class DebuggerPanel {
   /**
    * Cancel handle for the in-flight non-blocking op. Set from the nb runner's
    * `onStart` while a cancellable op runs; calling it stops the op, soft break
-   * first and the runner's own hard break after. Drives the in-panel Cancel button
+   * first, and the runner stops waiting if the op is still going. Drives the in-panel Cancel button
    * (which the webview shows only while the busy spinner is up). Undefined when
    * nothing cancellable is running.
    */
   private activeNbCancel: (() => void) | undefined;
-  /** How many times Cancel was clicked for the current op (1 = soft break, 2+ = hard).
-   *  Reset to 0 when a cancellable op begins; drives the acknowledgement wording. */
+  /** How many times Cancel was clicked for the current op (1 = soft break, 2+ = stop
+   *  waiting now). Reset to 0 when a cancellable op begins; drives the acknowledgement wording. */
   private cancelClicks = 0;
   /** Set in dispose() so an in-flight Nb op's continuation skips touching a dead panel. */
   private disposed = false;
@@ -2830,13 +2830,12 @@ export class DebuggerPanel {
     } catch (e: unknown) {
       const raw = e instanceof Error ? e.message : String(e);
       if (this.cancelClicks > 0) {
-        // The user interrupted this eval. Show a clean header (with which break it
-        // was — soft = stop at a safe point, hard = forced) plus the raw gem error
-        // for context, in the eval-result area below the bar (no top-banner error).
-        // Only a hard break rejects with NbCancelledError, and the runner may send
-        // one itself after a single click.
-        const kind = e instanceof NbCancelledError ? 'hard break' : 'soft break';
-        value = `Evaluation Cancelled (${kind})${raw ? ` — ${raw}` : ''}`;
+        // The user interrupted this eval. Show a clean header plus the gem's own
+        // answer for context, in the eval-result area below the bar (no top-banner
+        // error). NbCancelledError means the runner stopped waiting, so the gem
+        // gave no answer yet.
+        const detail = e instanceof NbCancelledError ? 'the gem is still finishing it' : raw;
+        value = `Evaluation Cancelled${detail ? ` — ${detail}` : ''}`;
       } else {
         value = `Error: ${raw}`;
       }
@@ -2894,7 +2893,9 @@ export class DebuggerPanel {
     // Acknowledge the click so it visibly registers — the break is asynchronous
     // (the gem stops at a safe point), so without this the Cancel feels unheard.
     this.flash(
-      this.cancelClicks === 1 ? 'Break sent — waiting for the gem to stop…' : 'Forcing interrupt…',
+      this.cancelClicks === 1
+        ? 'Break sent — waiting for the gem to stop…'
+        : 'Stopped waiting — the gem is still finishing it.',
     );
     this.activeNbCancel();
   }

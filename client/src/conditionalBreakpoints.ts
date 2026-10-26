@@ -474,8 +474,8 @@ class DeciderError extends Error {
 
 /**
  * Release a process one of our own calls left suspended. The decider runs in a
- * process of its own, never the developer's, so whatever stopped it — a soft or
- * hard break, an error — leaves nothing anyone will resume.
+ * process of its own, never the developer's, so whatever stopped it — a break or
+ * an error — leaves nothing anyone will resume.
  */
 function releaseProcess(session: ActiveSession, context: number | bigint | undefined): void {
   if (context === undefined) return;
@@ -570,8 +570,8 @@ export interface RuleRunOptions {
    */
   onTranscript?: (text: string) => void;
   /**
-   * A hard break from the runner the loop is part of: the caller has already
-   * given up on the run, so the loop releases the process and stops.
+   * Aborted when the runner the loop is part of stops waiting: the caller has
+   * already given up on the run, so the loop releases the process and stops.
    */
   signal?: AbortSignal;
   /**
@@ -622,8 +622,8 @@ export async function applyBreakpointRules(
   };
   options.onStart?.(cancel, () => cancelled);
 
-  // The hard break has already rejected the run, so nobody else will release
-  // what it stopped.
+  // The runner has already rejected the run, so nobody else will release what
+  // it stopped.
   const abandon = (): never => {
     releaseProcess(session, process);
     throw new NbCancelledError();
@@ -759,7 +759,7 @@ export type BreakpointStop =
  * Apply the rules to the breakpoint `context` is stopped at, and say where the
  * run ended up. With no rules, returns before any GCI call.
  *
- * Throws `NbCancelledError` on a hard break, and a plain Error when there is
+ * Throws `NbCancelledError` when the runner stops waiting, and a plain Error when there is
  * nothing left to debug: the session logged out, or the run stopped with no
  * process to open a debugger on.
  */

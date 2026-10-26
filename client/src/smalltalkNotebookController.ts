@@ -101,8 +101,8 @@ async function runCell(session: ActiveSession, source: string): Promise<string> 
       {
         title: 'GemStone: Running cell…',
         disposableProcess: true,
-        // The `finally`'s end is refused while a hard-broken cell is being
-        // collected; this is where it can succeed.
+        // The `finally`'s end is refused while a cell the runner stopped waiting
+        // for is being collected; this is where it can succeed.
         onAbandonedCollected: () => appendTranscriptOutput(endClientForwarderMode(session)),
       },
     );

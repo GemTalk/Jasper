@@ -298,9 +298,9 @@ export class CodeExecutor {
     } finally {
       editor.setDecorations(executingDecorationType, []);
       // End clientForwarder mode; display anything that raced the end. (After
-      // a hard-break cancel the gem may still be settling — the end then
-      // fails quietly, and runs again once the call is collected; see
-      // pollForCompletion.)
+      // a cancel the runner stopped waiting for, the gem may still be settling —
+      // the end then fails quietly, and runs again once the call is collected;
+      // see pollForCompletion.)
       appendTranscriptOutput(endClientForwarderMode(session));
       this.setExecuting(session.id, false);
     }
@@ -518,8 +518,8 @@ export class CodeExecutor {
    * Answers whether the code raised, or whether the user cancelled it — and no
    * more than that. Once the process is suspended it belongs to the debugger the
    * user opened on it, so its eventual fate isn't ours to report. A
-   * cancel (a soft or hard break, or Cancel while breakpoint rules are being
-   * applied) is reported as `cancelled`, not `raised`, and never opens a
+   * cancel (a soft break, the runner giving up waiting, or Cancel while
+   * breakpoint rules are being applied) is reported as `cancelled`, not `raised`, and never opens a
    * debugger: it was the user's decision, not the code's fault. Throws when the
    * execution could not be started at all, or stopped with nothing left to
    * debug (no process, or the session logged out).
@@ -562,8 +562,8 @@ export class CodeExecutor {
     } catch (e: unknown) {
       // A cancelled run tells us nothing about the code — it was the user's
       // decision, not the test's fault — so report it as cancelled and never
-      // open a debugger on it. Cancel arrives three ways: a hard break rejects
-      // with NbCancelledError; a soft break lets the gem raise its "a soft
+      // open a debugger on it. Cancel arrives three ways: a run the runner stopped
+      // waiting for rejects with NbCancelledError; a soft break lets the gem raise its "a soft
       // break was received" error (6003), which surfaces here as a
       // DebuggableError with a live context like any other break; and a cancel
       // while breakpoint rules are being applied stops at the hit it reached.
@@ -759,8 +759,8 @@ export class CodeExecutor {
     return pollNbToCompletion(session, onReady, {
       title: 'GemStone: Executing…',
       disposableProcess: true,
-      // Every caller runs in clientForwarder mode, and after a hard break the
-      // `finally`'s end is refused; this is where it can succeed.
+      // Every caller runs in clientForwarder mode, and after the runner stops
+      // waiting the `finally`'s end is refused; this is where it can succeed.
       onAbandonedCollected: () => appendTranscriptOutput(endClientForwarderMode(session)),
     });
   }

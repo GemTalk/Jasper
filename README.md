@@ -213,7 +213,7 @@ With an active session, execute Smalltalk code from any editor:
 
 By default, **Display It** shows its result as a non-destructive inline overlay — an annotation that is not part of the document, so the file is never modified. Hover the result for **Copy** and **Expand** actions; **Enter** inserts the full result into the document, **Backspace** or **Escape** dismisses it. Set `gemstone.displayItMode` to `"insert"` for the classic behavior of inserting the result as editable text.
 
-Long-running expressions show a progress notification with soft-break and hard-break options. The **GemStone Transcript** output channel captures transcript output from the session.
+Long-running expressions show a progress notification with a Cancel button. One press asks the gem to stop at a safe point; if the run is still going about 1.5 seconds later, Jasper stops waiting and frees the editor, and the session says the stopped run is still finishing until the gem is done. The **GemStone Transcript** output channel captures transcript output from the session.
 
 ### GemStone Explorer
 
