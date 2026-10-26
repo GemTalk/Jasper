@@ -191,7 +191,8 @@ cls compileMethod: 'outer ^ self inner' dictionaries: System myUserProfile symbo
       // Required, not tolerated: a step that finished on its own was never
       // interrupted mid-call, and would leave this test asserting nothing.
       await expect(step).rejects.toBeInstanceOf(NbCancelledError);
-      await waitForSessionFree();
+      // Retried: under load the step can outlive the drain, which refuses once.
+      await within(untilSessionFree(), 20_000, 'the session to be free after the cancel');
 
       expect(stackDepth(gsProcess)).toBeGreaterThan(0);
       // Not merely a surviving oop: still a process the panel can drive.

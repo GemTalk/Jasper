@@ -34,6 +34,11 @@ export function evalPython(execute: QueryExecutor, source: string): string {
 // kernels use the notebook URI as scopeId, giving each notebook its own
 // module scope within the session).
 export function evalPythonInScope(execute: QueryExecutor, source: string, scopeId: string): string {
+  return execute(pythonInScopeCode(source, scopeId));
+}
+
+/** The code {@link evalPythonInScope} runs, for a caller that runs it non-blocking. */
+export function pythonInScopeCode(source: string, scopeId: string): string {
   const escScope = escapeString(scopeId);
   const expr = `| scopes scope |
        scopes := SessionTemps current at: #'__vscGrailScopes' ifAbsent: [nil].
@@ -42,8 +47,7 @@ export function evalPythonInScope(execute: QueryExecutor, source: string, scopeI
          SessionTemps current at: #'__vscGrailScopes' put: scopes].
        scope := scopes at: '${escScope}' ifAbsentPut: [SymbolDictionary new].
        (dispatcher evaluateSource: src usingModuleScope: scope) printString`;
-  const code = buildPythonQuery(expr, source);
-  return execute(code);
+  return buildPythonQuery(expr, source);
 }
 
 // Drop the persistent module scope for scopeId so the next evalPythonInScope

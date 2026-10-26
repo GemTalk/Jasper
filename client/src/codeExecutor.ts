@@ -23,6 +23,7 @@ import {
   pollNbToCompletion,
   NbCancelledError,
   NbSessionBusyError,
+  sayRunInProgress,
   whenSessionFree,
 } from './nbRunner';
 import {
@@ -93,13 +94,6 @@ class DebuggableError extends Error {
 }
 
 /** Refuse a second run on a session that is still running one, saying how to stop it. */
-function showStillExecuting(session: ActiveSession): void {
-  void vscode.window.showWarningMessage(
-    `Session ${session.id} is still running your last expression. Wait for it, or press ` +
-      'Cancel on its "GemStone: Executing…" notification to stop it.',
-  );
-}
-
 export class CodeExecutor {
   private executing = new Set<number>();
   private diagnostics: vscode.DiagnosticCollection;
@@ -169,7 +163,7 @@ export class CodeExecutor {
     if (!session) return;
 
     if (this.executing.has(session.id)) {
-      showStillExecuting(session);
+      sayRunInProgress(session);
       return;
     }
 
@@ -749,9 +743,8 @@ export class CodeExecutor {
     try {
       await whenSessionFree(session, start);
     } catch (e) {
+      // Already told: the refusal raises its own notice, with a way to stop the run.
       if (!(e instanceof NbSessionBusyError)) throw e;
-      // A stopped run's refusal has its own notice, with Force Stop.
-      if (!e.stoppedRun) vscode.window.showWarningMessage(e.message);
     }
   }
 
@@ -831,7 +824,7 @@ export class CodeExecutor {
     if (!session) return;
 
     if (this.executing.has(session.id)) {
-      showStillExecuting(session);
+      sayRunInProgress(session);
       return;
     }
 
@@ -862,7 +855,7 @@ export class CodeExecutor {
     if (!session) return;
 
     if (this.executing.has(session.id)) {
-      showStillExecuting(session);
+      sayRunInProgress(session);
       return;
     }
 

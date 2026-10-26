@@ -32,6 +32,7 @@ vi.mock('../nbRunner', async (orig) => {
     ...actual,
     pollNbToCompletion: vi.fn(actual.pollNbToCompletion),
     whenSessionFree: vi.fn(actual.whenSessionFree),
+    sayRunInProgress: vi.fn(),
   };
 });
 vi.mock('../basicInspector/basicInspector', () => ({
@@ -49,6 +50,7 @@ import {
   whenSessionFree,
   forgetSession,
   NbSessionBusyError,
+  sayRunInProgress,
   type NbRunOptions,
 } from '../nbRunner';
 import { DebuggerPanel } from '../debugger/debuggerPanel';
@@ -518,7 +520,7 @@ describe('CodeExecutor', () => {
     );
 
     it.each(['executeIt', 'displayIt', 'inspectIt'] as const)(
-      '%s says another run is in progress, and starts nothing',
+      '%s starts nothing while another run holds the session, leaving the telling to its notice',
       async (command) => {
         setActiveEditor(makeEditor('3 + 4'));
         vi.mocked(whenSessionFree).mockImplementationOnce(() => {
@@ -528,9 +530,7 @@ describe('CodeExecutor', () => {
         await executor[command]();
 
         expect(gci.GciTsNbExecute).not.toHaveBeenCalled();
-        expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
-          expect.stringMatching(/still in progress/),
-        );
+        expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
       },
     );
 
@@ -1263,7 +1263,7 @@ describe('CodeExecutor', () => {
     // The keys stay bound while a run goes on, so a second press reaches this
     // rather than whatever VS Code binds to the same keys.
     it.each(['executeIt', 'displayIt', 'inspectIt'] as const)(
-      '%s on a session still running one says how to stop it, and starts nothing',
+      '%s on a session still running one offers to stop that run, and starts nothing',
       async (command) => {
         setActiveEditor(makeEditor('3 + 4'));
         (executor as unknown as { executing: Set<number> }).executing.add(session.id);
@@ -1271,9 +1271,7 @@ describe('CodeExecutor', () => {
         await executor[command]();
 
         expect(gci.GciTsNbExecute).not.toHaveBeenCalled();
-        expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
-          expect.stringMatching(/^Session \d+ is still running your last expression\. .*Cancel/),
-        );
+        expect(sayRunInProgress).toHaveBeenCalledWith(session);
       },
     );
 

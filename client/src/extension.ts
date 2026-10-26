@@ -81,12 +81,14 @@ import {
   normalizeGitUrl,
 } from './rowanLoad';
 import {
+  cancelRunOn,
   NbCancelledError,
+  setRunInProgressHandler,
   setStillRunningHandler,
   setStoppedRunCollectedHandler,
 } from './nbRunner';
 import { forceStop, rearmAfterForceStop } from './forceStop';
-import { showStillRunning } from './stillRunningNotice';
+import { showRunInProgress, showStillRunning } from './stillRunningNotice';
 import { RowanRepoRegistry } from './rowanRepos';
 import {
   RowanTreeProvider,
@@ -911,6 +913,12 @@ export function activate(context: vscode.ExtensionContext) {
       forceStop: (s) =>
         forceStop(s, { loginTransient: (from) => sessionManager.loginTransient(from.login, from) }),
       logout: (id) => sessionManager.logout(id),
+    });
+  });
+  setRunInProgressHandler((session) => {
+    void showRunInProgress(session, {
+      isRegistered: (id) => sessionManager.getSession(id) !== undefined,
+      stop: cancelRunOn,
     });
   });
   setStoppedRunCollectedHandler(rearmAfterForceStop);

@@ -157,6 +157,7 @@ export const STOP_WAITING_AFTER_MS = 1500;
 export const EARLIEST_STOP_WAITING_MS = 2500;
 
 let stillRunningHandler: ((session: ActiveSession) => void) | undefined;
+let runInProgressHandler: ((session: ActiveSession) => void) | undefined;
 let stoppedRunCollectedHandler: ((session: ActiveSession) => void) | undefined;
 
 /**
@@ -166,6 +167,33 @@ let stoppedRunCollectedHandler: ((session: ActiveSession) => void) | undefined;
  */
 export function setStillRunningHandler(handler: typeof stillRunningHandler): void {
   stillRunningHandler = handler;
+}
+
+/** Say what to do when a run nobody has stopped refuses a new call on its session. */
+export function setRunInProgressHandler(handler: typeof runInProgressHandler): void {
+  runInProgressHandler = handler;
+}
+
+/** Tell the user, through the {@link setRunInProgressHandler} handler, that a run holds the session. */
+export function sayRunInProgress(session: ActiveSession): void {
+  try {
+    runInProgressHandler?.(session);
+  } catch (e) {
+    logInfo(
+      `[Session ${session.id}] Could not say a run is in progress: ` +
+        (e instanceof Error ? e.message : String(e)),
+    );
+  }
+}
+
+/**
+ * Stop the run on `session` as its own Cancel would. Answers false when there is
+ * no run being polled to stop.
+ */
+export function cancelRunOn(session: ActiveSession): boolean {
+  const running = live.get(session.id);
+  running?.cancel();
+  return running !== undefined;
 }
 
 /** Say what to do once a call the runner stopped waiting for is collected. */
@@ -248,7 +276,10 @@ type CollectState = 'collected' | 'pending' | 'failed' | 'gone';
  * while yet, through a tearDown or an ensure: block. `stop` sends the call the
  * escalation that stops it, answering the call's own promise.
  */
-const live = new Map<number, { stopRequested: () => boolean; stop: () => Promise<unknown> }>();
+const live = new Map<
+  number,
+  { stopRequested: () => boolean; cancel: () => void; stop: () => Promise<unknown> }
+>();
 
 /**
  * Stop the call in flight on `session`, if any, and wait until the session is
@@ -437,6 +468,7 @@ function collectLate(
 export function ensureSessionFree(session: ActiveSession): void {
   const running = live.get(session.id);
   if (running && !running.stopRequested()) {
+    sayRunInProgress(session);
     throw new NbSessionBusyError(
       'Another run is still in progress on this session. Wait for it to finish, or stop ' +
         'it, before starting another.',
@@ -657,6 +689,8 @@ export function pollNbToCompletion<T>(
     let stopped = false;
     const liveEntry = {
       stopRequested: (): boolean => softBreakSent,
+      // What the run's own Cancel does.
+      cancel: (): void => requestCancel(),
       // Twice, like pressing Cancel twice: a soft break, then stop waiting. A run
       // the first press already settled needs no second one.
       stop: (): Promise<T> => {

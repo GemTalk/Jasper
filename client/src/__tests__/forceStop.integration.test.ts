@@ -20,6 +20,8 @@ import {
 } from '../transcriptSink';
 import { BrowserQueryError, executeFetchString } from '../browserQueries';
 import { SessionManager } from '../sessionManager';
+import { evalSmalltalk } from '../smalltalkNotebookController';
+import { evalPythonInScopeNb } from '../pythonQueries';
 import { testActiveSession } from './testActiveSession';
 import { useIntegrationTest } from './useIntegrationTest';
 
@@ -131,6 +133,36 @@ describe('Force Stop (integration)', () => {
     expect(own.executeAndFetchString("Transcript nextPutAll: 'after'. (3 + 4) printString")).toBe(
       '7',
     );
+  }, 30_000);
+
+  it("stops a notebook cell from the cell's own stop, and Force Stop frees the session", async () => {
+    const own = armedSession();
+    installTranscriptSink(own);
+    let cancel: (() => void) | undefined;
+    const cellRun = evalSmalltalk(
+      own,
+      '[[true] whileTrue] on: Break do: [:e | e resume]',
+      (c) => (cancel = c),
+    );
+    cellRun.catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    cancel!();
+
+    await expect(cellRun).rejects.toBeInstanceOf(NbCancelledError);
+    expect(stoppedRunHolds(own)).toBe(true);
+    await expect(forceStop(own, deps)).resolves.toBe(true);
+    await expect(evalSmalltalk(own, '3 + 4')).resolves.toBe('7');
+  }, 30_000);
+
+  // No test stone has Grail, so this shows the path works, not a stop of real Python.
+  it('runs a Python cell without blocking, handing out its canceller', async () => {
+    const own = armedSession();
+    const onStart = vi.fn();
+
+    const answer = await evalPythonInScopeNb(own, 'x = 1', 'file:///nb.ipynb', onStart);
+
+    expect(answer).toMatch(/^Grail \(GemStone-Python\) not detected/);
+    expect(onStart).toHaveBeenCalledWith(expect.any(Function), expect.any(Function));
   }, 30_000);
 
   it('offers Force Stop when an Explorer query is blocked by the stopped run', async () => {

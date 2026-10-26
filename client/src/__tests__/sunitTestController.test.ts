@@ -897,7 +897,7 @@ describe('SunitTestController', () => {
       ctrl.dispose();
     });
 
-    it('reports a debug run refused because the session is busy as not run, and says why', async () => {
+    it('reports a debug run refused because the session is busy as not run', async () => {
       const debugExecutor = makeDebugExecutor();
       debugExecutor.executeWithDebugger.mockRejectedValueOnce(
         new NbSessionBusyError('Another run is still in progress on this session.', false),
@@ -907,9 +907,8 @@ describe('SunitTestController', () => {
       await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd'], 'debug');
 
       expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toBeUndefined();
-      expect(window.showWarningMessage).toHaveBeenCalledWith(
-        expect.stringMatching(/still in progress/),
-      );
+      // The refusal raises its own notice, from the runner.
+      expect(window.showWarningMessage).not.toHaveBeenCalled();
       ctrl.dispose();
     });
 
@@ -1369,7 +1368,7 @@ describe('SunitTestController', () => {
       ctrl.dispose();
     });
 
-    it('refuses a run of several tests once, with one warning', async () => {
+    it('refuses a run of several tests once, adding no warning of its own', async () => {
       vi.mocked(whenSessionFree).mockImplementationOnce(() => {
         throw new NbSessionBusyError('Another run is still in progress on this session.', false);
       });
@@ -1377,12 +1376,12 @@ describe('SunitTestController', () => {
 
       await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd', 'testRemove']);
 
-      expect(window.showWarningMessage).toHaveBeenCalledTimes(1);
+      expect(window.showWarningMessage).not.toHaveBeenCalled();
       expect(sunit.runTestMethodNb).not.toHaveBeenCalled();
       ctrl.dispose();
     });
 
-    it('reports a run refused because the session is busy as not run, and says why', async () => {
+    it('reports a run refused because the session is busy as not run', async () => {
       // It never started: calling that the test erroring would blame the test.
       vi.mocked(sunit.runTestMethodNb).mockRejectedValueOnce(
         new NbSessionBusyError('Another run is still in progress on this session.', false),
@@ -1392,9 +1391,8 @@ describe('SunitTestController', () => {
       await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
 
       expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toBeUndefined();
-      expect(window.showWarningMessage).toHaveBeenCalledWith(
-        expect.stringMatching(/still in progress/),
-      );
+      // The refusal raises its own notice, from the runner.
+      expect(window.showWarningMessage).not.toHaveBeenCalled();
       ctrl.dispose();
     });
 

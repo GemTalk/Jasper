@@ -5,7 +5,17 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 import { window } from '../__mocks__/vscode';
 import type { ActiveSession } from '../activeSession';
 import { DEFAULT_LOGIN } from '../loginTypes';
-import { FORCE_STOP, LOG_OUT, showStillRunning } from '../stillRunningNotice';
+import {
+  FORCE_STOP,
+  LOG_OUT,
+  STOP,
+  showRunInProgress,
+  showStillRunning,
+} from '../stillRunningNotice';
+
+// Each test a minute after the last, in whatever order they run, so none falls
+// inside the notice's burst window of another.
+let clock = Date.parse('2026-10-26T12:00:00Z');
 
 const session = { id: 3, login: { ...DEFAULT_LOGIN, stone: 'gs64stone' } } as ActiveSession;
 
@@ -25,8 +35,6 @@ function pickForceStop(confirm?: string): void {
 }
 
 describe('the "stopped run is still running" notice', () => {
-  // Each test a minute after the last, past the notice's burst window.
-  let clock = Date.parse('2026-10-26T12:00:00Z');
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime((clock += 60_000));
@@ -144,5 +152,67 @@ describe('the "stopped run is still running" notice', () => {
     await showStillRunning(session, d);
 
     expect(d.forceStop).not.toHaveBeenCalled();
+  });
+});
+
+describe('the "a run is still going" notice', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime((clock += 60_000));
+    vi.clearAllMocks();
+    vi.mocked(window.showWarningMessage).mockReset();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  const runDeps = (stops = true) => ({
+    isRegistered: vi.fn(() => true),
+    stop: vi.fn(() => stops),
+  });
+
+  it('says a run holds the session, and offers to stop it', async () => {
+    await showRunInProgress(session, runDeps());
+
+    expect(window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringMatching(/^Session 3 — .*a run is still going on this session/),
+      STOP,
+    );
+  });
+
+  it('stops the run when asked', async () => {
+    vi.mocked(window.showWarningMessage).mockResolvedValueOnce(STOP);
+    const d = runDeps();
+
+    await showRunInProgress(session, d);
+
+    expect(d.stop).toHaveBeenCalledWith(session);
+    expect(window.showInformationMessage).not.toHaveBeenCalled();
+  });
+
+  it('says so when the run ended before Stop was pressed', async () => {
+    vi.mocked(window.showWarningMessage).mockResolvedValueOnce(STOP);
+
+    await showRunInProgress(session, runDeps(false));
+
+    expect(window.showInformationMessage).toHaveBeenCalledWith(
+      'Session 3: that run has already ended.',
+    );
+  });
+
+  it('shows one per burst, independently of the Force Stop notice', async () => {
+    await showRunInProgress(session, runDeps());
+    await showRunInProgress(session, runDeps());
+    await showStillRunning(session, {
+      isRegistered: () => true,
+      forceStop: async () => true,
+      logout: async () => true,
+    });
+
+    expect(window.showWarningMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("says nothing about Jasper's own short-lived logins", async () => {
+    await showRunInProgress(session, { isRegistered: () => false, stop: vi.fn(() => true) });
+
+    expect(window.showWarningMessage).not.toHaveBeenCalled();
   });
 });

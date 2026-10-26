@@ -538,6 +538,8 @@ Jasper registers notebook kernels for `.ipynb` files, in two languages: GemStone
 - **GemStone: Reset Grail Notebook Scope** (command palette) clears the active notebook's globals — the equivalent of restarting a kernel.
 - Without Grail in the stone, running a cell reports "Grail (GemStone-Python) not detected".
 
+In either language, a cell's own stop button stops it, the same way Cancel stops Execute It. The cell then says "Stopped.", and any cells queued after it don't run. A cell that keeps going gets the same **Force Stop** notice as the rest of Jasper, and VS Code stays usable while any cell runs.
+
 ### Class Sync (File Export)
 
 Jasper keeps a local mirror of a session's classes as `.gs` files in Topaz format, so VS Code's search, Go to Definition, and find-in-files have something to work with. Files land in `{workspaceRoot}/.gemstone/{host}/{stone}/{user}/{index}-{dictName}/` by default — a hidden directory, keyed by connection target so it's shared across that target's sessions. Override the layout with the `gemstone.exportPath` template setting (variables: `{workspaceRoot}`, `{session}`, `{host}`, `{stone}`, `{user}`, `{index}`, `{dictName}`).

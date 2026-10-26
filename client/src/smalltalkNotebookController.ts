@@ -4,7 +4,7 @@ import { wrapExecuteCode } from './queries/executeCode';
 import { GemStoneNotebookKernel, GEMSTONE_NOTEBOOK_TYPE } from './gemstoneNotebookKernel';
 import { startClientForwarderMode, endClientForwarderMode, settleNbResult } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
-import { runNbCall, whenSessionFree } from './nbRunner';
+import { NbRunOptions, runNbCall, whenSessionFree } from './nbRunner';
 import { OOP_ILLEGAL, OOP_NIL, OOP_CLASS_UTF8 } from './gciConstants';
 import { SMALLTALK_LANGUAGE } from './languageIds';
 import { sessionKernelId } from './sessionKernels';
@@ -34,14 +34,22 @@ const MAX_CELL_RESULT = 256 * 1024;
 // Cells run on the NON-BLOCKING execute path in clientForwarder mode, so
 // `Transcript show:` output streams to the GemStone Transcript channel while
 // the cell runs (and a long cell doesn't freeze the extension host).
-export async function evalSmalltalk(session: ActiveSession, source: string): Promise<string> {
+export async function evalSmalltalk(
+  session: ActiveSession,
+  source: string,
+  onStart?: NbRunOptions['onStart'],
+): Promise<string> {
   // Before any GCI call: a stopped call still on the session would make GemStone
   // refuse clientForwarder mode's start, and while a worker still owns the
   // session a call from here could kill the process.
-  return await whenSessionFree(session, () => runCell(session, source));
+  return await whenSessionFree(session, () => runCell(session, source, onStart));
 }
 
-async function runCell(session: ActiveSession, source: string): Promise<string> {
+async function runCell(
+  session: ActiveSession,
+  source: string,
+  onStart: NbRunOptions['onStart'],
+): Promise<string> {
   const { result: inProgress } = session.GciTsCallInProgress();
   if (inProgress !== 0) {
     throw new Error(
@@ -101,6 +109,7 @@ async function runCell(session: ActiveSession, source: string): Promise<string> 
       {
         title: 'GemStone: Running cell…',
         disposableProcess: true,
+        onStart,
         // The `finally`'s end is refused while a cell the runner stopped waiting
         // for is being collected; this is where it can succeed.
         onAbandonedCollected: () => appendTranscriptOutput(endClientForwarderMode(session)),
@@ -165,7 +174,7 @@ export function smalltalkSessionKernel(
     label: SMALLTALK_CONTROLLER_LABEL,
     description: `Always runs Smalltalk in Session ${sessionId}`,
     supportedLanguages: [SMALLTALK_LANGUAGE_ID],
-    evaluate: (session, source) => evalSmalltalk(session, source),
+    evaluate: (session, source, _scopeId, onStart) => evalSmalltalk(session, source, onStart),
     sessionId,
   });
 }
@@ -179,7 +188,7 @@ export class SmalltalkNotebookController extends GemStoneNotebookKernel {
       label: SMALLTALK_CONTROLLER_LABEL,
       description: 'Run Smalltalk in the active GemStone session',
       supportedLanguages: [SMALLTALK_LANGUAGE_ID],
-      evaluate: (session, source) => evalSmalltalk(session, source),
+      evaluate: (session, source, _scopeId, onStart) => evalSmalltalk(session, source, onStart),
     });
     // Offer this kernel first for Smalltalk notebooks, including ones that
     // hot-exit restored before the extension activated.

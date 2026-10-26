@@ -15,6 +15,8 @@ import {
   EARLIEST_STOP_WAITING_MS,
   setStillRunningHandler,
   setStoppedRunCollectedHandler,
+  setRunInProgressHandler,
+  cancelRunOn,
   stoppedRunHolds,
   LATE_COLLECT_INTERVAL_MS,
   LATE_COLLECT_LIMIT_MS,
@@ -1441,6 +1443,41 @@ describe('ensureSessionFree', () => {
       vi.clearAllTimers();
       vi.useRealTimers();
     }
+  });
+
+  it('offers to stop a call nobody stopped, and the stop is its own Cancel', async () => {
+    vi.useFakeTimers();
+    const told = vi.fn();
+    setRunInProgressHandler(told);
+    try {
+      const { session, gci } = makeSession([{ result: 0 }]);
+      (gci.GciTsNbPoll as ReturnType<typeof vi.fn>).mockReturnValue({ result: 0, err: noErr });
+      const running = runNbCall(
+        session,
+        () => ({ success: true, err: noErr as never }),
+        () => 'done',
+        { suppressNotification: true },
+      );
+      running.catch(() => {});
+
+      expect(() => ensureSessionFree(session)).toThrow(NbSessionBusyError);
+      expect(told).toHaveBeenCalledWith(session);
+
+      expect(cancelRunOn(session)).toBe(true);
+      expect(gci.GciTsBreak).toHaveBeenCalledWith(expect.anything(), false);
+      expect(stoppedRunHolds(session)).toBe(true);
+    } finally {
+      setRunInProgressHandler(undefined);
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('has nothing to stop on a session with no run', () => {
+    const { session, gci } = makeSession([{ result: 0 }]);
+
+    expect(cancelRunOn(session)).toBe(false);
+    expect(gci.GciTsBreak).not.toHaveBeenCalled();
   });
 
   it('offers no Force Stop for a call nobody stopped', async () => {
