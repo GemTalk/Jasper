@@ -36,6 +36,7 @@ import {
 import type { ActiveSession } from '../../sessionManager';
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { testActiveSession } from '../../__tests__/testActiveSession';
+import { knownGemStoneBugs, skipForKnownGemStoneBug } from '../../__tests__/knownGemStoneBugs';
 import { BreakpointManager } from '../breakpointManager';
 import { StepPointModel } from '../stepPointModel';
 import { buildMethodUri } from '../../gemstoneFileSystemProvider';
@@ -55,16 +56,19 @@ import { debug, Location, Position, SourceBreakpoint } from '../../__mocks__/vsc
  *   finishes, 6005 and the next process when it stops at another breakpoint,
  *   any other error when the code raised. (The in-gem alternative does not
  *   travel: `GsProcess>>_continue` exists only on 3.6.x, and 3.7.x's
- *   `_primContinue:` refuses a GCI-suspended process outright.);
+ *   `_primContinue:` refuses a GCI-suspended process outright.) The macOS 3.7
+ *   builds break this from a loop's step point: the resume answers 6006 at the
+ *   same step and never advances (`knownGemStoneBugs.resumeStuckAtLoopStep`);
  * - the receiver in a **block** frame is the `ExecBlock`, so a condition
  *   mentioning `self` or an instance variable only works when the receiver is
  *   taken from the home frame instead (GemTalk/Jasper#561);
  * - `_stepPointAt:` reports the **home** method's step point numbering even in a
  *   block frame, which is what lets a spec set on the home method match.
  *
- * Ungated: needs only a running stone. The harness aborts afterward, so the
- * throwaway class never reaches the repository, and breakpoints are per-gem
- * state that goes away with the session regardless.
+ * Needs only a running stone; one test is gated off a known GemStone bug. The
+ * harness aborts afterward, so the throwaway class never reaches the
+ * repository, and breakpoints are per-gem state that goes away with the session
+ * regardless.
  */
 describe('conditional breakpoints (integration)', () => {
   let gci: GciLibrary;
@@ -569,7 +573,8 @@ describe('conditional breakpoints (integration)', () => {
     expect(seen[3].step).toBe(returnStep);
   });
 
-  it('reports an error the code raises while being skipped', async () => {
+  it('reports an error the code raises while being skipped', async (ctx) => {
+    skipForKnownGemStoneBug(knownGemStoneBugs.resumeStuckAtLoopStep, ctx, session());
     // The resume answers an error rather than a result here, which is what
     // separates a run that raised from one that finished.
     fixture();
