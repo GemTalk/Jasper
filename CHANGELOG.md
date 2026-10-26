@@ -14,6 +14,10 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 - **One press of Cancel or Stop is enough, and Jasper no longer forces a stop.** Every Cancel and Stop asks the gem to stop. If the run is still going about 1.5 seconds later, Jasper stops waiting and the stopped run finishes in the background, so VS Code is free again. A forced stop (a hard break) seldom stopped more than the request did and could skip the code's own cleanup. A stopped test's `tearDown` now always runs to the end.
 
+### Documentation
+
+- **Known limitation: on macOS with GemStone 3.7, a conditional breakpoint inside a loop can report a bogus error.** On the macOS 3.7 builds (seen on 3.7.2 through 3.7.6), resuming from some breakpoints inside an inlined loop never moves on: GemStone answers error 6006 ("Stack breakpoint encountered on return") at the same step, every time. So a conditional breakpoint whose condition stays false can stop with "Breakpoint occurred (error 6006)" instead of letting the run continue, and Continue or Step from that stop does not advance. Removing the breakpoint and continuing gets the run going again. This is GemStone bug 52165, not Jasper; Linux, Windows and GemStone 3.6 are not affected. ([#804](https://github.com/GemTalk/Jasper/issues/804))
+
 ## [1.16.0] - 2026-10-23
 
 ### Added
