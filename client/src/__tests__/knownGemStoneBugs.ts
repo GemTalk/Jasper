@@ -25,16 +25,22 @@ export interface KnownGemStoneBug {
 
 export const knownGemStoneBugs = {
   /**
-   * On the macOS 3.7 builds, resuming from a method breakpoint on a `to:do:`
-   * loop's step point never advances: every resume answers 6006 (a stack
-   * breakpoint "on return") at that same step. Plain `topaz -l` shows it, so no
-   * Jasper code is involved; 3.6.x and the other platforms resume normally.
+   * On the macOS 3.7 builds, resuming from *some* method breakpoints inside an
+   * inlined loop never advances: every resume answers 6006 (a stack breakpoint
+   * "on return") at that same step. Plain `topaz -l` shows it, so no Jasper code
+   * is involved; 3.6.x and the other platforms resume normally.
+   *
+   * Not every step in a loop: on 3.7.5 a statement followed by an inlined
+   * `ifTrue:` sticks (whatever the block holds), as does the `to:do:` step of
+   * some loops, while the same statement as the loop's last, or followed by a
+   * plain send, resumes fine. The exact rule is GemStone's to find, so a test
+   * that newly sticks this way may still be this bug.
    */
-  resumeStuckAtLoopStep: {
+  resumeStuckAtStep: {
     description:
-      'GemStone bug 52165 (GemTalk/Jasper#804): on macOS 3.7, resuming from a breakpoint stops again with error 6006 at the same step instead of advancing',
+      'GemStone bug 52165 (GemTalk/Jasper#804): on macOS 3.7, resuming from some breakpoints inside an inlined loop stops again with error 6006 at the same step instead of advancing',
     osName: 'Darwin',
-    brokenIn: [{ from: '3.7.0', through: '3.7.6' }],
+    brokenIn: [{ from: '3.7.2', through: '3.7.6' }],
   },
 } satisfies Record<string, KnownGemStoneBug>;
 
