@@ -499,10 +499,10 @@ describe('CodeExecutor', () => {
       },
     );
 
-    // A stopped run the gem is still finishing makes GemStone refuse the start, and
-    // its message names a GCI condition, not anything the user did.
+    // A run still on the session makes GemStone refuse the start, and its message
+    // names a GCI condition, not anything the user did.
     it.each(['executeIt', 'displayIt', 'inspectIt'] as const)(
-      '%s says a stopped run is still finishing, and starts nothing',
+      '%s starts nothing while a stopped run holds the session, leaving the telling to its Force Stop notice',
       async (command) => {
         setActiveEditor(makeEditor('3 + 4'));
         vi.mocked(whenSessionFree).mockImplementationOnce(() => {
@@ -513,8 +513,23 @@ describe('CodeExecutor', () => {
 
         expect(gci.GciTsNbExecute).not.toHaveBeenCalled();
         expect(gci.executeAndFetchString).not.toHaveBeenCalled();
+        expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(['executeIt', 'displayIt', 'inspectIt'] as const)(
+      '%s says another run is in progress, and starts nothing',
+      async (command) => {
+        setActiveEditor(makeEditor('3 + 4'));
+        vi.mocked(whenSessionFree).mockImplementationOnce(() => {
+          throw new NbSessionBusyError('Another run is still in progress on this session.', false);
+        });
+
+        await executor[command]();
+
+        expect(gci.GciTsNbExecute).not.toHaveBeenCalled();
         expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
-          expect.stringMatching(/still finishing/),
+          expect.stringMatching(/still in progress/),
         );
       },
     );
@@ -1245,6 +1260,23 @@ describe('CodeExecutor', () => {
   // ── Execution busy-state indicators ───────────────────────
 
   describe('execution busy-state indicators', () => {
+    // The keys stay bound while a run goes on, so a second press reaches this
+    // rather than whatever VS Code binds to the same keys.
+    it.each(['executeIt', 'displayIt', 'inspectIt'] as const)(
+      '%s on a session still running one says how to stop it, and starts nothing',
+      async (command) => {
+        setActiveEditor(makeEditor('3 + 4'));
+        (executor as unknown as { executing: Set<number> }).executing.add(session.id);
+
+        await executor[command]();
+
+        expect(gci.GciTsNbExecute).not.toHaveBeenCalled();
+        expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+          expect.stringMatching(/^Session \d+ is still running your last expression\. .*Cancel/),
+        );
+      },
+    );
+
     it('sets gemstone.executing context to true on start and false on finish', async () => {
       const editor = makeEditor('3 + 4');
       setActiveEditor(editor);

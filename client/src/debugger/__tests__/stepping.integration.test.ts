@@ -19,7 +19,12 @@ import {
   clearStack,
   evaluateInFrameNb,
 } from '../debugQueries';
-import { runNbCall, NbCancelledError } from '../../nbRunner';
+import {
+  runNbCall,
+  NbCancelledError,
+  NbSessionBusyError,
+  setStillRunningHandler,
+} from '../../nbRunner';
 import { testActiveSession } from '../../__tests__/testActiveSession';
 
 const GCI_ERR_HALT = 2709;
@@ -207,6 +212,18 @@ cls compileMethod: 'outer ^ self inner' dictionaries: System myUserProfile symbo
     // runner makes that wait longer than the 5s default allows.
   }, 30_000);
 
+  /** Resolves once the session is free, retrying while a stopped run still finishes. */
+  async function untilSessionFree(): Promise<void> {
+    for (;;) {
+      try {
+        return await waitForSessionFree();
+      } catch (e) {
+        if (!(e instanceof NbSessionBusyError)) throw e;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
+  }
+
   /** `promise`, or a failure naming `what` once `ms` pass: never a hung test. */
   const within = <T>(promise: Promise<T>, ms: number, what: string): Promise<T> =>
     Promise.race([
@@ -244,6 +261,47 @@ cls compileMethod: 'outer ^ self inner' dictionaries: System myUserProfile symbo
       expect(stackDepth(gsProcess)).toBeGreaterThan(0);
     } finally {
       await waitForSessionFree().catch(() => {});
+      clearStack(session(), gsProcess);
+    }
+  }, 30_000);
+
+  it('says a stepped-over run that ignores the stop is still running', async () => {
+    // Bounded at 3.5s, so the run ends on its own and the session is free again.
+    const compiled = exec(
+      `| cls |
+cls := Object subclass: 'ZzStepIgnoresStop' instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals options: #().
+cls compileMethod: 'inner | t | self halt. t := Time millisecondClockValue. [[(Time millisecondClockValue - t) < 3500] whileTrue: []] on: Break do: [:e | e resume]. ^ 1' dictionaries: System myUserProfile symbolList category: #probe.
+cls compileMethod: 'outer ^ self inner' dictionaries: System myUserProfile symbolList category: #probe.
+'compiled'`,
+      0,
+    );
+    expect(compiled.err.number).toBe(0);
+    const { err } = exec(
+      'ZzStepIgnoresStop new outer',
+      GCI_PERFORM_FLAG_ENABLE_DEBUG | GCI_PERFORM_FLAG_INTERPRETED,
+    );
+    expect(err.number).toBe(GCI_ERR_HALT);
+    const gsProcess = err.context;
+    const told = vi.fn();
+    setStillRunningHandler(told);
+    let cancel: (() => void) | undefined;
+    const step = stepOverNb(session(), gsProcess, stackDepth(gsProcess), {
+      suppressNotification: true,
+      onStart: (c) => {
+        cancel = c;
+      },
+    });
+    step.catch(() => {});
+    try {
+      cancel!();
+      await expect(within(step, 10_000, 'the cancelled step settling')).rejects.toBeInstanceOf(
+        NbCancelledError,
+      );
+      expect(told).toHaveBeenCalledTimes(1);
+    } finally {
+      setStillRunningHandler(undefined);
+      // Wait out the bounded run; the next test needs the session.
+      await within(untilSessionFree(), 15_000, 'the bounded run ending');
       clearStack(session(), gsProcess);
     }
   }, 30_000);

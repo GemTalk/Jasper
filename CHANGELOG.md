@@ -6,7 +6,11 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ### Changed
 
-- **Logging out no longer waits for the gem.** It returns at once, even during a run that ignores stops, and the gem still ends within about a second. Before, it could freeze VS Code.
+- **A run that won't stop no longer leaves you stuck.** "Stopping…" shows while Jasper waits. If the run is still going, a notice says so and offers **Force Stop**, which ends it and keeps your session and its uncommitted changes. The notice comes back whenever the stopped run blocks something else. Code that catches every exception ignores Force Stop too; Jasper then offers to log the session out, asking first, since uncommitted changes are lost.
+
+- **A second Execute It, Display It or Inspect It during a run now says so.** Its keyboard shortcut used to do nothing while a run was going, or, for Ctrl+K D, open VS Code's Compare with Saved. It now says the session is still running and how to stop it. The right-click menu still greys these out during a run.
+
+- **Logging out no longer waits for the gem, and never leaves it running.** A run still going is stopped first, with Force Stop if it ignores the stop, so its gem ends instead of running on unseen on the server. A run that ignores even that is ended on the server; if your user isn't allowed to (it needs the SessionAccess privilege), Jasper tells you what is left running and how an administrator can end it. Before, logging out could freeze VS Code.
 
 - **One press of Cancel or Stop is enough, and Jasper no longer forces a stop.** Every Cancel and Stop asks the gem to stop. If the run is still going about 1.5 seconds later, Jasper stops waiting and the stopped run finishes in the background, so VS Code is free again. A forced stop (a hard break) seldom stopped more than the request did and could skip the code's own cleanup. A stopped test's `tearDown` now always runs to the end.
 

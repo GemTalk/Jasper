@@ -222,7 +222,7 @@ With an active session, execute Smalltalk code from any editor:
 
 By default, **Display It** shows its result as a non-destructive inline overlay — an annotation that is not part of the document, so the file is never modified. Hover the result for **Copy** and **Expand** actions; **Enter** inserts the full result into the document, **Backspace** or **Escape** dismisses it. Set `gemstone.displayItMode` to `"insert"` for the classic behavior of inserting the result as editable text.
 
-Long-running expressions show a progress notification with a Cancel button. One press asks the gem to stop at a safe point; if the run is still going about 1.5 seconds later, Jasper stops waiting and frees the editor, and the session says the stopped run is still finishing until the gem is done. The **GemStone Transcript** output channel captures transcript output from the session.
+Long-running expressions show a progress notification with a Cancel button. One press asks the gem to stop at a safe point; if the run is still going about 1.5 seconds later, Jasper stops waiting and frees the editor, and a notice says the stopped run is still going. Its **Force Stop** ends the run and keeps the session and its uncommitted changes; only code that catches every exception ignores it, and then Jasper offers to log the session out. The **GemStone Transcript** output channel captures transcript output from the session.
 
 ### GemStone Explorer
 
@@ -517,7 +517,7 @@ The extension integrates with VS Code's native Test Explorer:
 - Run individual tests or entire test classes
 - Debug a test, or a whole class, under the GemStone debugger — a debug run omits SUnit's exception handler, so a failing test suspends on a live stack instead of being recorded and discarded
 - Pass/fail/error results with failure messages
-- Stop a long-running test: the Testing view's stop button, the ■ that replaces a row's ▶ in the Explorer while it runs, or the Cancel on the progress notification. First press asks the gem to stop at a safe point; a second interrupts it
+- Stop a long-running test: the Testing view's stop button, the ■ that replaces a row's ▶ in the Explorer while it runs, or the Cancel on the progress notification. One press asks the gem to stop at a safe point; a test that keeps going gets the same **Force Stop** notice as Execute It
 - Test items link to method source, and a run/status icon appears in the editor gutter beside an open test class or test method
 - Run from the GemStone Explorer too: a ▶ on a test class row (Classes or Hierarchy pane) or a test method row (Methods pane), each showing the outcome of its last run
 - Clicking a row in the Testing view opens the code without moving the Explorer; **Reveal in GemStone Explorer** — the ⊟ on the row, or its context menu — navigates the panes when you want it

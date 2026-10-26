@@ -607,6 +607,30 @@ describe('confirmLogoutWithUncommittedChanges', () => {
     expect(message).not.toContain('TransactionError');
   });
 
+  it('offers no commit, and says why, when a run that ignores every stop holds the session', async () => {
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
+      'Logout Anyway' as unknown as vscode.MessageItem,
+    );
+    const commit = vi.fn();
+
+    const decision = await extension.confirmLogoutWithUncommittedChanges(
+      3,
+      'DataCurator on gs64stone (localhost)',
+      undefined,
+      commit,
+      true,
+      true,
+    );
+
+    expect(decision).toBe('proceed');
+    const [title, options, ...buttons] = vi.mocked(vscode.window.showWarningMessage).mock
+      .calls[0] as unknown as [string, { detail: string }, ...string[]];
+    expect(title).toBe('Session 3 may have uncommitted changes.');
+    expect(options.detail).toMatch(/ignored every stop .* cannot be checked or committed/);
+    expect(buttons).toEqual(['Logout Anyway']);
+    expect(commit).not.toHaveBeenCalled();
+  });
+
   it('proceeds without committing when the user chooses to log out anyway', async () => {
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
       'Logout Anyway' as unknown as vscode.MessageItem,

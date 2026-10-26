@@ -92,6 +92,14 @@ class DebuggableError extends Error {
   }
 }
 
+/** Refuse a second run on a session that is still running one, saying how to stop it. */
+function showStillExecuting(session: ActiveSession): void {
+  void vscode.window.showWarningMessage(
+    `Session ${session.id} is still running your last expression. Wait for it, or press ` +
+      'Cancel on its "GemStone: Executing…" notification to stop it.',
+  );
+}
+
 export class CodeExecutor {
   private executing = new Set<number>();
   private diagnostics: vscode.DiagnosticCollection;
@@ -161,9 +169,7 @@ export class CodeExecutor {
     if (!session) return;
 
     if (this.executing.has(session.id)) {
-      vscode.window.showWarningMessage(
-        'A GemStone execution is already in progress on this session.',
-      );
+      showStillExecuting(session);
       return;
     }
 
@@ -744,7 +750,8 @@ export class CodeExecutor {
       await whenSessionFree(session, start);
     } catch (e) {
       if (!(e instanceof NbSessionBusyError)) throw e;
-      vscode.window.showWarningMessage(e.message);
+      // A stopped run's refusal has its own notice, with Force Stop.
+      if (!e.stoppedRun) vscode.window.showWarningMessage(e.message);
     }
   }
 
@@ -824,9 +831,7 @@ export class CodeExecutor {
     if (!session) return;
 
     if (this.executing.has(session.id)) {
-      vscode.window.showWarningMessage(
-        'A GemStone execution is already in progress on this session.',
-      );
+      showStillExecuting(session);
       return;
     }
 
@@ -857,9 +862,7 @@ export class CodeExecutor {
     if (!session) return;
 
     if (this.executing.has(session.id)) {
-      vscode.window.showWarningMessage(
-        'A GemStone execution is already in progress on this session.',
-      );
+      showStillExecuting(session);
       return;
     }
 

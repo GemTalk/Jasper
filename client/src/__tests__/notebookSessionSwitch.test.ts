@@ -59,6 +59,9 @@ vi.mock('../nbRunner', () => ({
   }),
   whenSessionFree: vi.fn((_session: unknown, start: () => unknown) => start()),
   forgetSession: vi.fn(),
+  // Logout asks whether a run is on the session; none is, here.
+  isRunning: vi.fn(() => false),
+  stoppedRunHolds: vi.fn(() => false),
 }));
 
 import { window, notebooks, __setConfig, __resetConfig } from '../__mocks__/vscode';

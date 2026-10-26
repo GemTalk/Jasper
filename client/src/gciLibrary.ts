@@ -2222,8 +2222,9 @@ export class GciLibrary {
   }
 
   /**
-   * Logs out `session` without waiting for the gem, which still exits within
-   * about a second. Don't use `GciTsLogout` here: it waits, forever for code
+   * Logs out `session` without waiting for the gem, which exits within about a
+   * second, unless it is running code that has resumed a soft break: that goes
+   * on running (see `SessionManager.logout`). Don't use `GciTsLogout` here: it waits, forever for code
    * that ignores breaks, and freezes VS Code. Failures are logged via
    * `console.warn` rather than thrown. Every caller is a teardown path, so a
    * throw would only be swallowed there, taking the error message with it, or,

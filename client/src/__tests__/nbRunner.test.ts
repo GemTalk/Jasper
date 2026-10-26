@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../gciLog', async (orig) => ({ ...(await orig()), logInfo: vi.fn() }));
@@ -13,6 +13,9 @@ import {
   ensureSessionFree,
   STOP_WAITING_AFTER_MS,
   EARLIEST_STOP_WAITING_MS,
+  setStillRunningHandler,
+  setStoppedRunCollectedHandler,
+  stoppedRunHolds,
   LATE_COLLECT_INTERVAL_MS,
   LATE_COLLECT_LIMIT_MS,
   whenSessionFree,
@@ -362,6 +365,114 @@ describe('runNbCall — one press is enough', () => {
       expect(gci.GciTsBreak).toHaveBeenCalledTimes(1);
       expect(gci.GciTsBreak).toHaveBeenCalledWith(handle, false);
     } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('telling the user a stopped run is still running', () => {
+  /** A run that never answers, its canceller, and a recording still-running handler. */
+  function setup(answers = [{ result: 0 }]) {
+    const { session, gci } = makeSession(answers);
+    const told = vi.fn();
+    setStillRunningHandler(told);
+    let cancel: (() => void) | undefined;
+    const run = runNbCall(
+      session,
+      () => ({ success: true, err: noErr as never }),
+      () => 'answered',
+      { suppressNotification: true, onStart: (c) => (cancel = c) },
+    );
+    run.catch(() => {});
+    return { session, gci, told, run, cancel: () => cancel!() };
+  }
+
+  afterEach(() => setStillRunningHandler(undefined));
+
+  it('tells once, when it stops waiting for a run the user stopped', async () => {
+    vi.useFakeTimers();
+    try {
+      const { session, told, run, cancel } = setup();
+      cancel();
+      await vi.advanceTimersByTimeAsync(EARLIEST_STOP_WAITING_MS + 100);
+
+      await expect(run).rejects.toBeInstanceOf(NbCancelledError);
+      expect(told).toHaveBeenCalledTimes(1);
+      expect(told).toHaveBeenCalledWith(session);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('tells nothing when the gem answers the stop', async () => {
+    vi.useFakeTimers();
+    try {
+      const { told, run, cancel } = setup([{ result: 0 }, { result: 1 }]);
+      cancel();
+      await vi.advanceTimersByTimeAsync(EARLIEST_STOP_WAITING_MS + 100);
+
+      await expect(run).resolves.toBe('answered');
+      expect(told).not.toHaveBeenCalled();
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('tells nothing, and shows no "Stopping…", for a run stopped by a logout', async () => {
+    vi.useFakeTimers();
+    try {
+      const { session, told, run } = setup();
+      void stopCallsOn(session);
+      await vi.advanceTimersByTimeAsync(SETTLE_MS);
+
+      await expect(run).rejects.toBeInstanceOf(NbCancelledError);
+      expect(told).not.toHaveBeenCalled();
+      expect(vscode.window.setStatusBarMessage).not.toHaveBeenCalled();
+    } finally {
+      await vi.runAllTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
+  it('still stops waiting when "Stopping…" cannot be shown', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(vscode.window.setStatusBarMessage).mockImplementationOnce(() => {
+        throw new Error('no status bar');
+      });
+      const { told, run, cancel } = setup();
+      cancel();
+      await vi.advanceTimersByTimeAsync(EARLIEST_STOP_WAITING_MS + 100);
+
+      await expect(run).rejects.toBeInstanceOf(NbCancelledError);
+      expect(told).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows "Stopping…" from the first press until the run ends', async () => {
+    vi.useFakeTimers();
+    try {
+      const { cancel } = setup([{ result: 0 }, { result: 1 }]);
+      cancel();
+
+      expect(vscode.window.setStatusBarMessage).toHaveBeenCalledWith(
+        expect.stringContaining('Stopping…'),
+        expect.any(Promise),
+      );
+      const statusCalls = (vscode.window.setStatusBarMessage as unknown as ReturnType<typeof vi.fn>)
+        .mock.calls;
+      const hideWhen = statusCalls[0][1] as Promise<void>;
+      let hidden = false;
+      void hideWhen.then(() => (hidden = true));
+      await vi.advanceTimersByTimeAsync(SETTLE_MS);
+      expect(hidden).toBe(true);
+    } finally {
+      vi.clearAllTimers();
       vi.useRealTimers();
     }
   });
@@ -1297,6 +1408,89 @@ describe('ensureSessionFree', () => {
       await expect(next).rejects.toThrow(/still finishing/);
       expect(gci.GciTsBreak).toHaveBeenCalledTimes(1);
     } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('tells the user, each time, that a stopped call still holds the session', async () => {
+    vi.useFakeTimers();
+    const told = vi.fn();
+    setStillRunningHandler(told);
+    try {
+      const { session, gci } = makeSession([{ result: 0 }]);
+      (gci.GciTsNbPoll as ReturnType<typeof vi.fn>).mockReturnValue({ result: 0, err: noErr });
+      await stopRun(session);
+      await vi.advanceTimersByTimeAsync(PAST_DRAIN_BUDGET_MS);
+      told.mockClear();
+
+      let refusal: unknown;
+      try {
+        ensureSessionFree(session);
+      } catch (e) {
+        refusal = e;
+      }
+      expect(() => ensureSessionFree(session)).toThrow(NbSessionBusyError);
+
+      expect(refusal).toMatchObject({ stoppedRun: true });
+      expect(String(refusal)).toMatch(/Force Stop/);
+      expect(told).toHaveBeenCalledTimes(2);
+      expect(told).toHaveBeenCalledWith(session);
+    } finally {
+      setStillRunningHandler(undefined);
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('offers no Force Stop for a call nobody stopped', async () => {
+    vi.useFakeTimers();
+    const told = vi.fn();
+    setStillRunningHandler(told);
+    try {
+      const { session, gci } = makeSession([{ result: 0 }]);
+      (gci.GciTsNbPoll as ReturnType<typeof vi.fn>).mockReturnValue({ result: 0, err: noErr });
+      const running = runNbCall(
+        session,
+        () => ({ success: true, err: noErr as never }),
+        () => 'done',
+        { suppressNotification: true },
+      );
+      running.catch(() => {});
+
+      expect(() => ensureSessionFree(session)).toThrow(
+        expect.objectContaining({ stoppedRun: false }),
+      );
+      expect(stoppedRunHolds(session)).toBe(false);
+      expect(told).not.toHaveBeenCalled();
+    } finally {
+      setStillRunningHandler(undefined);
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('says once a stopped call is collected, so the session can be re-armed', async () => {
+    vi.useFakeTimers();
+    const collected = vi.fn();
+    setStoppedRunCollectedHandler(collected);
+    try {
+      const { session, gci } = makeSession([{ result: 0 }]);
+      const poll = gci.GciTsNbPoll as ReturnType<typeof vi.fn>;
+      poll.mockReturnValue({ result: 0, err: noErr });
+      await stopRun(session);
+      await vi.advanceTimersByTimeAsync(PAST_DRAIN_BUDGET_MS);
+      expect(stoppedRunHolds(session)).toBe(true);
+      expect(collected).not.toHaveBeenCalled();
+
+      poll.mockReturnValue({ result: 1, err: noErr });
+      await vi.advanceTimersByTimeAsync(LATE_COLLECT_INTERVAL_MS);
+
+      expect(collected).toHaveBeenCalledTimes(1);
+      expect(collected).toHaveBeenCalledWith(session);
+      expect(stoppedRunHolds(session)).toBe(false);
+    } finally {
+      setStoppedRunCollectedHandler(undefined);
       vi.clearAllTimers();
       vi.useRealTimers();
     }

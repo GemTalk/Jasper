@@ -80,7 +80,13 @@ import {
   updateGitRepo,
   normalizeGitUrl,
 } from './rowanLoad';
-import { NbCancelledError } from './nbRunner';
+import {
+  NbCancelledError,
+  setStillRunningHandler,
+  setStoppedRunCollectedHandler,
+} from './nbRunner';
+import { forceStop, rearmAfterForceStop } from './forceStop';
+import { showStillRunning } from './stillRunningNotice';
 import { RowanRepoRegistry } from './rowanRepos';
 import {
   RowanTreeProvider,
@@ -318,7 +324,8 @@ async function logJasperError(message: string, scope: string, error: unknown) {
  * shown: a session outside a transaction can still hold uncommitted work (see
  * `canCommit`), so the warning still fires, and what is dropped is "Commit &
  * Logout", which there could only fail. `undefined` keeps the button, on
- * `canCommit`'s terms.
+ * `canCommit`'s terms. `runIgnoresStop` drops it too: a run that ignored every
+ * stop holds the session, so neither the check nor a commit can reach it.
  */
 export async function confirmLogoutWithUncommittedChanges(
   sessionId: number,
@@ -326,10 +333,11 @@ export async function confirmLogoutWithUncommittedChanges(
   needsCommit: boolean | undefined,
   commit: (id: number) => { success: boolean; err: { number: number; message: string } },
   inTransaction?: boolean,
+  runIgnoresStop = false,
 ): Promise<'proceed' | 'cancel'> {
   if (needsCommit === false) return 'proceed';
 
-  const commitIsPossible = canCommit(inTransaction);
+  const commitIsPossible = !runIgnoresStop && canCommit(inTransaction);
   const title =
     needsCommit === true
       ? `Session ${sessionId} has uncommitted changes.`
@@ -340,9 +348,11 @@ export async function confirmLogoutWithUncommittedChanges(
       : 'Its commit state could not be checked; logging out may discard uncommitted work.';
   // Outside a transaction the work cannot be saved at all, so say that rather
   // than "commit first" over a button the dialog is not offering.
-  const detail = commitIsPossible
-    ? `${stake} Commit first to keep your work.`
-    : `${stake} This session is not in a transaction, so the changes cannot be committed — begin a transaction before making them, or let them go.`;
+  const detail = runIgnoresStop
+    ? 'Its run ignored every stop and still holds the session, so its changes cannot be checked or committed. Logging out discards any uncommitted work.'
+    : commitIsPossible
+      ? `${stake} Commit first to keep your work.`
+      : `${stake} This session is not in a transaction, so the changes cannot be committed — begin a transaction before making them, or let them go.`;
   const choice = await vscode.window.showWarningMessage(
     title,
     { modal: true, detail },
@@ -895,6 +905,15 @@ export function activate(context: vscode.ExtensionContext) {
   // SessionManager is created early so the Logins panel can mark the connected
   // login row (and swap its inline Login action for Logout) in single-session mode.
   sessionManager = new SessionManager();
+  setStillRunningHandler((session) => {
+    void showStillRunning(session, {
+      isRegistered: (id) => sessionManager.getSession(id) !== undefined,
+      forceStop: (s) =>
+        forceStop(s, { loginTransient: (from) => sessionManager.loginTransient(from.login, from) }),
+      logout: (id) => sessionManager.logout(id),
+    });
+  });
+  setStoppedRunCollectedHandler(rearmAfterForceStop);
 
   // De-duplicates connect clicks: the blocking GciTsLogin freezes the extension
   // host while it runs, so extra clicks during a slow login queue up and replay
@@ -2703,12 +2722,15 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.window.showInformationMessage('No GemStone session to log out of.');
           return;
         }
+        // Stopped first, or the run would block the uncommitted-changes check.
+        const runIgnoresStop = await sessionManager.stopRun(session.id);
         const decision = await confirmLogoutWithUncommittedChanges(
           session.id,
           loginLabel(session.login),
-          queries.sessionNeedsCommit(session),
+          runIgnoresStop ? undefined : queries.sessionNeedsCommit(session),
           (id) => sessionManager.commit(id),
           session.inTransaction,
+          runIgnoresStop,
         );
         if (decision === 'cancel') return;
         // The session's views close only once it is gone: GemStone can refuse

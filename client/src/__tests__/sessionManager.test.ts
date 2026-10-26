@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const configValues: Record<string, unknown> = {};
 
@@ -21,6 +21,7 @@ vi.mock('vscode', () => ({
   window: {
     showQuickPick: vi.fn(),
     showInformationMessage: vi.fn(),
+    showWarningMessage: vi.fn(),
     withProgress: vi.fn(async (_opts: unknown, task: () => Promise<unknown>) => await task()),
   },
   ProgressLocation: { Notification: 15 },
@@ -47,6 +48,8 @@ function stoneAnswer(..._args: unknown[]): string {
   if (code.includes('System transactionMode asString,')) return transactionStateAnswer;
   const switchTo = /System transactionMode: #(\w+)\./.exec(code);
   if (switchTo) return switchAnswer ?? switchTo[1];
+  // Force Stop's arming, answering the session's number on the stone.
+  if (code.includes('enableSignaledGemStoneSessionError')) return '42';
   return 'installed';
 }
 // Restored in beforeEach: a test that swaps the implementation must not leave
@@ -145,16 +148,22 @@ vi.mock('../gciLog', () => ({
   logError: vi.fn(),
 }));
 
-vi.mock('../nbRunner', async (orig) => ({
-  ...(await orig()),
-  stopCallsOn: vi.fn(async () => {}),
-}));
+vi.mock('../nbRunner', async (orig) => {
+  const runner = await orig<typeof import('../nbRunner')>();
+  return {
+    ...runner,
+    stopCallsOn: vi.fn(async () => {}),
+    isRunning: vi.fn(runner.isRunning),
+    stoppedRunHolds: vi.fn(runner.stoppedRunHolds),
+  };
+});
 
 import * as vscode from 'vscode';
 import { SessionManager, evaluateLoginPolicy } from '../sessionManager';
 import { DEFAULT_LOGIN, loginLabel } from '../loginTypes';
 import { GciLibraryError } from '../gciLibraryError';
-import { stopCallsOn } from '../nbRunner';
+import { isRunning, stopCallsOn, stoppedRunHolds } from '../nbRunner';
+import { FORCE_STOP_WAIT_MS } from '../forceStop';
 
 describe('evaluateLoginPolicy', () => {
   it('allows the first login regardless of mode', () => {
@@ -711,29 +720,38 @@ describe('SessionManager', () => {
 
   // GemStone refuses a logout while a worker thread owns the session. Dropping
   // the session anyway would leave its gem running with nothing to reach it.
+  /** Whether the code the gem was asked to run includes `fragment`. */
+  const ran = (fragment: string): boolean =>
+    executeAndFetchStringMock.mock.calls.some((args) => String(args[1]).includes(fragment));
+
   describe('a logout refused while a call runs', () => {
     const refused = { sessionFreed: false };
+    const freed = { sessionFreed: true };
 
-    it('stops the calls on the session and logs out', async () => {
+    it('ends the gem from a second login, stops the calls, and logs out', async () => {
       const session = manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
       gciLogout.mockReturnValueOnce(refused);
 
       await manager.logout(session.id);
 
+      expect(ran('System stopSession: 42')).toBe(true);
       expect(vi.mocked(stopCallsOn).mock.calls[0][0]).toBe(session);
-      expect(gciLogout).toHaveBeenCalledTimes(2);
       expect(manager.getSession(session.id)).toBeUndefined();
     });
 
-    it('keeps the session when the logout is refused again', async () => {
+    it('keeps the session when the logout is refused again, saying how to end it', async () => {
       const session = manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
-      gciLogout.mockReturnValueOnce(refused).mockReturnValueOnce(refused);
+      // The session's logout, the second login's, and the session's again.
+      gciLogout
+        .mockReturnValueOnce(refused)
+        .mockReturnValueOnce(freed)
+        .mockReturnValueOnce(refused);
       const removed = vi.fn();
       manager.onDidRemoveSession(removed);
 
       const logout = manager.logout(session.id);
 
-      await expect(logout).rejects.toThrow('The session is still open.');
+      await expect(logout).rejects.toThrow(/The session is still open\..*System stopSession: 42/);
       expect(manager.getSession(session.id)).toBe(session);
       expect(manager.getSelectedSession()).toBe(session);
       expect(removed).not.toHaveBeenCalled();
@@ -765,7 +783,10 @@ describe('SessionManager', () => {
 
     it('fails a joined logout when the logout it joined fails', async () => {
       const session = manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
-      gciLogout.mockReturnValueOnce(refused).mockReturnValueOnce(refused);
+      gciLogout
+        .mockReturnValueOnce(refused)
+        .mockReturnValueOnce(freed)
+        .mockReturnValueOnce(refused);
 
       const first = manager.logout(session.id);
       const second = manager.logout(session.id);
@@ -781,14 +802,41 @@ describe('SessionManager', () => {
 
       expect(stopCallsOn).not.toHaveBeenCalled();
       expect(vscode.window.withProgress).not.toHaveBeenCalled();
+      expect(ran('System sendSignal:')).toBe(false);
+    });
+  });
+
+  // A gem whose run has resumed a soft break keeps running after its logout, so
+  // the run is stopped first: with the stop, then Force Stop, then on the server.
+  describe('a logout with a run still on the session', () => {
+    afterEach(() => {
+      vi.mocked(isRunning).mockReset();
+      vi.mocked(stoppedRunHolds).mockReset();
+      vi.useRealTimers();
     });
 
-    it('shows progress, naming the session, while it waits for the call to stop', async () => {
+    /** A session with a run on it that `holds` answers for, once stopped. */
+    function busySession(holds: () => boolean) {
       const session = manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
-      gciLogout.mockReturnValueOnce(refused);
+      vi.mocked(isRunning).mockReturnValue(true);
+      vi.mocked(stoppedRunHolds).mockImplementation(holds);
+      return session;
+    }
+
+    /** Log out, letting Force Stop's wait run out. */
+    async function logOutPastForceStop(id: number): Promise<void> {
+      vi.useFakeTimers();
+      const logout = manager.logout(id);
+      await vi.advanceTimersByTimeAsync(FORCE_STOP_WAIT_MS + 500);
+      await logout;
+    }
+
+    it('stops the run first, showing progress that names the session', async () => {
+      const session = busySession(() => false);
       let progressShownWhileStopping = false;
       vi.mocked(stopCallsOn).mockImplementationOnce(async () => {
         progressShownWhileStopping = vi.mocked(vscode.window.withProgress).mock.calls.length === 1;
+        expect(gciLogout).not.toHaveBeenCalled();
       });
 
       await manager.logout(session.id);
@@ -797,6 +845,171 @@ describe('SessionManager', () => {
       expect(vi.mocked(vscode.window.withProgress).mock.calls[0][0].title).toContain(
         loginLabel(session.login),
       );
+      expect(ran('System sendSignal:')).toBe(false);
+      expect(manager.getSession(session.id)).toBeUndefined();
+    });
+
+    it('force-stops a run that ignores the stop, then logs out', async () => {
+      // Held when stopped, and when Force Stop looks; free once signalled.
+      let looks = 0;
+      const session = busySession(() => ++looks <= 2);
+
+      await manager.logout(session.id);
+
+      expect(ran('System sendSignal: 1 to: 42')).toBe(true);
+      expect(ran('System stopSession:')).toBe(false);
+      expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+      expect(manager.getSession(session.id)).toBeUndefined();
+    });
+
+    it('ends a run that ignores Force Stop too, once logged out', async () => {
+      const session = busySession(() => true);
+
+      await logOutPastForceStop(session.id);
+
+      expect(ran('System sendSignal: 1 to: 42')).toBe(true);
+      expect(ran('System stopSession: 42')).toBe(true);
+      expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+      expect(manager.getSession(session.id)).toBeUndefined();
+    });
+
+    it('says what is left running, and how to end it, when the user may not end it', async () => {
+      const session = busySession(() => true);
+      executeAndFetchStringMock.mockImplementation((...args: unknown[]) => {
+        if (String(args[1]).includes('System stopSession:')) {
+          throw GciLibraryError.fromGciError({ number: 2151, message: 'no privilege' });
+        }
+        return stoneAnswer(...args);
+      });
+
+      await logOutPastForceStop(session.id);
+
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /^Session \d+ is logged out, but its run .* still running on the server\. .*SessionAccess privilege.*System stopSession: 42$/,
+        ),
+      );
+      expect(manager.getSession(session.id)).toBeUndefined();
+    });
+
+    it('says what is left running when ending it fails for another reason', async () => {
+      const session = busySession(() => true);
+      executeAndFetchStringMock.mockImplementation((...args: unknown[]) => {
+        if (String(args[1]).includes('System stopSession:')) throw new Error('connection lost');
+        return stoneAnswer(...args);
+      });
+
+      await logOutPastForceStop(session.id);
+
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+        expect.stringMatching(/could not be ended \(connection lost\)\..*System stopSession: 42$/),
+      );
+    });
+
+    it('still logs out, and ends the run on the server, when Force Stop cannot be sent', async () => {
+      const session = busySession(() => true);
+      executeAndFetchStringMock.mockImplementation((...args: unknown[]) => {
+        if (String(args[1]).includes('System sendSignal:')) throw new Error('login refused');
+        return stoneAnswer(...args);
+      });
+
+      await manager.logout(session.id);
+
+      expect(ran('System stopSession: 42')).toBe(true);
+      expect(manager.getSession(session.id)).toBeUndefined();
+    });
+  });
+
+  // The Log Out command stops the run before checking for uncommitted changes,
+  // which the run would otherwise block; the logout then must not stop it again.
+  describe('stopping the run before the logout', () => {
+    afterEach(() => {
+      vi.mocked(isRunning).mockReset();
+      vi.mocked(stoppedRunHolds).mockReset();
+      vi.useRealTimers();
+    });
+
+    const signals = (): number =>
+      executeAndFetchStringMock.mock.calls.filter((args) =>
+        String(args[1]).includes('System sendSignal:'),
+      ).length;
+
+    it('does nothing for an idle session', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Idle' }, '/mock/lib');
+
+      expect(await manager.stopRun(session.id)).toBe(false);
+      expect(stopCallsOn).not.toHaveBeenCalled();
+    });
+
+    it('answers false once Force Stop has freed the session', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
+      // Held when asked, when stopped, and when Force Stop looks; free once signalled.
+      let looks = 0;
+      vi.mocked(stoppedRunHolds).mockImplementation(() => ++looks <= 3);
+
+      expect(await manager.stopRun(session.id)).toBe(false);
+      expect(signals()).toBe(1);
+    });
+
+    it('remembers a run that ignores every stop, so the logout neither waits nor signals again', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
+      vi.mocked(stoppedRunHolds).mockReturnValue(true);
+      vi.useFakeTimers();
+      const stopping = manager.stopRun(session.id);
+      await vi.advanceTimersByTimeAsync(FORCE_STOP_WAIT_MS + 500);
+      expect(await stopping).toBe(true);
+      vi.useRealTimers();
+
+      await manager.logout(session.id);
+
+      expect(signals()).toBe(1);
+      expect(ran('System stopSession: 42')).toBe(true);
+      expect(manager.getSession(session.id)).toBeUndefined();
+    });
+
+    it('forgets that once the run has ended by itself', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
+      vi.mocked(stoppedRunHolds).mockReturnValue(true);
+      vi.useFakeTimers();
+      const stopping = manager.stopRun(session.id);
+      await vi.advanceTimersByTimeAsync(FORCE_STOP_WAIT_MS + 500);
+      await stopping;
+      vi.useRealTimers();
+      vi.mocked(stoppedRunHolds).mockReturnValue(false);
+      vi.mocked(isRunning).mockReturnValue(false);
+
+      await manager.logout(session.id);
+
+      expect(ran('System stopSession:')).toBe(false);
+      expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('closing the window with a run still on a session', () => {
+    afterEach(() => {
+      vi.mocked(isRunning).mockReset();
+      vi.mocked(stoppedRunHolds).mockReset();
+    });
+
+    it('signals the run, logs out, and ends the gem, without waiting', () => {
+      manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
+      vi.mocked(stoppedRunHolds).mockReturnValue(true);
+
+      manager.dispose();
+
+      expect(ran('System sendSignal: 1 to: 42')).toBe(true);
+      expect(ran('System stopSession: 42')).toBe(true);
+    });
+
+    it('touches nothing else for an idle session', () => {
+      manager.login({ ...DEFAULT_LOGIN, label: 'Idle' }, '/mock/lib');
+      vi.mocked(stoppedRunHolds).mockReturnValue(false);
+      vi.mocked(isRunning).mockReturnValue(false);
+
+      manager.dispose();
+
+      expect(ran('System sendSignal:')).toBe(false);
+      expect(ran('System stopSession:')).toBe(false);
     });
   });
 

@@ -899,14 +899,16 @@ describe('SunitTestController', () => {
 
     it('reports a debug run refused because the session is busy as not run, and says why', async () => {
       const debugExecutor = makeDebugExecutor();
-      debugExecutor.executeWithDebugger.mockRejectedValueOnce(new NbSessionBusyError());
+      debugExecutor.executeWithDebugger.mockRejectedValueOnce(
+        new NbSessionBusyError('Another run is still in progress on this session.', false),
+      );
       const ctrl = new SunitTestController(makeSessionManager(true), debugExecutor);
 
       await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd'], 'debug');
 
       expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toBeUndefined();
       expect(window.showWarningMessage).toHaveBeenCalledWith(
-        expect.stringMatching(/still finishing/),
+        expect.stringMatching(/still in progress/),
       );
       ctrl.dispose();
     });
@@ -1369,7 +1371,7 @@ describe('SunitTestController', () => {
 
     it('refuses a run of several tests once, with one warning', async () => {
       vi.mocked(whenSessionFree).mockImplementationOnce(() => {
-        throw new NbSessionBusyError();
+        throw new NbSessionBusyError('Another run is still in progress on this session.', false);
       });
       const ctrl = new SunitTestController(makeSessionManager(true));
 
@@ -1382,15 +1384,28 @@ describe('SunitTestController', () => {
 
     it('reports a run refused because the session is busy as not run, and says why', async () => {
       // It never started: calling that the test erroring would blame the test.
-      vi.mocked(sunit.runTestMethodNb).mockRejectedValueOnce(new NbSessionBusyError());
+      vi.mocked(sunit.runTestMethodNb).mockRejectedValueOnce(
+        new NbSessionBusyError('Another run is still in progress on this session.', false),
+      );
       const ctrl = new SunitTestController(makeSessionManager(true));
 
       await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
 
       expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toBeUndefined();
       expect(window.showWarningMessage).toHaveBeenCalledWith(
-        expect.stringMatching(/still finishing/),
+        expect.stringMatching(/still in progress/),
       );
+      ctrl.dispose();
+    });
+
+    it('leaves the telling to the Force Stop notice when a stopped run holds the session', async () => {
+      vi.mocked(sunit.runTestMethodNb).mockRejectedValueOnce(new NbSessionBusyError());
+      const ctrl = new SunitTestController(makeSessionManager(true));
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toBeUndefined();
+      expect(window.showWarningMessage).not.toHaveBeenCalled();
       ctrl.dispose();
     });
 

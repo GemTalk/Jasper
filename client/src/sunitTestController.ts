@@ -929,7 +929,8 @@ export class SunitTestController implements vscode.Disposable {
    */
   private wasRefused(e: unknown): boolean {
     if (!(e instanceof NbSessionBusyError)) return false;
-    vscode.window.showWarningMessage(e.message);
+    // A stopped run's refusal has its own notice, with Force Stop.
+    if (!e.stoppedRun) vscode.window.showWarningMessage(e.message);
     return true;
   }
 

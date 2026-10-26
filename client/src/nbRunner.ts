@@ -48,12 +48,17 @@ export class NbCancelledError extends Error {
  * rather than anything the user did.
  */
 export class NbSessionBusyError extends Error {
+  /** Whether the run in the way is one the user stopped, which Force Stop can end. */
+  readonly stoppedRun: boolean;
+
   constructor(
     message = 'The stopped run is still finishing on the server, so this session cannot start ' +
-      'another one yet. Try again in a moment, or log out to abandon it.',
+      'another one yet. Try again in a moment, or use Force Stop.',
+    stoppedRun = true,
   ) {
     super(message);
     this.name = 'NbSessionBusyError';
+    this.stoppedRun = stoppedRun;
   }
 }
 
@@ -150,6 +155,35 @@ export interface NbRunOptions {
  */
 export const STOP_WAITING_AFTER_MS = 1500;
 export const EARLIEST_STOP_WAITING_MS = 2500;
+
+let stillRunningHandler: ((session: ActiveSession) => void) | undefined;
+let stoppedRunCollectedHandler: ((session: ActiveSession) => void) | undefined;
+
+/**
+ * Say what to do when a call the user stopped keeps the session busy: when the
+ * runner stops waiting for it, and each time it refuses a new call. Not called for
+ * {@link stopCallsOn}'s stops: their caller is already logging out.
+ */
+export function setStillRunningHandler(handler: typeof stillRunningHandler): void {
+  stillRunningHandler = handler;
+}
+
+/** Say what to do once a call the runner stopped waiting for is collected. */
+export function setStoppedRunCollectedHandler(handler: typeof stoppedRunCollectedHandler): void {
+  stoppedRunCollectedHandler = handler;
+}
+
+/** Tell the user, through the {@link setStillRunningHandler} handler, that a stopped run holds the session. */
+export function sayStillRunning(session: ActiveSession): void {
+  try {
+    stillRunningHandler?.(session);
+  } catch (e) {
+    logInfo(
+      `[Session ${session.id}] Could not say the stopped run is still running: ` +
+        (e instanceof Error ? e.message : String(e)),
+    );
+  }
+}
 
 /**
  * How long the next call waits for a stopped call's result to be collected,
@@ -401,18 +435,33 @@ function collectLate(
  * can uses {@link whenSessionFree}, which waits out the drain first.
  */
 export function ensureSessionFree(session: ActiveSession): void {
-  if (draining.has(session.id)) throw new NbSessionBusyError();
   const running = live.get(session.id);
-  if (running) {
-    throw running.stopRequested()
-      ? new NbSessionBusyError()
-      : new NbSessionBusyError(
-          'Another run is still in progress on this session. Wait for it to finish, or stop ' +
-            'it, before starting another.',
-        );
+  if (running && !running.stopRequested()) {
+    throw new NbSessionBusyError(
+      'Another run is still in progress on this session. Wait for it to finish, or stop ' +
+        'it, before starting another.',
+      false,
+    );
   }
+  if (stoppedRunHolds(session)) {
+    sayStillRunning(session);
+    throw new NbSessionBusyError();
+  }
+}
+
+/**
+ * Whether a run the user stopped still holds the session, collecting it first if
+ * its result is in.
+ */
+export function stoppedRunHolds(session: ActiveSession): boolean {
+  return live.get(session.id)?.stopRequested() === true || abandonedRunHolds(session);
+}
+
+/** Like {@link stoppedRunHolds}, for a run the runner has already stopped waiting for. */
+export function abandonedRunHolds(session: ActiveSession): boolean {
+  if (draining.has(session.id)) return true;
   const pending = uncollected.get(session.id);
-  if (pending && !pending.collect()) throw new NbSessionBusyError();
+  return pending !== undefined && !pending.collect();
 }
 
 /**
@@ -446,6 +495,11 @@ export function whenSessionFree<T>(
     ensureSessionFree(session);
     return await start();
   })();
+}
+
+/** Whether a call is still being polled on the session. */
+export function isRunning(session: ActiveSession): boolean {
+  return live.has(session.id);
 }
 
 /**
@@ -516,17 +570,23 @@ function awaitAbandonedRead(
   draining.set(session.id, done);
 }
 
-/** Run a caller's `onAbandonedCollected`; the caller is long gone, so only log a throw. */
+/**
+ * Run a caller's `onAbandonedCollected`, then the {@link setStoppedRunCollectedHandler}
+ * handler; the caller is long gone, so only log a throw.
+ */
 function runCollectedHook(session: ActiveSession, hook: (() => void) | undefined): void {
-  if (!hook) return;
-  try {
-    hook();
-  } catch (e) {
-    logInfo(
-      `[Session ${session.id}] Cleanup after a cancelled run failed: ` +
-        (e instanceof Error ? e.message : String(e)),
-    );
-  }
+  const run = (cleanup: () => void): void => {
+    try {
+      cleanup();
+    } catch (e) {
+      logInfo(
+        `[Session ${session.id}] Cleanup after a cancelled run failed: ` +
+          (e instanceof Error ? e.message : String(e)),
+      );
+    }
+  };
+  if (hook) run(hook);
+  if (stoppedRunCollectedHandler) run(() => stoppedRunCollectedHandler?.(session));
 }
 
 /**
@@ -614,9 +674,12 @@ export function pollNbToCompletion<T>(
         progressResolve = null;
       }
     };
+    // Ends the "Stopping…" status-bar message the first cancel shows.
+    let stoppingDone: (() => void) | null = null;
     const settle = (fn: () => void): void => {
       if (settled) return;
       settled = true;
+      stoppingDone?.();
       if (live.get(session.id) === liveEntry) live.delete(session.id);
       if (stopped) fn = () => reject(new NbCancelledError());
       if (progressTimer) {
@@ -669,6 +732,7 @@ export function pollNbToCompletion<T>(
         );
       }
       settle(() => reject(new NbCancelledError()));
+      if (!stopped) sayStillRunning(session);
     });
 
     const requestCancel = settleOnThrow(() => {
@@ -690,6 +754,17 @@ export function pollNbToCompletion<T>(
       );
       softBreakSent = true;
       progressReport?.({ message: 'Soft break sent — waiting for the gem to stop…' });
+      // Best-effort: a failure here must not keep the stop-waiting timer below unset.
+      if (!stopped) {
+        try {
+          vscode.window.setStatusBarMessage(
+            '$(loading~spin) Stopping…',
+            new Promise<void>((done) => (stoppingDone = done)),
+          );
+        } catch (e) {
+          logInfo(`[Session ${session.id}] Could not show "Stopping…": ${String(e)}`);
+        }
+      }
       // performance.now, not Date.now: this asks how much time has elapsed, which
       // the wall clock can't answer once anything on the system moves it.
       const waitFor = Math.max(
