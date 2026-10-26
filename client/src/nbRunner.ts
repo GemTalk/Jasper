@@ -439,8 +439,7 @@ export function whenSessionFree<T>(
 
 /**
  * Forget everything kept for a session that has logged out: its id may come back
- * for another login, and polling a closed session could reach a GCI library that
- * has already been unloaded.
+ * for another login.
  */
 export function forgetSession(sessionId: number): void {
   uncollected.get(sessionId)?.forget();

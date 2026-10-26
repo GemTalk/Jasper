@@ -46,7 +46,6 @@ vi.mock('../gciLibrary', () => ({
     supportsNonBlockingLogin() {
       return false;
     }
-    close() {}
   },
 }));
 

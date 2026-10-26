@@ -707,14 +707,7 @@ export class SessionManager {
     // reader.
     this._selectedId = null;
     this.selectionOrder = [];
-    for (const gci of this.gciInstances.values()) {
-      try {
-        gci.close();
-      } catch {
-        /* ignore */
-      }
-    }
-    this.gciInstances.clear();
+    // The GCI libraries stay loaded; GciLibrary's `lib` field says why.
     this._onDidChangeSelection.dispose();
     this._onDidRemoveSession.dispose();
     this._onDidAddSession.dispose();

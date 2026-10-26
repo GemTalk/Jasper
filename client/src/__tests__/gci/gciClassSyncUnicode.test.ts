@@ -63,7 +63,6 @@ describe('Class sync round-trip with non-ASCII source (integration)', () => {
       /* roll back the temp class */
     }
     session?.logout();
-    gci.close();
   });
 
   it('round-trips the file-out through the content transport with the em dash intact', () => {

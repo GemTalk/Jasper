@@ -218,6 +218,12 @@ type OptionalBinding<N extends GciOptionalFunctionName> = koffi.KoffiFunction & 
  *   {@link resolveSymbol} or `Smalltalk at: #someSymbol`.
  */
 export class GciLibrary {
+  /**
+   * Never unloaded, on purpose. A call can still be running on a koffi worker
+   * thread, or have returned with its callback still queued, and either
+   * crashes the process once the library is gone. Unloading frees nothing
+   * anyway: the extension host exits right after deactivate.
+   */
   private lib: koffi.IKoffiLib;
   private _netldiLib: koffi.IKoffiLib | undefined;
   /**
@@ -2162,10 +2168,6 @@ export class GciLibrary {
     const err: Record<string, unknown> = {};
     const result = this._optional.GciTsDebugStartDebugService(session, token, err);
     return { success: result !== 0, err: err as unknown as GciError };
-  }
-
-  close(): void {
-    this.lib.unload();
   }
 
   // ---------------------------------------------------------------------

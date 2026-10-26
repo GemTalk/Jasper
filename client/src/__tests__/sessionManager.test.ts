@@ -137,7 +137,6 @@ vi.mock('../gciLibrary', () => ({
     GciTsNbLoginFinished(...args: unknown[]) {
       return gciTsNbLoginFinished(...(args as []));
     }
-    close() {}
   },
 }));
 

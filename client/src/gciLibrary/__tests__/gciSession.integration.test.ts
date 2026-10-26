@@ -76,30 +76,25 @@ describe('GCI session lifecycle (integration)', () => {
       // eslint-disable-next-line no-restricted-syntax -- the unwrapped baseline is the point of the test; it never logs in, and login is banned separately
       const bare = new GciLibrary(libraryPath, nativeSocketLibrary);
       const wrapped = createSessionGciLibrary(libraryPath, nativeSocketLibrary);
-      try {
-        const names = reachableNames(bare);
-        // Guards the guard: an empty list would make this pass vacuously.
-        expect(names.length).toBeGreaterThan(150);
+      const names = reachableNames(bare);
+      // Guards the guard: an empty list would make this pass vacuously.
+      expect(names.length).toBeGreaterThan(150);
 
-        const lost: string[] = [];
-        for (const name of names) {
-          const want = (bare as unknown as Record<string, unknown>)[name];
-          const got = (wrapped as unknown as Record<string, unknown>)[name];
-          if (typeof got !== typeof want) {
-            lost.push(`${name}: ${typeof want} became ${typeof got}`);
-            continue;
-          }
-          if (typeof want !== 'function') continue;
-          const gotCarried = carriedProperties(got as object);
-          for (const [key, type] of carriedProperties(want)) {
-            if (gotCarried.get(key) !== type) lost.push(`${name}.${String(key)}`);
-          }
+      const lost: string[] = [];
+      for (const name of names) {
+        const want = (bare as unknown as Record<string, unknown>)[name];
+        const got = (wrapped as unknown as Record<string, unknown>)[name];
+        if (typeof got !== typeof want) {
+          lost.push(`${name}: ${typeof want} became ${typeof got}`);
+          continue;
         }
-        expect(lost).toEqual([]);
-      } finally {
-        wrapped.close();
-        bare.close();
+        if (typeof want !== 'function') continue;
+        const gotCarried = carriedProperties(got as object);
+        for (const [key, type] of carriedProperties(want)) {
+          if (gotCarried.get(key) !== type) lost.push(`${name}.${String(key)}`);
+        }
       }
+      expect(lost).toEqual([]);
     });
   });
 
