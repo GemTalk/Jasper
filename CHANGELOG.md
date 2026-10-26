@@ -4,6 +4,10 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Documentation
+
+- **Known limitation: on macOS with GemStone 3.7, a conditional breakpoint inside a loop can report a bogus error.** On the macOS 3.7 builds (seen on 3.7.2 through 3.7.6), resuming from some breakpoints inside an inlined loop never moves on: GemStone answers error 6006 ("Stack breakpoint encountered on return") at the same step, every time. So a conditional breakpoint whose condition stays false can stop with "Breakpoint occurred (error 6006)" instead of letting the run continue, and Continue or Step from that stop does not advance. Removing the breakpoint and continuing gets the run going again. This is GemStone bug 52165, not Jasper; Linux, Windows and GemStone 3.6 are not affected. ([#804](https://github.com/GemTalk/Jasper/issues/804))
+
 ## [1.16.0] - 2026-10-23
 
 ### Added

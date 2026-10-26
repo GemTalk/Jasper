@@ -67,6 +67,7 @@ The on-demand `client/src/__tests__/gci/` project **never runs in CI** (see `.cl
 - _needs Rowan or Grail in the image_ → probe for it live and `ctx.skip(reason)` when absent, the way `rowanExportFixpoint.integration.test.ts` does with `listRowanProjects(exec).available`. Unlike the server plugin, there is no CI pass with Rowan/Grail installed yet, so such a test currently always skips in CI — that's a known gap, not a reason to write it in `gci/` instead.
 - _needs a class, method, or test-case fixture a bare vendor extent lacks_ → create it in the test; the auto-abort rolls it back.
 - _depends on behavior that differs by stone version_ → a version-applicability gate resolved off the session, never a hardcoded `stoneVersion` literal.
+- _trips a known GemStone defect on some releases_ → add it to `knownGemStoneBugs` (`src/__tests__/knownGemStoneBugs.ts`) and call `skipForKnownGemStoneBug` at the test's top. End each range at the last release seen broken, never at a guessed fix, so newer releases run the test again.
 - _needs `SystemUser` or different credentials_ → `login({ user: 'SystemUser' })`.
 
 A test whose assertion **branches on what the live stone happens to contain** doesn't belong in `gci/` either — it needs a bounded, deterministic fixture. An `if (present) … else …` that asserts both branches passes no matter which one ran, so it can never fail.
