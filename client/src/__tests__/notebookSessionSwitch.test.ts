@@ -28,9 +28,6 @@ vi.mock('../gciLibrary', () => ({
     GciTsFetchUtf8() {
       return { data: '7', err: { number: 0, message: '' } };
     }
-    GciTsCallInProgress() {
-      return { result: 0, err: { number: 0, message: '' } };
-    }
     GciTsAbort() {
       return ok;
     }

@@ -544,8 +544,7 @@ export class BasicInspector {
    * a much less helpful message than this one.
    */
   private busyError(): string | null {
-    const { result: inProgress } = this.session.GciTsCallInProgress();
-    return inProgress !== 0 ? 'Session is busy with another operation — try again.' : null;
+    return this.session.isBusy() ? 'Session is busy with another operation — try again.' : null;
   }
 
   private setSlot(msg: {

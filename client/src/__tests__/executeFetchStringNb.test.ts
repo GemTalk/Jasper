@@ -4,7 +4,7 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 import { executeFetchStringNb, loadRowanProjectNb, BrowserQueryError } from '../browserQueries';
 import type { ActiveSession } from '../sessionManager';
-import { fakeActiveSession } from './fakeActiveSession';
+import { fakeActiveSession, startNonBlockingCall } from './fakeActiveSession';
 
 // A fake session whose gci implements just the non-blocking execute path:
 // start (NbExecute) → poll ready (NbPoll) → result oop (NbResult) → string
@@ -15,7 +15,6 @@ function fakeSession(overrides: Record<string, unknown> = {}): ActiveSession {
     handle: { fake: true },
     login: { stone: 'test-stone' },
     gci: {
-      GciTsCallInProgress: vi.fn(() => ({ result: 0, err: { number: 0 } })),
       utf8ClassOop: vi.fn(() => 7n),
       GciTsNbExecute: vi.fn(() => ({ success: true, err: { number: 0 } })),
       isAvailable: vi.fn(() => true),
@@ -42,13 +41,15 @@ describe('executeFetchStringNb', () => {
   });
 
   it('refuses to start while the session is busy with another call', async () => {
-    const session = fakeSession({
-      GciTsCallInProgress: vi.fn(() => ({ result: 1, err: { number: 0 } })),
-    });
+    const nbExecute = vi.fn(() => ({ success: true, err: { number: 0 } }));
+    const session = fakeSession({ GciTsNbExecute: nbExecute });
+    startNonBlockingCall(session);
+    nbExecute.mockClear();
 
     await expect(executeFetchStringNb(session, 'test', 'code')).rejects.toThrow(
       /busy with another operation/,
     );
+    expect(nbExecute).not.toHaveBeenCalled();
   });
 
   it('rejects when the execution cannot start', async () => {

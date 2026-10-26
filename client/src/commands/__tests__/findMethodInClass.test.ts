@@ -41,7 +41,6 @@ function createMockSession(executeAndFetchString = vi.fn(() => '')): ActiveSessi
     GciTsExecuteFetchBytes: vi.fn(() => ({ data: '', err: { ...noErr } })),
     GciTsPerformFetchBytes: vi.fn(() => ({ data: '', err: { ...noErr } })),
     executeAndFetchString,
-    GciTsCallInProgress: vi.fn(() => ({ result: 0 })),
     GciTsClearStack: vi.fn(),
   };
 

@@ -355,9 +355,7 @@ function resolveClassUtf8(session: ActiveSession): bigint {
 // single fixed-size buffer.
 export function executeFetchString(session: ActiveSession, code: string): string {
   try {
-    // Check if session is busy with an async operation (e.g., Display It)
-    const { result: inProgress } = session.GciTsCallInProgress();
-    if (inProgress !== 0) {
+    if (session.isBusy()) {
       throw new Error(
         'Session is busy with another operation. Please wait or use a different session.',
       );
@@ -395,8 +393,7 @@ export async function executeFetchStringNb(
     // Every GCI call here, the busy check included, goes inside the start, which
     // runNbCall makes only once the session is free; see whenSessionFree.
     () => {
-      const { result: inProgress } = session.GciTsCallInProgress();
-      if (inProgress !== 0) {
+      if (session.isBusy()) {
         const msg =
           'Session is busy with another operation. Please wait or use a different session.';
         logError(session.id, msg);
@@ -443,8 +440,7 @@ export function executeFetchStringWithLimit(
   code: string,
   maxBytes: number,
 ): string {
-  const { result: inProgress } = session.GciTsCallInProgress();
-  if (inProgress !== 0) {
+  if (session.isBusy()) {
     const msg = 'Session is busy with another operation. Please wait or use a different session.';
     logError(session.id, msg);
     throw new BrowserQueryError(msg);

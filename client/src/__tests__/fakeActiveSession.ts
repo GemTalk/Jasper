@@ -1,4 +1,5 @@
 import { ActiveSession } from '../activeSession';
+import { OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
 import type { GciLibrary } from '../gciLibrary';
 import type { GemStoneLogin } from '../loginTypes';
 
@@ -40,4 +41,15 @@ export function sessionOn(gci: object, fields: FakeFields = {}): ActiveSession {
     ...fields,
     gci,
   });
+}
+
+/**
+ * Leaves `session` with a non-blocking call started and its result not yet
+ * read, as a running Execute It does: GemStone refuses any other call on the
+ * session until then. The session's fake library has to start the call, so it
+ * answers GciTsNbExecute with success.
+ */
+export function startNonBlockingCall(session: ActiveSession): void {
+  const started = session.GciTsNbExecute('nil', OOP_ILLEGAL, OOP_ILLEGAL, OOP_NIL, 0, 0);
+  if (!started?.success) throw new Error('The fake library did not start the non-blocking call');
 }
