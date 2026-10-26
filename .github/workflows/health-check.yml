@@ -232,7 +232,7 @@ jobs:
       matrix:
         # macOS is deliberately absent from this axis — it gets a single
         # leg via the `include` below instead of the full version sweep.
-        platform: [ubuntu-latest, windows-latest]
+        platform: [macos-latest]
         gemstone-version: ${{ fromJson(needs.prepare.outputs.versions) }}
         node-version: ['']            # empty ⇒ dev jobs resolve Node from .nvmrc (node-version-file); floor include overrides
         # node-version's declared axis value is only '' (which falls back to
@@ -241,30 +241,6 @@ jobs:
         # it adds an additional job pinned to the oldest GemStone version
         # and the Node floor, as a smoke test to verify tests run on the
         # Node floor too. This is to support older VS Code versions.
-        include:
-          # Temporary: macOS ran the full version sweep like the other two
-          # platforms, but its runners show far more duration variance than
-          # ubuntu or windows, so those legs were the ones most likely to
-          # trip the timeout on a bad-runner day — noise that says nothing
-          # about the code under test. Cut to one leg while that variance is
-          # investigated; restore the platform to the axis above once it is
-          # understood. The macOS-specific mechanics are version-independent
-          # (the DMG mount and shared-memory setup are the same on every
-          # release), so one leg still covers those. What it gives up: the
-          # dropped legs were the only place a newer release's darwin GCI
-          # client got exercised.
-          #
-          # It runs the *oldest* supported version, not the newest: the newest
-          # is already exercised on ubuntu and windows, whereas the oldest is
-          # where GCI API gaps surface, and pairing that with the platform
-          # whose setup differs most is the combination least covered
-          # elsewhere.
-          - platform: macos-latest
-            gemstone-version: ${{ needs.prepare.outputs.oldest-version }}
-            node-version: '' # resolve Node from .nvmrc, like the dev legs above
-          - platform: ubuntu-latest # smoke test only cares about the Node floor, not the OS-specific WSL/GCI-DLL path
-            gemstone-version: ${{ needs.prepare.outputs.oldest-version }}
-            node-version: '22.15.1'   # pin the floor for the smoke-test
 
     steps:
       - name: Checkout code
@@ -403,48 +379,14 @@ jobs:
         env:
           GEMSTONE_VERSION: ${{ matrix.gemstone-version }}
         run: npm run test:server:start -- "$GEMSTONE_VERSION"
-      - name: Run tests (without server plugin)
-        env:
-          VITEST_JSON_OUTPUT: ${{ env.SKIP_REPORT_BARE_PATH }}
-        run: npm test
-      - name: Relativize skip report paths (without server plugin)
-        env:
-          SKIP_REPORT_PATH: ${{ env.SKIP_REPORT_BARE_PATH }}
-        # windows-latest defaults to pwsh, which doesn't understand bash's
-        # $VAR syntax — force bash (present on both runner images) so this
-        # one shell script works unchanged on either platform.
-        shell: bash
-        run: node scripts/relativize-skip-report.mjs "$SKIP_REPORT_PATH" "$GITHUB_WORKSPACE"
-      - name: Upload skip report (without server plugin)
-        # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
-        # not a mutable tag like @v7
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ${{ env.SKIP_REPORT_BARE_NAME }}
-          path: ${{ env.SKIP_REPORT_BARE_PATH }}
-          if-no-files-found: ignore
-      - name: Install server plugin
-        run: npm run test:server:install-plugin
-      - name: Run tests (with server plugin)
-        env:
-          VITEST_JSON_OUTPUT: ${{ env.SKIP_REPORT_PLUGIN_PATH }}
-        run: npm test
-      - name: Relativize skip report paths (with server plugin)
-        env:
-          SKIP_REPORT_PATH: ${{ env.SKIP_REPORT_PLUGIN_PATH }}
-        # windows-latest defaults to pwsh, which doesn't understand bash's
-        # $VAR syntax — force bash (present on both runner images) so this
-        # one shell script works unchanged on either platform.
-        shell: bash
-        run: node scripts/relativize-skip-report.mjs "$SKIP_REPORT_PATH" "$GITHUB_WORKSPACE"
-      - name: Upload skip report (with server plugin)
-        # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
-        # not a mutable tag like @v7
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ${{ env.SKIP_REPORT_PLUGIN_NAME }}
-          path: ${{ env.SKIP_REPORT_PLUGIN_PATH }}
-          if-no-files-found: ignore
+      - name: Repro 804 - whole conditional breakpoints file
+        working-directory: client
+        continue-on-error: true
+        run: npx vitest run --project default src/debugger/__tests__/conditionalBreakpoints.integration.test.ts
+      - name: Repro 804 - the failing test alone
+        working-directory: client
+        continue-on-error: true
+        run: npx vitest run --project default src/debugger/__tests__/conditionalBreakpoints.integration.test.ts -t 'reports an error the code raises while being skipped'
       # A native GCI crash on Windows (SEH exception inside gcits.dll,
       # e.g. "GciWindowsExceptionFilter called ...") doesn't fail a test —
       # it kills a vitest fork worker, which vitest only reports as a

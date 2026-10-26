@@ -579,6 +579,28 @@ describe('conditional breakpoints (integration)', () => {
       specFor('failAt:', 'total := total + i', 'i >= 9999'),
     ]);
 
+    // Temporary probe for issue 804: show where an unexpected stop landed.
+    if (outcome.kind === 'raised' && outcome.errorNumber === 6006) {
+      let frames: string;
+      try {
+        frames = gci.executeAndFetchString(
+          handle,
+          `| p ws | p := Object _objectForOop: ${outcome.context}.
+ws := WriteStream on: String new.
+1 to: p localStackDepth do: [:k |
+  ws print: k; nextPutAll: ' '.
+  [ | fc | fc := p _frameContentsAt: k.
+    ws nextPutAll: (fc at: 1) printString;
+       nextPutAll: ' step '; print: (p _stepPointAt: k) ]
+    on: Error do: [:ex | ws nextPutAll: 'ERR ', ex messageText asString ].
+  ws lf ].
+ws contents`,
+        );
+      } catch (e) {
+        frames = `could not read the stack: ${String(e)}`;
+      }
+      console.log(`issue804 probe: 6006 after ${outcome.skipped} skips\n${frames}`);
+    }
     expect(outcome.kind).toBe('raised');
     if (outcome.kind !== 'raised') return;
     expect(outcome.description).toContain('deliberate');
