@@ -44,7 +44,7 @@ vi.mock('../queries/basicInspectorQueries', () => ({
   fetchBrowseLocation: vi.fn(() => null),
 }));
 
-vi.mock('../../debugQueries', () => ({
+vi.mock('../../debugger/debugQueries', () => ({
   fetchFullPrintString: vi.fn(() => 'an Account'),
   getObjectPrintString: vi.fn(() => '84'),
   evaluateWithReceiverToOop: vi.fn(() => 777n),
@@ -62,7 +62,7 @@ vi.mock('../../debugQueries', () => ({
 import * as vscode from 'vscode';
 import { BasicInspector } from '../basicInspector';
 import * as queries from '../queries/basicInspectorQueries';
-import * as debug from '../../debugQueries';
+import * as debug from '../../debugger/debugQueries';
 import { forgetSession as forgetSessionPins } from '../../exportSetPins';
 import type { ActiveSession } from '../../sessionManager';
 import { fakeActiveSession } from '../../__tests__/fakeActiveSession';

@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import { BREAKPOINT_ERROR } from '../conditionalBreakpoints';
+import { BREAKPOINT_ERROR } from '../debugger/conditionalBreakpoints';
 import { CLIENT_FORWARDER_SEND_ERR } from '../transcriptSink';
 import { OOP_NIL } from '../gciConstants';
 

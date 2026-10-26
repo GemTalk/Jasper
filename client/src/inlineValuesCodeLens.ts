@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { DebuggerPanel } from './debuggerPanel';
+import { DebuggerPanel } from './debugger/debuggerPanel';
 
 /**
  * A one-line CodeLens at the top of an Enhanced Debugger source pane that toggles

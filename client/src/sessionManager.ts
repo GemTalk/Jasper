@@ -8,7 +8,7 @@ import { GemStoneLogin, gemNrsFor, loginLabel, stoneNrsFor } from './loginTypes'
 import { logInfo, logWarning } from './gciLog';
 import { createSessionGciLibrary } from './enhancedInspector/enhancedInspectorPerfTracker';
 import { installTranscriptSink } from './transcriptSink';
-import { forgetSession } from './nbRunner';
+import { forgetSession, stopCallsOn } from './nbRunner';
 import { installMethodHistory } from './methodHistory/methodHistoryServer';
 import {
   TransactionMode,
@@ -21,6 +21,19 @@ import {
 // that connect latency is imperceptible, large enough not to busy-spin while the
 // background login thread works.
 const LOGIN_POLL_INTERVAL_MS = 25;
+
+/**
+ * Log `session` out, answering false only when GemStone refused because a
+ * call is still in progress. A session that is already logged out counts as
+ * gone.
+ */
+export function logOutOrFindGone(session: ActiveSession): boolean {
+  try {
+    return session.logout();
+  } catch {
+    return true;
+  }
+}
 
 /**
  * Decide whether a new login may proceed given the current session count.
@@ -59,6 +72,9 @@ export class SessionManager {
   // Logins started but not yet registered as sessions (the async window of
   // loginAsync). Counted alongside sessions for the single-session policy.
   private pendingLogins = 0;
+  // Logouts still waiting for a refused session's calls to stop, so a second
+  // logout of the same session joins the first instead of racing it.
+  private loggingOut = new Map<number, Promise<boolean>>();
 
   private _selectedId: number | null = null;
   // Session ids in the order they were last made current, most recent last.
@@ -401,11 +417,7 @@ export class SessionManager {
     return {
       session: transient,
       logout: () => {
-        try {
-          transient.logout();
-        } catch {
-          /* already gone */
-        }
+        logOutOrFindGone(transient);
       },
     };
   }
@@ -437,14 +449,51 @@ export class SessionManager {
     );
   }
 
-  logout(id: number): void {
+  /**
+   * Log session `id` out and drop it from the manager, handing the selection on
+   * when it was the current one.
+   *
+   * GemStone refuses a logout while a koffi worker thread owns the session (an
+   * Execute It resuming on one to stream Transcript output). Dropping the
+   * session then would leave its gem running with nothing left to reach it, so
+   * the calls on it are stopped and the logout tried once more.
+   *
+   * A logout of a session already being logged out waits for that one and
+   * shares its outcome.
+   *
+   * @returns whether this call logged the session out: false when the session
+   *   was already gone or another logout of it did the work.
+   * @throws {Error} when the second logout is refused too; the session stays
+   *   open and registered.
+   */
+  async logout(id: number): Promise<boolean> {
+    const pending = this.loggingOut.get(id);
+    if (pending) return await pending.then(() => false);
     const s = this.sessions.get(id);
-    if (!s) return;
+    if (!s) return false;
+    const done = this.logOutAndDrop(id, s).finally(() => this.loggingOut.delete(id));
+    this.loggingOut.set(id, done);
+    return await done;
+  }
+
+  private async logOutAndDrop(id: number, s: ActiveSession): Promise<boolean> {
     logInfo(`[Session ${id}] Logging out: ${s.login.gs_user}@${s.login.gem_host}/${s.login.stone}`);
-    try {
-      s.logout();
-    } catch {
-      // Session may already be dead — remove it regardless
+    if (!logOutOrFindGone(s)) {
+      logInfo(`[Session ${id}] Logout refused while a call runs; stopping it and retrying.`);
+      // Stopping the call can take a while (the drain waits for the gem), and
+      // without this a Log out click looks like it did nothing.
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Stopping the call running on ${loginLabel(s.login)} before logging out…`,
+        },
+        () => stopCallsOn(s),
+      );
+      if (!logOutOrFindGone(s)) {
+        throw new Error(
+          `Could not log out session ${id}: a call is still running on it. The session is still open.`,
+        );
+      }
     }
     forgetSession(id);
     this.sessions.delete(id);
@@ -481,6 +530,7 @@ export class SessionManager {
         vscode.commands.executeCommand('setContext', 'gemstone.hasActiveSession', false);
       }
     }
+    return true;
   }
 
   /**
@@ -647,11 +697,7 @@ export class SessionManager {
 
   dispose(): void {
     for (const s of this.sessions.values()) {
-      try {
-        s.logout();
-      } catch {
-        /* ignore */
-      }
+      logOutOrFindGone(s);
       forgetSession(s.id);
     }
     this.sessions.clear();
@@ -661,14 +707,7 @@ export class SessionManager {
     // reader.
     this._selectedId = null;
     this.selectionOrder = [];
-    for (const gci of this.gciInstances.values()) {
-      try {
-        gci.close();
-      } catch {
-        /* ignore */
-      }
-    }
-    this.gciInstances.clear();
+    // The GCI libraries stay loaded; GciLibrary's `lib` field says why.
     this._onDidChangeSelection.dispose();
     this._onDidRemoveSession.dispose();
     this._onDidAddSession.dispose();

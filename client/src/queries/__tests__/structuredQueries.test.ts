@@ -7,7 +7,7 @@ import { getClassEnvironments } from '../getClassEnvironments';
 import { getBaseMethodSource } from '../getBaseMethodSource';
 import { getClassHierarchy } from '../getClassHierarchy';
 import { getMethodList } from '../getMethodList';
-import { getStepPointSelectorRanges } from '../getStepPointSelectorRanges';
+import { getStepPointSelectorRanges } from '../../debugger/queries/getStepPointSelectorRanges';
 import { runFailingTests, globToPatternArray } from '../runFailingTests';
 import { describeTestFailure } from '../describeTestFailure';
 import { evalPython, evalPythonInScope, resetPythonScope, compilePython } from '../python';

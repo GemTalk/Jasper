@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { SessionPanelTitle } from '../activeSessionDisplay';
 import * as crypto from 'crypto';
 import { ActiveSession } from '../sessionManager';
-import * as debug from '../debugQueries';
+import * as debug from '../debugger/debugQueries';
 import { executeFetchString } from '../browserQueries';
 import {
   getEnhancedInspectorViewSpecs,

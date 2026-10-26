@@ -18,7 +18,12 @@ vi.mock('vscode', () => ({
     };
     dispose = vi.fn();
   },
-  window: { showQuickPick: vi.fn(), showInformationMessage: vi.fn() },
+  window: {
+    showQuickPick: vi.fn(),
+    showInformationMessage: vi.fn(),
+    withProgress: vi.fn(async (_opts: unknown, task: () => Promise<unknown>) => await task()),
+  },
+  ProgressLocation: { Notification: 15 },
   workspace: {
     getConfiguration: vi.fn(() => ({
       get: vi.fn((key: string, defaultValue?: unknown) => configValues[key] ?? defaultValue),
@@ -54,7 +59,7 @@ const gciTsFetchSize = vi.fn((..._args: unknown[]) => ({
   result: pingErrNumber ? -1n : 0n,
   err: { number: pingErrNumber, message: pingErrNumber ? 'boom' : '' },
 }));
-const gciLogout = vi.fn((..._args: unknown[]) => true);
+const gciLogout = vi.fn((..._args: unknown[]) => ({ sessionFreed: true }));
 // login() aborts once after setup to drop the session-method-policy's spurious
 // write; capture those calls so tests can assert on them.
 const gciTsBegin = vi.fn((..._args: unknown[]) => ({
@@ -132,7 +137,6 @@ vi.mock('../gciLibrary', () => ({
     GciTsNbLoginFinished(...args: unknown[]) {
       return gciTsNbLoginFinished(...(args as []));
     }
-    close() {}
   },
 }));
 
@@ -141,10 +145,16 @@ vi.mock('../gciLog', () => ({
   logError: vi.fn(),
 }));
 
+vi.mock('../nbRunner', async (orig) => ({
+  ...(await orig()),
+  stopCallsOn: vi.fn(async () => {}),
+}));
+
 import * as vscode from 'vscode';
 import { SessionManager, evaluateLoginPolicy } from '../sessionManager';
-import { DEFAULT_LOGIN } from '../loginTypes';
+import { DEFAULT_LOGIN, loginLabel } from '../loginTypes';
 import { GciLibraryError } from '../gciLibraryError';
+import { stopCallsOn } from '../nbRunner';
 
 describe('evaluateLoginPolicy', () => {
   it('allows the first login regardless of mode', () => {
@@ -456,9 +466,9 @@ describe('SessionManager', () => {
     );
   });
 
-  it('allows login again after logging out', () => {
+  it('allows login again after logging out', async () => {
     const session = manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
-    manager.logout(session.id);
+    await manager.logout(session.id);
     const session2 = manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
     expect(session2.id).toBe(2);
   });
@@ -473,11 +483,11 @@ describe('SessionManager', () => {
       );
     };
 
-    it('makes the remaining session current when the last one standing is unambiguous', () => {
+    it('makes the remaining session current when the last one standing is unambiguous', async () => {
       const [first, second] = loginN(2);
       manager.selectSession(first.id);
 
-      manager.logout(first.id);
+      await manager.logout(first.id);
 
       expect(manager.getSelectedSession()?.id).toBe(second.id);
     });
@@ -486,11 +496,11 @@ describe('SessionManager', () => {
     // and "the next one along" give different answers here, which is what makes
     // this the case worth having. Leaving nothing current would mean every "act
     // in the current session" command had nothing to act in.
-    it('promotes the session worked in before, not the next one along', () => {
+    it('promotes the session worked in before, not the next one along', async () => {
       const [first, second, third] = loginN(3);
       manager.selectSession(second.id);
 
-      manager.logout(second.id);
+      await manager.logout(second.id);
 
       expect(manager.getSelectedSession()?.id).toBe(first.id);
       expect(manager.getSelectedSession()?.id).not.toBe(third.id);
@@ -500,12 +510,12 @@ describe('SessionManager', () => {
     // out. "Oldest still logged in" hands the window to session 1 — a stone the
     // user last touched hours ago; the session they were actually cycling
     // through is 2.
-    it('promotes the most recently worked in session, not the oldest', () => {
+    it('promotes the most recently worked in session, not the oldest', async () => {
       const [first, second, third] = loginN(3);
       manager.selectSession(second.id);
       manager.selectSession(third.id);
 
-      manager.logout(third.id);
+      await manager.logout(third.id);
 
       expect(manager.getSelectedSession()?.id).toBe(second.id);
       expect(manager.getSelectedSession()?.id).not.toBe(first.id);
@@ -513,16 +523,16 @@ describe('SessionManager', () => {
 
     // Logging out the promoted session falls back another step rather than
     // stopping at the one just handed over.
-    it('walks further back when the promoted session is logged out in turn', () => {
+    it('walks further back when the promoted session is logged out in turn', async () => {
       const [first, second, third, fourth] = loginN(4);
       manager.selectSession(third.id);
       manager.selectSession(second.id);
       manager.selectSession(fourth.id);
 
-      manager.logout(fourth.id);
+      await manager.logout(fourth.id);
       expect(manager.getSelectedSession()?.id).toBe(second.id);
 
-      manager.logout(second.id);
+      await manager.logout(second.id);
 
       expect(manager.getSelectedSession()?.id).toBe(third.id);
       expect(manager.getSelectedSession()?.id).not.toBe(first.id);
@@ -533,14 +543,14 @@ describe('SessionManager', () => {
     // is the one worked in before the current one, and it is logged out in the
     // background first — so promoting it would hand the window a dead handle: a
     // GCI call that fails quietly, then `Session not found`.
-    it('skips a remembered session that has since been logged out', () => {
+    it('skips a remembered session that has since been logged out', async () => {
       const [first, second, third, fourth] = loginN(4);
       manager.selectSession(third.id);
       manager.selectSession(second.id);
       manager.selectSession(fourth.id);
 
-      manager.logout(second.id);
-      manager.logout(fourth.id);
+      await manager.logout(second.id);
+      await manager.logout(fourth.id);
 
       expect(manager.getSelectedSession()?.id).toBe(third.id);
       expect(manager.getSelectedSession()?.id).not.toBe(first.id);
@@ -548,16 +558,16 @@ describe('SessionManager', () => {
 
     // Nothing was ever switched between — login makes a session current only
     // when it is the first one — so there is no "before this" to go back to.
-    it('falls back to the oldest when no session was ever switched to', () => {
+    it('falls back to the oldest when no session was ever switched to', async () => {
       const [first, second] = loginN(3);
-      manager.logout(first.id);
+      await manager.logout(first.id);
 
       expect(manager.getSelectedSession()?.id).toBe(second.id);
     });
 
-    it('leaves nothing current when the last session goes', () => {
+    it('leaves nothing current when the last session goes', async () => {
       const [only] = loginN(1);
-      manager.logout(only.id);
+      await manager.logout(only.id);
 
       expect(manager.getSelectedSession()).toBeUndefined();
     });
@@ -576,11 +586,11 @@ describe('SessionManager', () => {
 
     // The window has just changed which stone Display It / Execute It / a
     // notebook cell will run in, and none of those asks first.
-    it('says which session it promoted', () => {
+    it('says which session it promoted', async () => {
       const [first, second] = loginN(2);
       manager.selectSession(second.id);
 
-      manager.logout(second.id);
+      await manager.logout(second.id);
 
       expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
         expect.stringContaining(`Session ${first.id}`),
@@ -590,36 +600,36 @@ describe('SessionManager', () => {
       );
     });
 
-    it('says nothing when the session logged out was not the current one', () => {
+    it('says nothing when the session logged out was not the current one', async () => {
       const [first, second] = loginN(3);
       manager.selectSession(first.id);
 
-      manager.logout(second.id);
+      await manager.logout(second.id);
 
       expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
     });
 
-    it('turns hasActiveSession off when the last session goes', () => {
+    it('turns hasActiveSession off when the last session goes', async () => {
       const [only] = loginN(1);
-      manager.logout(only.id);
+      await manager.logout(only.id);
 
       expect(contextCalls().at(-1)?.[2]).toBe(false);
     });
 
-    it('leaves hasActiveSession on when a session remains to be promoted', () => {
+    it('leaves hasActiveSession on when a session remains to be promoted', async () => {
       const [first] = loginN(3);
       manager.selectSession(first.id);
 
-      manager.logout(first.id);
+      await manager.logout(first.id);
 
       expect(contextCalls().at(-1)?.[2]).toBe(true);
     });
 
-    it('keeps the current session when a background session is logged out', () => {
+    it('keeps the current session when a background session is logged out', async () => {
       const [first, second] = loginN(3);
       manager.selectSession(first.id);
 
-      manager.logout(second.id);
+      await manager.logout(second.id);
 
       expect(manager.getSelectedSession()?.id).toBe(first.id);
     });
@@ -629,11 +639,11 @@ describe('SessionManager', () => {
     // current one must not move the selection at all, whatever the promotion rule
     // is, so the case is pinned with the newest session going and the MIDDLE one
     // current, which is where a promotion that fired by mistake would land on 1.
-    it('leaves the current session alone when the newest is logged out from under it', () => {
+    it('leaves the current session alone when the newest is logged out from under it', async () => {
       const [first, second, third] = loginN(3);
       manager.selectSession(second.id);
 
-      manager.logout(third.id);
+      await manager.logout(third.id);
 
       expect(manager.getSelectedSession()?.id).toBe(second.id);
       expect(manager.getSelectedSession()?.id).not.toBe(first.id);
@@ -646,13 +656,13 @@ describe('SessionManager', () => {
     // a network round trip per candidate in the middle of a logout, on the path
     // that Display It and a notebook cell are waiting on. The logout's own
     // GciTsLogout is the one call that has to happen.
-    it('promotes without a round trip to any gem', () => {
+    it('promotes without a round trip to any gem', async () => {
       const [, second, third] = loginN(3);
       manager.selectSession(second.id);
       manager.selectSession(third.id);
       vi.clearAllMocks();
 
-      manager.logout(third.id);
+      await manager.logout(third.id);
 
       expect(manager.getSelectedSession()?.id).toBe(second.id);
       expect(gciLogout).toHaveBeenCalledTimes(1);
@@ -663,11 +673,11 @@ describe('SessionManager', () => {
 
     // The same for the fallback arm, which walks every remaining session to find
     // the lowest id — reading ids off the map, not asking any of them anything.
-    it('falls back to the oldest without a round trip to any gem', () => {
+    it('falls back to the oldest without a round trip to any gem', async () => {
       const [first] = loginN(3);
       vi.clearAllMocks();
 
-      manager.logout(first.id);
+      await manager.logout(first.id);
 
       expect(gciLogout).toHaveBeenCalledTimes(1);
       expect(gciTsFetchSize).not.toHaveBeenCalled();
@@ -683,7 +693,7 @@ describe('SessionManager', () => {
     const rememberedOrder = (m: SessionManager) =>
       (m as unknown as { selectionOrder: number[] }).selectionOrder;
 
-    it('discards a logged-out session from the remembered order instead of stepping over it', () => {
+    it('discards a logged-out session from the remembered order instead of stepping over it', async () => {
       const [first, second, third] = loginN(3);
       manager.selectSession(first.id);
       manager.selectSession(second.id);
@@ -692,10 +702,101 @@ describe('SessionManager', () => {
       const sessions = (manager as unknown as { sessions: Map<number, unknown> }).sessions;
       sessions.delete(second.id);
 
-      manager.logout(third.id);
+      await manager.logout(third.id);
 
       expect(manager.getSelectedSession()?.id).toBe(first.id);
       expect(rememberedOrder(manager)).toEqual([first.id]);
+    });
+  });
+
+  // GemStone refuses a logout while a worker thread owns the session. Dropping
+  // the session anyway would leave its gem running with nothing to reach it.
+  describe('a logout refused while a call runs', () => {
+    const refused = { sessionFreed: false };
+
+    it('stops the calls on the session and logs out', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
+      gciLogout.mockReturnValueOnce(refused);
+
+      await manager.logout(session.id);
+
+      expect(vi.mocked(stopCallsOn).mock.calls[0][0]).toBe(session);
+      expect(gciLogout).toHaveBeenCalledTimes(2);
+      expect(manager.getSession(session.id)).toBeUndefined();
+    });
+
+    it('keeps the session when the logout is refused again', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
+      gciLogout.mockReturnValueOnce(refused).mockReturnValueOnce(refused);
+      const removed = vi.fn();
+      manager.onDidRemoveSession(removed);
+
+      const logout = manager.logout(session.id);
+
+      await expect(logout).rejects.toThrow('The session is still open.');
+      expect(manager.getSession(session.id)).toBe(session);
+      expect(manager.getSelectedSession()).toBe(session);
+      expect(removed).not.toHaveBeenCalled();
+    });
+
+    it('lets a second logout of the session join the first', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
+      gciLogout.mockReturnValueOnce(refused);
+      const removed = vi.fn();
+      manager.onDidRemoveSession(removed);
+
+      const first = manager.logout(session.id);
+      const second = manager.logout(session.id);
+
+      expect(await first).toBe(true);
+      expect(await second).toBe(false);
+      expect(stopCallsOn).toHaveBeenCalledTimes(1);
+      expect(removed).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports that a session already logged out needed no logout', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Gone' }, '/mock/lib');
+      await manager.logout(session.id);
+
+      const again = await manager.logout(session.id);
+
+      expect(again).toBe(false);
+    });
+
+    it('fails a joined logout when the logout it joined fails', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
+      gciLogout.mockReturnValueOnce(refused).mockReturnValueOnce(refused);
+
+      const first = manager.logout(session.id);
+      const second = manager.logout(session.id);
+
+      await expect(first).rejects.toThrow('The session is still open.');
+      await expect(second).rejects.toThrow('The session is still open.');
+    });
+
+    it('does not stop calls on a session that logs out at once', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Idle' }, '/mock/lib');
+
+      await manager.logout(session.id);
+
+      expect(stopCallsOn).not.toHaveBeenCalled();
+      expect(vscode.window.withProgress).not.toHaveBeenCalled();
+    });
+
+    it('shows progress, naming the session, while it waits for the call to stop', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
+      gciLogout.mockReturnValueOnce(refused);
+      let progressShownWhileStopping = false;
+      vi.mocked(stopCallsOn).mockImplementationOnce(async () => {
+        progressShownWhileStopping = vi.mocked(vscode.window.withProgress).mock.calls.length === 1;
+      });
+
+      await manager.logout(session.id);
+
+      expect(progressShownWhileStopping).toBe(true);
+      expect(vi.mocked(vscode.window.withProgress).mock.calls[0][0].title).toContain(
+        loginLabel(session.login),
+      );
     });
   });
 
@@ -710,7 +811,7 @@ describe('SessionManager', () => {
     const invariantHolds = () =>
       manager.getSessions().length === 0 || manager.getSelectedSession() !== undefined;
 
-    it('holds through every order of logging three sessions out', () => {
+    it('holds through every order of logging three sessions out', async () => {
       configValues['sessionMode'] = 'multiple';
       // Each permutation of the logout order, over a fresh set of logins.
       const orders = [
@@ -727,7 +828,7 @@ describe('SessionManager', () => {
         );
         expect(invariantHolds(), 'after logging in').toBe(true);
         for (const which of order) {
-          manager.logout(ids[which]);
+          await manager.logout(ids[which]);
           expect(invariantHolds(), `after logging out ${ids[which]} of ${ids}`).toBe(true);
         }
         expect(manager.getSessions()).toHaveLength(0);
@@ -739,7 +840,7 @@ describe('SessionManager', () => {
     // remembered selection order is exercised with its entries removed in every
     // order, which is the way "promote the most recently worked in" could reach
     // a session that is no longer logged in.
-    it('holds through every logout order when each session is worked in first', () => {
+    it('holds through every logout order when each session is worked in first', async () => {
       configValues['sessionMode'] = 'multiple';
       const orders = [
         [0, 1, 2],
@@ -755,7 +856,7 @@ describe('SessionManager', () => {
         );
         for (const which of order) {
           manager.selectSession(ids[which]);
-          manager.logout(ids[which]);
+          await manager.logout(ids[which]);
           expect(invariantHolds(), `after logging out ${ids[which]} of ${ids}`).toBe(true);
           const current = manager.getSelectedSession();
           expect(current === undefined || manager.getSession(current.id) !== undefined).toBe(true);
@@ -763,17 +864,17 @@ describe('SessionManager', () => {
       }
     });
 
-    it('holds when a session is logged out and another logged in again', () => {
+    it('holds when a session is logged out and another logged in again', async () => {
       configValues['sessionMode'] = 'multiple';
       const first = manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
       const second = manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
-      manager.logout(first.id);
+      await manager.logout(first.id);
       expect(invariantHolds()).toBe(true);
 
       manager.login({ ...DEFAULT_LOGIN, label: 'Third' }, '/mock/lib');
       expect(invariantHolds()).toBe(true);
 
-      manager.logout(second.id);
+      await manager.logout(second.id);
       expect(invariantHolds()).toBe(true);
     });
   });

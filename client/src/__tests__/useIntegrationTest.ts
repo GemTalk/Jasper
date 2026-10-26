@@ -137,12 +137,10 @@ export function useIntegrationTest(
   });
 
   afterAll(() => {
-    if (!gciLibrary) return;
     try {
       if (session) {
         logout();
       }
-      gciLibrary.close();
     } finally {
       restoreGemstoneGlobalDir();
     }

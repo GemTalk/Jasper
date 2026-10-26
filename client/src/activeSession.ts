@@ -102,9 +102,13 @@ export class ActiveSession {
    * GemStone's error. Once the session is gone, every method that needs its
    * handle throws, a second logout included. A failed logout usually frees it
    * too; only a refusal because a call is still in progress leaves it usable.
+   *
+   * @returns whether the session is gone; false only for that refusal.
    */
-  logout() {
-    if (this.gci.logout(this.handle()).sessionFreed) this.handle = loggedOut;
+  logout(): boolean {
+    const { sessionFreed } = this.gci.logout(this.handle());
+    if (sessionFreed) this.handle = loggedOut;
+    return sessionFreed;
   }
 
   /**

@@ -18,7 +18,7 @@ import { SessionPanelTitle } from '../activeSessionDisplay';
 import { EvalMode } from '../evaluateMode';
 import * as crypto from 'crypto';
 import { ActiveSession } from '../sessionManager';
-import * as debug from '../debugQueries';
+import * as debug from '../debugger/debugQueries';
 import * as pins from '../exportSetPins';
 import { executeFetchString } from '../browserQueries';
 import { logError } from '../gciLog';

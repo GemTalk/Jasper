@@ -4,6 +4,7 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 import { __resetConfig, __setConfig, TreeItemCollapsibleState } from '../__mocks__/vscode';
 import { LoginStorage } from '../loginStorage';
+import { fakeSecretStorage } from './support/secretStorage';
 import { LoginTreeProvider, GemStoneLoginItem, GemStoneSessionItem } from '../loginTreeProvider';
 import { DEFAULT_LOGIN, GemStoneLogin } from '../loginTypes';
 import type { ActiveSession, SessionManager } from '../sessionManager';
@@ -36,7 +37,7 @@ describe('LoginTreeProvider', () => {
 
   beforeEach(() => {
     __resetConfig();
-    storage = new LoginStorage();
+    storage = new LoginStorage(fakeSecretStorage());
     provider = new LoginTreeProvider(storage);
   });
 

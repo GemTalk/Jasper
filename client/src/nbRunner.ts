@@ -209,11 +209,35 @@ type CollectState = 'collected' | 'pending' | 'failed' | 'gone';
 
 /**
  * Sessions with a call still being polled ({@link pollNbToCompletion}), keyed
- * like {@link draining}. Each entry answers whether the user has asked that call
- * to stop: a soft break the gem handles can leave it running for a long while
- * yet, through a tearDown or an ensure: block.
+ * like {@link draining}. `stopRequested` answers whether the user has asked that
+ * call to stop: a soft break the gem handles can leave it running for a long
+ * while yet, through a tearDown or an ensure: block. `stop` sends the call the
+ * escalation that stops it, answering the call's own promise.
  */
-const live = new Map<number, () => boolean>();
+const live = new Map<number, { stopRequested: () => boolean; stop: () => Promise<unknown> }>();
+
+/**
+ * Stop the call in flight on `session`, if any, and wait until the session is
+ * free.
+ *
+ * The call gets the soft break its Cancel sends, and the runner stops waiting
+ * for it at once; the call is then waited out the way the next call on the
+ * session waits for it. Both waits are bounded, so this always resolves; a
+ * session still busy past them refuses its next call cleanly rather than
+ * crashing.
+ *
+ * A call stopped here rejects with `NbCancelledError`, however it ended. The
+ * gem's own answer to the soft break is a Break error with a live context,
+ * which a caller would offer to debug on a session that is about to go.
+ */
+export async function stopCallsOn(session: ActiveSession): Promise<void> {
+  await live
+    .get(session.id)
+    ?.stop()
+    .catch(() => {});
+  await draining.get(session.id);
+  uncollected.get(session.id)?.collect();
+}
 
 /**
  * Collect and discard the result of a call we gave up on, so the session goes
@@ -378,9 +402,9 @@ function collectLate(
  */
 export function ensureSessionFree(session: ActiveSession): void {
   if (draining.has(session.id)) throw new NbSessionBusyError();
-  const stopRequested = live.get(session.id);
-  if (stopRequested) {
-    throw stopRequested()
+  const running = live.get(session.id);
+  if (running) {
+    throw running.stopRequested()
       ? new NbSessionBusyError()
       : new NbSessionBusyError(
           'Another run is still in progress on this session. Wait for it to finish, or stop ' +
@@ -426,8 +450,7 @@ export function whenSessionFree<T>(
 
 /**
  * Forget everything kept for a session that has logged out: its id may come back
- * for another login, and polling a closed session could reach a GCI library that
- * has already been unloaded.
+ * for another login.
  */
 export function forgetSession(sessionId: number): void {
   uncollected.get(sessionId)?.forget();
@@ -558,7 +581,7 @@ export function pollNbToCompletion<T>(
   onReady: (signal: AbortSignal) => T | Promise<T>,
   opts: NbRunOptions = {},
 ): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
+  const run = new Promise<T>((resolve, reject) => {
     let settled = false;
     let pollIndex = 0;
     let progressShown = false;
@@ -571,7 +594,18 @@ export function pollNbToCompletion<T>(
     // onReady's work, once it has begun: from then on the non-blocking result
     // is already read and the session may belong to a worker thread.
     let reading: Promise<T> | null = null;
-    const liveEntry = (): boolean => softBreakSent;
+    let stopped = false;
+    const liveEntry = {
+      stopRequested: (): boolean => softBreakSent,
+      // Twice, like pressing Cancel twice: a soft break, then stop waiting. A run
+      // the first press already settled needs no second one.
+      stop: (): Promise<T> => {
+        stopped = true;
+        requestCancel();
+        if (!settled) requestCancel();
+        return run;
+      },
+    };
     live.set(session.id, liveEntry);
 
     const finishProgress = (): void => {
@@ -584,6 +618,7 @@ export function pollNbToCompletion<T>(
       if (settled) return;
       settled = true;
       if (live.get(session.id) === liveEntry) live.delete(session.id);
+      if (stopped) fn = () => reject(new NbCancelledError());
       if (progressTimer) {
         clearTimeout(progressTimer);
         progressTimer = null;
@@ -679,7 +714,15 @@ export function pollNbToCompletion<T>(
         reading = Promise.resolve(onReady(abandoned.signal));
         reading.then(
           (value) => settle(() => resolve(value)),
-          (e) => settle(() => reject(e)),
+          (e) => {
+            // The gem answering a stop's soft break hands back a live process,
+            // which settle swaps for NbCancelledError, so no caller is left to
+            // debug or clear it.
+            if (stopped && !settled && opts.disposableProcess === true) {
+              clearStoppedProcess(session, (e as { context?: unknown } | null)?.context);
+            }
+            settle(() => reject(e));
+          },
         );
         return;
       }
@@ -757,6 +800,7 @@ export function pollNbToCompletion<T>(
 
     doPoll();
   });
+  return run;
 }
 
 /**

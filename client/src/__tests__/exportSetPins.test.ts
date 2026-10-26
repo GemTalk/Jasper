@@ -4,12 +4,12 @@ vi.mock('vscode', () => ({
   window: { createOutputChannel: () => ({ appendLine: () => {} }) },
 }));
 
-vi.mock('../debugQueries', () => ({
+vi.mock('../debugger/debugQueries', () => ({
   saveObjs: vi.fn(),
   releaseObjs: vi.fn(),
 }));
 
-import * as debug from '../debugQueries';
+import * as debug from '../debugger/debugQueries';
 import { ActiveSession } from '../sessionManager';
 import { pinObject, unpinObjects, forgetSession, pinCount } from '../exportSetPins';
 

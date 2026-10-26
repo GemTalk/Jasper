@@ -1,6 +1,6 @@
 // Stopping a run whose gem goes on working after the break, against a live stone.
 //
-// A hard break does not end the GCI call: until its result is collected, GemStone
+// A stopped call isn't over until its result is collected; until then GemStone
 // refuses every call on the session. The runner gives a stopped call 2s to be
 // collected before it lets the next run start. These tests cover the gem that
 // takes longer than that. A paused gem (SIGSTOP) is the dependable stand-in for a
@@ -104,7 +104,7 @@ describe('stopping a run while the gem is slow to answer (integration)', () => {
     return Number(exec('((System descriptionOfSession: System session) at: 2) printString'));
   };
 
-  /** Stop the slow test with a soft then a hard break, and answer once the run has rejected. */
+  /** Stop the slow test with two presses (a soft break, then stop waiting), and answer once the run has rejected. */
   async function stopSlowTest(beforeBreak: () => void = () => {}): Promise<void> {
     let cancel: (() => void) | undefined;
     const run = runTestMethodNb(
@@ -171,9 +171,8 @@ describe('stopping a run while the gem is slow to answer (integration)', () => {
   }
 
   it('leaves the session usable after a stop during a slow tearDown, without the user doing anything', async () => {
-    // The gem stays busy for the rest of the 4s tearDown after the hard break, but
-    // nothing here depends on catching it busy; the paused-gem tests below hold it
-    // busy for certain.
+    // The gem stays busy for the rest of the 4s tearDown, but nothing here depends
+    // on catching it busy; the paused-gem tests below hold it busy for certain.
     installSlowTearDown();
 
     await stopSlowTest();
@@ -189,9 +188,9 @@ describe('stopping a run while the gem is slow to answer (integration)', () => {
   }, 120_000);
 
   it('lets a slow tearDown finish after one press, and says the run is still finishing meanwhile', async () => {
-    // One press is a soft break, which the test runner catches, and then the
-    // runner's own hard break once the tearDown has outlasted it. The tearDown
-    // must finish anyway: cut short, it leaves the test's changes in the session.
+    // One press is a soft break, which the test runner catches; GemStone repeats it
+    // every 2s. The tearDown must finish anyway: cut short, it leaves the test's
+    // changes in the session.
     installSlowTearDown();
     let cancel: (() => void) | undefined;
     const run = runTestMethodNb(
@@ -215,8 +214,8 @@ describe('stopping a run while the gem is slow to answer (integration)', () => {
 
     await expect(early).rejects.toBeInstanceOf(NbSessionBusyError);
     await expect(early).rejects.toThrow(/still finishing/);
-    // The hard break goes out while the 4s tearDown is still running, and gives up
-    // on the call; the tearDown carries on regardless.
+    // The runner stops waiting while the 4s tearDown is still running; the
+    // tearDown carries on regardless.
     await expect(run).rejects.toBeInstanceOf(NbCancelledError);
     await vi.waitFor(() => expect(exec("'alive'")).toBe('alive'), {
       timeout: FREED_WITHIN_MS,

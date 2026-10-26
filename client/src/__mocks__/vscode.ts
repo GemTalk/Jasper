@@ -13,6 +13,9 @@ export { Uri };
 const configStore: Record<string, Record<string, unknown>> = {};
 /** Which inspect() field a seeded value answers under, per key. */
 const scopeStore: Record<string, Record<string, string>> = {};
+type Layers = { globalValue?: unknown; workspaceValue?: unknown };
+/** Keys seeded in both files at once; the workspace's value wins, as in VS Code. */
+const layerStore: Record<string, Record<string, Layers>> = {};
 /** Every configuration update the code under test made, newest last. */
 export const __configUpdates: {
   section: string;
@@ -27,6 +30,10 @@ function getConfiguration(section: string) {
   }
   return {
     get<T>(key: string, defaultValue?: T): T {
+      const layers = layerStore[section]?.[key];
+      if (layers) {
+        return (layers.workspaceValue ?? layers.globalValue ?? defaultValue) as T;
+      }
       const val = configStore[section][key];
       return (val !== undefined ? val : defaultValue) as T;
     },
@@ -36,6 +43,8 @@ function getConfiguration(section: string) {
       workspaceValue?: T;
       workspaceFolderValue?: T;
     } {
+      const layers = layerStore[section]?.[key];
+      if (layers) return { key: `${section}.${key}`, ...(layers as object) };
       const val = configStore[section][key];
       // A seeded value stands in for an explicitly-set value, at the scope the
       // seeding named — global unless a test said otherwise; otherwise all
@@ -46,7 +55,12 @@ function getConfiguration(section: string) {
       return { key: `${section}.${key}`, [field]: val as T };
     },
     update: vi.fn(async (key: string, value: unknown, target?: number) => {
-      configStore[section][key] = value;
+      const layers = layerStore[section]?.[key];
+      if (layers) {
+        layers[target === ConfigurationTarget.Workspace ? 'workspaceValue' : 'globalValue'] = value;
+      } else {
+        configStore[section][key] = value;
+      }
       // getConfiguration() hands back a fresh object each call, so a test
       // cannot spy on this one: what was written, and at which layer, is
       // recorded here instead.
@@ -62,6 +76,9 @@ export function __resetConfig(): void {
   }
   for (const key of Object.keys(scopeStore)) {
     delete scopeStore[key];
+  }
+  for (const key of Object.keys(layerStore)) {
+    delete layerStore[key];
   }
   __configUpdates.length = 0;
 }
@@ -82,6 +99,16 @@ export function __setConfig(
     scopeStore[section] = {};
   }
   scopeStore[section][key] = `${scope}Value`;
+}
+
+/** Pre-seed a key in the user and the workspace settings at once. */
+export function __setConfigLayers(
+  section: string,
+  key: string,
+  layers: { global?: unknown; workspace?: unknown },
+): void {
+  layerStore[section] ??= {};
+  layerStore[section][key] = { globalValue: layers.global, workspaceValue: layers.workspace };
 }
 
 // ── TreeItem mock ──────────────────────────────────────────

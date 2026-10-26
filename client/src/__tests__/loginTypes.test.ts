@@ -4,6 +4,7 @@ import {
   GemStoneLogin,
   buildDataCuratorLogin,
   dataCuratorLoginToCreate,
+  duplicateOf,
   gemNrsFor,
   loginLabel,
   loginNetldiTarget,
@@ -161,6 +162,22 @@ describe('shouldSyncClasses', () => {
   });
 });
 
+describe('duplicateOf', () => {
+  it('starts keychain-backed even when the original keeps its passwords in plain text', () => {
+    const original = makeLogin({ label: 'x', gs_password: 'pw', password_in_keychain: false });
+
+    expect(duplicateOf(original)).toEqual({ ...original, label: '', password_in_keychain: true });
+  });
+
+  it("carries over the original's keychain passwords", () => {
+    const original = makeLogin({ gs_password: '', host_password: '', password_in_keychain: true });
+
+    const copy = duplicateOf(original, { gs_password: 'kc-gs', host_password: 'kc-host' });
+
+    expect(copy).toMatchObject({ gs_password: 'kc-gs', host_password: 'kc-host' });
+  });
+});
+
 describe('buildDataCuratorLogin', () => {
   const config = { version: '3.7.5', stoneName: 'devStone', ldiName: 'devLdi' };
 
@@ -172,6 +189,10 @@ describe('buildDataCuratorLogin', () => {
     expect(login.netldi).toBe('devLdi');
     expect(login.version).toBe('3.7.5');
     expect(login.gem_host).toBe('localhost');
+  });
+
+  it('starts keychain-backed, like any new login', () => {
+    expect(buildDataCuratorLogin(config).password_in_keychain).toBe(true);
   });
 
   it('prefills the stock DataCurator password for a freshly-created stone', () => {

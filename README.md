@@ -151,6 +151,15 @@ The **Logins & Sessions** view stores connection configurations for your GemSton
 - GemStone and host credentials
 - Optional per-login export path template
 
+**Where passwords are kept.** Each of a login's two passwords, GemStone and host, is either filled in or left blank, and the **Keep saved passwords in the OS keychain** box below them decides where a filled-in one goes:
+
+|                                                             | Password filled in                                       | Password left blank                  |
+| ----------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------ |
+| **Box checked** (the default for a new or duplicated login) | kept in your operating system's password store           | asked for when you log in, if needed |
+| **Box unchecked**                                           | saved as plain text in your VS Code user `settings.json` | asked for when you log in, if needed |
+
+So, for example, you can keep the host password in the keychain and be asked for the GemStone password every time. If the keychain can't be written when you save, Jasper asks whether to save the passwords as plain text instead (the box is then unchecked) or not to save them, so you are asked for them when you log in. If the keychain can't be read when you open a login, the editor shows it read-only, since saving would erase the passwords kept there, with **Edit anyway** for when you'd rather type them again; logging in says so too, then asks for the passwords. The password store is reached through VS Code: Keychain on macOS, Windows' built-in credential encryption, and GNOME Keyring or KWallet on Linux. Plain text in `settings.json` also ends up in anything that copies it — backups, a dotfiles repo, Settings Sync. When Jasper finds a login whose password is in plain text, it offers once to move it to the keychain. A password in the keychain stays on this computer: on another computer that syncs your settings, Jasper asks for it until you save it there. On Linux with no keyring running, VS Code falls back to a weaker store of its own and says so; install GNOME Keyring or KWallet to avoid that.
+
 Each login is a row in the tree; click **Login** to start a session, which appears as a child beneath it. A login with no children is idle; a login with children is connected — so the tree itself shows what's running.
 
 **Login rows** offer Edit, Duplicate, Delete, and Login. A login **cannot be edited or deleted while it has an active session** — log out first. **Session rows** (the children) offer:

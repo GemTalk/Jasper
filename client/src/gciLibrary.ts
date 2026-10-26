@@ -218,6 +218,12 @@ type OptionalBinding<N extends GciOptionalFunctionName> = koffi.KoffiFunction & 
  *   {@link resolveSymbol} or `Smalltalk at: #someSymbol`.
  */
 export class GciLibrary {
+  /**
+   * Never unloaded, on purpose. A call can still be running on a koffi worker
+   * thread, or have returned with its callback still queued, and either
+   * crashes the process once the library is gone. Unloading frees nothing
+   * anyway: the extension host exits right after deactivate.
+   */
   private lib: koffi.IKoffiLib;
   private _netldiLib: koffi.IKoffiLib | undefined;
   /**
@@ -2164,10 +2170,6 @@ export class GciLibrary {
     return { success: result !== 0, err: err as unknown as GciError };
   }
 
-  close(): void {
-    this.lib.unload();
-  }
-
   // ---------------------------------------------------------------------
   // Session lifecycle
   // ---------------------------------------------------------------------
@@ -2221,10 +2223,10 @@ export class GciLibrary {
 
   /**
    * Logs out `session`. Failures are logged via `console.warn` rather than
-   * thrown. Every caller is a teardown path that drops the session whatever
-   * the outcome (`SessionManager.logout` and `dispose`, transient logins, test
-   * teardown), so a throw would only be swallowed there, taking the error
-   * message with it, or, in a test, obscure the real failure above it.
+   * thrown. Every caller is a teardown path, so a throw would only be
+   * swallowed there, taking the error message with it, or, in a test, obscure
+   * the real failure above it. What a refusal means is the caller's to decide,
+   * through the answered `sessionFreed`.
    *
    * Clears the session's cached Utf8 class oop only once the session is freed;
    * a refused logout leaves the session, and so its cache, alive.

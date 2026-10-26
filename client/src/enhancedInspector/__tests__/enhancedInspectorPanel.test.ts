@@ -12,7 +12,7 @@ vi.mock('vscode', () => ({
   ViewColumn: { Beside: 2 },
 }));
 
-vi.mock('../../debugQueries', () => ({
+vi.mock('../../debugger/debugQueries', () => ({
   fetchPrintString: vi.fn(),
   getObjectClassName: vi.fn(),
   fetchFullPrintString: vi.fn(),
@@ -43,7 +43,7 @@ vi.mock('../../systemBrowser', () => ({
 }));
 
 import * as vscode from 'vscode';
-import * as debug from '../../debugQueries';
+import * as debug from '../../debugger/debugQueries';
 import * as queries from '../queries/getEnhancedInspectorViewSpecs';
 import { SystemBrowser } from '../../systemBrowser';
 import { EnhancedInspector } from '../enhancedInspector';

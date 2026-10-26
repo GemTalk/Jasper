@@ -7,7 +7,7 @@ vi.mock('vscode', () => ({
 }));
 
 import { ActiveSession } from '../sessionManager';
-import { fetchPrintString, fetchFullPrintString } from '../debugQueries';
+import { fetchPrintString, fetchFullPrintString } from '../debugger/debugQueries';
 import { sessionOn } from './fakeActiveSession';
 
 const noErr = {

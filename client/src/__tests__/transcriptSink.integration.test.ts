@@ -11,7 +11,7 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 // An install failure is routed to gciLog, whose output channel here is the
 // vscode mock's discarding `appendLine`. Console logging keeps failures
 // diagnosable -- the install runs in `beforeEach` for every test below -- and
-// logInfo carries nbRunner's account of a cancel (whether the hard break was
+// logInfo carries nbRunner's account of a cancel (whether the break was
 // accepted, whether the cancelled call was ever collected).
 vi.mock('../gciLog', async (orig) => ({
   ...(await orig()),
@@ -30,7 +30,7 @@ import {
   drainTranscript,
   settleNbResult,
 } from '../transcriptSink';
-import { runNbCall, NbCancelledError, pollNbResultReady } from '../nbRunner';
+import { runNbCall, NbCancelledError, pollNbResultReady, stopCallsOn } from '../nbRunner';
 import { expectEventLoopToRemainResponsiveDuring } from './support/timers';
 import {
   OOP_CLASS_STRING,
@@ -101,7 +101,7 @@ describe('transcript sink (integration)', () => {
    *
    * Deliberately does NOT end the mode afterwards, as production's `finally`
    * does: the scoping tests below prove the mode ends with its process, and
-   * `afterEach` tidies up for the rest. It does end it once a hard-broken call
+   * `afterEach` tidies up for the rest. It does end it once a stopped call
    * has been collected, exactly as production does (`onAbandonedCollected`).
    */
   function executeForwarding(
@@ -291,21 +291,17 @@ tmps := SessionTemps current.
     expect(chunks).toEqual(['before', 'after']);
   });
 
-  it('a hard break while output streams leaves the session and its Transcript usable', async () => {
-    // Cancel pressed twice while the Transcript streams: the second press lands
-    // while a koffi worker thread owns the session for GciTsContinueWith.
-    // Polling the session from the main thread then kills the extension host
-    // (measured on 3.6.2 and 3.7.5), and a process stopped holding the
-    // Transcript semaphore fails every later write until it is cleared.
+  it('stopping while output streams leaves the session and its Transcript usable', async () => {
+    // Cancel pressed twice while the Transcript streams: the runner stops waiting
+    // while a koffi worker thread owns the session for GciTsContinueWith. Polling
+    // the session from the main thread then kills the extension host (measured on
+    // 3.6.2 and 3.7.5), and a process stopped holding the Transcript semaphore
+    // fails every later write until it is cleared.
     //
-    // Built so the hard break always lands in that worst place. The run first
-    // writes, which puts it on the worker, and then holds the semaphore in a
-    // loop of short waits. The soft break is resumed by a handler around both,
-    // so the run is still inside when the hard break arrives: soft-break
-    // delivery varies by an order of magnitude, and a run that stops at the
-    // soft break never reaches the path under test. Short waits rather than
-    // one long one, because on 3.6.2 resuming the break cuts a single Delay
-    // short. Bounded, so a break that never arrives cannot hang the file.
+    // The run writes first, which puts it on the worker, then holds the semaphore
+    // in a loop of short waits, resuming the break, so it is still inside when the
+    // runner stops waiting. Short waits rather than one long one, because on 3.6.2
+    // resuming the break cuts a single Delay short. Bounded, so it can't hang.
     let wroteOnce: () => void = () => {};
     const onWorker = new Promise<void>((resolve) => {
       wroteOnce = resolve;
@@ -348,13 +344,68 @@ tmps := SessionTemps current.
       await run.catch(() => {});
       await sessionFree().catch(() => {});
     }
-    // Far past the 5s default, because the worst case here is slow rather than
-    // broken: the run's handler resumes the hard break, so the gem can carry on
-    // to the end of its wait loop, and the worker's GciTsContinueWith only
-    // returns then. The follow-up write waits for that worker by design. A
-    // quiet machine settles the break in ~25ms and finishes the whole test in
-    // ~325ms; a loaded CI runner has taken the full loop, which the default
-    // killed mid-wait and left the session busy for the rest of the file.
+    // Far past the 5s default: the run's handler resumes the break, so the gem
+    // carries on to the end of its wait loop before the worker returns, and the
+    // follow-up write waits for that worker by design.
+  }, 30_000);
+
+  it('a logout refused while output streams succeeds once the run is stopped', async () => {
+    // GemStone refuses a logout while a koffi worker thread owns the session,
+    // and dropping the session after that refusal leaves its gem running with
+    // nothing left to reach it. Stopping the run hands the session back.
+    //
+    // On a session of its own, because the logout is the point. The run
+    // writes, which puts it on the worker, then waits there long enough for
+    // the first logout to land; the pause before it lets the worker actually
+    // start, since the write is reported just before the resume is queued.
+    const { session: busy, err } = session().transientLogin(session().login);
+    if (!busy) throw new Error(`Transient login failed: ${err.message}`);
+    const gemSession = busy.executeAndFetchString('System session printString');
+    expect(installTranscriptSink(busy)).toBe(true);
+    let wroteOnce: () => void = () => {};
+    const onWorker = new Promise<void>((resolve) => {
+      wroteOnce = resolve;
+    });
+    const code =
+      "Transcript nextPutAll: 'streaming'. " +
+      '200 timesRepeat: [(Delay forMilliseconds: 50) wait]. 42';
+    startClientForwarderMode(busy, code);
+    const run = runNbCall(
+      busy,
+      () => busy.GciTsNbExecute(code, OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL, 0, 0),
+      (signal) => settleNbResult(busy, () => wroteOnce(), signal),
+      { suppressNotification: true, disposableProcess: true },
+    );
+    // Claimed now: the stop rejects it before the assertions below run.
+    run.catch(() => {});
+    try {
+      await onWorker;
+      await sleep(200);
+      const firstLogout = busy.logout();
+
+      await stopCallsOn(busy);
+      const retry = busy.logout();
+
+      expect(firstLogout).toBe(false);
+      expect(retry).toBe(true);
+      await expect(run).rejects.toBeInstanceOf(NbCancelledError);
+      // The stone deregisters a gem shortly after its logout returns.
+      await vi.waitFor(
+        () =>
+          expect(exec(`(System currentSessions includes: ${gemSession}) printString`)).toBe(
+            'false',
+          ),
+        { timeout: 2000, interval: 100 },
+      );
+    } finally {
+      // Whatever failed above, the gem must not outlive the test.
+      await stopCallsOn(busy);
+      try {
+        busy.logout();
+      } catch {
+        /* already logged out */
+      }
+    }
   }, 30_000);
 
   it('a live write with no worker thread fails loudly and strands nothing', async () => {

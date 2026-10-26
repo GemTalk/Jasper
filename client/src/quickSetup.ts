@@ -6,7 +6,7 @@ import { installOutcomeText, showInstallOutcome, VersionManager } from './manage
 import { DatabaseManager } from './manager/databaseManager';
 import { ProcessManager } from './manager/processManager';
 import { LoginStorage } from './loginStorage';
-import { DEFAULT_GS_PW } from './loginTypes';
+import { dataCuratorLoginToCreate } from './loginTypes';
 import { GemStoneVersion } from './sysadminTypes';
 import { getSharedMemory } from './sharedMemoryTreeProvider';
 import { appendSysadmin } from './sysadminChannel';
@@ -204,17 +204,11 @@ export async function runQuickSetup(deps: QuickSetupDeps): Promise<void> {
   }
 
   // ── Step 9: Create login ────────────────────────────────
-  const login = {
-    label: '',
+  const login = dataCuratorLoginToCreate(loginStorage.getLogins(), {
     version: version.version,
-    gem_host: 'localhost',
-    stone: stoneName,
-    gs_user: 'DataCurator',
-    gs_password: DEFAULT_GS_PW,
-    netldi: ldiName,
-    host_user: '',
-    host_password: '',
-  };
+    stoneName,
+    ldiName,
+  });
 
   // Auto-detect GCI library path
   const bundledDll = isWindows() ? bundledWindowsClientGciPath(version.version) : undefined;
@@ -256,7 +250,7 @@ export async function runQuickSetup(deps: QuickSetupDeps): Promise<void> {
     }
   }
 
-  await loginStorage.saveLogin(login);
+  if (login) await loginStorage.saveLogin(login);
   refreshLogins();
 
   appendSysadmin('Quick Setup complete');

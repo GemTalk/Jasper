@@ -7,50 +7,83 @@
  */
 
 import * as vscode from 'vscode';
-import { GemStoneLogin } from './loginTypes';
+import { GemStoneLogin, loginLabel } from './loginTypes';
 
 export const KEYCHAIN_SERVICE = 'jasper-gemstone-login';
 
+type LoginIdentity = Pick<GemStoneLogin, 'gs_user' | 'gem_host' | 'stone'>;
+
+export type LoginPasswords = Pick<GemStoneLogin, 'gs_password' | 'host_password'>;
+
 /** Build a unique account identifier for a login. */
-export function loginCredentialAccount(
-  login: Pick<GemStoneLogin, 'gs_user' | 'gem_host' | 'stone'>,
-): string {
+export function loginCredentialAccount(login: LoginIdentity): string {
   return `${login.gs_user}@${login.gem_host}/${login.stone}`;
 }
 
-function loginSecretKey(login: Pick<GemStoneLogin, 'gs_user' | 'gem_host' | 'stone'>): string {
-  return `${KEYCHAIN_SERVICE}:${loginCredentialAccount(login)}`;
+// The GemStone password's key has no suffix: entries saved before the host
+// password could be kept here must still be found.
+function secretKeys(login: LoginIdentity): Record<keyof LoginPasswords, string> {
+  const base = `${KEYCHAIN_SERVICE}:${loginCredentialAccount(login)}`;
+  return { gs_password: base, host_password: `${base}#host` };
 }
 
-/** Store the login's password in SecretStorage. */
-export async function setLoginPassword(
+/** An empty password deletes its entry. Throws when SecretStorage can't be written. */
+export async function storeLoginPasswords(
   secrets: vscode.SecretStorage,
   login: GemStoneLogin,
 ): Promise<void> {
-  await secrets.store(loginSecretKey(login), login.gs_password);
-}
-
-/** Fetch a login's password from SecretStorage. Returns undefined if missing or unreadable. */
-export async function getLoginPassword(
-  secrets: vscode.SecretStorage,
-  login: Pick<GemStoneLogin, 'gs_user' | 'gem_host' | 'stone'>,
-): Promise<string | undefined> {
-  try {
-    return await secrets.get(loginSecretKey(login));
-  } catch {
-    return undefined;
+  const keys = secretKeys(login);
+  for (const field of ['gs_password', 'host_password'] as const) {
+    if (login[field]) {
+      await secrets.store(keys[field], login[field]);
+    } else {
+      await secrets.delete(keys[field]);
+    }
   }
 }
 
-/** Remove a login's password from SecretStorage. Returns true on success. */
-export async function deleteLoginPassword(
+/**
+ * A password missing comes back ''; throws when SecretStorage can't be read.
+ * For a caller that writes the passwords back, where '' would delete the entry.
+ */
+export async function readLoginPasswords(
   secrets: vscode.SecretStorage,
-  login: Pick<GemStoneLogin, 'gs_user' | 'gem_host' | 'stone'>,
-): Promise<boolean> {
+  login: LoginIdentity,
+): Promise<LoginPasswords> {
+  const keys = secretKeys(login);
+  const [gs_password, host_password] = await Promise.all([
+    secrets.get(keys.gs_password),
+    secrets.get(keys.host_password),
+  ]);
+  return { gs_password: gs_password ?? '', host_password: host_password ?? '' };
+}
+
+/**
+ * For a caller that asks for a password it doesn't have: a password missing
+ * comes back '', and so do both when SecretStorage can't be read, after telling
+ * the user so and what happens instead (`ifUnreadable`).
+ */
+export async function getLoginPasswords(
+  secrets: vscode.SecretStorage,
+  login: LoginIdentity,
+  ifUnreadable: string,
+): Promise<LoginPasswords> {
   try {
-    await secrets.delete(loginSecretKey(login));
-    return true;
-  } catch {
-    return false;
+    return await readLoginPasswords(secrets, login);
+  } catch (e) {
+    void vscode.window.showWarningMessage(
+      `Couldn't read the passwords for "${loginLabel(login)}" from the OS keychain ` +
+        `(${e instanceof Error ? e.message : String(e)}). ${ifUnreadable}`,
+    );
+    return { gs_password: '', host_password: '' };
   }
+}
+
+/** Best effort: each entry is tried on its own, and a failure is ignored. */
+export async function deleteLoginPasswords(
+  secrets: vscode.SecretStorage,
+  login: LoginIdentity,
+): Promise<void> {
+  const keys = secretKeys(login);
+  await Promise.allSettled([secrets.delete(keys.gs_password), secrets.delete(keys.host_password)]);
 }

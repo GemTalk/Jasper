@@ -11,6 +11,8 @@ export interface TestStone {
   user: string;
   password: string;
   gciLibraryPath: string;
+  /** Where the stone and NetLDI registered; a login resolves the NetLDI's name there. */
+  globalDir: string;
 }
 
 const envTestPath = path.resolve(__dirname, '..', '..', 'client', '.env.test');
@@ -57,5 +59,6 @@ export function readTestStone(): TestStone | undefined {
     user: env.VITE_GEMSTONE_USER ?? 'DataCurator',
     password: env.VITE_GEMSTONE_PASSWORD ?? '',
     gciLibraryPath,
+    globalDir: env.VITE_GEMSTONE_GLOBAL_DIR ?? '',
   };
 }

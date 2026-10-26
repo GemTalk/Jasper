@@ -82,7 +82,7 @@ export async function takeDownDatabase(
  *  can be tested without real time or real processes. */
 export interface SessionClearDeps {
   /** Log out Jasper's sessions on the database; returns how many there were. */
-  reapSessions(): number;
+  reapSessions(): Promise<number>;
   /** Processes holding the extents, excluding the stone's own. Asynchronous
    *  because the probe shells out, and the extension host must stay responsive
    *  while it does. */
@@ -110,7 +110,7 @@ export async function clearSessionsForStop(
   deps: SessionClearDeps,
   opts: { timeoutMs: number; pollMs: number },
 ): Promise<ExtentHolder[]> {
-  if (deps.reapSessions() === 0) return await deps.attachedHolders();
+  if ((await deps.reapSessions()) === 0) return await deps.attachedHolders();
 
   const deadline = deps.now() + opts.timeoutMs;
   let holders = await deps.attachedHolders();

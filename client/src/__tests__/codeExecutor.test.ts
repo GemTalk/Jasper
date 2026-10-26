@@ -17,7 +17,7 @@ vi.mock('../socketPoll', () => ({
   pollReadable: vi.fn(() => 1),
 }));
 
-vi.mock('../debuggerPanel', () => ({
+vi.mock('../debugger/debuggerPanel', () => ({
   DebuggerPanel: { create: vi.fn() },
 }));
 
@@ -38,7 +38,7 @@ vi.mock('../basicInspector/basicInspector', () => ({
   BasicInspector: { create: vi.fn() },
 }));
 
-vi.mock('../logpointChannel', () => ({
+vi.mock('../debugger/logpointChannel', () => ({
   appendLogpoint: vi.fn(),
   showLogpointChannel: vi.fn(),
 }));
@@ -51,7 +51,7 @@ import {
   NbSessionBusyError,
   type NbRunOptions,
 } from '../nbRunner';
-import { DebuggerPanel } from '../debuggerPanel';
+import { DebuggerPanel } from '../debugger/debuggerPanel';
 import { EnhancedInspector } from '../enhancedInspector/enhancedInspector';
 import { BasicInspector } from '../basicInspector/basicInspector';
 import { SessionManager, ActiveSession } from '../sessionManager';
@@ -59,7 +59,7 @@ import * as vscode from 'vscode';
 import { __resetConfig, __setConfig } from '../__mocks__/vscode';
 import { appendTranscript, appendTranscriptOutput, showTranscript } from '../transcriptChannel';
 import { pollReadable } from '../socketPoll';
-import { appendLogpoint, showLogpointChannel } from '../logpointChannel';
+import { appendLogpoint, showLogpointChannel } from '../debugger/logpointChannel';
 import { NbCancelledError } from '../nbRunner';
 import {
   GCI_PERFORM_FLAG_ENABLE_DEBUG,
@@ -71,7 +71,7 @@ import {
   DECISION,
   setBreakpointRuleSource,
   type BreakpointRuleSource,
-} from '../conditionalBreakpoints';
+} from '../debugger/conditionalBreakpoints';
 import { fakeActiveSession } from './fakeActiveSession';
 import {
   fakeSkipLoopGci,
@@ -560,12 +560,12 @@ describe('CodeExecutor', () => {
       expect(gci.GciTsNbExecute).not.toHaveBeenCalled();
     });
 
-    // After a hard break the `finally`'s end is refused while the call is
+    // After the runner stops waiting, the `finally`'s end is refused while the call is
     // still being collected; the runner calls this hook once it has been. When
     // it runs is nbRunner.test.ts's to pin; here, that each caller hands one
     // over and that it ends the mode.
     it.each(['executeIt', 'displayIt', 'inspectIt'] as const)(
-      '%s ends clientForwarder mode once a hard-broken call is collected',
+      '%s ends clientForwarder mode once a stopped call is collected',
       async (command) => {
         setActiveEditor(makeEditor('3 + 4'));
         await executor[command]();
@@ -1777,7 +1777,7 @@ describe('CodeExecutor', () => {
       expect(sinkCalls[1]).toContain('jasperEndClientForwarderMode');
     });
 
-    it('ends clientForwarder mode once a hard-broken call is collected', async () => {
+    it('ends clientForwarder mode once a stopped call is collected', async () => {
       const gci = makeGci();
       const session = makeSession(gci);
       const executor = executorWith(makeSessionManager(session), NO_CONDITIONS);
@@ -2046,7 +2046,7 @@ describe('CodeExecutor', () => {
       expect(mockOf(gci, 'GciTsClearStack')).toHaveBeenCalledWith(expect.anything(), PROCESS_OOP);
     });
 
-    it('lets a hard-break cancel through, without a warning', async () => {
+    it('lets a cancel the runner stopped waiting for through, without a warning', async () => {
       const gci = haltingGci([DECISION.Go], []);
       mockOf(gci, 'GciTsContinueWithAsync').mockRejectedValue(new NbCancelledError());
       const session = makeSession(gci);

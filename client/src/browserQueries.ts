@@ -239,8 +239,8 @@ import {
 import { getAllSelectors as sharedGetAllSelectors } from './queries/getAllSelectors';
 import { getMethodList as sharedGetMethodList } from './queries/getMethodList';
 import { getSourceOffsets as sharedGetSourceOffsets } from './queries/getSourceOffsets';
-import { getStepPointSelectorRanges as sharedGetStepPointSelectorRanges } from './queries/getStepPointSelectorRanges';
-import { getStepPointBundle as sharedGetStepPointBundle } from './queries/getStepPointBundle';
+import { getStepPointSelectorRanges as sharedGetStepPointSelectorRanges } from './debugger/queries/getStepPointSelectorRanges';
+import { getStepPointBundle as sharedGetStepPointBundle } from './debugger/queries/getStepPointBundle';
 import { listRowanProjects as sharedListRowanProjects } from './queries/rowan/listRowanProjects';
 import { getGemCacheKB as sharedGetGemCacheKB } from './queries/rowan/getGemCacheKB';
 import { exportRowanProject as sharedExportRowanProject } from './queries/rowan/exportRowanProject';
@@ -290,18 +290,18 @@ import { renameDictionary as sharedRenameDictionary } from './queries/renameDict
 import { renameClassCategory as sharedRenameClassCategory } from './queries/renameClassCategory';
 import { moveDictionaryUp as sharedMoveDictionaryUp } from './queries/moveDictionaryUp';
 import { moveDictionaryDown as sharedMoveDictionaryDown } from './queries/moveDictionaryDown';
-import { setBreakAtStepPoint as sharedSetBreakAtStepPoint } from './queries/setBreakAtStepPoint';
-import { clearBreakAtStepPoint as sharedClearBreakAtStepPoint } from './queries/clearBreakAtStepPoint';
-import { clearAllBreaks as sharedClearAllBreaks } from './queries/clearAllBreaks';
-import { disableBreakAtStepPoint as sharedDisableBreakAtStepPoint } from './queries/disableBreakAtStepPoint';
-import { getAllBreakpoints as sharedGetAllBreakpoints } from './queries/getAllBreakpoints';
+import { setBreakAtStepPoint as sharedSetBreakAtStepPoint } from './debugger/queries/setBreakAtStepPoint';
+import { clearBreakAtStepPoint as sharedClearBreakAtStepPoint } from './debugger/queries/clearBreakAtStepPoint';
+import { clearAllBreaks as sharedClearAllBreaks } from './debugger/queries/clearAllBreaks';
+import { disableBreakAtStepPoint as sharedDisableBreakAtStepPoint } from './debugger/queries/disableBreakAtStepPoint';
+import { getAllBreakpoints as sharedGetAllBreakpoints } from './debugger/queries/getAllBreakpoints';
 import {
   enableAllBreakpoints as sharedEnableAllBreakpoints,
   disableAllBreakpoints as sharedDisableAllBreakpoints,
   removeAllBreakpoints as sharedRemoveAllBreakpoints,
   hasBreakpoints as sharedHasBreakpoints,
   breakpointByOop as sharedBreakpointByOop,
-} from './queries/breakpointGlobals';
+} from './debugger/queries/breakpointGlobals';
 
 // Re-export shared types so existing callers (extension.ts, systemBrowser.ts, etc.)
 // can continue to import them from './browserQueries'.
@@ -315,9 +315,9 @@ export type { ClassHierarchyEntry } from './queries/getClassHierarchy';
 export type { DescendantClass } from './refactoring/queries/getClassDescendantNames';
 export type { MoveArgs } from './refactoring/queries/previewInstVarStructure';
 export type { MethodEntry } from './queries/getMethodList';
-export type { StepPointSelectorInfo } from './queries/getStepPointSelectorRanges';
-export type { StepPointBundle } from './queries/getStepPointBundle';
-export type { GemStoneBreakpoint } from './queries/getAllBreakpoints';
+export type { StepPointSelectorInfo } from './debugger/queries/getStepPointSelectorRanges';
+export type { StepPointBundle } from './debugger/queries/getStepPointBundle';
+export type { GemStoneBreakpoint } from './debugger/queries/getAllBreakpoints';
 export type { MethodSearchResult } from './queries/methodSearch';
 export type { RowanProject, RowanProjectList } from './queries/rowan/listRowanProjects';
 export type { RowanExportResult } from './queries/rowan/exportRowanProject';

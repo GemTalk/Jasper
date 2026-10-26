@@ -921,8 +921,7 @@ export class DatabasesPanel {
         return;
       case 'deleteLogin':
         // Through the command, not `storage.deleteLogin`: the command is what
-        // refuses a login with a live session and confirms before removing, and
-        // what clears the keychain entry a bare storage delete would orphan.
+        // refuses a login with a live session and confirms before removing.
         await this.loginCommand('gemstone.deleteLogin', msg.login);
         return;
       case 'chooseRoot':

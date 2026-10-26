@@ -21,6 +21,8 @@ order the login editor presents them:
    - **Host User** / **Host Password** — *optional.* The OS account on the Gem's
      host machine, required only when the remote NetLDI requires host
      authentication. Leave blank for a local stone or a guest-mode NetLDI.
+   - **Keep saved passwords in the OS keychain** — leave it checked to keep the
+     passwords you fill in out of your VS Code `settings.json`.
 4. Click **Save**.
 5. Back in **Logins & Sessions**, click the saved login (the plug) to connect.
 

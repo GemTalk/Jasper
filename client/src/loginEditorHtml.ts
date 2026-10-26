@@ -172,7 +172,15 @@ export function loginEditorHtml(nonce: string): string {
   </div>
 
   <div id="readOnlyBanner" class="banner">
-    This login has an active session, so its configuration is read-only. Log out to edit it.
+    <span id="activeSessionNote">
+      This login has an active session, so its configuration is read-only. Log out to edit it.
+    </span>
+    <span id="keychainUnreadableNote">
+      The OS keychain couldn't be read, so this login is read-only: saving it now would erase the
+      passwords kept there. Close it and open it again to retry, or edit it anyway and type the
+      passwords again.
+      <button id="editAnywayBtn" class="secondary" type="button">Edit anyway</button>
+    </span>
   </div>
 
   <div class="field-group">
@@ -206,11 +214,7 @@ export function loginEditorHtml(nonce: string): string {
 
     <label for="gs_password">GemStone Password</label>
     <input type="password" id="gs_password">
-    <div class="checkbox-row">
-      <input type="checkbox" id="password_in_keychain">
-      <label for="password_in_keychain" class="inline-label">Store password in OS keychain</label>
-    </div>
-    <div class="field-help">The password for the GemStone user. Leave it blank to be prompted on each login, or check the box above to store it securely in your OS keychain.</div>
+    <div class="field-help">The password for the GemStone user.</div>
   </div>
 
   <div class="field-group">
@@ -220,6 +224,14 @@ export function loginEditorHtml(nonce: string): string {
     <label for="host_password">Host Password (optional)</label>
     <input type="password" id="host_password">
     <div class="field-help">The operating-system account on the Gem's host machine. Fill these in only when the remote NetLDI requires host authentication; leave them blank for a local stone or a guest-mode NetLDI. If left blank, your own OS user is used.</div>
+  </div>
+
+  <div class="field-group">
+    <div class="checkbox-row">
+      <input type="checkbox" id="password_in_keychain">
+      <label for="password_in_keychain" class="inline-label">Keep saved passwords in the OS keychain</label>
+    </div>
+    <div class="hint">For both passwords above. A password you fill in is kept in your OS keychain when this is checked, or as plain text in your VS Code settings when it isn't. A password left blank is never saved: Jasper asks for it when you log in, if it is needed.</div>
   </div>
 
   <div class="field-group">

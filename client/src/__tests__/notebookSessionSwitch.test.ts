@@ -41,12 +41,11 @@ vi.mock('../gciLibrary', () => ({
       return ok;
     }
     logout() {
-      return true;
+      return { sessionFreed: true };
     }
     supportsNonBlockingLogin() {
       return false;
     }
-    close() {}
   },
 }));
 
@@ -172,7 +171,7 @@ describe('Switch Session in a notebook, with sessions logged in along the way', 
     const first = login('DataCurator');
     const second = login('SystemUser');
     const third = login('Carl');
-    manager.logout(second.id);
+    await manager.logout(second.id);
 
     const offered = await switchSessionTo(third);
 
@@ -183,7 +182,7 @@ describe('Switch Session in a notebook, with sessions logged in along the way', 
   it('with only one session left, keeps it without asking', async () => {
     const first = login('DataCurator');
     const second = login('SystemUser');
-    manager.logout(second.id);
+    await manager.logout(second.id);
 
     await chooseActiveSession(manager);
 

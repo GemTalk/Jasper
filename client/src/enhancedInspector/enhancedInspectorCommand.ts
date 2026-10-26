@@ -18,7 +18,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { ActiveSession, SessionManager } from '../sessionManager';
+import { ActiveSession, SessionManager, logOutOrFindGone } from '../sessionManager';
 import { refreshEnhancedInspectorAvailable } from './enhancedInspectorAvailability';
 import {
   installEnhancedInspectorSupport,
@@ -95,11 +95,7 @@ async function performInstall(
         ),
     );
   } finally {
-    try {
-      sys.logout();
-    } catch {
-      // The transient session is being discarded regardless.
-    }
+    logOutOrFindGone(sys);
   }
 
   if (!result.success) {

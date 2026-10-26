@@ -127,6 +127,15 @@ describe('logging a session out', () => {
     expect(gci.logout.mock.calls[0][0]).toBe(handle);
   });
 
+  it('answers whether the logout freed the session', () => {
+    const freed = fakeActiveSession({ gci: { logout: () => ({ sessionFreed: true }) } });
+    const refused = fakeActiveSession({ gci: { logout: () => ({ sessionFreed: false }) } });
+
+    const answers = [freed.logout(), refused.logout()];
+
+    expect(answers).toEqual([true, false]);
+  });
+
   it('refuses calls once the logout frees the session', () => {
     const { gci, calls } = recordingLibrary();
     const session = sessionOn(gci);

@@ -10,8 +10,8 @@ import {
 } from './gciConstants';
 import { logError, logInfo } from './gciLog';
 import { routeInspect } from './inspectRouter';
-import { DebuggerPanel } from './debuggerPanel';
-import { clearStack, getObjectPrintString } from './debugQueries';
+import { DebuggerPanel } from './debugger/debuggerPanel';
+import { clearStack, getObjectPrintString } from './debugger/debugQueries';
 import { appendTranscript, appendTranscriptOutput, showTranscript } from './transcriptChannel';
 import {
   startClientForwarderMode,
@@ -30,7 +30,7 @@ import {
   CONTINUE_FLAGS,
   SOFT_BREAK_ERROR,
   resolveBreakpointStop,
-} from './conditionalBreakpoints';
+} from './debugger/conditionalBreakpoints';
 
 const MAX_RESULT_SIZE = 64 * 1024;
 

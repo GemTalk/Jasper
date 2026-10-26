@@ -1,0 +1,303 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
+
+// `StepPointModel.fetch` asks for all three in one query now. The bundle mock
+// delegates to the three separate mocks so every test keeps setting up its
+// method the same way, one fact at a time.
+vi.mock('../../browserQueries', () => {
+  const getMethodSource = vi.fn(() => '');
+  const getSourceOffsets = vi.fn((): number[] => []);
+  const getStepPointSelectorRanges = vi.fn((): unknown[] => []);
+  return {
+    getMethodSource,
+    getSourceOffsets,
+    getStepPointSelectorRanges,
+    getStepPointBundle: vi.fn((...args: unknown[]) => ({
+      source: (getMethodSource as (...a: unknown[]) => string)(...args),
+      offsets: (getSourceOffsets as (...a: unknown[]) => number[])(...args),
+      selectors: (getStepPointSelectorRanges as (...a: unknown[]) => unknown[])(...args),
+    })),
+  };
+});
+
+import type * as vscode from 'vscode';
+import { Uri, Position } from '../../__mocks__/vscode';
+import { StepPointHoverProvider } from '../stepPointHover';
+import { StepPointModel } from '../stepPointModel';
+import { BreakpointManager, AppliedBreakpoint } from '../breakpointManager';
+import { SessionManager } from '../../sessionManager';
+import {
+  getMethodSource,
+  getSourceOffsets,
+  getStepPointSelectorRanges,
+} from '../../browserQueries';
+import { fakeActiveSession } from '../../__tests__/fakeActiveSession';
+
+const mockGetMethodSource = vi.mocked(getMethodSource);
+const mockGetSourceOffsets = vi.mocked(getSourceOffsets);
+const mockGetRanges = vi.mocked(getStepPointSelectorRanges);
+
+/** The mock's Position is structurally distinct from vscode's; bridge it once. */
+const pos = (line: number, char: number) => new Position(line, char) as unknown as vscode.Position;
+
+const METHOD_URI = 'gemstone://1/Globals/Account/instance/accessing/balance';
+//                0         1
+//                0123456789012345678
+const SOURCE = 'balance\n^self total';
+//  'self' at 0-based 9, 'total' at 14
+
+function makeSessionManager() {
+  return {
+    getSelectedSession: vi.fn(() =>
+      fakeActiveSession({
+        id: 1,
+        gci: {},
+        handle: 'h',
+        login: {},
+        stoneVersion: '3.7.5',
+      }),
+    ),
+    onDidChangeSelection: vi.fn(() => ({ dispose: () => {} })),
+  } as unknown as SessionManager;
+}
+
+function makeDocument(uriStr = METHOD_URI) {
+  return {
+    uri: Uri.parse(uriStr),
+    isDirty: false,
+    getText: () => SOURCE,
+    // Line 0 is 'balance' (8 chars incl. newline); line 1 starts at offset 8.
+    offsetAt: (p: Position) => (p.line === 0 ? p.character : 8 + p.character),
+    positionAt: (offset: number) =>
+      offset < 8 ? new Position(0, offset) : new Position(1, offset - 8),
+  } as unknown as import('vscode').TextDocument;
+}
+
+function makeManager(applied: AppliedBreakpoint[] = []) {
+  return {
+    appliedFor: vi.fn(() => applied),
+    ruleOf: vi.fn((bp: AppliedBreakpoint) => ({ ...bp })),
+  } as unknown as BreakpointManager;
+}
+
+function hoverText(hover: import('vscode').Hover | null): string {
+  if (!hover) return '';
+  const contents = hover.contents as { value: string }[] | { value: string };
+  return Array.isArray(contents) ? contents.map((c) => c.value).join('\n') : contents.value;
+}
+
+describe('StepPointHoverProvider', () => {
+  beforeEach(() => {
+    mockGetMethodSource.mockReset().mockReturnValue(SOURCE);
+    // step points 1 and 2, at 0-based 9 ('self') and 14 ('total')
+    mockGetSourceOffsets.mockReset().mockReturnValue([10, 15]);
+    mockGetRanges.mockReset().mockReturnValue([
+      { stepPoint: 1, selectorOffset: 9, selectorLength: 4, selectorText: 'self' },
+      { stepPoint: 2, selectorOffset: 14, selectorLength: 5, selectorText: 'total' },
+    ]);
+  });
+
+  it('reports the step point under the pointer', () => {
+    const provider = new StepPointHoverProvider(
+      new StepPointModel(makeSessionManager()),
+      makeManager(),
+    );
+    // character 6 on line 1 => offset 14 => 'total' => step point 2
+    const hover = provider.provideHover(makeDocument(), pos(1, 6));
+    expect(hoverText(hover)).toContain('Step point 2');
+  });
+
+  it('reports how many step points the method has', () => {
+    const provider = new StepPointHoverProvider(
+      new StepPointModel(makeSessionManager()),
+      makeManager(),
+    );
+    const hover = provider.provideHover(makeDocument(), pos(1, 1));
+    expect(hoverText(hover)).toContain('of 2');
+  });
+
+  it('highlights the step point’s own token, so the reach is visible', () => {
+    const provider = new StepPointHoverProvider(
+      new StepPointModel(makeSessionManager()),
+      makeManager(),
+    );
+    const hover = provider.provideHover(makeDocument(), pos(1, 6));
+    // 'total' spans offsets 14..19, i.e. characters 6..11 of line 1.
+    expect(hover?.range?.start).toMatchObject({ line: 1, character: 6 });
+    expect(hover?.range?.end).toMatchObject({ line: 1, character: 11 });
+  });
+
+  it('offers to set a breakpoint when there is none', () => {
+    const provider = new StepPointHoverProvider(
+      new StepPointModel(makeSessionManager()),
+      makeManager(),
+    );
+    const text = hoverText(provider.provideHover(makeDocument(), pos(1, 6)));
+    expect(text).toContain('gemstone.breakpoints.toggleAtStepPoint');
+    expect(text).not.toContain('disableAtStepPoint');
+  });
+
+  it('offers clear and disable for an enabled breakpoint', () => {
+    const provider = new StepPointHoverProvider(
+      new StepPointModel(makeSessionManager()),
+      makeManager([{ stepPoint: 2, offset: 14, line: 2, enabled: true }]),
+    );
+    const text = hoverText(provider.provideHover(makeDocument(), pos(1, 6)));
+    expect(text).toContain('Breakpoint set');
+    expect(text).toContain('gemstone.breakpoints.clearAtStepPoint');
+    expect(text).toContain('gemstone.breakpoints.disableAtStepPoint');
+  });
+
+  it('offers enable for a disabled breakpoint', () => {
+    const provider = new StepPointHoverProvider(
+      new StepPointModel(makeSessionManager()),
+      makeManager([{ stepPoint: 2, offset: 14, line: 2, enabled: false }]),
+    );
+    const text = hoverText(provider.provideHover(makeDocument(), pos(1, 6)));
+    expect(text).toContain('disabled');
+    expect(text).toContain('gemstone.breakpoints.enableAtStepPoint');
+  });
+
+  it('offers to add a condition to a breakpoint that has none', () => {
+    const provider = new StepPointHoverProvider(
+      new StepPointModel(makeSessionManager()),
+      makeManager([{ stepPoint: 2, offset: 14, line: 2, enabled: true }]),
+    );
+    const text = hoverText(provider.provideHover(makeDocument(), pos(1, 6)));
+    expect(text).toContain('Add condition');
+    expect(text).toContain('gemstone.breakpoints.editConditionAtStepPoint');
+  });
+
+  it('shows a condition in full, and offers to edit it', () => {
+    // The marker beside the token elides a long condition; the hover is where
+    // the whole of it can be read, and where it can be changed.
+    const provider = new StepPointHoverProvider(
+      new StepPointModel(makeSessionManager()),
+      makeManager([{ stepPoint: 2, offset: 14, line: 2, enabled: true, condition: 'total > 100' }]),
+    );
+    const text = hoverText(provider.provideHover(makeDocument(), pos(1, 6)));
+    expect(text).toContain('Conditional breakpoint set');
+    expect(text).toContain('total > 100');
+    expect(text).toContain('Edit condition');
+  });
+
+  it('says where a logpoint writes, and offers a way there', () => {
+    // The two places a developer actually points — the label and the gutter —
+    // name a channel they then have to go and find. This hover is where the way
+    // in lives.
+    const provider = new StepPointHoverProvider(
+      new StepPointModel(makeSessionManager()),
+      makeManager([
+        {
+          stepPoint: 2,
+          offset: 14,
+          line: 2,
+          enabled: true,
+          logMessage: 'total={total}',
+        },
+      ]),
+    );
+    const text = hoverText(provider.provideHover(makeDocument(), pos(1, 6)));
+    expect(text).toContain('Logpoint set');
+    expect(text).toContain('GemStone Logpoints');
+    expect(text).toContain('total={total}');
+    expect(text).toContain('command:gemstone.breakpoints.showLogpointOutput');
+  });
+
+  it('offers no logpoint output link on a breakpoint that only stops', () => {
+    const provider = new StepPointHoverProvider(
+      new StepPointModel(makeSessionManager()),
+      makeManager([{ stepPoint: 2, offset: 14, line: 2, enabled: true, condition: 'x > 1' }]),
+    );
+    const text = hoverText(provider.provideHover(makeDocument(), pos(1, 6)));
+    expect(text).not.toContain('showLogpointOutput');
+  });
+
+  it('says a disabled conditional breakpoint is both', () => {
+    const provider = new StepPointHoverProvider(
+      new StepPointModel(makeSessionManager()),
+      makeManager([
+        { stepPoint: 2, offset: 14, line: 2, enabled: false, condition: 'total > 100' },
+      ]),
+    );
+    const text = hoverText(provider.provideHover(makeDocument(), pos(1, 6)));
+    expect(text).toContain('Conditional breakpoint set but disabled');
+  });
+
+  it('says what a breakpoint waits for, and offers to change it', () => {
+    // The hover used to leave the trigger out, so a breakpoint that only waited
+    // on another one said nothing about why it was not stopping.
+    const waiting = {
+      stepPoint: 2,
+      offset: 14,
+      line: 2,
+      enabled: true,
+      triggeredBy: {
+        uri: 'gemstone://1/Globals/Account/instance/accessing/deposit%3A',
+        stepPoint: 4,
+      },
+    };
+    const manager = makeManager([waiting]);
+    vi.mocked(manager.ruleOf).mockReturnValue({ ...waiting, triggerProblem: 'disabled' });
+    const provider = new StepPointHoverProvider(new StepPointModel(makeSessionManager()), manager);
+    const text = hoverText(provider.provideHover(makeDocument(), pos(1, 6)));
+    expect(text).toContain('Waits for **Account>>deposit: @4**, which is disabled');
+    expect(text).toContain('Edit trigger](command:gemstone.breakpoints.editTriggerAtStepPoint?');
+  });
+
+  it('offers to make a breakpoint wait for another', () => {
+    const provider = new StepPointHoverProvider(
+      new StepPointModel(makeSessionManager()),
+      makeManager([{ stepPoint: 2, offset: 14, line: 2, enabled: true }]),
+    );
+    const text = hoverText(provider.provideHover(makeDocument(), pos(1, 6)));
+    expect(text).toContain(
+      'Break only after…](command:gemstone.breakpoints.editTriggerAtStepPoint?',
+    );
+  });
+
+  it('trusts only the commands its own links run', () => {
+    // The hover shows the developer's own condition, so wholesale trust would
+    // run any command link written into one.
+    const provider = new StepPointHoverProvider(
+      new StepPointModel(makeSessionManager()),
+      makeManager([{ stepPoint: 2, offset: 14, line: 2, enabled: true, condition: 'x' }]),
+    );
+    const hover = provider.provideHover(makeDocument(), pos(1, 6));
+    const md = hover?.contents as unknown as { value: string; isTrusted: unknown };
+    const trusted = (md.isTrusted as { enabledCommands: string[] }).enabledCommands;
+    const linked = [...md.value.matchAll(/\(command:([\w.]+)/g)].map((m) => m[1]);
+    expect(linked.length).toBeGreaterThan(0);
+    for (const id of linked) expect(trusted).toContain(id);
+    expect(trusted.every((id) => id.startsWith('gemstone.breakpoints.'))).toBe(true);
+  });
+
+  it('says nothing when the pointer is not on a step point token', () => {
+    // Character 0 of line 1 is '^', which carries no selector range here — and
+    // the caret rule would otherwise fall forward and misreport a step point.
+    const provider = new StepPointHoverProvider(
+      new StepPointModel(makeSessionManager()),
+      makeManager(),
+    );
+    expect(provider.provideHover(makeDocument(), pos(1, 0))).toBeNull();
+  });
+
+  it('says nothing for a non-gemstone document', () => {
+    const provider = new StepPointHoverProvider(
+      new StepPointModel(makeSessionManager()),
+      makeManager(),
+    );
+    expect(provider.provideHover(makeDocument('file:///a.st'), pos(1, 6))).toBeNull();
+  });
+
+  it('says nothing for a method with no step points', () => {
+    mockGetSourceOffsets.mockReturnValue([]);
+    mockGetRanges.mockReturnValue([]);
+    const provider = new StepPointHoverProvider(
+      new StepPointModel(makeSessionManager()),
+      makeManager(),
+    );
+    expect(provider.provideHover(makeDocument(), pos(1, 6))).toBeNull();
+  });
+});

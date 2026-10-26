@@ -975,7 +975,7 @@ describe('SunitTestController', () => {
     });
 
     it('reports a cancelled debug run as skipped, not as a test error', async () => {
-      // Cancelling a debug run (a soft or hard break) is the user's decision,
+      // Cancelling a debug run is the user's decision,
       // not a test failure — it must leave no verdict, like a stopped run,
       // rather than storing an error and blaming the test.
       const debugExecutor = makeDebugExecutor({ raised: false, cancelled: true });

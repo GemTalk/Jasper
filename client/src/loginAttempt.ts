@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import type { GemStoneLogin } from './loginTypes';
+import type { LoginPasswords } from './loginCredentials';
 import type { ActiveSession } from './sessionManager';
 import type { LoginOutcome } from './telemetry';
 import { bundledWindowsClientGciPath, bundledGciArchSupported } from './bundledGci';
@@ -13,7 +14,7 @@ const BROWSE = 'Browse...';
 
 /** What {@link attemptLogin} needs from the extension's storage, installers and connect UI. */
 export interface LoginAttemptDeps {
-  keychainPassword(login: GemStoneLogin): Promise<string | undefined>;
+  keychainPasswords(login: GemStoneLogin): Promise<LoginPasswords>;
   getGciLibraryPath(version: string): string | undefined;
   setGciLibraryPath(version: string, gciPath: string): Promise<void>;
   removeGciLibraryPath(version: string): Promise<void>;
@@ -44,13 +45,10 @@ export async function attemptLogin(
 ): Promise<LoginOutcome> {
   const login = { ...original };
 
-  // If the login is configured to use the OS keychain, fetch the password
-  // from there. Fall through to the prompt if the keychain entry is missing.
-  if (login.password_in_keychain && !login.gs_password) {
-    const stored = await deps.keychainPassword(login);
-    if (stored) {
-      login.gs_password = stored;
-    }
+  if (login.password_in_keychain) {
+    const stored = await deps.keychainPasswords(login);
+    login.gs_password ||= stored.gs_password;
+    login.host_password ||= stored.host_password;
   }
 
   if (!login.gs_password) {

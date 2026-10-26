@@ -1,0 +1,676 @@
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
+
+vi.mock('../debugQueries', () => ({
+  getStackDepth: vi.fn(() => 3),
+  getFrameInfo: vi.fn((session: unknown, gsProcess: bigint, level: number) => ({
+    methodOop: BigInt(1000 + level),
+    ipOffset: 10 * level,
+    selfOop: 500n,
+    selfIsUnavailable: false,
+    homeMethodOop: OOP_NIL,
+    argAndTempNames: ['arg1', 'temp1'],
+    argAndTempOops: [100n, 200n],
+  })),
+  getMethodInfo: vi.fn((_session: unknown, methodOop: bigint) => ({
+    className: 'SmallInteger',
+    selector: methodOop === 1001n ? '/' : methodOop === 1002n ? '_errorExec' : 'perform:',
+  })),
+  getMethodUriInfo: vi.fn((session: unknown, methodOop: bigint) => ({
+    dictName: 'Globals',
+    className: 'SmallInteger',
+    isMeta: false,
+    category: 'arithmetic',
+    selector: methodOop === 1001n ? '/' : methodOop === 1002n ? '_errorExec' : 'perform:',
+  })),
+  getMethodSource: vi.fn(() => '/ aNumber\n  ^ self _primitiveDivide: aNumber'),
+  getLineForIp: vi.fn(() => 2),
+  getObjectPrintString: vi.fn((session: unknown, oop: bigint) => {
+    if (oop === 100n) return '42';
+    if (oop === 200n) return 'nil';
+    if (oop === 500n) return 'anObject';
+    return `OOP(${oop})`;
+  }),
+  getObjectClassName: vi.fn((session: unknown, oop: bigint) => {
+    if (oop === 100n) return 'SmallInteger';
+    if (oop === 200n) return 'UndefinedObject';
+    if (oop === 500n) return 'SmallInteger';
+    return 'Object';
+  }),
+  isSpecialOop: vi.fn((session: unknown, oop: bigint) => {
+    // SmallIntegers and nil are special
+    return oop === 100n || oop === 200n || oop === 0x14n;
+  }),
+  getInstVarNames: vi.fn(() => []),
+  getNamedInstVarOops: vi.fn(() => []),
+  getIndexedSize: vi.fn(() => 0),
+  getIndexedOops: vi.fn(() => []),
+  clearStack: vi.fn(),
+  continueExecution: vi.fn(() => ({ completed: true })),
+  stepOver: vi.fn(() => ({ completed: false })),
+  stepInto: vi.fn(() => ({ completed: false })),
+  stepOut: vi.fn(() => ({ completed: false })),
+  trimStackToLevel: vi.fn(),
+  evaluateInFrame: vi.fn(() => '42'),
+}));
+
+vi.mock('../conditionalBreakpoints', () => ({
+  resumeNeedsRules: vi.fn(() => false),
+  honourRulesAfterResume: vi.fn(),
+}));
+
+import { GemStoneDebugSession } from '../gemstoneDebugSession';
+import { honourRulesAfterResume, resumeNeedsRules } from '../conditionalBreakpoints';
+import { SessionManager } from '../../sessionManager';
+import * as debugQueries from '../debugQueries';
+import { OOP_NIL } from '../../gciConstants';
+import { fakeActiveSession } from '../../__tests__/fakeActiveSession';
+
+// Capture DAP messages sent by the debug session
+interface DapMessage {
+  type: string;
+  event?: string;
+  command?: string;
+  body?: Record<string, unknown>;
+  success?: boolean;
+  message?: string;
+}
+
+function createTestSession() {
+  const sent: DapMessage[] = [];
+
+  const mockSessionManager = {
+    getSessions: vi.fn(() => [
+      fakeActiveSession({
+        id: 1,
+        gci: {},
+        handle: {},
+        login: { label: 'Test' },
+        stoneVersion: '3.7.2',
+      }),
+    ]),
+    getSelectedSession: vi.fn(),
+    onDidChangeSelection: vi.fn(() => ({ dispose: () => {} })),
+  } as unknown as SessionManager;
+
+  const session = new GemStoneDebugSession(mockSessionManager);
+
+  // Intercept DAP output by overriding sendResponse and sendEvent
+  (session as unknown as Record<string, unknown>).sendResponse = vi.fn((resp: DapMessage) => {
+    sent.push({
+      type: 'response',
+      command: resp.command,
+      body: resp.body,
+      success: resp.success,
+      message: resp.message,
+    });
+  });
+  (session as unknown as Record<string, unknown>).sendEvent = vi.fn(
+    (evt: { event: string; body?: unknown }) => {
+      sent.push({ type: 'event', event: evt.event, body: evt.body as Record<string, unknown> });
+    },
+  );
+
+  return { session, sent, mockSessionManager };
+}
+
+// Helper to invoke protected DAP request handlers
+function callRequest(
+  session: GemStoneDebugSession,
+  method: string,
+  response: Record<string, unknown>,
+  args: Record<string, unknown>,
+) {
+  const fn = (session as unknown as Record<string, (...a: unknown[]) => unknown>)[method];
+  return fn.call(session, response, args);
+}
+
+function makeResponse(command: string): Record<string, unknown> {
+  return { command, seq: 0, type: 'response', request_seq: 0, success: true, body: {} };
+}
+
+describe('GemStoneDebugSession', () => {
+  // Overrides here must be the *Once kind: a sticky mockReturnValue or
+  // mockImplementation survives vi.clearAllMocks() and leaks into whichever
+  // tests run after it under sequence.shuffle.
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe('initializeRequest', () => {
+    it('reports capabilities and sends InitializedEvent', () => {
+      const { session, sent } = createTestSession();
+      const response = makeResponse('initialize');
+      callRequest(session, 'initializeRequest', response, { adapterID: 'gemstone' });
+
+      expect(response.body).toMatchObject({
+        supportsRestartFrame: true,
+        supportsEvaluateForHovers: true,
+        supportsTerminateRequest: true,
+      });
+      expect(sent).toContainEqual(expect.objectContaining({ type: 'event', event: 'initialized' }));
+    });
+  });
+
+  describe('attachRequest', () => {
+    it('attaches to a session and sends StoppedEvent', () => {
+      const { session, sent } = createTestSession();
+      const response = makeResponse('attach');
+      callRequest(session, 'attachRequest', response, {
+        sessionId: 1,
+        gsProcess: '12345',
+        errorMessage: 'a]ZeroDivide',
+      });
+
+      expect(sent).toContainEqual(
+        expect.objectContaining({
+          type: 'event',
+          event: 'stopped',
+        }),
+      );
+    });
+
+    it('fails when session not found', () => {
+      const { session } = createTestSession();
+      const response = makeResponse('attach');
+      callRequest(session, 'attachRequest', response, {
+        sessionId: 999,
+        gsProcess: '12345',
+      });
+
+      expect(response.success).toBe(false);
+      expect(response.message).toContain('999');
+    });
+  });
+
+  describe('threadsRequest', () => {
+    it('returns a single GsProcess thread', () => {
+      const { session } = createTestSession();
+      const response = makeResponse('threads');
+      callRequest(session, 'threadsRequest', response, {});
+
+      expect(response.body).toMatchObject({
+        threads: [expect.objectContaining({ id: 1, name: 'GsProcess' })],
+      });
+    });
+  });
+
+  describe('stackTraceRequest (after attach)', () => {
+    let session: GemStoneDebugSession;
+    let sent: DapMessage[];
+
+    beforeEach(() => {
+      const test = createTestSession();
+      session = test.session;
+      sent = test.sent;
+      // Attach first
+      callRequest(session, 'attachRequest', makeResponse('attach'), {
+        sessionId: 1,
+        gsProcess: '12345',
+        errorMessage: 'ZeroDivide',
+      });
+      sent.length = 0; // clear attach events
+    });
+
+    it('returns stack frames with class>>selector names', () => {
+      const response = makeResponse('stackTrace');
+      callRequest(session, 'stackTraceRequest', response, { threadId: 1 });
+
+      const body = response.body as {
+        stackFrames: Array<{ id: number; name: string }>;
+        totalFrames: number;
+      };
+      expect(body.totalFrames).toBe(3);
+      expect(body.stackFrames).toHaveLength(3);
+      expect(body.stackFrames[0].id).toBe(1);
+      expect(body.stackFrames[0].name).toBe('SmallInteger>>#/');
+      expect(body.stackFrames[1].name).toBe('SmallInteger>>#_errorExec');
+      expect(body.stackFrames[2].name).toBe('SmallInteger>>#perform:');
+    });
+
+    it('respects startFrame and levels', () => {
+      const response = makeResponse('stackTrace');
+      callRequest(session, 'stackTraceRequest', response, {
+        threadId: 1,
+        startFrame: 1,
+        levels: 1,
+      });
+
+      const body = response.body as { stackFrames: Array<{ id: number }>; totalFrames: number };
+      expect(body.totalFrames).toBe(3);
+      expect(body.stackFrames).toHaveLength(1);
+      expect(body.stackFrames[0].id).toBe(2);
+    });
+
+    it('assigns source references for each method', () => {
+      const response = makeResponse('stackTrace');
+      callRequest(session, 'stackTraceRequest', response, { threadId: 1 });
+
+      const body = response.body as {
+        stackFrames: Array<{ source?: { sourceReference?: number } }>;
+      };
+      const refs = body.stackFrames.map((f) => f.source?.sourceReference).filter(Boolean);
+      expect(refs.length).toBe(3);
+      // Each unique methodOop gets a unique sourceReference
+      expect(new Set(refs).size).toBe(3);
+    });
+
+    it('provides gemstone:// URI as source path', () => {
+      const response = makeResponse('stackTrace');
+      callRequest(session, 'stackTraceRequest', response, { threadId: 1 });
+
+      const body = response.body as { stackFrames: Array<{ source?: { path?: string } }> };
+      const path = body.stackFrames[0].source?.path;
+      expect(path).toBe('gemstone://1/Globals/SmallInteger/instance/arithmetic/%2F');
+    });
+
+    it('still provides source reference when getMethodUriInfo returns undefined (doit frame)', () => {
+      // Simulate a "doit" method where the query can't resolve the method
+      vi.mocked(debugQueries.getMethodUriInfo).mockReturnValueOnce(undefined);
+      vi.mocked(debugQueries.getMethodInfo).mockImplementationOnce(() => {
+        throw new Error('does not understand #inClass');
+      });
+
+      const response = makeResponse('stackTrace');
+      callRequest(session, 'stackTraceRequest', response, { threadId: 1 });
+
+      const body = response.body as {
+        stackFrames: Array<{
+          id: number;
+          name: string;
+          source?: { sourceReference?: number; name?: string };
+        }>;
+        totalFrames: number;
+      };
+      expect(body.totalFrames).toBe(3);
+      expect(body.stackFrames).toHaveLength(3);
+
+      // The first frame (where getMethodInfo threw) should still have a source reference
+      const doitFrame = body.stackFrames[0];
+      expect(doitFrame.name).toBe('Executed Code');
+      expect(doitFrame.source).toBeDefined();
+      expect(doitFrame.source!.sourceReference).toBeGreaterThan(0);
+    });
+  });
+
+  describe('sourceRequest (after attach + stackTrace)', () => {
+    let session: GemStoneDebugSession;
+
+    beforeEach(() => {
+      const test = createTestSession();
+      session = test.session;
+      callRequest(session, 'attachRequest', makeResponse('attach'), {
+        sessionId: 1,
+        gsProcess: '12345',
+      });
+      // Trigger stackTrace to populate sourceRefMap
+      callRequest(session, 'stackTraceRequest', makeResponse('stackTrace'), { threadId: 1 });
+    });
+
+    it('returns method source for a valid sourceReference', () => {
+      const response = makeResponse('source');
+      callRequest(session, 'sourceRequest', response, { sourceReference: 1 });
+
+      const body = response.body as { content: string; mimeType?: string };
+      expect(body.content).toContain('_primitiveDivide');
+    });
+
+    it('returns the mime type, so this read-only frame source is highlighted', () => {
+      // package.json registers 'text/x-gemstone-smalltalk' as the mime type of
+      // the gemstone-smalltalk language, so returning it gets this view syntax
+      // highlighting — and no breakpoint gutter, because `contributes.breakpoints`
+      // names gemstone-method, which only a compiled method's own editor is
+      // given. The mime type used to be withheld to keep the gutter away, at the
+      // cost of the highlighting; the language split pays for both.
+      const response = makeResponse('source');
+      callRequest(session, 'sourceRequest', response, { sourceReference: 1 });
+
+      const body = response.body as { content: string; mimeType?: string };
+      expect(body.mimeType).toBe('text/x-gemstone-smalltalk');
+      expect(body.content).toContain('_primitiveDivide');
+    });
+
+    it('returns placeholder for unknown sourceReference', () => {
+      const response = makeResponse('source');
+      callRequest(session, 'sourceRequest', response, { sourceReference: 999 });
+
+      const body = response.body as { content: string };
+      expect(body.content).toContain('Source not available');
+    });
+  });
+
+  describe('scopesRequest', () => {
+    let session: GemStoneDebugSession;
+
+    beforeEach(() => {
+      const test = createTestSession();
+      session = test.session;
+      callRequest(session, 'attachRequest', makeResponse('attach'), {
+        sessionId: 1,
+        gsProcess: '12345',
+      });
+    });
+
+    it('returns Arguments & Temps and Receiver scopes', () => {
+      const response = makeResponse('scopes');
+      callRequest(session, 'scopesRequest', response, { frameId: 1 });
+
+      const body = response.body as { scopes: Array<{ name: string; variablesReference: number }> };
+      expect(body.scopes).toHaveLength(2);
+      expect(body.scopes[0].name).toBe('Arguments & Temps');
+      expect(body.scopes[0].variablesReference).toBeGreaterThan(0);
+      expect(body.scopes[1].name).toBe('Receiver');
+      expect(body.scopes[1].variablesReference).toBeGreaterThan(0);
+    });
+  });
+
+  describe('variablesRequest', () => {
+    let session: GemStoneDebugSession;
+
+    beforeEach(() => {
+      const test = createTestSession();
+      session = test.session;
+      callRequest(session, 'attachRequest', makeResponse('attach'), {
+        sessionId: 1,
+        gsProcess: '12345',
+      });
+    });
+
+    it('returns arg/temp variables for a frame scope', () => {
+      // First get scopes to get variable references
+      const scopesResp = makeResponse('scopes');
+      callRequest(session, 'scopesRequest', scopesResp, { frameId: 1 });
+      const scopes = (scopesResp.body as { scopes: Array<{ variablesReference: number }> }).scopes;
+      const argsRef = scopes[0].variablesReference;
+
+      const response = makeResponse('variables');
+      callRequest(session, 'variablesRequest', response, { variablesReference: argsRef });
+
+      const body = response.body as {
+        variables: Array<{ name: string; value: string; type: string }>;
+      };
+      expect(body.variables).toHaveLength(2);
+      expect(body.variables[0]).toMatchObject({ name: 'arg1', value: '42', type: 'SmallInteger' });
+      expect(body.variables[1]).toMatchObject({
+        name: 'temp1',
+        value: 'nil',
+        type: 'UndefinedObject',
+      });
+    });
+
+    it('returns empty for unknown variablesReference', () => {
+      const response = makeResponse('variables');
+      callRequest(session, 'variablesRequest', response, { variablesReference: 9999 });
+
+      const body = response.body as { variables: unknown[] };
+      expect(body.variables).toEqual([]);
+    });
+
+    it('does not give expandable refs to special OOPs', () => {
+      // Get the args scope
+      const scopesResp = makeResponse('scopes');
+      callRequest(session, 'scopesRequest', scopesResp, { frameId: 1 });
+      const argsRef = (scopesResp.body as { scopes: Array<{ variablesReference: number }> })
+        .scopes[0].variablesReference;
+
+      const response = makeResponse('variables');
+      callRequest(session, 'variablesRequest', response, { variablesReference: argsRef });
+
+      const body = response.body as { variables: Array<{ variablesReference: number }> };
+      // SmallInteger (100n) and nil (200n) are special — should have variablesReference: 0
+      expect(body.variables[0].variablesReference).toBe(0);
+      expect(body.variables[1].variablesReference).toBe(0);
+    });
+  });
+
+  describe('continueRequest', () => {
+    it('sends TerminatedEvent when execution completes', () => {
+      const { session, sent } = createTestSession();
+      callRequest(session, 'attachRequest', makeResponse('attach'), {
+        sessionId: 1,
+        gsProcess: '12345',
+      });
+      sent.length = 0;
+
+      const response = makeResponse('continue');
+      callRequest(session, 'continueRequest', response, { threadId: 1 });
+
+      expect(sent).toContainEqual(expect.objectContaining({ type: 'event', event: 'terminated' }));
+    });
+
+    it('carries on past a stop a breakpoint rule passes, then reports where it ended', async () => {
+      // As in the run that opened the session: a logpoint reached on continue
+      // logs and carries on rather than stopping.
+      const atLogpoint = {
+        completed: false,
+        errorMessage: 'Method breakpoint encountered',
+        errorContext: 999n,
+        errorNumber: 6005,
+      };
+      vi.mocked(debugQueries.continueExecution).mockReturnValueOnce(atLogpoint);
+      vi.mocked(resumeNeedsRules).mockReturnValueOnce(true);
+      vi.mocked(honourRulesAfterResume).mockResolvedValueOnce({ completed: true });
+
+      const { session, sent } = createTestSession();
+      callRequest(session, 'attachRequest', makeResponse('attach'), {
+        sessionId: 1,
+        gsProcess: '12345',
+      });
+      sent.length = 0;
+
+      callRequest(session, 'continueRequest', makeResponse('continue'), { threadId: 1 });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(vi.mocked(honourRulesAfterResume).mock.calls[0][1]).toBe(atLogpoint);
+      expect(sent).toContainEqual(expect.objectContaining({ type: 'event', event: 'terminated' }));
+      expect(sent).not.toContainEqual(expect.objectContaining({ type: 'event', event: 'stopped' }));
+    });
+
+    it('sends StoppedEvent when continue hits another error', () => {
+      vi.mocked(debugQueries.continueExecution).mockReturnValueOnce({
+        completed: false,
+        errorMessage: 'another error',
+        errorContext: 999n,
+      });
+
+      const { session, sent } = createTestSession();
+      callRequest(session, 'attachRequest', makeResponse('attach'), {
+        sessionId: 1,
+        gsProcess: '12345',
+      });
+      sent.length = 0;
+
+      const response = makeResponse('continue');
+      callRequest(session, 'continueRequest', response, { threadId: 1 });
+
+      expect(sent).toContainEqual(expect.objectContaining({ type: 'event', event: 'stopped' }));
+      expect(sent).not.toContainEqual(
+        expect.objectContaining({ type: 'event', event: 'terminated' }),
+      );
+    });
+  });
+
+  describe('stepping', () => {
+    let session: GemStoneDebugSession;
+    let sent: DapMessage[];
+
+    beforeEach(() => {
+      const test = createTestSession();
+      session = test.session;
+      sent = test.sent;
+      callRequest(session, 'attachRequest', makeResponse('attach'), {
+        sessionId: 1,
+        gsProcess: '12345',
+      });
+      sent.length = 0;
+    });
+
+    it('stepOver sends StoppedEvent with reason step', async () => {
+      const response = makeResponse('next');
+      await callRequest(session, 'nextRequest', response, { threadId: 1 });
+
+      expect(debugQueries.stepOver).toHaveBeenCalled();
+      expect(sent).toContainEqual(expect.objectContaining({ type: 'event', event: 'stopped' }));
+    });
+
+    it('stepIn sends StoppedEvent with reason step', async () => {
+      const response = makeResponse('stepIn');
+      await callRequest(session, 'stepInRequest', response, { threadId: 1 });
+
+      expect(debugQueries.stepInto).toHaveBeenCalled();
+      expect(sent).toContainEqual(expect.objectContaining({ type: 'event', event: 'stopped' }));
+    });
+
+    it('stepOut sends StoppedEvent with reason step', async () => {
+      const response = makeResponse('stepOut');
+      await callRequest(session, 'stepOutRequest', response, { threadId: 1 });
+
+      expect(debugQueries.stepOut).toHaveBeenCalled();
+      expect(sent).toContainEqual(expect.objectContaining({ type: 'event', event: 'stopped' }));
+    });
+  });
+
+  describe('evaluateRequest', () => {
+    it('returns evaluated result string', () => {
+      const { session } = createTestSession();
+      callRequest(session, 'attachRequest', makeResponse('attach'), {
+        sessionId: 1,
+        gsProcess: '12345',
+      });
+
+      const response = makeResponse('evaluate');
+      callRequest(session, 'evaluateRequest', response, {
+        expression: 'self + 1',
+        frameId: 1,
+      });
+
+      const body = response.body as { result: string; variablesReference: number };
+      expect(body.result).toBe('42');
+      expect(body.variablesReference).toBe(0);
+    });
+
+    it('returns error message when evaluation fails', () => {
+      vi.mocked(debugQueries.evaluateInFrame).mockImplementationOnce(() => {
+        throw new Error('Compile error');
+      });
+
+      const { session } = createTestSession();
+      callRequest(session, 'attachRequest', makeResponse('attach'), {
+        sessionId: 1,
+        gsProcess: '12345',
+      });
+
+      const response = makeResponse('evaluate');
+      callRequest(session, 'evaluateRequest', response, {
+        expression: 'bad code',
+        frameId: 1,
+      });
+
+      const body = response.body as { result: string };
+      expect(body.result).toContain('Error: Compile error');
+    });
+  });
+
+  describe('restartFrameRequest', () => {
+    it('trims stack and sends StoppedEvent with reason restart', () => {
+      const { session, sent } = createTestSession();
+      callRequest(session, 'attachRequest', makeResponse('attach'), {
+        sessionId: 1,
+        gsProcess: '12345',
+      });
+      sent.length = 0;
+
+      const response = makeResponse('restartFrame');
+      callRequest(session, 'restartFrameRequest', response, { frameId: 2 });
+
+      expect(debugQueries.trimStackToLevel).toHaveBeenCalledWith(expect.anything(), 12345n, 2);
+      expect(sent).toContainEqual(expect.objectContaining({ type: 'event', event: 'stopped' }));
+    });
+
+    it('reports failure when trimStackToLevel throws', () => {
+      vi.mocked(debugQueries.trimStackToLevel).mockImplementationOnce(() => {
+        throw new Error('Cannot trim');
+      });
+
+      const { session } = createTestSession();
+      callRequest(session, 'attachRequest', makeResponse('attach'), {
+        sessionId: 1,
+        gsProcess: '12345',
+      });
+
+      const response = makeResponse('restartFrame');
+      callRequest(session, 'restartFrameRequest', response, { frameId: 2 });
+
+      expect(response.success).toBe(false);
+      expect(response.message).toContain('Cannot trim');
+    });
+  });
+
+  describe('disconnectRequest', () => {
+    it('clears the stack on disconnect', () => {
+      const { session } = createTestSession();
+      callRequest(session, 'attachRequest', makeResponse('attach'), {
+        sessionId: 1,
+        gsProcess: '12345',
+      });
+
+      const response = makeResponse('disconnect');
+      callRequest(session, 'disconnectRequest', response, {});
+
+      expect(debugQueries.clearStack).toHaveBeenCalledWith(expect.anything(), 12345n);
+    });
+
+    it('does not clear stack if already cleared', () => {
+      const { session } = createTestSession();
+      // No attach — gsProcess is 0n
+      vi.mocked(debugQueries.clearStack).mockClear();
+
+      const response = makeResponse('disconnect');
+      callRequest(session, 'disconnectRequest', response, {});
+
+      expect(debugQueries.clearStack).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('terminateRequest', () => {
+    it('clears stack and sends TerminatedEvent', () => {
+      const { session, sent } = createTestSession();
+      callRequest(session, 'attachRequest', makeResponse('attach'), {
+        sessionId: 1,
+        gsProcess: '12345',
+      });
+      sent.length = 0;
+
+      const response = makeResponse('terminate');
+      callRequest(session, 'terminateRequest', response, {});
+
+      expect(debugQueries.clearStack).toHaveBeenCalled();
+      expect(sent).toContainEqual(expect.objectContaining({ type: 'event', event: 'terminated' }));
+    });
+  });
+
+  describe('configurationDoneRequest', () => {
+    it('sends response without error', () => {
+      const { session, sent } = createTestSession();
+      const response = makeResponse('configurationDone');
+      callRequest(session, 'configurationDoneRequest', response, {});
+
+      expect(sent).toContainEqual(
+        expect.objectContaining({ type: 'response', command: 'configurationDone' }),
+      );
+    });
+  });
+
+  describe('initializeRequest capabilities', () => {
+    it('reports supportsConfigurationDoneRequest', () => {
+      const { session } = createTestSession();
+      const response = makeResponse('initialize');
+      callRequest(session, 'initializeRequest', response, { adapterID: 'gemstone' });
+
+      expect(response.body).toMatchObject({
+        supportsConfigurationDoneRequest: true,
+      });
+    });
+  });
+});

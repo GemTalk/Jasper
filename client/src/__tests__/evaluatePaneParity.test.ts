@@ -31,13 +31,13 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
-import { evaluatePaneHtml } from '../debuggerEvalPane';
+import { evaluatePaneHtml } from '../debugger/debuggerEvalPane';
 
 beforeAll(() => {
   // evaluatePane.js first: both views reach for the global it registers as they wire their pane.
   for (const file of [
     '../webview/evaluatePane.js',
-    '../debuggerView.js',
+    '../debugger/debuggerView.js',
     '../webview/millerColumns.js',
     '../basicInspector/basicInspectorView.js',
   ]) {

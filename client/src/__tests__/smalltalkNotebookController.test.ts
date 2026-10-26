@@ -148,10 +148,10 @@ describe('SmalltalkNotebookController', () => {
     ctrl.dispose();
   });
 
-  // After a hard break the `finally`'s end is refused while the cell is still
+  // After the runner stops waiting, the `finally`'s end is refused while the cell is still
   // being collected; the runner calls this hook once it has been (when is
   // nbRunner.test.ts's to pin).
-  it('ends clientForwarder mode once a hard-broken cell is collected', async () => {
+  it('ends clientForwarder mode once a stopped cell is collected', async () => {
     const gci = makeGci();
     const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
     await runCells([makeCell('3 + 4')]);

@@ -1,3 +1,5 @@
+import type { LoginPasswords } from './loginCredentials';
+
 /**
  * The NRS naming the gem process to start for `login` — the host, the NetLDI
  * that spawns it, and the service it runs. The NetLDI name comes from the login
@@ -49,8 +51,8 @@ export interface GemStoneLogin {
   host_user: string;
   host_password: string;
   /**
-   * When true, the GemStone password is stored in the OS keychain and
-   * `gs_password` in the settings file is left empty. See loginCredentials.ts.
+   * When true, the GemStone and host passwords are stored in the OS keychain
+   * and left empty in the settings file. See loginCredentials.ts.
    */
   password_in_keychain?: boolean;
   /**
@@ -139,6 +141,7 @@ export const DEFAULT_LOGIN: GemStoneLogin = {
   netldi: 'gs64ldi',
   host_user: '',
   host_password: '',
+  password_in_keychain: true,
 };
 
 /** The connection coordinates of a Jasper-managed database, enough to build a
@@ -166,6 +169,20 @@ export function loginNetldiTarget(config: ManagedStoneConfig): string {
 }
 
 /**
+ * A duplicate is a new login, so its saved passwords go to the keychain like any
+ * other's. `stored` is the original's keychain passwords, carried into the copy.
+ */
+export function duplicateOf(login: GemStoneLogin, stored?: LoginPasswords): GemStoneLogin {
+  return {
+    ...login,
+    label: '',
+    password_in_keychain: true,
+    gs_password: login.gs_password || (stored?.gs_password ?? ''),
+    host_password: login.host_password || (stored?.host_password ?? ''),
+  };
+}
+
+/**
  * A DataCurator login for a Jasper-created stone. The stone is built from the
  * pristine extent, so DataCurator's password is GemStone's stock default —
  * prefilling it lets the login both connect and (cleanly) stop the stone right
@@ -183,6 +200,7 @@ export function buildDataCuratorLogin(config: ManagedStoneConfig): GemStoneLogin
     netldi: loginNetldiTarget(config),
     host_user: '',
     host_password: '',
+    password_in_keychain: true,
   };
 }
 

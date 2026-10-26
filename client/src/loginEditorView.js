@@ -132,13 +132,15 @@ window.addEventListener('message', (event) => {
     // Default on when unset, so existing logins keep syncing.
     document.getElementById('sync_classes').checked = msg.data.sync_classes !== false;
 
-    // Read-only view (login has an active session): show fields but disable
+    // Read-only view (an active session, or a keychain that can't be read): show fields but disable
     // every control, hide the Save/Cancel row, and surface the banner.
     versionChosen();
     for (const el of document.querySelectorAll('input, select')) {
       el.disabled = readOnly;
     }
     document.getElementById('readOnlyBanner').style.display = readOnly ? 'block' : 'none';
+    document.getElementById('activeSessionNote').hidden = Boolean(msg.keychainUnreadable);
+    document.getElementById('keychainUnreadableNote').hidden = !msg.keychainUnreadable;
     document.querySelector('.button-row').style.display = readOnly ? 'none' : 'flex';
 
     // Default the help open for a brand-new login (the first-use case this is
@@ -156,6 +158,10 @@ document.getElementById('saveBtn').addEventListener('click', () => {
   data.password_in_keychain = document.getElementById('password_in_keychain').checked;
   data.sync_classes = document.getElementById('sync_classes').checked;
   vscode.postMessage({ command: 'save', data, originalLabel });
+});
+
+document.getElementById('editAnywayBtn').addEventListener('click', () => {
+  vscode.postMessage({ command: 'editAnyway' });
 });
 
 document.getElementById('cancelBtn').addEventListener('click', () => {

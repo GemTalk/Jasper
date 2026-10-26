@@ -50,7 +50,7 @@ const SESSION = { id: 1, stoneVersion: '3.7.5' } as ActiveSession;
 
 function makeDeps(overrides: Partial<LoginAttemptDeps> = {}): LoginAttemptDeps {
   return {
-    keychainPassword: vi.fn(async () => undefined),
+    keychainPasswords: vi.fn(async () => ({ gs_password: '', host_password: '' })),
     getGciLibraryPath: vi.fn(() => GCI),
     setGciLibraryPath: vi.fn(async () => {}),
     removeGciLibraryPath: vi.fn(async () => {}),
@@ -107,6 +107,35 @@ describe('attempting a login', () => {
 
     expect(await attemptLogin({ ...LOGIN, host_user: 'gs' }, deps)).toBe('cancelled');
     expect(deps.connect).not.toHaveBeenCalled();
+  });
+
+  it('logs in with both passwords from the keychain, without asking for either', async () => {
+    const deps = makeDeps({
+      keychainPasswords: vi.fn(async () => ({ gs_password: 'kc-gs', host_password: 'kc-host' })),
+    });
+    const login = { ...LOGIN, gs_password: '', host_user: 'gs', password_in_keychain: true };
+
+    expect(await attemptLogin(login, deps)).toBe('connected');
+    expect(vscode.window.showInputBox).not.toHaveBeenCalled();
+    expect(deps.connect).toHaveBeenCalledWith(
+      expect.objectContaining({ gs_password: 'kc-gs', host_password: 'kc-host' }),
+      GCI,
+    );
+  });
+
+  it('asks for a password the keychain does not have', async () => {
+    vi.mocked(vscode.window.showInputBox).mockResolvedValueOnce('typed-host');
+    const deps = makeDeps({
+      keychainPasswords: vi.fn(async () => ({ gs_password: 'kc-gs', host_password: '' })),
+    });
+    const login = { ...LOGIN, gs_password: '', host_user: 'gs', password_in_keychain: true };
+
+    expect(await attemptLogin(login, deps)).toBe('connected');
+    expect(vscode.window.showInputBox).toHaveBeenCalledTimes(1);
+    expect(deps.connect).toHaveBeenCalledWith(
+      expect.objectContaining({ gs_password: 'kc-gs', host_password: 'typed-host' }),
+      GCI,
+    );
   });
 
   it('reports that no client library was available when the library picker is dismissed', async () => {

@@ -1317,9 +1317,9 @@ describe('a registered database whose NetLDI has moved', () => {
 });
 
 describe('deleting a login from the panel', () => {
-  it('routes through the command, which is what confirms and clears the keychain', async () => {
+  it('routes through the command, which is what confirms the delete', async () => {
     // Reaching for storage.deleteLogin here would skip the active-session
-    // refusal and the confirmation, and orphan the keychain entry.
+    // refusal and the confirmation.
     const login = {
       label: 'DataCurator on gs64stone (localhost)',
       gs_user: 'DataCurator',

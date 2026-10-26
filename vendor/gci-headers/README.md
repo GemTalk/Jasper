@@ -2,7 +2,7 @@
 
 Vendor snapshots of the GCI (GemStone C Interface) header files — `gci.ht`, `gcicmn.ht`, `gcits.hf`, `gcioop.ht`, `gcioc.ht`, `gcierr.ht`, and (from 3.7.2 onward) `gcits.ht` — copied verbatim from a GemStone server distribution's `include/` directory. They are the authoritative reference for GCI function signatures, struct layouts, and constants; not authored by this project, so don't edit them.
 
-Three of them — `gcioop.ht`, `gcierr.ht`, and `gcioc.ht` — exist so that constants resolve without leaving the snapshot: `gcioop.ht` defines the well-known and class OOPs transcribed in `client/src/gciConstants.ts`, `gcierr.ht` the GCI error numbers branched on in code such as `client/src/debuggerPanel.ts`, and `gcioc.ht` completes `gci.ht`'s include chain. `versions.md` notes which further includes are deliberately left out and why.
+Three of them — `gcioop.ht`, `gcierr.ht`, and `gcioc.ht` — exist so that constants resolve without leaving the snapshot: `gcioop.ht` defines the well-known and class OOPs transcribed in `client/src/gciConstants.ts`, `gcierr.ht` the GCI error numbers branched on in code such as `client/src/debugger/debuggerPanel.ts`, and `gcioc.ht` completes `gci.ht`'s include chain. `versions.md` notes which further includes are deliberately left out and why.
 
 One folder per **distinct header content revision**, named after the earliest GemStone version that shipped it. Several patch releases often ship byte-identical headers (see `versions.md`), so this avoids duplicate folders for content that hasn't changed.
 

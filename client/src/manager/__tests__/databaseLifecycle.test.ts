@@ -152,7 +152,7 @@ describe('clearSessionsForStop', () => {
     return {
       clock: () => clock,
       waits: [] as number[],
-      reapSessions: vi.fn(() => reaped),
+      reapSessions: vi.fn(async () => reaped),
       attachedHolders: vi.fn(async () => probes[Math.min(i++, probes.length - 1)]),
       wait: vi.fn(async (ms: number) => {
         clock += ms;
@@ -224,7 +224,7 @@ describe('clearSessionsForStop', () => {
     // A list that keeps churning must not poll forever.
     let pid = 1000;
     const d = {
-      reapSessions: vi.fn(() => 1),
+      reapSessions: vi.fn(async () => 1),
       attachedHolders: vi.fn(async () => [holder(pid++)]),
       wait: vi.fn(async () => {}),
       now: vi.fn(),
@@ -245,7 +245,7 @@ describe('clearSessionsForStop', () => {
     // Probing first would see Jasper's own gems and report them as foreign.
     const order: string[] = [];
     const d = {
-      reapSessions: vi.fn(() => {
+      reapSessions: vi.fn(async () => {
         order.push('reap');
         return 0;
       }),

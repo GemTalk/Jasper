@@ -17,7 +17,7 @@
  * serverPlugin/systemUserAuth.ts, shared with the install drivers.
  */
 import * as vscode from 'vscode';
-import { ActiveSession, SessionManager } from '../sessionManager';
+import { ActiveSession, SessionManager, logOutOrFindGone } from '../sessionManager';
 import { refreshEnhancedInspectorAvailable } from './enhancedInspectorAvailability';
 import { uninstallEnhancedInspectorSupport } from './enhancedInspectorUninstall';
 import {
@@ -64,11 +64,7 @@ async function performUninstall(
         ),
     );
   } finally {
-    try {
-      sys.logout();
-    } catch {
-      // The transient session is being discarded regardless.
-    }
+    logOutOrFindGone(sys);
   }
 
   if (!result.success) {
