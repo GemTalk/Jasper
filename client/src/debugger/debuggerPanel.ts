@@ -22,8 +22,9 @@ import { buildLineStarts, stepPointAtOffset, StepPointInfo } from './stepPointMo
 import { routeInspect, InspectorHandle } from '../inspectRouter';
 import { logError, logInfo, logWarning } from '../gciLog';
 import { buildMethodUri } from '../gemstoneFileSystemProvider';
-import { NbCancelledError, NbRunOptions } from '../nbRunner';
-import { honourRulesAfterResume, resumeNeedsRules } from './conditionalBreakpoints';
+import { NbCancelledError, NbRunOptions, stoppedRunHolds } from '../nbRunner';
+import { SESSION_SIGNAL_ERROR } from '../forceStop';
+import { resumeOnWorker } from './conditionalBreakpoints';
 import { extensionPathFrom } from '../extensionPath';
 import { readWebviewScript } from '../webviewAssets';
 import {
@@ -3122,52 +3123,67 @@ export class DebuggerPanel {
   private resume(): void {
     if (this.guardStaleTopActivation('Resume')) return;
     if (this.guardUncontinuable()) return;
-    // Don't issue a blocking continue while a non-blocking step/trim is in flight
-    // (only one GCI call per session). Resume itself is still BLOCKING — 3.7.x has
-    // no GciTsNbContinue — so a long/looping Resume can still stall the host until
-    // it returns; making Resume non-blocking needs a worker thread (tracked).
     if (this.nbBusy) {
       this.notifyBusy('Resume');
       return;
     }
     // Leaving this halt: drop revert state + release pinned originals.
     this.clearUndoState();
-    const result = debug.continueExecution(this.session, this.gsProcess);
-    if (resumeNeedsRules(this.session, result)) {
-      void this.continueHonouringRules('Resume', result);
-      return;
-    }
-    this.handleContinueResult(result);
+    void this.resumeUnderOverlay('Resume');
   }
 
   /**
-   * Carry a Resume past the stops its breakpoint rules decline, keeping the
-   * run's trigger arming, on a worker thread under the busy overlay, whose
-   * Cancel stops at the hit reached. `after` runs once it settles, whatever the
-   * outcome; Run to Cursor clears its temporary breakpoint there.
+   * Resume on a worker thread under the busy overlay, past the stops the
+   * breakpoint rules decline: VS Code stays responsive however long the run
+   * goes, and the overlay's Cancel stops it as anywhere else. `after` runs once
+   * the run has ended, whatever the outcome; Run to Cursor clears its temporary
+   * breakpoint there.
    */
-  private async continueHonouringRules(
-    action: string,
-    first: debug.StepResult,
-    after?: () => void,
-  ): Promise<void> {
+  private async resumeUnderOverlay(action: string, after?: () => void): Promise<void> {
+    // A run still going after Cancel holds the session, which would refuse `after`.
+    let afterWhenRunEnds = false;
     await this.runNb(action, async (opts) => {
       try {
-        const result = await honourRulesAfterResume(this.session, first, {
+        const result = await resumeOnWorker(this.session, this.gsProcess, {
           suppressNotification: true,
           onStart: opts.onStart,
           onTranscript: (text) => appendTranscriptOutput(text),
+          onGivenUpSettled: (ended) => {
+            if (afterWhenRunEnds) after?.();
+            this.afterStoppedRunEnded(ended);
+          },
         });
         if (this.disposed) return;
         this.handleContinueResult(result);
+      } catch (e: unknown) {
+        // Only the banner: the stack would be refused by the busy session, and a
+        // full init re-selects the top frame, which calls GemStone for its
+        // variables. Both are reloaded once the run ends.
+        if (!(e instanceof NbCancelledError && stoppedRunHolds(this.session))) throw e;
+        afterWhenRunEnds = true;
+        if (this.disposed) return;
+        this.errorMessage =
+          `${action} cancelled, but the run is still going. ` +
+          'Use Force Stop in the notice to end it.';
+        this.panel.webview.postMessage({ command: 'banner', text: this.errorMessage });
       } finally {
-        after?.();
+        if (!afterWhenRunEnds) after?.();
       }
     });
   }
 
+  /** A Resume the user cancelled has ended after all: show where it stopped, or close. */
+  private afterStoppedRunEnded(ended: debug.StepResult): void {
+    if (this.disposed) return;
+    this.handleContinueResult(
+      ended.errorNumber === SESSION_SIGNAL_ERROR
+        ? { ...ended, errorMessage: 'Stopped by Force Stop.' }
+        : ended,
+    );
+  }
+
   /**
-   * Dispatch the outcome of a blocking `continueExecution` (Resume / Run to Cursor):
+   * Dispatch the outcome of a Resume or Run to Cursor:
    * close on completion, show the fixed Terminate-only banner if the process is
    * now uncontinuable (6011), else refresh on the new stop. Shared so Run to Cursor
    * lands a hit exactly like a Resume that re-halted.
@@ -3278,21 +3294,9 @@ export class DebuggerPanel {
         logError(this.sessionId, e instanceof Error ? e.message : String(e));
       }
     };
-    let result: debug.StepResult;
-    try {
-      result = debug.continueExecution(this.session, this.gsProcess);
-    } catch (e: unknown) {
-      releaseBreak();
-      throw e;
-    }
     // A stop the rules pass keeps running towards the cursor, so the temporary
     // breakpoint has to outlast that too.
-    if (resumeNeedsRules(this.session, result)) {
-      void this.continueHonouringRules('Run to Cursor', result, releaseBreak);
-      return;
-    }
-    releaseBreak();
-    this.handleContinueResult(result);
+    void this.resumeUnderOverlay('Run to Cursor', releaseBreak);
   }
 
   /**

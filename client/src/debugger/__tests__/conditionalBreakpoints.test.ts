@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
+vi.mock('../../nbRunner', async (original) => ({
+  ...(await original<typeof import('../../nbRunner')>()),
+  isRunning: vi.fn(() => false),
+}));
 
 import {
   BreakpointRule,
@@ -10,7 +14,7 @@ import {
   logMessageExpression,
 } from '../conditionalBreakpoints';
 import { OOP_NIL } from '../../gciConstants';
-import { NbCancelledError } from '../../nbRunner';
+import { isRunning, NbCancelledError } from '../../nbRunner';
 import * as vscode from 'vscode';
 import { fakeActiveSession } from '../../__tests__/fakeActiveSession';
 import {
@@ -548,6 +552,45 @@ describe('applyBreakpointRules', () => {
     const { session, performed } = stubSession([DECISION.Stop], []);
     await applyBreakpointRules(session, 7n, [spec()]);
     expect(performed).toHaveLength(1);
+  });
+
+  it("resumes first for the debugger's Resume, judging only the stop it lands on", async () => {
+    const { session, performed, continues } = stubSession([DECISION.Stop], [hitsBreakpoint(8n)]);
+
+    const outcome = await applyBreakpointRules(session, 7n, [spec()], { resumeFirst: true });
+
+    expect(continues.map((c) => c.process)).toEqual([7n]);
+    expect(performed).toHaveLength(1);
+    expect(outcome).toEqual({ kind: 'stopped', context: 8n, skipped: 0 });
+  });
+
+  it('with no rules, stops at the first breakpoint a Resume reaches, compiling nothing', async () => {
+    const { session, executed } = stubSession([], [hitsBreakpoint(8n)]);
+
+    const outcome = await applyBreakpointRules(session, 7n, [], { resumeFirst: true });
+
+    expect(executed).toEqual([]);
+    expect(outcome).toMatchObject({ kind: 'stopped', context: 8n });
+  });
+
+  it('shows no notification of its own inside a run, which has one already', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(isRunning).mockReturnValueOnce(true);
+      vi.mocked(vscode.window.withProgress).mockClear();
+      const { session, gci } = stubSession([DECISION.Go, DECISION.Stop], [hitsBreakpoint(8n)]);
+      const resume = gci.GciTsContinueWithAsync;
+      gci.GciTsContinueWithAsync = (...args: Parameters<typeof resume>) =>
+        new Promise((resolve) => setTimeout(() => resolve(resume(...args)), 3000));
+
+      const run = applyBreakpointRules(session, 7n, [spec()]);
+      await vi.advanceTimersByTimeAsync(5000);
+      await run;
+
+      expect(vscode.window.withProgress).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('updates its progress now and then, counting skipped and logged hits apart', async () => {

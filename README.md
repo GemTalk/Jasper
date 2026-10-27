@@ -395,8 +395,11 @@ the thing it was set in goes away:
   frame and read the answer, one to resume), and a fourth when it logs. Over a
   slower link that grows with the latency, so a condition that skips tens of
   thousands of hits will be felt. Past a second and a half a cancellable progress
-  notification appears, and cancelling stops at whatever hit it has reached; a
+  notification appears (inside Execute It, Execute It's own notification stands
+  for it), and cancelling stops at whatever hit it has reached; a
   condition that runs slowly, or never finishes, can be cancelled the same way.
+  Code that ignores the stop is treated as anywhere else in Jasper: after about
+  1.5 seconds Jasper stops waiting and offers **Force Stop**.
   Your code is never rewritten or recompiled to make any of this work, and nothing
   is written to the repository. A breakpoint reached while skipping still stops if
   _it_ has no condition, and an error raised by your code while skipping opens the

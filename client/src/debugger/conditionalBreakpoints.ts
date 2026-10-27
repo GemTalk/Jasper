@@ -9,7 +9,16 @@ import {
 } from '../gciConstants';
 import { gsStringLiteral as literal } from '../serverPlugin/installHelpers';
 import { logError, logInfo } from '../gciLog';
-import { NbCancelledError } from '../nbRunner';
+import {
+  cancelRunOn,
+  EARLIEST_STOP_WAITING_MS,
+  holdSessionUntilSettled,
+  isRunning,
+  NbCancelledError,
+  sayStillRunning,
+  STOP_WAITING_AFTER_MS,
+  trackRun,
+} from '../nbRunner';
 import { continueThroughForwarderSends } from '../transcriptSink';
 import { FRAME_SELF_SMALLTALK } from './debugQueries';
 import type { StepResult } from './debugQueries';
@@ -41,8 +50,8 @@ import { skipLiteral } from '../smalltalkScan';
  * own `Breakpoint` handler. `GciTsContinueWith` is the one resume that behaves
  * the same on both releases.
  *
- * The debugger's Resume and Run to Cursor come back through
- * {@link honourRulesAfterResume}; steps are never filtered.
+ * The debugger's Resume and Run to Cursor go through {@link resumeOnWorker};
+ * steps are never filtered.
  */
 export interface BreakpointRule {
   /**
@@ -581,6 +590,16 @@ export interface RuleRunOptions {
   onStart?: (cancel: () => void, stopRequested: () => boolean) => void;
   /** Skip the loop's own progress notification; see `onStart`. */
   suppressNotification?: boolean;
+  /**
+   * Resume before judging anything: the process is parked at a halt or a step,
+   * not at a breakpoint the rules have to judge.
+   */
+  resumeFirst?: boolean;
+  /**
+   * Where the run ended up, once a call the loop gave up on has finished after
+   * all (a Force Stop, say), and the session is free again.
+   */
+  onGivenUpSettled?: (result: StepResult) => void;
 }
 
 /**
@@ -589,8 +608,12 @@ export interface RuleRunOptions {
  *
  * The resume and the judgement run the developer's code, so both go to a worker
  * thread: a long skip or a slow condition leaves VS Code responsive. Cancel
- * sends a soft break if one is running (a break in the resumed code comes back
- * as a `raised` 6003), and otherwise stops at the hit reached.
+ * stops it as the non-blocking runner's Cancel does. Inside a run the runner
+ * polls (Execute It), it is that run's Cancel. Otherwise it sends a soft break if
+ * a call is running (a break in the resumed code comes back as a `raised` 6003)
+ * and stops at the hit reached; a call that ignores the break is given up on
+ * after STOP_WAITING_AFTER_MS, rejecting with `NbCancelledError` while the
+ * session is held until the gem lets go, and the user is offered Force Stop.
  */
 export async function applyBreakpointRules(
   session: ActiveSession,
@@ -599,7 +622,8 @@ export async function applyBreakpointRules(
   options: RuleRunOptions = {},
 ): Promise<ConditionOutcome> {
   const { onLog, onLogFailure, onTranscript, signal } = options;
-  const decider = installDecider(session, specs, processOop);
+  let decider: bigint | undefined;
+  let resumeNext = options.resumeFirst === true;
   let process = processOop;
   let skipped = 0;
   let logged = 0;
@@ -610,17 +634,92 @@ export async function applyBreakpointRules(
   let report: (() => void) | undefined;
   let closeProgress: (() => void) | undefined;
 
+  const startedAt = performance.now();
+  // The call a worker thread is running, if any, and how to give up on it.
+  let inFlight: Promise<unknown> | undefined;
+  let inFlightIsResume = false;
+  let giveUp: ((e: Error) => void) | undefined;
+  let stopWaitingTimer: ReturnType<typeof setTimeout> | undefined;
+  const enclosingRun = isRunning(session);
+
+  /** Answers whether there was a call to stop waiting for. */
+  const stopWaiting = (): boolean => {
+    if (!inFlight || !giveUp) return false;
+    logInfo(`[Session ${session.id}] Stopped waiting for the breakpoint rules' call.`);
+    holdSessionUntilSettled(session, inFlight);
+    const { onGivenUpSettled } = options;
+    if (onGivenUpSettled) {
+      // A judgement given up on leaves the run where it was, at this hit.
+      const parked: StepResult = {
+        completed: false,
+        errorMessage: 'Method breakpoint encountered',
+        errorContext: process,
+        errorNumber: BREAKPOINT_ERROR,
+      };
+      const resuming = inFlightIsResume;
+      void inFlight
+        .then(
+          (value) => (resuming ? stepResultOf(value as { result: bigint; err: GciError }) : parked),
+          () => parked,
+        )
+        // A turn later, once the hold has let go of the session.
+        .then((result) => setTimeout(() => onGivenUpSettled(result), 0));
+    }
+    giveUp(new NbCancelledError());
+    return true;
+  };
   const cancel = (): void => {
     if (cancelled) return;
     cancelled = true;
+    if (enclosingRun) {
+      cancelRunOn(session);
+      return;
+    }
     if (!calling) return;
     try {
       session.GciTsBreak(false);
     } catch (e) {
       logError(session.id, `Could not send a soft break: ${errorText(e)}`);
     }
+    stopWaitingTimer = setTimeout(
+      () => {
+        if (stopWaiting()) sayStillRunning(session);
+      },
+      Math.max(STOP_WAITING_AFTER_MS, EARLIEST_STOP_WAITING_MS - (performance.now() - startedAt)),
+    );
   };
   options.onStart?.(cancel, () => cancelled);
+  const untrack = enclosingRun
+    ? undefined
+    : trackRun(session, {
+        stopRequested: () => cancelled,
+        cancel,
+        // A logout: stop waiting at once, without the notice.
+        stop: async () => {
+          cancel();
+          clearTimeout(stopWaitingTimer);
+          const work = inFlight;
+          stopWaiting();
+          await work?.catch(() => {});
+        },
+      });
+
+  /** `work` on a worker thread, which Cancel can stop waiting for. */
+  const onWorker = async <T>(work: Promise<T>, isResume = false): Promise<T> => {
+    inFlight = work;
+    inFlightIsResume = isResume;
+    try {
+      return await Promise.race([
+        work,
+        new Promise<never>((_resolve, reject) => {
+          giveUp = reject;
+        }),
+      ]);
+    } finally {
+      inFlight = undefined;
+      giveUp = undefined;
+    }
+  };
 
   // The runner has already rejected the run, so nobody else will release what
   // it stopped.
@@ -629,48 +728,62 @@ export async function applyBreakpointRules(
     throw new NbCancelledError();
   };
 
-  const progressTimer = options.suppressNotification
-    ? undefined
-    : setTimeout(() => {
-        void vscode.window.withProgress(
-          {
-            location: vscode.ProgressLocation.Notification,
-            title: 'GemStone: applying breakpoint rules',
-            cancellable: true,
-          },
-          (progress, token) =>
-            new Promise<void>((resolve) => {
-              closeProgress = resolve;
-              report = () =>
-                progress.report({
-                  message:
-                    logged > 0
-                      ? `${skipped - logged} skipped, ${logged} logged`
-                      : `${skipped} skipped`,
-                });
-              report();
-              token.onCancellationRequested(cancel);
-            }),
-        );
-      }, PROGRESS_AFTER_MS);
+  // Inside a run, that run's own notification and Cancel stand for the loop.
+  const progressTimer =
+    options.suppressNotification || enclosingRun
+      ? undefined
+      : setTimeout(() => {
+          void vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title: 'GemStone: applying breakpoint rules',
+              cancellable: true,
+            },
+            (progress, token) =>
+              new Promise<void>((resolve) => {
+                closeProgress = resolve;
+                report = () =>
+                  progress.report({
+                    message:
+                      logged > 0
+                        ? `${skipped - logged} skipped, ${logged} logged`
+                        : `${skipped} skipped`,
+                  });
+                report();
+                token.onCancellationRequested(cancel);
+              }),
+          );
+        }, PROGRESS_AFTER_MS);
 
   try {
     for (;;) {
       if (signal?.aborted) abandon();
+      // Not judged once stopped: the condition is the developer's code too.
+      if (cancelled) return { kind: 'cancelled', context: process, skipped };
       let decision: Decision;
-      calling = true;
-      try {
-        decision = await decideWith(session, decider, process);
-      } catch (e) {
-        if (signal?.aborted) abandon();
-        // A soft break that landed in the judgement stopped only the decider's
-        // own process; the run is still suspended at this hit.
-        if (cancelled || (e instanceof DeciderError && e.errorNumber === SOFT_BREAK_ERROR)) {
-          return { kind: 'cancelled', context: process, skipped };
+      const judged = !resumeNext;
+      if (resumeNext) {
+        resumeNext = false;
+        decision = { kind: 'go' };
+      } else if (specs.length === 0) {
+        return { kind: 'stopped', context: process, skipped };
+      } else {
+        calling = true;
+        try {
+          decider ??= installDecider(session, specs, process);
+          decision = await onWorker(decideWith(session, decider, process));
+        } catch (e) {
+          if (e instanceof NbCancelledError) throw e;
+          if (signal?.aborted) abandon();
+          // A soft break that landed in the judgement stopped only the decider's
+          // own process; the run is still suspended at this hit.
+          if (cancelled || (e instanceof DeciderError && e.errorNumber === SOFT_BREAK_ERROR)) {
+            return { kind: 'cancelled', context: process, skipped };
+          }
+          throw e;
+        } finally {
+          calling = false;
         }
-        throw e;
-      } finally {
-        calling = false;
       }
 
       if (decision.kind === 'stop') return { kind: 'stopped', context: process, skipped };
@@ -690,26 +803,30 @@ export async function applyBreakpointRules(
       let resumed: { result: bigint; err: GciError };
       calling = true;
       try {
-        resumed = await continueThroughForwarderSends(
-          session,
-          await session.GciTsContinueWithAsync(
-            process,
-            // Resume as-is rather than forcing the top of stack to nil — see
-            // `continueExecution` in debugQueries for why that distinction matters.
-            OOP_ILLEGAL,
-            null,
-            CONTINUE_FLAGS,
-          ),
-          (text) => onTranscript?.(text),
-          CONTINUE_FLAGS,
-          signal,
+        resumed = await onWorker(
+          (async () =>
+            await continueThroughForwarderSends(
+              session,
+              await session.GciTsContinueWithAsync(
+                process,
+                // Resume as-is rather than forcing the top of stack to nil — see
+                // `continueExecution` in debugQueries for why that distinction matters.
+                OOP_ILLEGAL,
+                null,
+                CONTINUE_FLAGS,
+              ),
+              (text) => onTranscript?.(text),
+              CONTINUE_FLAGS,
+              signal,
+            ))(),
+          true,
         );
       } finally {
         calling = false;
       }
       // Whatever the break stopped has been released by the forwarder loop.
       if (signal?.aborted) throw new NbCancelledError();
-      skipped += 1;
+      if (judged) skipped += 1;
       if (decision.kind === 'log' || decision.kind === 'logFailed') logged += 1;
 
       if (Date.now() - lastYield >= YIELD_EVERY_MS) {
@@ -734,6 +851,8 @@ export async function applyBreakpointRules(
     }
   } finally {
     clearTimeout(progressTimer);
+    clearTimeout(stopWaitingTimer);
+    untrack?.();
     closeProgress?.();
   }
 }
@@ -759,7 +878,7 @@ export type BreakpointStop =
  * Apply the rules to the breakpoint `context` is stopped at, and say where the
  * run ended up. With no rules, returns before any GCI call.
  *
- * Throws `NbCancelledError` when the runner stops waiting, and a plain Error when there is
+ * Throws `NbCancelledError` when the run is given up on, and a plain Error when there is
  * nothing left to debug: the session logged out, or the run stopped with no
  * process to open a debugger on.
  */
@@ -778,18 +897,19 @@ export async function resolveBreakpointStop(
   const specs = rulesFor(session);
   // Logged even with no rules: otherwise a stop no rule judged looks the same as
   // one whose condition held.
-  logInfo(
-    `[Session ${session.id}] breakpoint at a stop: ${specs.length} breakpoint rule(s) armed` +
-      specs
-        .map(
-          (s) =>
-            `\n  ${s.methodExpr} @${s.stepPoint}` +
-            (s.condition === undefined ? '' : ` if ${s.condition}`) +
-            (s.logMessage === undefined ? '' : ' (logpoint)'),
-        )
-        .join(''),
-  );
-  if (specs.length === 0) return stopHere;
+  if (!options.resumeFirst)
+    logInfo(
+      `[Session ${session.id}] breakpoint at a stop: ${specs.length} breakpoint rule(s) armed` +
+        specs
+          .map(
+            (s) =>
+              `\n  ${s.methodExpr} @${s.stepPoint}` +
+              (s.condition === undefined ? '' : ` if ${s.condition}`) +
+              (s.logMessage === undefined ? '' : ' (logpoint)'),
+          )
+          .join(''),
+    );
+  if (specs.length === 0 && !options.resumeFirst) return stopHere;
 
   let outcome: ConditionOutcome;
   try {
@@ -872,9 +992,45 @@ export async function resolveBreakpointStop(
   }
 }
 
+/** A resume's GCI answer as the debugger reads it. */
+function stepResultOf({ result, err }: { result: bigint; err: GciError }): StepResult {
+  if (err.number === 0) return { completed: true, resultOop: result };
+  return {
+    completed: false,
+    errorMessage: err.message || `GemStone error ${err.number}`,
+    errorContext: toBigInt(err.context ?? 0n),
+    errorNumber: err.number,
+  };
+}
+
 /**
- * Whether a debugger Resume's `result` needs {@link honourRulesAfterResume}, so
- * a caller keeps its synchronous path for every other stop.
+ * The debugger's Resume and Run to Cursor: resume `process` on a worker thread,
+ * on past every stop its breakpoint rules decline, so VS Code stays responsive
+ * and Cancel and Force Stop work as for any other run.
+ */
+export async function resumeOnWorker(
+  session: ActiveSession,
+  process: bigint,
+  options: Omit<RuleRunOptions, 'onLog' | 'onLogFailure' | 'resumeFirst'> = {},
+): Promise<StepResult> {
+  const stop = await resolveBreakpointStop(session, process, 'Method breakpoint encountered', {
+    ...options,
+    resumeFirst: true,
+  });
+  if (stop.kind === 'completed') return { completed: true, resultOop: stop.resultOop };
+  return {
+    completed: false,
+    // Cancel can land before the process has moved, so the breakpoint wording may not hold.
+    errorMessage: stop.cancelled ? 'Stopped by Cancel.' : stop.message,
+    errorContext: stop.context,
+    errorNumber: stop.errorNumber,
+  };
+}
+
+/**
+ * Whether a blocking Resume's `result` (the dormant DAP debugger's) needs
+ * {@link honourRulesAfterResume}, so it keeps its synchronous path for every
+ * other stop.
  */
 export function resumeNeedsRules(session: ActiveSession, result: StepResult): boolean {
   if (result.completed || result.errorNumber !== BREAKPOINT_ERROR) return false;
@@ -884,9 +1040,10 @@ export function resumeNeedsRules(session: ActiveSession, result: StepResult): bo
 }
 
 /**
- * Carry a debugger Resume (or Run to Cursor) past every stop its rules decline,
- * as the run's first stop was, so a trigger armed before the debugger opened is
- * still armed. Not for steps: a step goes where it was told.
+ * Carry the dormant DAP debugger's blocking Resume past every stop its rules
+ * decline, as the run's first stop was, so a trigger armed before the debugger
+ * opened is still armed. Not for steps: a step goes where it was told. The
+ * GemStone Debugger uses {@link resumeOnWorker}.
  */
 export async function honourRulesAfterResume(
   session: ActiveSession,

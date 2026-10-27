@@ -15,7 +15,7 @@ import {
   BreakpointRule,
   CONTINUE_FLAGS,
   applyBreakpointRules,
-  honourRulesAfterResume,
+  resumeOnWorker,
   logMessageExpression,
   setBreakpointRuleSource,
 } from '../conditionalBreakpoints';
@@ -1302,11 +1302,7 @@ describe('conditional breakpoints (integration)', () => {
       const process = BigInt(err.context);
       expect(debugQueries.getStepPoint(session(), process, 1)).toBe(armStep);
 
-      const result = await honourRulesAfterResume(
-        session(),
-        debugQueries.continueExecution(session(), process),
-        { suppressNotification: true },
-      );
+      const result = await resumeOnWorker(session(), process, { suppressNotification: true });
 
       expect(result.completed).toBe(true);
       expect(vi.mocked(appendLogpoint).mock.calls.map((c) => c[1])).toEqual([

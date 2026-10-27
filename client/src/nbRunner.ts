@@ -19,7 +19,8 @@ import { OOP_NIL } from './gciConstants';
  * (Execute/Display It, via `pollNbToCompletion`) and the debugger's step/trim
  * (via `runNbCall`) so the cancel/break/backoff/progress behaviour can't drift
  * between the two. It does NOT cover Resume: GemStone 3.7.x has no
- * GciTsNbContinue, so a non-blocking Resume needs a worker thread (tracked).
+ * GciTsNbContinue, so the debugger's Resume runs on a worker thread instead
+ * (`resumeOnWorker` in debugger/conditionalBreakpoints).
  */
 
 // Poll cadence: start tight (steps usually finish in a few ms), then back off so
@@ -276,10 +277,7 @@ type CollectState = 'collected' | 'pending' | 'failed' | 'gone';
  * while yet, through a tearDown or an ensure: block. `stop` sends the call the
  * escalation that stops it, answering the call's own promise.
  */
-const live = new Map<
-  number,
-  { stopRequested: () => boolean; cancel: () => void; stop: () => Promise<unknown> }
->();
+const live = new Map<number, TrackedRun>();
 
 /**
  * Stop the call in flight on `session`, if any, and wait until the session is
@@ -532,6 +530,43 @@ export function whenSessionFree<T>(
 /** Whether a call is still being polled on the session. */
 export function isRunning(session: ActiveSession): boolean {
   return live.has(session.id);
+}
+
+/** What {@link trackRun} needs to stop a run, shaped like the runner's own. */
+export interface TrackedRun {
+  stopRequested: () => boolean;
+  /** What the run's own Cancel does. */
+  cancel: () => void;
+  /** Stop it and stop waiting at once, for a logout; settles when it has. */
+  stop: () => Promise<unknown>;
+}
+
+/**
+ * Count a run the runner is not polling (one resumed on a worker thread) as the
+ * session's run, so other calls are refused with a way to stop it. Answers the
+ * function that stops counting it, or undefined when the session already has a
+ * run: the one this is part of, whose stop covers it.
+ */
+export function trackRun(session: ActiveSession, run: TrackedRun): (() => void) | undefined {
+  if (live.has(session.id)) return undefined;
+  live.set(session.id, run);
+  return () => {
+    if (live.get(session.id) === run) live.delete(session.id);
+  };
+}
+
+/**
+ * Hold the session for `work` its caller has stopped waiting for, until it
+ * settles: the way the runner holds it for a call it gave up on (see
+ * awaitAbandonedRead), so the next call waits or is refused instead of reaching
+ * a session a worker thread still owns.
+ */
+export function holdSessionUntilSettled(
+  session: ActiveSession,
+  work: Promise<unknown>,
+  onSettled?: () => void,
+): void {
+  awaitAbandonedRead(session, work, onSettled);
 }
 
 /**

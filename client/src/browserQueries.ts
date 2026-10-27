@@ -1,7 +1,14 @@
 import { ActiveSession } from './sessionManager';
 import { OOP_ILLEGAL, OOP_NIL } from './gciConstants';
 import { logError } from './gciLog';
-import { abandonedRunHolds, runNbCall, NbRunOptions, sayStillRunning } from './nbRunner';
+import {
+  abandonedRunHolds,
+  isRunning,
+  runNbCall,
+  NbRunOptions,
+  sayRunInProgress,
+  sayStillRunning,
+} from './nbRunner';
 
 import { QueryExecutor } from './queries/types';
 
@@ -367,6 +374,7 @@ export function executeFetchString(session: ActiveSession, code: string): string
     const msg = e instanceof Error ? e.message : String(e);
     logError(session.id, msg);
     if (abandonedRunHolds(session)) sayStillRunning(session);
+    else if (isRunning(session)) sayRunInProgress(session);
     throw new BrowserQueryError(msg);
   }
 }
