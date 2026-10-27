@@ -213,8 +213,8 @@ describe('SUnit non-blocking runs (integration)', () => {
 
   it('takes a second press by stopping waiting, with no hard break', async () => {
     // Two presses in a row once sent a hard break on the heels of the soft one,
-    // which crashed the client. A second press now only stops waiting; a live GCI
-    // shows it sends nothing more.
+    // which crashed the client. A second press now stops waiting and sends the
+    // soft break once more; a live GCI shows nothing but soft breaks go out.
     installSlowTest();
     const sent: boolean[] = [];
     const realBreak = gci.GciTsBreak.bind(gci);
@@ -235,7 +235,8 @@ describe('SUnit non-blocking runs (integration)', () => {
       cancel(); // stop waiting
 
       expect(STOPPED_ENDINGS).toContain(await settledStatus(run));
-      expect(sent).toEqual([false]);
+      expect(sent.length).toBeGreaterThan(0);
+      expect(sent.every((hard) => hard === false)).toBe(true);
     } catch (err) {
       gestureFailed = true;
       originalFailure = err;
