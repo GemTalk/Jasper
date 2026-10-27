@@ -674,6 +674,28 @@ describe('a run the loop gave up waiting for', () => {
     }
   });
 
+  it('sends the soft break again as it gives up, in case the first never reached the gem', async () => {
+    // A soft break that reaches the gem before it has started the call is lost.
+    vi.useFakeTimers();
+    try {
+      const { session, gci, breaks } = stubSession([DECISION.Stop], []);
+      gci.GciTsContinueWithAsync = () => new Promise(() => {}) as never;
+      let cancel: () => void = () => {};
+
+      await giveUp(
+        applyBreakpointRules(session, 7n, [spec()], {
+          resumeFirst: true,
+          onStart: (c) => (cancel = c),
+        }),
+        () => cancel(),
+      );
+
+      expect(breaks).toEqual([false, false]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('tells the debugger the run is parked at its hit, once a judgement it gave up on ends', async () => {
     // The condition ran in a process of its own; the developer's run never moved.
     vi.useFakeTimers();

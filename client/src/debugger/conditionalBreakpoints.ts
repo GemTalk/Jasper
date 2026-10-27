@@ -16,6 +16,7 @@ import {
   holdSessionUntilSettled,
   isRunning,
   NbCancelledError,
+  resendSoftBreak,
   sayStillRunning,
   STOP_WAITING_AFTER_MS,
   trackRun,
@@ -646,6 +647,7 @@ export async function applyBreakpointRules(
   /** Answers whether there was a call to stop waiting for. */
   const stopWaiting = (): boolean => {
     if (!inFlight || !giveUp) return false;
+    resendSoftBreak(session);
     logInfo(`[Session ${session.id}] Stopped waiting for the breakpoint rules' call.`);
     void holdSessionUntilSettled(session, inFlight);
     const { onGivenUpSettled } = options;

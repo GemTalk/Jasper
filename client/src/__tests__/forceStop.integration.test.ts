@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach, onTestFinished, vi } from 'vitest';
+import { execSync } from 'child_process';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
@@ -107,6 +108,54 @@ describe('Force Stop (integration)', () => {
     own.executeAndFetchString(`System abortTransaction. 'ok'`);
     expect(armed(own)).toBe('true');
   }, 30_000);
+
+  // A soft break that reaches the gem before it has started the call is lost; the
+  // runner sends it again when it stops waiting. The gem is held back with
+  // SIGSTOP while the call and the Cancel go out, which Windows has no way to do.
+  it.skipIf(process.platform === 'win32')(
+    'stops a run whose Cancel reached the gem before the run had started',
+    async () => {
+      const own = armedSession();
+      const pid = own
+        .executeAndFetchString('((System descriptionOfSession: System session) at: 2) printString')
+        .trim();
+      let cancel: (() => void) | undefined;
+      execSync(`kill -STOP ${pid}`);
+      let run: Promise<unknown>;
+      try {
+        run = runNbCall(
+          own,
+          () =>
+            own.GciTsNbExecute(
+              '[true] whileTrue: [nil]',
+              OOP_CLASS_UTF8,
+              OOP_ILLEGAL,
+              OOP_NIL,
+              0,
+              0,
+            ),
+          () => own.GciTsNbResult(),
+          { suppressNotification: true, disposableProcess: true, onStart: (c) => (cancel = c) },
+        );
+        run.catch(() => {});
+        cancel!();
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      } finally {
+        execSync(`kill -CONT ${pid}`);
+      }
+
+      await expect(run).rejects.toBeInstanceOf(NbCancelledError);
+      // Free once the gem has answered the break sent again: the loop never ends
+      // by itself.
+      const deadline = Date.now() + 10_000;
+      while (stoppedRunHolds(own) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(stoppedRunHolds(own)).toBe(false);
+      expect(own.executeAndFetchString('(3 + 4) printString')).toBe('7');
+    },
+    30_000,
+  );
 
   it('can stop the same session again', async () => {
     const own = armedSession();

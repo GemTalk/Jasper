@@ -149,6 +149,9 @@ export interface NbRunOptions {
  * hard break, no handler can catch it, which skips the code's own cleanup
  * (measured on 3.6.2 and 3.7.5).
  *
+ * The soft break is sent once more as the runner stops waiting: one that reaches
+ * the gem before it has started the call is lost (see {@link resendSoftBreak}).
+ *
  * Never earlier than {@link EARLIEST_STOP_WAITING_MS} into the call either: a break
  * sent in a call's first ~2s does not land until ~2s in, so measuring only from
  * the soft break would give up before it had a chance.
@@ -679,6 +682,29 @@ export function clearHolds(session: ActiveSession): boolean {
   return clearing.has(session.id);
 }
 
+/**
+ * Send a stop's soft break again, for a call that is still going when the runner
+ * stops waiting. A soft break that reaches the gem before it has started the call
+ * is lost, and the call runs on (measured on 3.6.8 and 3.7.5, with the gem held
+ * back while the call and the break were sent); a soft break the gem already has
+ * is harmless to repeat, since repeated ones never escalate. Best-effort: logged,
+ * never thrown.
+ */
+export function resendSoftBreak(session: ActiveSession): void {
+  try {
+    const { success, err } = session.GciTsBreak(false);
+    logInfo(
+      `[Session ${session.id}] Soft break sent again: success=${success}` +
+        (err?.number ? ` err=${err.number} ${err.message ?? ''}` : ''),
+    );
+  } catch (e) {
+    logInfo(
+      `[Session ${session.id}] Could not send the soft break again: ` +
+        (e instanceof Error ? e.message : String(e)),
+    );
+  }
+}
+
 /** Whether a GCI error's `context` names a process. */
 function isProcess(context: unknown): context is bigint | number {
   if (typeof context !== 'bigint' && typeof context !== 'number') return false;
@@ -829,6 +855,7 @@ export function pollNbToCompletion<T>(
     // stops waiting if the call is still going later, or at a second call.
     const stopWaiting = settleOnThrow(() => {
       if (settled) return;
+      resendSoftBreak(session);
       abandoned.abort();
       logInfo(
         `[Session ${session.id}] Stopped waiting for the call; the gem may still be finishing it.`,

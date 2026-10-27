@@ -189,9 +189,9 @@ describe('runNbCall — cancellation', () => {
         expect.objectContaining({ message: expect.stringMatching(/break/i) }),
       );
 
-      cancelHandler!(); // second cancel → stop waiting now
+      cancelHandler!(); // second cancel → stop waiting now, with the soft break again
       await expect(p).rejects.toBeInstanceOf(NbCancelledError);
-      expect(gci.GciTsBreak).toHaveBeenCalledTimes(1);
+      expect(gci.GciTsBreak.mock.calls.map(([, hard]) => hard)).toEqual([false, false]);
 
       await vi.advanceTimersByTimeAsync(3000); // let the drain finish
       vi.clearAllTimers();
@@ -296,6 +296,46 @@ describe('runNbCall — one press is enough', () => {
       await vi.advanceTimersByTimeAsync(LATE_COLLECT_LIMIT_MS);
       await expect(p).rejects.toBeInstanceOf(NbCancelledError);
       expect(gci.GciTsBreak).not.toHaveBeenCalledWith(handle, true);
+      // The press, and once more as the runner stops waiting.
+      expect(gci.GciTsBreak).toHaveBeenCalledTimes(2);
+      vi.clearAllTimers();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // A soft break that reaches the gem before it has started the call is lost,
+  // and the call runs on (measured on 3.6.8 and 3.7.5).
+  it('sends the soft break again when it stops waiting on a call still going', async () => {
+    vi.useFakeTimers();
+    try {
+      const { p, cancel, gci, handle } = stoppableCall();
+      cancel();
+      expect(gci.GciTsBreak).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(EARLIEST_STOP_WAITING_MS + 100);
+      await expect(p).rejects.toBeInstanceOf(NbCancelledError);
+
+      expect(gci.GciTsBreak.mock.calls).toEqual([
+        [handle, false],
+        [handle, false],
+      ]);
+      vi.clearAllTimers();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not send it again to a call the first soft break stopped', async () => {
+    vi.useFakeTimers();
+    try {
+      const { p, cancel, gci } = stoppableCall();
+      p.catch(() => {});
+      cancel();
+      gci.GciTsNbPoll.mockReturnValue({ result: 1, err: noErr });
+
+      await vi.advanceTimersByTimeAsync(EARLIEST_STOP_WAITING_MS + 100);
+
       expect(gci.GciTsBreak).toHaveBeenCalledTimes(1);
       vi.clearAllTimers();
     } finally {
@@ -1930,7 +1970,7 @@ describe('stopping the calls on a session', () => {
     return run;
   }
 
-  it('sends one soft break and stops waiting, never a hard break', async () => {
+  it('sends soft breaks only, and stops waiting, never a hard break', async () => {
     vi.useFakeTimers();
     try {
       const { session, gci, handle } = newSession();
@@ -1940,6 +1980,7 @@ describe('stopping the calls on a session', () => {
       await vi.advanceTimersByTimeAsync(SETTLE_MS);
 
       expect(gci.GciTsBreak.mock.calls.map(([h, hard]) => [h === handle, hard])).toEqual([
+        [true, false],
         [true, false],
       ]);
       await expect(run).rejects.toBeInstanceOf(NbCancelledError);
@@ -1985,7 +2026,9 @@ describe('stopping the calls on a session', () => {
       await vi.advanceTimersByTimeAsync(SETTLE_MS);
       await stop;
 
-      expect(gci.GciTsBreak.mock.calls.map(([, hard]) => hard)).toEqual([false]);
+      const hard = gci.GciTsBreak.mock.calls.map(([, isHard]) => isHard);
+      expect(hard.length).toBeGreaterThan(0);
+      expect(hard.every((h) => h === false)).toBe(true);
       await expect(run).rejects.toBeInstanceOf(NbCancelledError);
     } finally {
       await vi.runAllTimersAsync();
