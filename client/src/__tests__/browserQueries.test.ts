@@ -8,14 +8,14 @@ vi.mock('vscode', () => ({
 
 import { ActiveSession } from '../sessionManager';
 import * as queries from '../browserQueries';
-import { sessionOn } from './fakeActiveSession';
+import { sessionOn, startNonBlockingCall } from './fakeActiveSession';
 import { GciLibraryError, SESSION_BUSY_MESSAGE } from '../gciLibraryError';
 import { holdSessionUntilSettled, setStillRunningHandler } from '../nbRunner';
 
 function createMockGci(executeFetchData = '') {
   return {
     executeAndFetchString: vi.fn((_session: unknown, _code: string) => executeFetchData),
-    GciTsCallInProgress: vi.fn(() => ({ result: 0 })),
+    GciTsNbExecute: vi.fn(() => ({ success: true, err: { number: 0 } })),
     GciTsPerform: vi.fn(),
   };
 }
@@ -57,9 +57,10 @@ describe('browserQueries', () => {
 
     it('says the same when another call still holds the session, without calling GemStone', () => {
       const gci = createMockGci();
-      gci.GciTsCallInProgress.mockReturnValue({ result: 1 });
+      const session = sessionOn(gci);
+      startNonBlockingCall(session);
 
-      expect(() => queries.compileMethod(sessionOn(gci), 'Array', false, 'test', 'foo')).toThrow(
+      expect(() => queries.compileMethod(session, 'Array', false, 'test', 'foo')).toThrow(
         SESSION_BUSY_MESSAGE,
       );
       expect(gci.executeAndFetchString).not.toHaveBeenCalled();
@@ -67,8 +68,8 @@ describe('browserQueries', () => {
 
     it('offers Force Stop when what holds the session is a run the user stopped', async () => {
       const gci = createMockGci();
-      gci.GciTsCallInProgress.mockReturnValue({ result: 1 });
       const session = sessionOn(gci, { id: 9031 });
+      startNonBlockingCall(session);
       let finish: () => void = () => {};
       const held = holdSessionUntilSettled(session, new Promise<void>((r) => (finish = r)));
       const told = vi.fn();
@@ -392,9 +393,9 @@ describe('browserQueries', () => {
     });
 
     it('cannot tell when the session is busy with another operation', () => {
-      const gci = createMockGci('true');
-      const session = sessionOn(gci);
-      gci.GciTsCallInProgress.mockReturnValue({ result: 1 });
+      const session = createMockSession('true');
+      startNonBlockingCall(session);
+
       expect(queries.sessionNeedsCommit(session)).toBeUndefined();
     });
 

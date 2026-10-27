@@ -51,8 +51,7 @@ async function runCell(
   source: string,
   onStart: NbRunOptions['onStart'],
 ): Promise<string> {
-  const { result: inProgress } = session.GciTsCallInProgress();
-  if (inProgress !== 0) {
+  if (session.isBusy()) {
     throw new Error(SESSION_BUSY_MESSAGE);
   }
 

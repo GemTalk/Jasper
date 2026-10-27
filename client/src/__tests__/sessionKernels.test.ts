@@ -229,9 +229,11 @@ describe('the real per-session factories', () => {
   // session would reach session 1's gci instead.
   function managerWithGci() {
     const gciOf = (id: number) => ({
-      // Busy, so evalSmalltalk stops at its first GCI call — the one that shows
-      // which session it went to.
-      GciTsCallInProgress: vi.fn((_session: unknown) => ({ result: 1, err: { number: 0 } })),
+      // Failing, so evalSmalltalk stops at its first GCI call — the one that
+      // shows which session it went to.
+      executeAndFetchString: vi.fn((_session: unknown) => {
+        throw new Error('stop here');
+      }),
       id,
     });
     const libraries = new Map([1, 2].map((id) => [id, gciOf(id)]));
@@ -283,8 +285,8 @@ describe('the real per-session factories', () => {
     expect(kernel.supportedLanguages).toEqual(['gemstone-smalltalk']);
     await kernel.executeHandler([cell('3 + 4')]);
 
-    expect(libraries.get(2)!.GciTsCallInProgress.mock.calls[0][0]).toBe(handles.get(2));
-    expect(libraries.get(1)!.GciTsCallInProgress).not.toHaveBeenCalled();
+    expect(libraries.get(2)!.executeAndFetchString.mock.calls[0][0]).toBe(handles.get(2));
+    expect(libraries.get(1)!.executeAndFetchString).not.toHaveBeenCalled();
   });
 });
 

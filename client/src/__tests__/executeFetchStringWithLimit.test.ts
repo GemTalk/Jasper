@@ -11,11 +11,11 @@ import { executeFetchStringWithLimit, BrowserQueryError } from '../browserQuerie
 import { SESSION_BUSY_MESSAGE } from '../gciLibraryError';
 import { ActiveSession } from '../sessionManager';
 import type { GciLibrary } from '../gciLibrary';
-import { fakeActiveSession } from './fakeActiveSession';
+import { fakeActiveSession, startNonBlockingCall } from './fakeActiveSession';
 
 function makeSession(gciOverrides: Record<string, unknown> = {}): ActiveSession {
   const gci = {
-    GciTsCallInProgress: vi.fn(() => ({ result: 0 })),
+    GciTsNbExecute: vi.fn(() => ({ success: true, err: { number: 0 } })),
     utf8ClassOop: vi.fn(() => 42n),
     GciTsExecuteFetchBytes: vi.fn(() => ({ bytesReturned: 3, data: 'abc', err: { number: 0 } })),
     ...gciOverrides,
@@ -49,10 +49,9 @@ describe('executeFetchStringWithLimit', () => {
 
   it('throws when the session is busy', () => {
     const fetchBytes = vi.fn();
-    const session = makeSession({
-      GciTsCallInProgress: vi.fn(() => ({ result: 1 })),
-      GciTsExecuteFetchBytes: fetchBytes,
-    });
+    const session = makeSession({ GciTsExecuteFetchBytes: fetchBytes });
+    startNonBlockingCall(session);
+
     expect(() => executeFetchStringWithLimit(session, 'l', 'C', 1024)).toThrow(
       SESSION_BUSY_MESSAGE,
     );

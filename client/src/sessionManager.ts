@@ -581,8 +581,7 @@ export class SessionManager {
     const s = this.sessions.get(id);
     if (!s) return;
     try {
-      const { result: inProgress } = s.GciTsCallInProgress();
-      if (inProgress !== 0) return;
+      if (s.isBusy()) return;
       const { mode, inTransaction } = getTransactionState((code) => s.executeAndFetchString(code));
       if (mode === undefined && inTransaction === undefined) return;
       // Each half is kept independently: a read that parses one and not the other

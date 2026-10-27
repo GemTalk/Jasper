@@ -25,8 +25,8 @@ import {
   forgetSession,
   stopCallsOn,
 } from '../nbRunner';
+import { OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
 import { fakeActiveSession } from './fakeActiveSession';
-import { OOP_NIL } from '../gciConstants';
 
 const noErr = { number: 0 } as const;
 
@@ -56,6 +56,7 @@ function makeSession(pollResults: { result: number; err?: unknown }[]) {
     // 0 = the session is there and idle-ish; -1 would mean it has gone away, which
     // the poll treats as "nobody is coming to answer this call".
     GciTsCallInProgress: vi.fn(() => ({ result: 0, err: noErr })),
+    GciTsNbExecute: vi.fn(() => ({ success: true, err: noErr })),
     GciTsNbResult: vi.fn(() => ({ result: 0, err: noErr })),
     GciTsClearStackAsync: vi.fn(() => ({ success: true, err: noErr })),
     logout: vi.fn(() => ({ sessionFreed: true })),
@@ -850,7 +851,7 @@ async function stopRun(
   let cancel: (() => void) | undefined;
   const p = runNbCall(
     session,
-    () => ({ success: true, err: noErr as never }),
+    () => session.GciTsNbExecute('nil', OOP_ILLEGAL, OOP_ILLEGAL, OOP_NIL, 0, 0),
     () => 'unreachable',
     {
       suppressNotification: true,
@@ -1293,6 +1294,45 @@ describe('a stopped call whose collection hits a poll error', () => {
 
       expect(poll.mock.calls.length).toBe(pollsAfterGivingUp);
       expect(vi.mocked(logInfo).mock.calls.flat().join('\n')).toMatch(/Gave up collecting/);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops calling the session busy once it gives up while draining', async () => {
+    vi.useFakeTimers();
+    try {
+      const { session, gci } = makeSession([{ result: 0 }]);
+      const poll = gci.GciTsNbPoll as ReturnType<typeof vi.fn>;
+      poll.mockReturnValue({ result: 0, err: noErr });
+      await stopRun(session);
+
+      poll.mockReturnValue({ result: -1, err: { number: 9, message: 'poll err' } });
+      await vi.advanceTimersByTimeAsync(PAST_DRAIN_BUDGET_MS);
+
+      expect(gci.GciTsNbResult).not.toHaveBeenCalled();
+      expect(session.isBusy()).toBe(false);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops calling the session busy once it gives up collecting in the background', async () => {
+    vi.useFakeTimers();
+    try {
+      const { session, gci } = makeSession([{ result: 0 }]);
+      const poll = gci.GciTsNbPoll as ReturnType<typeof vi.fn>;
+      poll.mockReturnValue({ result: 0, err: noErr });
+      await stopRun(session);
+      await vi.advanceTimersByTimeAsync(PAST_DRAIN_BUDGET_MS);
+
+      poll.mockReturnValue({ result: -1, err: { number: 9, message: 'poll err' } });
+      await vi.advanceTimersByTimeAsync(5 * LATE_COLLECT_INTERVAL_MS);
+
+      expect(gci.GciTsNbResult).not.toHaveBeenCalled();
+      expect(session.isBusy()).toBe(false);
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();
@@ -2092,11 +2132,14 @@ describe('clearing a stopped run in the background', () => {
       expect(() => ensureSessionFree(session)).toThrow(NbSessionBusyError);
       expect(told).toHaveBeenCalledWith(session);
       expect(then).not.toHaveBeenCalled();
+      // The clear runs on a worker thread, which GemStone counts as a call in progress.
+      expect(session.isBusy()).toBe(true);
 
       finish({ success: true, err: noErr });
       await clearing;
       expect(then).toHaveBeenCalledTimes(1);
       expect(() => ensureSessionFree(session)).not.toThrow();
+      expect(session.isBusy()).toBe(false);
     } finally {
       setStillRunningHandler(undefined);
     }

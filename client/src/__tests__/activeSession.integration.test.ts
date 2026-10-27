@@ -3,8 +3,8 @@ import { describe, it, expect, onTestFinished, vi } from 'vitest';
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 import type { ActiveSession } from '../activeSession';
-import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
-import { runNbCall } from '../nbRunner';
+import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL, GS_ERR_HALT } from '../gciConstants';
+import { pollNbResultReady, runNbCall } from '../nbRunner';
 import { testActiveSession } from './testActiveSession';
 import { useIntegrationTest } from './useIntegrationTest';
 
@@ -193,4 +193,161 @@ describe('logging out never waits for the gem (integration)', () => {
 
     await expectOffTheStone(serial);
   }, 20_000);
+});
+
+describe('whether a session is busy (integration)', () => {
+  let session: ActiveSession;
+
+  useIntegrationTest((testContext) => {
+    session = testActiveSession(testContext.gciLibrary, testContext.session);
+  });
+
+  // Logging out with a non-blocking call outstanding frees the session too, so
+  // a test can leave one behind.
+  function transientSession(): ActiveSession {
+    const { session: transient, err } = session.transientLogin(session.login);
+    if (!transient) throw new Error(`Transient login failed: ${err.message}`);
+    onTestFinished(() => {
+      transient.logout();
+    });
+    return transient;
+  }
+
+  function startNonBlocking(on: ActiveSession, code: string): void {
+    const { success, err } = on.GciTsNbExecute(code, OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL, 0, 0);
+    if (!success) throw new Error(`Non-blocking start failed: ${err.message}`);
+  }
+
+  async function resultReady(on: ActiveSession): Promise<void> {
+    for (;;) {
+      const { result, err } = pollNbResultReady(on);
+      if (result === 1) return;
+      if (result === -1) throw new Error(`Polling for the result failed: ${err.message}`);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+
+  function delayOn(on: ActiveSession, milliseconds: number): bigint {
+    const { result, err } = on.GciTsExecute(
+      `Delay forMilliseconds: ${milliseconds}`,
+      OOP_CLASS_UTF8,
+      OOP_ILLEGAL,
+      OOP_NIL,
+      0,
+      0,
+    );
+    if (err.number !== 0) throw new Error(`Could not build the delay: ${err.message}`);
+    return result;
+  }
+
+  // A logout is refused while a worker owns the session, so the session would
+  // leak if a failed assertion skipped waiting for the call. onTestFinished
+  // callbacks run last-registered first, so this wait runs before the logout
+  // transientSession registered.
+  function waitBeforeLogout<T>(call: Promise<T>): Promise<T> {
+    onTestFinished(async () => {
+      await call;
+    });
+    return call;
+  }
+
+  function startOnWorker(on: ActiveSession): Promise<unknown> {
+    return waitBeforeLogout(on.GciTsPerformAsync(delayOn(on, 300), OOP_ILLEGAL, 'wait', [], 0, 0));
+  }
+
+  function resumeOnWorker(on: ActiveSession, process: bigint): Promise<unknown> {
+    return waitBeforeLogout(on.GciTsContinueWithAsync(process, OOP_ILLEGAL, null, 0));
+  }
+
+  function pausedProcess(on: ActiveSession, code: string): bigint {
+    const { err } = on.GciTsExecute(
+      `self pause. ${code}`,
+      OOP_CLASS_UTF8,
+      OOP_ILLEGAL,
+      OOP_NIL,
+      0,
+      0,
+    );
+    if (err.number !== GS_ERR_HALT) throw new Error(`The process did not pause: ${err.message}`);
+    return BigInt(err.context);
+  }
+
+  it('is free right after login', () => {
+    const transient = transientSession();
+
+    expect(transient.isBusy()).toBe(false);
+  });
+
+  it('is busy while code it started without waiting is still running', () => {
+    const transient = transientSession();
+
+    startNonBlocking(transient, '(Delay forSeconds: 1) wait');
+
+    expect(transient.isBusy()).toBe(true);
+  });
+
+  it('is busy while a message it sent without waiting is still running', () => {
+    const transient = transientSession();
+    const delay = delayOn(transient, 1000);
+
+    const { success, err } = transient.GciTsNbPerform(delay, OOP_ILLEGAL, 'wait', [], 0, 0);
+
+    expect(success, err.message).toBe(true);
+    expect(transient.isBusy()).toBe(true);
+  });
+
+  it('stays busy after code started without waiting finishes, until its answer is read', async () => {
+    const transient = transientSession();
+    startNonBlocking(transient, 'true');
+
+    await resultReady(transient);
+
+    expect(transient.isBusy()).toBe(true);
+  });
+
+  it('is free once the answer to code started without waiting is read', async () => {
+    const transient = transientSession();
+    startNonBlocking(transient, 'true');
+    await resultReady(transient);
+
+    transient.GciTsNbResult();
+
+    expect(transient.isBusy()).toBe(false);
+  });
+
+  it('is free once the error from code started without waiting is read', async () => {
+    const transient = transientSession();
+    startNonBlocking(transient, '1/0');
+    await resultReady(transient);
+
+    const { err } = transient.GciTsNbResult();
+
+    expect(err.number).not.toBe(0);
+    expect(transient.isBusy()).toBe(false);
+  });
+
+  it('is busy while a message send runs on another thread', () => {
+    const transient = transientSession();
+
+    void startOnWorker(transient);
+
+    expect(transient.isBusy()).toBe(true);
+  });
+
+  it('is busy while a paused process resumes on another thread', () => {
+    const transient = transientSession();
+    const process = pausedProcess(transient, '(Delay forMilliseconds: 300) wait');
+
+    void resumeOnWorker(transient, process);
+
+    expect(transient.isBusy()).toBe(true);
+  });
+
+  it('is free once a call on another thread finishes', async () => {
+    const transient = transientSession();
+
+    await startOnWorker(transient);
+
+    expect(transient.isBusy()).toBe(false);
+  });
 });

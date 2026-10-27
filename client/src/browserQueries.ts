@@ -364,7 +364,7 @@ function resolveClassUtf8(session: ActiveSession): bigint {
 export function executeFetchString(session: ActiveSession, code: string): string {
   try {
     // A call still in progress, a background clear say, would refuse this one.
-    if (session.GciTsCallInProgress().result === 0) return session.executeAndFetchString(code);
+    if (!session.isBusy()) return session.executeAndFetchString(code);
   } catch (e) {
     if (!(e instanceof GciLibraryError && e.number === GCI_ERR_OP_IN_PROGRESS)) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -411,7 +411,7 @@ export async function executeFetchStringNb(
     // Every GCI call here, the busy check included, goes inside the start, which
     // runNbCall makes only once the session is free; see whenSessionFree.
     () => {
-      if (session.GciTsCallInProgress().result !== 0) throw refusedAsBusy(session);
+      if (session.isBusy()) throw refusedAsBusy(session);
       const oopClassUtf8 = resolveClassUtf8(session);
       return session.GciTsNbExecute(code, oopClassUtf8, OOP_ILLEGAL, OOP_NIL, 0, 0);
     },
@@ -453,7 +453,7 @@ export function executeFetchStringWithLimit(
   code: string,
   maxBytes: number,
 ): string {
-  if (session.GciTsCallInProgress().result !== 0) throw refusedAsBusy(session);
+  if (session.isBusy()) throw refusedAsBusy(session);
 
   const oopClassUtf8 = resolveClassUtf8(session);
 

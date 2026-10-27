@@ -2,6 +2,7 @@
 // which run under `tsx` outside the extension host with only a minimal
 // `vscode` stub (see `install-server-plugin.mjs`), can import it.
 
+import { GCI_ERR_OP_IN_PROGRESS } from './gciConstants';
 import type { GciError, GciLibrary } from './gciLibrary';
 import { GciLibraryError } from './gciLibraryError';
 import type { GciOptionalFunctionName } from './gciLibrary/optionalFunctions';
@@ -52,6 +53,12 @@ export class ActiveSession {
   // Counts down, so a transient login's id never matches a registered session's
   // (those count up from 1) and per-session state keyed by id stays apart.
   private static nextTransientId = -1;
+
+  // GciTsCallInProgress can't answer for non-blocking calls (it answers 0 even
+  // while one runs, a libgcits bug confirmed by GemTalk), so the session keeps
+  // its own count of what GemStone would refuse a call for. See `isBusy`.
+  private hasUncollectedNonBlockingCall = false;
+  private workerCallsInProgress = 0;
 
   constructor(
     public id: number,
@@ -120,6 +127,34 @@ export class ActiveSession {
     return this.handle === loggedOut;
   }
 
+  /**
+   * Whether GemStone would refuse a call on this session right now because
+   * another one is outstanding: a non-blocking call that has started and whose
+   * result is not collected yet, whether the gem is still running it or has
+   * finished, or a call running on a worker thread. Answers without a native
+   * call.
+   *
+   * Only calls made through this object count: a second ActiveSession built
+   * around the same native session does not see them. Throws once a logout has
+   * freed the session, so a caller reports that rather than a busy session.
+   */
+  isBusy(): boolean {
+    this.handle();
+    return this.hasUncollectedNonBlockingCall || this.workerCallsInProgress > 0;
+  }
+
+  /**
+   * Stop counting a non-blocking call whose result nobody will read, because
+   * collecting it kept failing (a broken connection, say). Without this,
+   * `isBusy` would answer true until logout and every caller would be told to
+   * wait for a session that will never answer; with it, their calls reach
+   * GemStone and report the session as it is.
+   */
+  forgetUncollectedCall(): void {
+    this.handle();
+    this.hasUncollectedNonBlockingCall = false;
+  }
+
   // Each method below is a pass-through to the GciLibrary method of the same
   // name with this session's handle bound in. The contract lives there: the
   // GciTsXxx calls return a GciError, the rest throw GciLibraryError. One
@@ -154,7 +189,7 @@ export class ActiveSession {
 
   /** See {@link GciLibrary.GciTsClearStackAsync}. */
   async GciTsClearStackAsync(gsProcess: bigint) {
-    return await this.gci.GciTsClearStackAsync(this.handle(), gsProcess);
+    return await this.trackWorkerCall((handle) => this.gci.GciTsClearStackAsync(handle, gsProcess));
   }
 
   /** See {@link GciLibrary.GciTsCommit}. */
@@ -179,18 +214,20 @@ export class ActiveSession {
   }
 
   /** See {@link GciLibrary.GciTsContinueWithAsync}. */
-  async GciTsContinueWithAsync(
+  GciTsContinueWithAsync(
     gsProcess: bigint,
     replaceTopOfStack: bigint,
     continueWithError: GciError | null,
     flags: number,
   ) {
-    return await this.gci.GciTsContinueWithAsync(
-      this.handle(),
-      gsProcess,
-      replaceTopOfStack,
-      continueWithError,
-      flags,
+    return this.trackWorkerCall((handle) =>
+      this.gci.GciTsContinueWithAsync(
+        handle,
+        gsProcess,
+        replaceTopOfStack,
+        continueWithError,
+        flags,
+      ),
     );
   }
 
@@ -283,14 +320,16 @@ export class ActiveSession {
     flags: number,
     environmentId: number,
   ) {
-    return this.gci.GciTsNbExecute(
-      this.handle(),
-      sourceStr,
-      sourceOop,
-      contextObject,
-      symbolList,
-      flags,
-      environmentId,
+    return this.trackNonBlockingCall((handle) =>
+      this.gci.GciTsNbExecute(
+        handle,
+        sourceStr,
+        sourceOop,
+        contextObject,
+        symbolList,
+        flags,
+        environmentId,
+      ),
     );
   }
 
@@ -303,14 +342,8 @@ export class ActiveSession {
     flags: number,
     environmentId: number,
   ) {
-    return this.gci.GciTsNbPerform(
-      this.handle(),
-      receiver,
-      selector,
-      selectorStr,
-      args,
-      flags,
-      environmentId,
+    return this.trackNonBlockingCall((handle) =>
+      this.gci.GciTsNbPerform(handle, receiver, selector, selectorStr, args, flags, environmentId),
     );
   }
 
@@ -322,7 +355,12 @@ export class ActiveSession {
 
   /** See {@link GciLibrary.GciTsNbResult}. */
   GciTsNbResult() {
-    return this.gci.GciTsNbResult(this.handle());
+    const collected = this.gci.GciTsNbResult(this.handle());
+    // Any other answer, a Smalltalk error included, means the call is over.
+    // Only defensive: reading before the result is ready blocks until it is,
+    // rather than answering GCI_ERR_OP_IN_PROGRESS (seen on 3.6.2).
+    if (collected.err.number !== GCI_ERR_OP_IN_PROGRESS) this.hasUncollectedNonBlockingCall = false;
+    return collected;
   }
 
   /** See {@link GciLibrary.GciTsNewString}. */
@@ -366,7 +404,7 @@ export class ActiveSession {
   }
 
   /** See {@link GciLibrary.GciTsPerformAsync}. */
-  async GciTsPerformAsync(
+  GciTsPerformAsync(
     receiver: bigint,
     selector: bigint,
     selectorStr: string | null,
@@ -374,14 +412,16 @@ export class ActiveSession {
     flags: number,
     environmentId: number,
   ) {
-    return await this.gci.GciTsPerformAsync(
-      this.handle(),
-      receiver,
-      selector,
-      selectorStr,
-      args,
-      flags,
-      environmentId,
+    return this.trackWorkerCall((handle) =>
+      this.gci.GciTsPerformAsync(
+        handle,
+        receiver,
+        selector,
+        selectorStr,
+        args,
+        flags,
+        environmentId,
+      ),
     );
   }
 
@@ -452,5 +492,26 @@ export class ActiveSession {
   /** See {@link GciLibrary.isAvailable}. */
   isAvailable(name: GciOptionalFunctionName) {
     return this.gci.isAvailable(name);
+  }
+
+  // Bookkeeping for `isBusy`. Unlike the library-level calls above, these need
+  // the session.
+
+  /** Runs `call` on this session's handle, counting it as a worker call until it settles. */
+  private async trackWorkerCall<T>(call: (handle: unknown) => Promise<T>): Promise<T> {
+    const handle = this.handle();
+    this.workerCallsInProgress++;
+    try {
+      return await call(handle);
+    } finally {
+      this.workerCallsInProgress--;
+    }
+  }
+
+  /** Runs `start` on this session's handle, counting the call as uncollected once it has started. */
+  private trackNonBlockingCall<T extends { success: boolean }>(start: (handle: unknown) => T): T {
+    const started = start(this.handle());
+    if (started.success) this.hasUncollectedNonBlockingCall = true;
+    return started;
   }
 }

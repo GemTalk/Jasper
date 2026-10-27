@@ -545,8 +545,7 @@ export class BasicInspector {
    * a much less helpful message than this one.
    */
   private busyError(): string | null {
-    const { result: inProgress } = this.session.GciTsCallInProgress();
-    return inProgress !== 0 ? SESSION_BUSY_MESSAGE : null;
+    return this.session.isBusy() ? SESSION_BUSY_MESSAGE : null;
   }
 
   private setSlot(msg: {
