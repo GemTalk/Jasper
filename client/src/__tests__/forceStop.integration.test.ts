@@ -112,9 +112,12 @@ describe('Force Stop (integration)', () => {
   // A soft break that reaches the gem before it has started the call is lost; the
   // runner sends it again when it stops waiting. The gem is held back with
   // SIGSTOP while the call and the Cancel go out, which Windows has no way to do.
-  it.skipIf(process.platform === 'win32')(
-    'stops a run whose Cancel reached the gem before the run had started',
-    async () => {
+  it.skipIf(process.platform === 'win32').each([
+    ['one press', 1],
+    ['two quick presses', 2],
+  ])(
+    'stops a run whose Cancel reached the gem before the run had started (%s)',
+    async (_how, presses) => {
       const own = armedSession();
       const pid = own
         .executeAndFetchString('((System descriptionOfSession: System session) at: 2) printString')
@@ -138,7 +141,7 @@ describe('Force Stop (integration)', () => {
           { suppressNotification: true, disposableProcess: true, onStart: (c) => (cancel = c) },
         );
         run.catch(() => {});
-        cancel!();
+        for (let i = 0; i < presses; i++) cancel!();
         await new Promise((resolve) => setTimeout(resolve, 500));
       } finally {
         execSync(`kill -CONT ${pid}`);

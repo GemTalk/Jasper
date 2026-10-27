@@ -296,8 +296,10 @@ describe('runNbCall — one press is enough', () => {
       await vi.advanceTimersByTimeAsync(LATE_COLLECT_LIMIT_MS);
       await expect(p).rejects.toBeInstanceOf(NbCancelledError);
       expect(gci.GciTsBreak).not.toHaveBeenCalledWith(handle, true);
-      // The press, and once more as the runner stops waiting.
-      expect(gci.GciTsBreak).toHaveBeenCalledTimes(2);
+      // The press, once more as the runner stops waiting, and a few times while
+      // the call is collected in the background; never without end.
+      expect(gci.GciTsBreak.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(gci.GciTsBreak.mock.calls.length).toBeLessThanOrEqual(7);
       vi.clearAllTimers();
     } finally {
       vi.useRealTimers();
@@ -320,6 +322,32 @@ describe('runNbCall — one press is enough', () => {
         [handle, false],
         [handle, false],
       ]);
+      vi.clearAllTimers();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('sends it again from the background once the gem has had time to start, after two quick presses', async () => {
+    // Two presses at once send both soft breaks before the gem may have started
+    // the call, and both are then lost.
+    vi.useFakeTimers();
+    try {
+      const { p, cancel, gci } = stoppableCall();
+      cancel();
+      cancel();
+      await expect(p).rejects.toBeInstanceOf(NbCancelledError);
+      const atOnce = gci.GciTsBreak.mock.calls.length;
+
+      // Past the drain's 2s budget, then 2s of background collection.
+      await vi.advanceTimersByTimeAsync(2000 + 4 * LATE_COLLECT_INTERVAL_MS + 100);
+      expect(gci.GciTsBreak.mock.calls.length).toBe(atOnce + 1);
+
+      // Once the gem lets go, no more.
+      gci.GciTsNbPoll.mockReturnValue({ result: 1, err: noErr });
+      await vi.advanceTimersByTimeAsync(10 * LATE_COLLECT_INTERVAL_MS);
+      expect(gci.GciTsBreak.mock.calls.length).toBe(atOnce + 1);
+      expect(gci.GciTsBreak.mock.calls.every(([, hard]) => hard === false)).toBe(true);
       vi.clearAllTimers();
     } finally {
       vi.useRealTimers();

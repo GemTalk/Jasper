@@ -149,8 +149,9 @@ export interface NbRunOptions {
  * hard break, no handler can catch it, which skips the code's own cleanup
  * (measured on 3.6.2 and 3.7.5).
  *
- * The soft break is sent once more as the runner stops waiting: one that reaches
- * the gem before it has started the call is lost (see {@link resendSoftBreak}).
+ * The soft break is sent again as the runner stops waiting, and a few times more
+ * while the call is collected in the background: one that reaches the gem before
+ * it has started the call is lost (see {@link resendSoftBreak}).
  *
  * Never earlier than {@link EARLIEST_STOP_WAITING_MS} into the call either: a break
  * sent in a call's first ~2s does not land until ~2s in, so measuring only from
@@ -246,6 +247,13 @@ export const LATE_COLLECT_LIMIT_MS = 5 * 60_000;
  * call until logout.
  */
 const COLLECT_FAILURES_TO_GIVE_UP = 3;
+
+/**
+ * While a stopped call is collected in the background, its soft break is sent
+ * again every this many polls (2s), at most {@link LATE_BREAKS} times.
+ */
+const LATE_BREAK_EVERY_TICKS = 4;
+const LATE_BREAKS = 5;
 
 /**
  * Sessions still busy with a call we gave up on: its result is still being
@@ -454,6 +462,12 @@ function collectLate(
   const entry = { collect: settled, forget };
   const tick = (n: number): void => {
     if (settled()) return;
+    // The stop's soft breaks may all have reached the gem before it started the
+    // call (see resendSoftBreak): two quick presses send both at once. By now it
+    // has started.
+    if (n % LATE_BREAK_EVERY_TICKS === 0 && n / LATE_BREAK_EVERY_TICKS <= LATE_BREAKS) {
+      resendSoftBreak(session);
+    }
     if (n * LATE_COLLECT_INTERVAL_MS >= LATE_COLLECT_LIMIT_MS) {
       logInfo(
         `[Session ${session.id}] Stopped polling for a cancelled call after ` +
@@ -684,7 +698,8 @@ export function clearHolds(session: ActiveSession): boolean {
 
 /**
  * Send a stop's soft break again, for a call that is still going when the runner
- * stops waiting. A soft break that reaches the gem before it has started the call
+ * stops waiting, and now and then while it is collected in the background
+ * (see collectLate). A soft break that reaches the gem before it has started the call
  * is lost, and the call runs on (measured on 3.6.8 and 3.7.5, with the gem held
  * back while the call and the break were sent); a soft break the gem already has
  * is harmless to repeat, since repeated ones never escalate. Best-effort: logged,
