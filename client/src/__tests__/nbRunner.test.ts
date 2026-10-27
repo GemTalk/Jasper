@@ -6,6 +6,8 @@ vi.mock('../gciLog', async (orig) => ({ ...(await orig()), logInfo: vi.fn() }));
 import * as vscode from 'vscode';
 import { logInfo } from '../gciLog';
 import {
+  STOP_CALLS_WAIT_MS,
+  holdSessionUntilSettled,
   clearHolds,
   clearInBackground,
   runNbCall,
@@ -1997,6 +1999,27 @@ describe('stopping the calls on a session', () => {
     run.catch(() => {});
     return run;
   }
+
+  it('waits at most a couple of seconds for a stopped run that keeps the session', async () => {
+    // A logout behind clean-up that ignores the stop goes on to Force Stop and
+    // ending the gem, instead of sitting out the 30s a new call would wait.
+    vi.useFakeTimers();
+    try {
+      const { session } = newSession();
+      void holdSessionUntilSettled(session, new Promise(() => {}));
+      let stopped = false;
+
+      void stopCallsOn(session).then(() => (stopped = true));
+      await vi.advanceTimersByTimeAsync(STOP_CALLS_WAIT_MS - 100);
+      expect(stopped).toBe(false);
+      await vi.advanceTimersByTimeAsync(200);
+
+      expect(stopped).toBe(true);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
 
   it('sends soft breaks only, and stops waiting, never a hard break', async () => {
     vi.useFakeTimers();

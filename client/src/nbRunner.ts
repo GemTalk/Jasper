@@ -296,10 +296,10 @@ const live = new Map<number, TrackedRun>();
  * free.
  *
  * The call gets the soft break its Cancel sends, and the runner stops waiting
- * for it at once; the call is then waited out the way the next call on the
- * session waits for it. Both waits are bounded, so this always resolves; a
- * session still busy past them refuses its next call cleanly rather than
- * crashing.
+ * for it at once; what is left of it is then waited out for at most
+ * {@link STOP_CALLS_WAIT_MS}, so a logout behind clean-up that ignores the stop
+ * moves on to Force Stop and ending the gem instead of sitting there. A session
+ * still busy past that refuses its next call cleanly rather than crashing.
  *
  * A call stopped here rejects with `NbCancelledError`, however it ended. The
  * gem's own answer to the soft break is a Break error with a live context,
@@ -310,9 +310,24 @@ export async function stopCallsOn(session: ActiveSession): Promise<void> {
     .get(session.id)
     ?.stop()
     .catch(() => {});
-  await draining.get(session.id);
+  const holding = draining.get(session.id);
+  if (holding) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      holding,
+      new Promise<void>((resolve) => (timer = setTimeout(resolve, STOP_CALLS_WAIT_MS))),
+    ]);
+    clearTimeout(timer);
+  }
   uncollected.get(session.id)?.collect();
 }
+
+/**
+ * How long {@link stopCallsOn} waits for a stopped call to let go of the session:
+ * the drain's own budget, rather than the 30s a call waits for one that ignores
+ * the stop.
+ */
+export const STOP_CALLS_WAIT_MS = 2000;
 
 /**
  * Collect and discard the result of a call we gave up on, so the session goes
