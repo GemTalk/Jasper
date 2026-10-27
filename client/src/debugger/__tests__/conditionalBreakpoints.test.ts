@@ -8,6 +8,7 @@ vi.mock('../../nbRunner', async (original) => ({
 import {
   BreakpointRule,
   DECISION,
+  resumeOnWorker,
   deciderSource,
   decodeDecision,
   applyBreakpointRules,
@@ -15,6 +16,7 @@ import {
 } from '../conditionalBreakpoints';
 import { OOP_NIL } from '../../gciConstants';
 import { isRunning, NbCancelledError } from '../../nbRunner';
+import type { StepResult } from '../debugQueries';
 import * as vscode from 'vscode';
 import { fakeActiveSession } from '../../__tests__/fakeActiveSession';
 import {
@@ -631,5 +633,90 @@ describe('applyBreakpointRules', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('a run the loop gave up waiting for', () => {
+  /** Cancel `run`, then wait out the loop's give-up; it rejects with NbCancelledError. */
+  async function giveUp(run: Promise<unknown>, cancel: () => void): Promise<void> {
+    run.catch(() => {});
+    await vi.advanceTimersByTimeAsync(100);
+    cancel();
+    await vi.advanceTimersByTimeAsync(3000);
+    await expect(run).rejects.toBeInstanceOf(NbCancelledError);
+  }
+
+  it('tells the debugger the run finished after all, once a resume it gave up on completes', async () => {
+    // So the debugger closes, as after an ordinary Resume.
+    vi.useFakeTimers();
+    try {
+      const { session, gci } = stubSession([DECISION.Stop], []);
+      let finish: (v: unknown) => void = () => {};
+      gci.GciTsContinueWithAsync = () => new Promise((resolve) => (finish = resolve)) as never;
+      let cancel: () => void = () => {};
+      const ended = vi.fn<(r: StepResult) => void>();
+
+      await giveUp(
+        applyBreakpointRules(session, 7n, [spec()], {
+          resumeFirst: true,
+          onStart: (c) => (cancel = c),
+          onGivenUpSettled: ended,
+        }),
+        () => cancel(),
+      );
+      expect(ended).not.toHaveBeenCalled();
+
+      finish({ result: 0x55n, err: { number: 0, message: '', context: 0n } });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(ended).toHaveBeenCalledWith({ completed: true, resultOop: 0x55n });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('tells the debugger the run is parked at its hit, once a judgement it gave up on ends', async () => {
+    // The condition ran in a process of its own; the developer's run never moved.
+    vi.useFakeTimers();
+    try {
+      const { session, gci } = stubSession([DECISION.Go], []);
+      let finish: (v: unknown) => void = () => {};
+      gci.GciTsPerformAsync = (() => new Promise((resolve) => (finish = resolve))) as never;
+      let cancel: () => void = () => {};
+      const ended = vi.fn<(r: StepResult) => void>();
+
+      await giveUp(
+        applyBreakpointRules(session, 7n, [spec()], {
+          onStart: (c) => (cancel = c),
+          onGivenUpSettled: ended,
+        }),
+        () => cancel(),
+      );
+
+      finish({ result: OOP_NIL, err: { number: 6003, message: 'a Break', context: 0n } });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(ended).toHaveBeenCalledWith(
+        expect.objectContaining({ completed: false, errorContext: 7n, errorNumber: 6005 }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("the debugger's Resume", () => {
+  it('says the run was stopped by Cancel when Cancel lands before the process has moved', async () => {
+    // The breakpoint wording would not hold: the process is still at its halt.
+    const { session, continues } = stubSession([DECISION.Stop], [hitsBreakpoint(8n)]);
+
+    const result = await resumeOnWorker(session, 7n, { onStart: (cancel) => cancel() });
+
+    expect(continues).toHaveLength(0);
+    expect(result).toEqual(
+      expect.objectContaining({
+        completed: false,
+        errorMessage: 'Stopped by Cancel.',
+        errorContext: 7n,
+      }),
+    );
   });
 });
