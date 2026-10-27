@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { ActiveSession, SessionManager } from './sessionManager';
 import * as queries from './browserQueries';
 import { BrowserQueryError } from './browserQueries';
+import { GCI_ERR_OP_IN_PROGRESS } from './gciConstants';
 import { ExportManager } from './exportManager';
 import { logInfo } from './gciLog';
 import { receiver } from './queries/util';
@@ -925,6 +926,12 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
       this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri }]);
       logInfo(`[FS] writeFile → success (${parsed.kind})`);
     } catch (e: unknown) {
+      // A busy session refused the save: nothing was written and nothing is wrong
+      // with the code, so the save fails, leaving the editor's changes unsaved.
+      if (e instanceof BrowserQueryError && e.gciErrorNumber === GCI_ERR_OP_IN_PROGRESS) {
+        logInfo(`[FS] writeFile → refused, session busy`);
+        throw e;
+      }
       if (e instanceof BrowserQueryError) {
         logInfo(`[FS] writeFile → compile error: ${e.message}`);
         // Parse line number from GCI error message (e.g. "... (line 3, ...")

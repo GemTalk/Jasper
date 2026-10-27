@@ -24,6 +24,8 @@ import {
 } from '../transcriptSink';
 import { executeFetchString } from '../browserQueries';
 import { SESSION_BUSY_MESSAGE } from '../gciLibraryError';
+import { GemStoneFileSystemProvider } from '../gemstoneFileSystemProvider';
+import * as vscode from 'vscode';
 import { SessionManager } from '../sessionManager';
 import * as queries from '../browserQueries';
 import { applyBreakpointRules, resumeOnWorker } from '../debugger/conditionalBreakpoints';
@@ -220,6 +222,54 @@ describe('Force Stop (integration)', () => {
 
     cancel!();
     await run.catch(() => {});
+  }, 30_000);
+
+  it('fails a save made during a run, so the edit stays unsaved, and saves it once the run ends', async () => {
+    const own = armedSession();
+    const CLASS = 'JasperBusySaveTest';
+    queries.compileClassDefinition(
+      own,
+      `Object subclass: '${CLASS}' instVarNames: #() classVars: #() classInstVars: #() ` +
+        `poolDictionaries: #() inDictionary: UserGlobals options: #()`,
+    );
+    const provider = new GemStoneFileSystemProvider({
+      getSession: () => own,
+      getSessions: () => [own],
+    } as unknown as SessionManager);
+    const uri = vscode.Uri.parse(
+      `gemstone://${own.id}/UserGlobals/${CLASS}/instance/test/jasperBusySave`,
+    );
+    const save = () =>
+      provider.writeFile(uri, new TextEncoder().encode('jasperBusySave\n  ^ 42'), {
+        create: false,
+        overwrite: true,
+      });
+    const hasMethod = () =>
+      own.executeAndFetchString(`(${CLASS} includesSelector: #jasperBusySave) printString`);
+    let cancel: (() => void) | undefined;
+    const run = runNbCall(
+      own,
+      () =>
+        own.GciTsNbExecute(
+          '(Delay forSeconds: 30) wait',
+          OOP_CLASS_UTF8,
+          OOP_ILLEGAL,
+          OOP_NIL,
+          0,
+          0,
+        ),
+      () => own.GciTsNbResult(),
+      { suppressNotification: true, disposableProcess: true, onStart: (c) => (cancel = c) },
+    );
+    run.catch(() => {});
+
+    expect(save).toThrow(SESSION_BUSY_MESSAGE);
+
+    cancel!();
+    await run.catch(() => {});
+    expect(hasMethod()).toBe('false');
+    save();
+    expect(hasMethod()).toBe('true');
   }, 30_000);
 
   it('says a run that catches every exception is still going, and re-arms once it ends', async () => {
