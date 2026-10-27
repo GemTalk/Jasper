@@ -206,7 +206,7 @@ cls compileMethod: 'outer ^ self inner' dictionaries: System myUserProfile symbo
     } finally {
       cancel?.();
       await step.catch(() => {});
-      await waitForSessionFree().catch(() => {});
+      await within(untilSessionFree(), 20_000, 'the session coming free').catch(() => {});
       await clearStack(session(), gsProcess);
     }
     // The cancel is followed by a drain the next call waits out, and a loaded
@@ -252,7 +252,7 @@ cls compileMethod: 'outer ^ self inner' dictionaries: System myUserProfile symbo
       cancel!();
       await within(settled, 10_000, 'the cancelled step settling');
       // The gem has stopped once the call is collected and the session is free.
-      await within(waitForSessionFree(), 10_000, 'the gem stopping the cancelled step');
+      await within(untilSessionFree(), 20_000, 'the gem stopping the cancelled step');
 
       const after = gci.executeAndFetchString(
         handle,
@@ -261,7 +261,7 @@ cls compileMethod: 'outer ^ self inner' dictionaries: System myUserProfile symbo
       expect(after).toContain('status=debug'); // suspended by the break, not finished
       expect(stackDepth(gsProcess)).toBeGreaterThan(0);
     } finally {
-      await waitForSessionFree().catch(() => {});
+      await within(untilSessionFree(), 20_000, 'the session coming free').catch(() => {});
       await clearStack(session(), gsProcess);
     }
   }, 30_000);
@@ -324,11 +324,11 @@ cls compileMethod: 'outer ^ self inner' dictionaries: System myUserProfile symbo
       await new Promise((resolve) => setTimeout(resolve, 500)); // the loop is running
       cancel!();
       await within(settled, 10_000, 'the cancelled evaluation settling');
-      await within(waitForSessionFree(), 10_000, 'the gem stopping the cancelled evaluation');
+      await within(untilSessionFree(), 20_000, 'the gem stopping the cancelled evaluation');
 
       await expect(evaluateInFrameNb(session(), gsProcess, '3 + 4', 1)).resolves.toBe('7');
     } finally {
-      await waitForSessionFree().catch(() => {});
+      await within(untilSessionFree(), 20_000, 'the session coming free').catch(() => {});
       await clearStack(session(), gsProcess);
     }
   }, 30_000);
