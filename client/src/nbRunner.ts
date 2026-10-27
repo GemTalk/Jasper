@@ -707,13 +707,17 @@ export function clearInBackground(
   const failed = (why: string): void =>
     logInfo(`[Session ${session.id}] Could not clear a stopped run's process: ${why}`);
   clearing.add(session.id);
-  const cleared = session.GciTsClearStackAsync(gsProcess).then(
-    ({ err }) => {
+  // Never rejects: whatever goes wrong is logged, and the session let go.
+  const cleared = (async (): Promise<void> => {
+    try {
+      const { err } = await session.GciTsClearStackAsync(gsProcess);
       if (err.number !== 0) failed(err.message || `GemStone error ${err.number}`);
-    },
-    (e: unknown) => failed(e instanceof Error ? e.message : String(e)),
-  );
-  void cleared.finally(() => clearing.delete(session.id));
+    } catch (e) {
+      failed(e instanceof Error ? e.message : String(e));
+    } finally {
+      clearing.delete(session.id);
+    }
+  })();
   return awaitAbandonedRead(session, cleared, then);
 }
 

@@ -6,6 +6,7 @@ vi.mock('../gciLog', async (orig) => ({ ...(await orig()), logInfo: vi.fn() }));
 import * as vscode from 'vscode';
 import { logInfo } from '../gciLog';
 import {
+  clearHolds,
   clearInBackground,
   runNbCall,
   pollNbResultReady,
@@ -2166,6 +2167,22 @@ describe('clearing a stopped run in the background', () => {
     } finally {
       setStillRunningHandler(undefined);
     }
+  });
+
+  it('lets go of the session, logging it, when the clear itself fails in any way', async () => {
+    // Including an answer it cannot read: nothing may be left rejecting unhandled.
+    const { session, gci } = makeSession([]);
+    gci.GciTsClearStackAsync.mockReturnValueOnce(undefined as never);
+    const then = vi.fn();
+
+    await clearInBackground(session, 0x4242n, then);
+
+    expect(then).toHaveBeenCalledTimes(1);
+    expect(clearHolds(session)).toBe(false);
+    expect(() => ensureSessionFree(session)).not.toThrow();
+    expect(vi.mocked(logInfo)).toHaveBeenCalledWith(
+      expect.stringContaining("Could not clear a stopped run's process"),
+    );
   });
 
   it('runs `then` at once, holding nothing, when there is no process', async () => {

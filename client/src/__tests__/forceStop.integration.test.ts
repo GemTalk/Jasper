@@ -10,6 +10,7 @@ import {
   clearInBackground,
   NbCancelledError,
   runNbCall,
+  whenSessionFree,
   setRunInProgressHandler,
   setStillRunningHandler,
   setStoppedRunCollectedHandler,
@@ -267,6 +268,8 @@ describe('Force Stop (integration)', () => {
 
     cancel!();
     await run.catch(() => {});
+    // On a loaded machine the stopped run can still be finishing.
+    await whenSessionFree(own, () => {});
     expect(hasMethod()).toBe('false');
     save();
     expect(hasMethod()).toBe('true');
