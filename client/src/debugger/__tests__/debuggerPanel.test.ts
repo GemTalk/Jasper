@@ -958,6 +958,19 @@ describe('DebuggerPanel', () => {
     expect(p2.dispose).toHaveBeenCalled();
   });
 
+  it('disposeForSession leaves another session’s panels open', () => {
+    DebuggerPanel.create(makeSession(4242), GS_PROCESS, ERROR_MSG);
+    const mine = lastPanel();
+    DebuggerPanel.create(makeSession(4243), 0x456n, 'another error');
+    const theirs = lastPanel();
+
+    DebuggerPanel.disposeForSession(4242);
+
+    expect(mine.dispose).toHaveBeenCalled();
+    expect(theirs.dispose).not.toHaveBeenCalled();
+    DebuggerPanel.disposeForSession(4243);
+  });
+
   it('posts the error string back to the webview unchanged', () => {
     DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
     const panel = lastPanel();

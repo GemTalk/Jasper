@@ -8,6 +8,10 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 - **Known limitation: on macOS with GemStone 3.7, a conditional breakpoint inside a loop can report a bogus error.** On the macOS 3.7 builds (seen on 3.7.2 through 3.7.6), resuming from some breakpoints inside an inlined loop never moves on: GemStone answers error 6006 ("Stack breakpoint encountered on return") at the same step, every time. So a conditional breakpoint whose condition stays false can stop with "Breakpoint occurred (error 6006)" instead of letting the run continue, and Continue or Step from that stop does not advance. Removing the breakpoint and continuing gets the run going again. This is GemStone bug 52165, not Jasper; Linux, Windows and GemStone 3.6 are not affected. ([#804](https://github.com/GemTalk/Jasper/issues/804))
 
+### Fixed
+
+- **Stopping a stone closes its sessions' inspectors and debuggers and clears their breakpoints.** Stopping a stone logged its sessions out, and a logical restore logged out the session it ran in, but both left their inspectors and debuggers open against a session that was gone, and kept their breakpoints. They now close exactly as they do on Log out, whichever way the session is logged out. And when a stone with several of your sessions stops, the current session moves straight to a session that stays. Before, it could first move to another session that was being logged out too, with a notice for each move. ([#775](https://github.com/GemTalk/Jasper/issues/775))
+
 ## [1.16.0] - 2026-10-23
 
 ### Added

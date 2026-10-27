@@ -103,9 +103,6 @@ import { findMethodInClass } from './commands/findMethodInClass';
 import { loadClassPickItems } from './commands/classPicker';
 import { GlobalsBrowser } from './globalsBrowser';
 import { CommentBrowser } from './commentBrowser';
-import { EnhancedInspector } from './enhancedInspector/enhancedInspector';
-import { BasicInspector } from './basicInspector/basicInspector';
-import { forgetSession as forgetSessionPins } from './exportSetPins';
 import { revealInspect } from './inspectRouter';
 import {
   maybeOfferServerSupport,
@@ -120,6 +117,7 @@ import { FS_CHANGED_COMMAND, SEARCH_RESYNC_COMMAND } from './undo/afterUndo';
 import { resyncEditorsAfterAbort } from './afterAbort';
 import { clearUndoStack, onUndoStackChanged } from './undo/undoStack';
 import { registerStashRelease } from './undo/releaseStash';
+import { registerSessionTeardown } from './sessionTeardown';
 import { supportsEnhancedInspector } from './enhancedInspector/enhancedInspectorInstall';
 import { DebuggerPanel } from './debugger/debuggerPanel';
 import { InlineValuesCodeLensProvider } from './inlineValuesCodeLens';
@@ -127,7 +125,6 @@ import {
   GemStoneFileSystemProvider,
   MethodCompiledEvent,
   ClassDefinitionCompiledEvent,
-  closeGemstoneTabsForSession,
   installStaleGemstoneTabReaper,
   parseMethodUri,
   classCompiledTarget,
@@ -1177,6 +1174,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   const stepPointHints = new StepPointHintsProvider(stepPointModel);
   stepPointHints.register(context);
+
+  context.subscriptions.push(
+    registerSessionTeardown(sessionManager, breakpointManager, stepPointHints),
+  );
 
   // A GemStone breakpoint lives in the gem, so it dies with the session. VS Code
   // persists its breakpoint list across restarts regardless, so anything it just
@@ -2720,25 +2721,15 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.window.showErrorMessage(e instanceof Error ? e.message : String(e));
           return;
         }
-        // Before the panels close: the export set went with the session, so a
-        // panel releasing its pins would only fail against the logged-out handle.
-        forgetSessionPins(session.id);
+        // Its inspectors, debuggers, breakpoints and gemstone:// tabs go on the
+        // session's removal: see registerSessionTeardown and the stale-tab reaper.
         // Keep the class mirror on disk: it's keyed by connection target and is
         // re-synced incrementally on the next login, which is far cheaper than
         // rebuilding it from scratch (especially for large, remote images).
         SystemBrowser.disposeForSession(session.id);
         GlobalsBrowser.disposeForSession(session.id);
         CommentBrowser.disposeForSession(session.id);
-        // Close any lingering class-definition / method-source editor tabs for this
-        // session (e.g. opened via go-to-definition without a browser). Browser-owned
-        // tabs are already closed when the browser is disposed above.
-        void closeGemstoneTabsForSession(session.id);
-        EnhancedInspector.disposeForSession(session.id);
-        BasicInspector.disposeForSession(session.id);
-        DebuggerPanel.disposeForSession(session.id);
         treeProvider.refresh();
-        breakpointManager.clearAllForSession(session.id);
-        stepPointHints.refresh();
         vscode.window.showInformationMessage(`Session ${session.id}: Logged out.`);
       },
     ),
@@ -4496,7 +4487,7 @@ export function activate(context: vscode.ExtensionContext) {
     );
     // Together, not one after another: a refused logout waits for its call to
     // stop, and the stone's stop should not wait for each of those in turn.
-    const outcomes = await Promise.allSettled(doomed.map((s) => sessionManager.logout(s.id)));
+    const outcomes = await sessionManager.logoutAll(doomed.map((s) => s.id));
     for (const outcome of outcomes) {
       if (outcome.status === 'rejected') {
         const e: unknown = outcome.reason;
