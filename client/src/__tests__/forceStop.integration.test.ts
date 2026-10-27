@@ -90,6 +90,16 @@ describe('Force Stop (integration)', () => {
     expect(stoppedRunHolds(own)).toBe(true);
   }
 
+  /** Waits for `run` to end either way a stop ends it: given up on, or answered. */
+  async function settled(run: Promise<unknown>): Promise<void> {
+    await run.then(
+      () => {},
+      (e) => {
+        if (!(e instanceof NbCancelledError)) throw e;
+      },
+    );
+  }
+
   const armed = (own: ActiveSession) =>
     own.executeAndFetchString('System signaledGemStoneSessionErrorStatus printString');
 
@@ -147,9 +157,9 @@ describe('Force Stop (integration)', () => {
         execSync(`kill -CONT ${pid}`);
       }
 
-      await expect(run).rejects.toBeInstanceOf(NbCancelledError);
-      // Free once the gem has answered the break sent again: the loop never ends
-      // by itself.
+      // Given up on, or answered with a Break where the first one was not lost
+      // (macOS); either way it has to end, which the loop never does by itself.
+      await settled(run);
       const deadline = Date.now() + 10_000;
       while (stoppedRunHolds(own) && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 100));
@@ -349,13 +359,17 @@ describe('Force Stop (integration)', () => {
 
   describe('logging out a session whose stopped run is still going', () => {
     /** A logged-in session of its own, running `code` that the user has stopped. */
-    async function loggedInAndStopped(manager: SessionManager, code: string) {
+    async function loggedInAndStopped(
+      manager: SessionManager,
+      code: string,
+      stop: (own: ActiveSession, code: string) => Promise<void> = stopAndAbandon,
+    ) {
       const own = manager.login(session.login, process.env.VITE_GEMSTONE_GCI_LIBRARY_PATH!);
       const serial = own.executeAndFetchString('System session printString');
       onTestFinished(() => {
         if (listed(serial)) session.executeAndFetchString(`System stopSession: ${serial}. 'ok'`);
       });
-      await stopAndAbandon(own, code);
+      await stop(own, code);
       return { own, serial };
     }
 
@@ -385,9 +399,23 @@ describe('Force Stop (integration)', () => {
       // way out, as for any run Force Stop can't end.
       const manager = new SessionManager();
       const ignoresStop = '[[true] whileTrue: [nil]] on: Break do: [:e | e resume]';
+      // A Break that lands outside the handler can stop the run outright; the
+      // logout must end the gem either way.
       const { own, serial } = await loggedInAndStopped(
         manager,
         `[${ignoresStop}] ensure: [${ignoresStop}]`,
+        async (on, code) => {
+          let cancel: (() => void) | undefined;
+          const run = runNbCall(
+            on,
+            () => on.GciTsNbExecute(code, OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL, 0, 0),
+            () => on.GciTsNbResult(),
+            { suppressNotification: true, disposableProcess: true, onStart: (c) => (cancel = c) },
+          );
+          run.catch(() => {});
+          cancel!();
+          await settled(run);
+        },
       );
 
       const startedAt = Date.now();
