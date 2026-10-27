@@ -174,6 +174,29 @@ describe('Force Stop', () => {
     }
   });
 
+  it('gives a hard break sent to late clean-up a full wait of its own', async () => {
+    // The clean-up starts only once the signal has stopped the run, near the end
+    // of the wait; on 3.6.2 the hard break then takes about 1.5s to land.
+    vi.useFakeTimers();
+    try {
+      const { session } = fakeSession();
+      armForceStop(session);
+      const startedAt = Date.now();
+      const cleanUpFrom = startedAt + FORCE_STOP_WAIT_MS - 300;
+      const cleanUpEnds = cleanUpFrom + 1500;
+      vi.mocked(stoppedRunHolds).mockImplementation(() => Date.now() < cleanUpEnds);
+      vi.mocked(clearHolds).mockImplementation(() => Date.now() >= cleanUpFrom);
+
+      const stopping = forceStop(session, fakeSender().deps);
+      await vi.advanceTimersByTimeAsync(FORCE_STOP_WAIT_MS + 1500);
+
+      await expect(stopping).resolves.toBe(true);
+    } finally {
+      vi.useRealTimers();
+      vi.mocked(clearHolds).mockReset().mockReturnValue(false);
+    }
+  });
+
   it('answers false for a run still going after the wait, and leaves it alone', async () => {
     vi.useFakeTimers();
     try {
