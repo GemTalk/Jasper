@@ -9,6 +9,8 @@ vi.mock('vscode', () => ({
 import { ActiveSession } from '../sessionManager';
 import * as queries from '../browserQueries';
 import { sessionOn } from './fakeActiveSession';
+import { GciLibraryError, SESSION_BUSY_MESSAGE } from '../gciLibraryError';
+import { holdSessionUntilSettled, setStillRunningHandler } from '../nbRunner';
 
 function createMockGci(executeFetchData = '') {
   return {
@@ -35,6 +37,52 @@ describe('browserQueries', () => {
       const code = gci.executeAndFetchString.mock.calls[0][1];
       expect(code).toContain('compileMethod:');
       expect(code).toContain('dictionaries: System myUserProfile symbolList');
+    });
+
+    // A save is the call where the stone's text hurt most: "Failed to save" with
+    // a reason about GciTsNb that names neither the run nor the remedy.
+    it('says in plain words when a save meets a session busy with a run', () => {
+      const gci = createMockGci();
+      gci.executeAndFetchString.mockImplementation(() => {
+        throw GciLibraryError.fromGciError({
+          number: 2203,
+          message: 'session has a GciTsNb operation in progress',
+        });
+      });
+
+      expect(() => queries.compileMethod(sessionOn(gci), 'Array', false, 'test', 'foo')).toThrow(
+        SESSION_BUSY_MESSAGE,
+      );
+    });
+
+    it('says the same when another call still holds the session, without calling GemStone', () => {
+      const gci = createMockGci();
+      gci.GciTsCallInProgress.mockReturnValue({ result: 1 });
+
+      expect(() => queries.compileMethod(sessionOn(gci), 'Array', false, 'test', 'foo')).toThrow(
+        SESSION_BUSY_MESSAGE,
+      );
+      expect(gci.executeAndFetchString).not.toHaveBeenCalled();
+    });
+
+    it('offers Force Stop when what holds the session is a run the user stopped', async () => {
+      const gci = createMockGci();
+      gci.GciTsCallInProgress.mockReturnValue({ result: 1 });
+      const session = sessionOn(gci, { id: 9031 });
+      let finish: () => void = () => {};
+      const held = holdSessionUntilSettled(session, new Promise<void>((r) => (finish = r)));
+      const told = vi.fn();
+      setStillRunningHandler(told);
+      try {
+        expect(() => queries.compileMethod(session, 'Array', false, 'test', 'foo')).toThrow(
+          SESSION_BUSY_MESSAGE,
+        );
+        expect(told).toHaveBeenCalledWith(session);
+      } finally {
+        setStillRunningHandler(undefined);
+        finish();
+        await held;
+      }
     });
 
     it('branches on isMeta inside the Smalltalk, not via a GCI perform', () => {

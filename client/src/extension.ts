@@ -2785,7 +2785,7 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.window.showInformationMessage(`Session ${session.id} is active and responsive.`);
         } else {
           vscode.window.showErrorMessage(
-            `Session ${session.id}: Ping failed — ${err.message || `error ${err.number}`}`,
+            `Session ${session.id}: Ping failed — ${explainGciError(err) || `error ${err.number}`}`,
           );
         }
       } catch (e: unknown) {

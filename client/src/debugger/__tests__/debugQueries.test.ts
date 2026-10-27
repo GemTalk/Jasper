@@ -12,6 +12,7 @@ import * as debug from '../debugQueries';
 import { runNbCall, NbSessionBusyError, type NbRunOptions } from '../../nbRunner';
 import { homeDictionaryNameExpr } from '../../queries/util';
 import { fakeActiveSession } from '../../__tests__/fakeActiveSession';
+import { SESSION_BUSY_MESSAGE } from '../../gciLibraryError';
 
 const noErr = {
   number: 0,
@@ -1574,5 +1575,31 @@ describe('parseFrameVars (#5 single-frame one-trip payload)', () => {
 
   it('returns [] for empty input', () => {
     expect(debug.parseFrameVars('')).toEqual([]);
+  });
+});
+
+describe('a debugger call on a session busy with a run', () => {
+  // The panel shows these in its banner; GemStone's own text is about GciTsNb.
+  const busy = { number: 2203, message: 'session has a GciTsNb operation in progress' };
+
+  function busySession() {
+    return fakeActiveSession({
+      id: 1,
+      handle: {},
+      gci: {
+        GciTsPerform: vi.fn(() => ({ result: 0n, err: { ...busy, context: 0n } })),
+        GciTsI64ToOop: vi.fn((_h: unknown, n: bigint) => ({ result: n, err: { number: 0 } })),
+      },
+    });
+  }
+
+  it('says so in plain words when reading the stack', () => {
+    expect(() => debug.getStackDepth(busySession(), 0x500n)).toThrow(SESSION_BUSY_MESSAGE);
+  });
+
+  it('says so in plain words when a step is refused', () => {
+    const result = debug.stepOver(busySession(), 0x500n, 1);
+
+    expect(result).toMatchObject({ completed: false, errorMessage: SESSION_BUSY_MESSAGE });
   });
 });

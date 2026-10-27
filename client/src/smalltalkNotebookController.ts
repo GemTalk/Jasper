@@ -8,6 +8,7 @@ import { clearInBackground, NbRunOptions, runNbCall, whenSessionFree } from './n
 import { OOP_ILLEGAL, OOP_NIL, OOP_CLASS_UTF8 } from './gciConstants';
 import { SMALLTALK_LANGUAGE } from './languageIds';
 import { sessionKernelId } from './sessionKernels';
+import { SESSION_BUSY_MESSAGE } from './gciLibraryError';
 
 // GemStone Smalltalk as a Jupyter kernel — see gemstoneNotebookKernel.ts for
 // the Jupyter integration mechanics. Each cell is an independent doit (the
@@ -52,9 +53,7 @@ async function runCell(
 ): Promise<string> {
   const { result: inProgress } = session.GciTsCallInProgress();
   if (inProgress !== 0) {
-    throw new Error(
-      'Session is busy with another operation. Please wait or use a different session.',
-    );
+    throw new Error(SESSION_BUSY_MESSAGE);
   }
 
   const code = wrapExecuteCode(source);

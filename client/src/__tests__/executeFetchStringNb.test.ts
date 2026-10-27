@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
+import { SESSION_BUSY_MESSAGE } from '../gciLibraryError';
 import { executeFetchStringNb, loadRowanProjectNb, BrowserQueryError } from '../browserQueries';
 import type { ActiveSession } from '../sessionManager';
 import { fakeActiveSession } from './fakeActiveSession';
@@ -47,7 +48,7 @@ describe('executeFetchStringNb', () => {
     });
 
     await expect(executeFetchStringNb(session, 'test', 'code')).rejects.toThrow(
-      /busy with another operation/,
+      SESSION_BUSY_MESSAGE,
     );
   });
 

@@ -22,6 +22,7 @@ import * as debug from '../debugger/debugQueries';
 import * as pins from '../exportSetPins';
 import { executeFetchString } from '../browserQueries';
 import { logError } from '../gciLog';
+import { SESSION_BUSY_MESSAGE } from '../gciLibraryError';
 import { QueryExecutor } from '../queries/types';
 import { readWebviewScript } from '../webviewAssets';
 import {
@@ -545,7 +546,7 @@ export class BasicInspector {
    */
   private busyError(): string | null {
     const { result: inProgress } = this.session.GciTsCallInProgress();
-    return inProgress !== 0 ? 'Session is busy with another operation — try again.' : null;
+    return inProgress !== 0 ? SESSION_BUSY_MESSAGE : null;
   }
 
   private setSlot(msg: {

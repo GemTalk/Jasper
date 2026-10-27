@@ -22,7 +22,8 @@ import {
   settleNbResult,
   startClientForwarderMode,
 } from '../transcriptSink';
-import { BrowserQueryError, executeFetchString } from '../browserQueries';
+import { executeFetchString } from '../browserQueries';
+import { SESSION_BUSY_MESSAGE } from '../gciLibraryError';
 import { SessionManager } from '../sessionManager';
 import * as queries from '../browserQueries';
 import { applyBreakpointRules, resumeOnWorker } from '../debugger/conditionalBreakpoints';
@@ -181,14 +182,14 @@ describe('Force Stop (integration)', () => {
     await stopAndAbandon(own, '[[true] whileTrue: [nil]] on: Break do: [:e | e resume]');
     told.mockClear();
 
-    expect(() => executeFetchString(own, '(3 + 4) printString')).toThrow(BrowserQueryError);
+    expect(() => executeFetchString(own, '(3 + 4) printString')).toThrow(SESSION_BUSY_MESSAGE);
     expect(told).toHaveBeenCalledWith(own);
 
     await expect(forceStop(own, deps)).resolves.toBe(true);
     expect(executeFetchString(own, '(3 + 4) printString')).toBe('7');
   }, 30_000);
 
-  it('offers Stop when an Explorer query meets a run still going', async () => {
+  it('offers Stop, in plain words, when an Explorer query or a save meets a run still going', async () => {
     const told = vi.fn();
     setRunInProgressHandler(told);
     onTestFinished(() => setRunInProgressHandler(undefined));
@@ -210,8 +211,12 @@ describe('Force Stop (integration)', () => {
     );
     run.catch(() => {});
 
-    expect(() => executeFetchString(own, '(3 + 4) printString')).toThrow(BrowserQueryError);
+    expect(() => executeFetchString(own, '(3 + 4) printString')).toThrow(SESSION_BUSY_MESSAGE);
     expect(told).toHaveBeenCalledWith(own);
+    // A save goes the same way, and says why it did not happen.
+    expect(() =>
+      queries.compileMethod(own, 'Object', false, 'jasper-test', 'jasperBusySave ^ 1'),
+    ).toThrow(SESSION_BUSY_MESSAGE);
 
     cancel!();
     await run.catch(() => {});
@@ -309,7 +314,7 @@ describe('Force Stop (integration)', () => {
 
       const startedAt = Date.now();
       const clearing = clearInBackground(own, process);
-      expect(() => executeFetchString(own, '3 printString')).toThrow(BrowserQueryError);
+      expect(() => executeFetchString(own, '3 printString')).toThrow(SESSION_BUSY_MESSAGE);
       expect(told).toHaveBeenCalledWith(own);
       await clearing;
 
@@ -453,7 +458,7 @@ describe('Force Stop (integration)', () => {
         });
         skipping.catch(() => {});
         await new Promise((resolve) => setTimeout(resolve, 500));
-        expect(() => executeFetchString(own, '3 printString')).toThrow(BrowserQueryError);
+        expect(() => executeFetchString(own, '3 printString')).toThrow(SESSION_BUSY_MESSAGE);
 
         const pressedAt = Date.now();
         cancel!();
