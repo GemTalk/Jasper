@@ -5283,7 +5283,7 @@ export class DebuggerPanel {
     // Closing the panel implicitly terminates the suspended process it owned,
     // releasing the stalled GsProcess on the server (same as dismissing the
     // error notifier). clearStack is best-effort: the session may already be gone.
-    debug.clearStack(this.session, this.gsProcess);
+    void debug.clearStack(this.session, this.gsProcess);
   }
 
   /**

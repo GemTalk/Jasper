@@ -7,7 +7,7 @@ import {
   GCI_PERFORM_FLAG_INTERPRETED,
 } from '../gciConstants';
 import { logInfo, logError } from '../gciLog';
-import { runNbCall, NbRunOptions } from '../nbRunner';
+import { clearInBackground, runNbCall, NbRunOptions } from '../nbRunner';
 import {
   DUMP_PAYLOAD_TEMPS,
   dumpPayloadPrelude,
@@ -1283,15 +1283,16 @@ export function continueExecution(session: ActiveSession, gsProcess: bigint): St
 }
 
 /**
- * Clears the stack of a suspended process (aborts it).
+ * Clears the stack of a suspended process (aborts it), in the background: see
+ * {@link clearInBackground}, which `then` is handed to.
  */
-export function clearStack(session: ActiveSession, gsProcess: bigint): void {
+export function clearStack(
+  session: ActiveSession,
+  gsProcess: bigint,
+  then?: () => void,
+): Promise<void> {
   logInfo(`[Session ${session.id}] Debug: clearStack`);
-  try {
-    session.GciTsClearStack(gsProcess);
-  } catch {
-    // Ignore — process may already be gone
-  }
+  return clearInBackground(session, gsProcess, then);
 }
 
 /**

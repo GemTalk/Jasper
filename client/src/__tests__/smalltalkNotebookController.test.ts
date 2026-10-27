@@ -199,7 +199,7 @@ describe('SmalltalkNotebookController', () => {
         result: 0n,
         err: { number: 2010, message: 'a Halt occurred', context: 0x99n },
       })),
-      GciTsClearStack: clearStack,
+      GciTsClearStackAsync: clearStack,
     });
     const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
 
@@ -207,6 +207,31 @@ describe('SmalltalkNotebookController', () => {
 
     expect(clearStack).toHaveBeenCalledTimes(1);
     expect(clearStack.mock.calls[0][1]).toBe(0x99n);
+    expect(executionAt(0).end).toHaveBeenCalledWith(false, expect.any(Number));
+    ctrl.dispose();
+  });
+
+  it('reports the cell failed only once the clear is done, so the next cell finds the session free', async () => {
+    // The clear runs the process's ensure: blocks on a worker thread; a cell
+    // started meanwhile would be refused.
+    let finish: (v: unknown) => void = () => {};
+    const clearStack = vi.fn(() => new Promise((resolve) => (finish = resolve)));
+    const gci = makeGci({
+      GciTsNbResult: vi.fn(() => ({
+        result: 0n,
+        err: { number: 2010, message: 'a Halt occurred', context: 0x99n },
+      })),
+      GciTsClearStackAsync: clearStack,
+    });
+    const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
+
+    const running = runCells([makeCell('Transcript nextPutAll: brokenPrintString')]);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(clearStack).toHaveBeenCalled();
+    expect(executionAt(0).end).not.toHaveBeenCalled();
+
+    finish({ success: true, err: { number: 0 } });
+    await running;
     expect(executionAt(0).end).toHaveBeenCalledWith(false, expect.any(Number));
     ctrl.dispose();
   });
@@ -221,7 +246,7 @@ describe('SmalltalkNotebookController', () => {
         result: 0n,
         err: { number: 2010, message: 'a Halt occurred', context: 0n },
       })),
-      GciTsClearStack: clearStack,
+      GciTsClearStackAsync: clearStack,
     });
     const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
 

@@ -4,7 +4,7 @@ import { wrapExecuteCode } from './queries/executeCode';
 import { GemStoneNotebookKernel, GEMSTONE_NOTEBOOK_TYPE } from './gemstoneNotebookKernel';
 import { startClientForwarderMode, endClientForwarderMode, settleNbResult } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
-import { NbRunOptions, runNbCall, whenSessionFree } from './nbRunner';
+import { clearInBackground, NbRunOptions, runNbCall, whenSessionFree } from './nbRunner';
 import { OOP_ILLEGAL, OOP_NIL, OOP_CLASS_UTF8 } from './gciConstants';
 import { SMALLTALK_LANGUAGE } from './languageIds';
 import { sessionKernelId } from './sessionKernels';
@@ -96,12 +96,7 @@ async function runCell(
           // semaphore, and there is no notebook debugger to hand it to, so
           // leaving it suspended leaks both (#646). Execute It makes the same
           // call after the user declines its Debug prompt.
-          // koffi hands a uint64 back as a number whenever it fits, so
-          // normalize before comparing against the bigint OOP constants.
-          const context = BigInt(err.context);
-          if (context !== OOP_NIL && context !== 0n) {
-            session.GciTsClearStack(context);
-          }
+          await clearInBackground(session, err.context);
           throw new Error(err.message || `GCI error ${err.number}`);
         }
         return result;

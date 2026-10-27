@@ -152,6 +152,11 @@ export class ActiveSession {
     return this.gci.GciTsClearStack(this.handle(), gsProcess);
   }
 
+  /** See {@link GciLibrary.GciTsClearStackAsync}. */
+  async GciTsClearStackAsync(gsProcess: bigint) {
+    return await this.gci.GciTsClearStackAsync(this.handle(), gsProcess);
+  }
+
   /** See {@link GciLibrary.GciTsCommit}. */
   GciTsCommit() {
     return this.gci.GciTsCommit(this.handle());

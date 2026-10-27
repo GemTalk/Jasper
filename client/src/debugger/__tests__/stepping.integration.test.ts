@@ -81,7 +81,7 @@ cls compileMethod: 'outer self inner. ^ 42' dictionaries: System myUserProfile s
     return err.context;
   }
 
-  it('single-steps a process halted inside a compiled method', () => {
+  it('single-steps a process halted inside a compiled method', async () => {
     let gsProcess = haltedProcess();
     let ranToCompletion = false;
     const stepErrorNumbers: number[] = [];
@@ -104,7 +104,7 @@ cls compileMethod: 'outer self inner. ^ 42' dictionaries: System myUserProfile s
         }
       }
     } finally {
-      if (!ranToCompletion) clearStack(session(), gsProcess);
+      if (!ranToCompletion) await clearStack(session(), gsProcess);
     }
 
     expect(ranToCompletion).toBe(true);
@@ -207,7 +207,7 @@ cls compileMethod: 'outer ^ self inner' dictionaries: System myUserProfile symbo
       cancel?.();
       await step.catch(() => {});
       await waitForSessionFree().catch(() => {});
-      clearStack(session(), gsProcess);
+      await clearStack(session(), gsProcess);
     }
     // The cancel is followed by a drain the next call waits out, and a loaded
     // runner makes that wait longer than the 5s default allows.
@@ -262,7 +262,7 @@ cls compileMethod: 'outer ^ self inner' dictionaries: System myUserProfile symbo
       expect(stackDepth(gsProcess)).toBeGreaterThan(0);
     } finally {
       await waitForSessionFree().catch(() => {});
-      clearStack(session(), gsProcess);
+      await clearStack(session(), gsProcess);
     }
   }, 30_000);
 
@@ -303,7 +303,7 @@ cls compileMethod: 'outer ^ self inner' dictionaries: System myUserProfile symbo
       setStillRunningHandler(undefined);
       // Wait out the bounded run; the next test needs the session.
       await within(untilSessionFree(), 15_000, 'the bounded run ending');
-      clearStack(session(), gsProcess);
+      await clearStack(session(), gsProcess);
     }
   }, 30_000);
 
@@ -329,7 +329,7 @@ cls compileMethod: 'outer ^ self inner' dictionaries: System myUserProfile symbo
       await expect(evaluateInFrameNb(session(), gsProcess, '3 + 4', 1)).resolves.toBe('7');
     } finally {
       await waitForSessionFree().catch(() => {});
-      clearStack(session(), gsProcess);
+      await clearStack(session(), gsProcess);
     }
   }, 30_000);
 

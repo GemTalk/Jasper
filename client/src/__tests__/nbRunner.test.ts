@@ -6,6 +6,7 @@ vi.mock('../gciLog', async (orig) => ({ ...(await orig()), logInfo: vi.fn() }));
 import * as vscode from 'vscode';
 import { logInfo } from '../gciLog';
 import {
+  clearInBackground,
   runNbCall,
   pollNbResultReady,
   NbCancelledError,
@@ -25,6 +26,7 @@ import {
   stopCallsOn,
 } from '../nbRunner';
 import { fakeActiveSession } from './fakeActiveSession';
+import { OOP_NIL } from '../gciConstants';
 
 const noErr = { number: 0 } as const;
 
@@ -55,7 +57,7 @@ function makeSession(pollResults: { result: number; err?: unknown }[]) {
     // the poll treats as "nobody is coming to answer this call".
     GciTsCallInProgress: vi.fn(() => ({ result: 0, err: noErr })),
     GciTsNbResult: vi.fn(() => ({ result: 0, err: noErr })),
-    GciTsClearStack: vi.fn(() => ({ success: true, err: noErr })),
+    GciTsClearStackAsync: vi.fn(() => ({ success: true, err: noErr })),
     logout: vi.fn(() => ({ sessionFreed: true })),
   };
   const handle = { h: 1 };
@@ -659,7 +661,7 @@ describe('after the runner stops waiting', () => {
       poll.mockReturnValue({ result: 1, err: noErr });
       await vi.advanceTimersByTimeAsync(500);
 
-      expect(gci.GciTsClearStack).toHaveBeenCalledWith(handle, 0x4242n);
+      expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(handle, 0x4242n);
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();
@@ -705,7 +707,7 @@ describe('after the runner stops waiting', () => {
       // Still drained -- the session has to go back to idle either way, or the
       // next step is refused as "an operation is in progress".
       expect(gci.GciTsNbResult).toHaveBeenCalled();
-      expect(gci.GciTsClearStack).not.toHaveBeenCalled();
+      expect(gci.GciTsClearStackAsync).not.toHaveBeenCalled();
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();
@@ -920,6 +922,32 @@ describe('a stopped call the gem takes longer than the drain budget to finish', 
     }
   });
 
+  it('still counts the session as held when collecting the call starts clearing its process', async () => {
+    // Force Stop polls this and turns signals back on once it says free; the
+    // clear's worker thread would refuse that call.
+    vi.useFakeTimers();
+    try {
+      const { session, gci } = makeSession([{ result: 0 }]);
+      const poll = gci.GciTsNbPoll as ReturnType<typeof vi.fn>;
+      poll.mockReturnValue({ result: 0, err: noErr });
+      await stopRun(session, { disposableProcess: true });
+      await vi.advanceTimersByTimeAsync(PAST_DRAIN_BUDGET_MS);
+
+      poll.mockReturnValue({ result: 1, err: noErr });
+      vi.mocked(gci.GciTsNbResult).mockReturnValue({
+        result: 0,
+        err: { ...noErr, number: 6010, context: 0x4242n } as never,
+      });
+      gci.GciTsClearStackAsync.mockReturnValueOnce(new Promise(() => {}) as never);
+
+      expect(stoppedRunHolds(session)).toBe(true);
+      expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(expect.anything(), 0x4242n);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it('collects the result when the next run starts, if it is ready by then', async () => {
     vi.useFakeTimers();
     try {
@@ -974,7 +1002,7 @@ describe('a stopped call the gem takes longer than the drain budget to finish', 
       poll.mockReturnValue({ result: 1, err: noErr });
       await vi.advanceTimersByTimeAsync(1000);
 
-      expect(gci.GciTsClearStack).toHaveBeenCalledWith(handle, 0x4242n);
+      expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(handle, 0x4242n);
       expect(collected).toHaveBeenCalledTimes(1);
     } finally {
       vi.clearAllTimers();
@@ -1992,7 +2020,7 @@ describe('stopping the calls on a session', () => {
       await vi.advanceTimersByTimeAsync(SETTLE_MS);
       await stop;
 
-      expect(gci.GciTsClearStack).toHaveBeenCalledWith(handle, 0x4242n);
+      expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(handle, 0x4242n);
     } finally {
       await vi.runAllTimersAsync();
       vi.useRealTimers();
@@ -2009,7 +2037,7 @@ describe('stopping the calls on a session', () => {
       await vi.advanceTimersByTimeAsync(SETTLE_MS);
       await stop;
 
-      expect(gci.GciTsClearStack).not.toHaveBeenCalled();
+      expect(gci.GciTsClearStackAsync).not.toHaveBeenCalled();
     } finally {
       await vi.runAllTimersAsync();
       vi.useRealTimers();
@@ -2044,5 +2072,67 @@ describe('stopping the calls on a session', () => {
     await stopCallsOn(session);
 
     expect(gci.GciTsBreak).not.toHaveBeenCalled();
+  });
+});
+
+describe('clearing a stopped run in the background', () => {
+  it('holds the session until the clear is done, then runs `then`', async () => {
+    const { session, gci } = makeSession([]);
+    let finish: (v: unknown) => void = () => {};
+    gci.GciTsClearStackAsync.mockReturnValueOnce(
+      new Promise((resolve) => (finish = resolve)) as never,
+    );
+    const then = vi.fn();
+    const told = vi.fn();
+    setStillRunningHandler(told);
+    try {
+      const clearing = clearInBackground(session, 0x4242n, then);
+
+      expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(expect.anything(), 0x4242n);
+      expect(() => ensureSessionFree(session)).toThrow(NbSessionBusyError);
+      expect(told).toHaveBeenCalledWith(session);
+      expect(then).not.toHaveBeenCalled();
+
+      finish({ success: true, err: noErr });
+      await clearing;
+      expect(then).toHaveBeenCalledTimes(1);
+      expect(() => ensureSessionFree(session)).not.toThrow();
+    } finally {
+      setStillRunningHandler(undefined);
+    }
+  });
+
+  it('refuses a call that would wait for the clean-up, telling the user', async () => {
+    const { session, gci } = makeSession([]);
+    let finish: (v: unknown) => void = () => {};
+    gci.GciTsClearStackAsync.mockReturnValueOnce(
+      new Promise((resolve) => (finish = resolve)) as never,
+    );
+    const told = vi.fn();
+    setStillRunningHandler(told);
+    try {
+      const clearing = clearInBackground(session, 0x4242n);
+      const start = vi.fn();
+
+      expect(() => whenSessionFree(session, start)).toThrow(NbSessionBusyError);
+      expect(start).not.toHaveBeenCalled();
+      expect(told).toHaveBeenCalledWith(session);
+
+      finish({ success: true, err: noErr });
+      await clearing;
+    } finally {
+      setStillRunningHandler(undefined);
+    }
+  });
+
+  it('runs `then` at once, holding nothing, when there is no process', async () => {
+    const { session, gci } = makeSession([]);
+    const then = vi.fn();
+
+    await clearInBackground(session, OOP_NIL, then);
+
+    expect(gci.GciTsClearStackAsync).not.toHaveBeenCalled();
+    expect(then).toHaveBeenCalledTimes(1);
+    expect(() => ensureSessionFree(session)).not.toThrow();
   });
 });

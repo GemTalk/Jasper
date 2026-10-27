@@ -20,6 +20,7 @@ import {
   settleNbResult,
 } from './transcriptSink';
 import {
+  abandonedRunHolds,
   pollNbToCompletion,
   NbCancelledError,
   NbSessionBusyError,
@@ -260,7 +261,7 @@ export class CodeExecutor {
             DebuggerPanel.create(session, e.context, 'Debug It');
           } catch (panelErr: unknown) {
             logError(session.id, panelErr instanceof Error ? panelErr.message : String(panelErr));
-            clearStack(session, e.context);
+            this.releaseProcess(session, e.context);
           }
           return;
         }
@@ -297,11 +298,10 @@ export class CodeExecutor {
       }
     } finally {
       editor.setDecorations(executingDecorationType, []);
-      // End clientForwarder mode; display anything that raced the end. (After
-      // a cancel the runner stopped waiting for, the gem may still be settling —
-      // the end then fails quietly, and runs again once the call is collected;
-      // see pollForCompletion.)
-      appendTranscriptOutput(endClientForwarderMode(session));
+      // End clientForwarder mode; display anything that raced the end. A run
+      // still settling holds the session, and the end runs once it is
+      // collected (see pollForCompletion); releaseProcess ends it before clearing.
+      this.endForwarding(session);
       this.setExecuting(session.id, false);
     }
   }
@@ -570,7 +570,7 @@ export class CodeExecutor {
       // No debugger will own the suspended process, so it is released here.
       if (e instanceof NbCancelledError) return { raised: false, cancelled: true };
       if (e instanceof DebuggableError && (e.cancelled || e.errorNumber === SOFT_BREAK_ERROR)) {
-        clearStack(session, e.context);
+        this.releaseProcess(session, e.context);
         return { raised: false, cancelled: true };
       }
 
@@ -583,7 +583,7 @@ export class CodeExecutor {
       }
       throw e instanceof Error ? e : new Error(msg);
     } finally {
-      appendTranscriptOutput(endClientForwarderMode(session));
+      this.endForwarding(session);
       this.setExecuting(session.id, false);
     }
   }
@@ -683,6 +683,24 @@ export class CodeExecutor {
    * torn out, but this notifier was its only caller: attaching needs a live
    * `gsProcess` OOP, which nothing else surfaces, so the DAP route is dormant.
    */
+  /** End clientForwarder mode now, unless a stopped run holds the session; see the callers. */
+  private endForwarding(session: ActiveSession): void {
+    if (abandonedRunHolds(session)) return;
+    appendTranscriptOutput(endClientForwarderMode(session));
+  }
+
+  /**
+   * Clear a suspended process no debugger will own, in the background. Ends
+   * clientForwarder mode first: on 3.7.5 a clean-up that writes to the
+   * Transcript while the mode is on stops at that write (measured), and the
+   * clear holds the session past the caller's own end anyway. What the clean-up
+   * wrote is shown once it is done.
+   */
+  private releaseProcess(session: ActiveSession, gsProcess: bigint): void {
+    appendTranscriptOutput(endClientForwarderMode(session));
+    void clearStack(session, gsProcess, () => appendTranscriptOutput(drainTranscript(session)));
+  }
+
   private async promptDebuggableError(
     session: ActiveSession,
     gsProcess: bigint,
@@ -701,10 +719,10 @@ export class CodeExecutor {
         // If the panel fails to open, nothing owns the suspended process, so
         // release it rather than leaving it stalled on the server.
         logError(session.id, err instanceof Error ? err.message : String(err));
-        clearStack(session, gsProcess);
+        this.releaseProcess(session, gsProcess);
       }
     } else {
-      clearStack(session, gsProcess);
+      this.releaseProcess(session, gsProcess);
     }
   }
 
@@ -922,7 +940,7 @@ export class CodeExecutor {
       if (editor) {
         editor.setDecorations(executingDecorationType, []);
       }
-      appendTranscriptOutput(endClientForwarderMode(session));
+      this.endForwarding(session);
       this.setExecuting(session.id, false);
     }
   }

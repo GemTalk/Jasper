@@ -1,6 +1,7 @@
 import type { GciError } from './gciLibrary';
+import { clearInBackground } from './nbRunner';
 import type { ActiveSession } from './sessionManager';
-import { OOP_ILLEGAL, OOP_NIL, toBigInt } from './gciConstants';
+import { OOP_ILLEGAL, toBigInt } from './gciConstants';
 import { logError, logInfo } from './gciLog';
 
 /**
@@ -433,7 +434,7 @@ export async function continueThroughForwarderSends(
   while (isForwarderSendError(err)) {
     const suspended = toBigInt(err.context);
     if (abandoned?.aborted) {
-      clearSuspendedWriter(session, suspended);
+      await clearSuspendedWriter(session, suspended);
       return { result, err };
     }
     try {
@@ -441,12 +442,12 @@ export async function continueThroughForwarderSends(
       if (text !== null && text.length > 0) onTranscript(text);
       ({ result, err } = await session.GciTsContinueWithAsync(suspended, OOP_ILLEGAL, null, flags));
     } catch (e) {
-      clearSuspendedWriter(session, suspended);
+      await clearSuspendedWriter(session, suspended);
       throw e;
     }
   }
   if (abandoned?.aborted && err.number !== 0) {
-    clearSuspendedWriter(session, toBigInt(err.context));
+    await clearSuspendedWriter(session, toBigInt(err.context));
   }
   return { result, err };
 }
@@ -454,17 +455,9 @@ export async function continueThroughForwarderSends(
 /**
  * Release the Transcript semaphore held by a process we are about to abandon.
  * Best-effort: the session may already be unusable, and the caller is on its
- * way out with the real error, which must not be replaced by this one.
+ * way out with the real error, which must not be replaced by this one. Waited
+ * for, so the caller's next call does not meet the clear still running.
  */
-function clearSuspendedWriter(session: ActiveSession, gsProcess: bigint): void {
-  if (gsProcess === OOP_NIL || gsProcess === 0n) return;
-  try {
-    session.GciTsClearStack(gsProcess);
-  } catch (e) {
-    logError(
-      session.id,
-      `Could not clear the suspended Transcript writer; later Transcript writes in this ` +
-        `session may deadlock until logout: ${e instanceof Error ? e.message : String(e)}`,
-    );
-  }
+async function clearSuspendedWriter(session: ActiveSession, gsProcess: bigint): Promise<void> {
+  await clearInBackground(session, gsProcess);
 }

@@ -126,11 +126,12 @@ export interface NbRunOptions {
   disposableProcess?: boolean;
   /**
    * Called once a call the runner stopped waiting for has been collected and the
-   * session is idle again, before any call waiting on the session starts. Execute
-   * It and notebook cells end clientForwarder mode here: their own `finally` runs
-   * while the call is still being collected, when GemStone refuses it (see
-   * transcriptSink.ts). Not called if collection gives up. Anything it throws is
-   * logged.
+   * session is idle again, before any call waiting on the session starts, and
+   * before a disposable process is cleared. Execute It and notebook cells end
+   * clientForwarder mode here: their own `finally` runs while the call is still
+   * being collected, when GemStone refuses it (see transcriptSink.ts), and on
+   * 3.7.5 a clean-up that writes to the Transcript while the mode is on stops at
+   * that write. Not called if collection gives up. Anything it throws is logged.
    */
   onAbandonedCollected?: () => void;
 }
@@ -338,8 +339,12 @@ function drainAbandonedCall(
       const { result, err } = pollNbResultReady(session);
       if (result === 1) {
         const { err } = session.GciTsNbResult();
-        if (disposableProcess) clearStoppedProcess(session, err?.context);
-        runCollectedHook(session, onCollected);
+        if (disposableProcess) {
+          runHook(session, onCollected);
+          void clearInBackground(session, err?.context);
+        } else {
+          runCollectedHook(session, onCollected);
+        }
         return { state: 'collected' };
       }
       if (result === -1) {
@@ -491,7 +496,9 @@ export function stoppedRunHolds(session: ActiveSession): boolean {
 export function abandonedRunHolds(session: ActiveSession): boolean {
   if (draining.has(session.id)) return true;
   const pending = uncollected.get(session.id);
-  return pending !== undefined && !pending.collect();
+  if (pending !== undefined && !pending.collect()) return true;
+  // Collecting the call may just have started clearing its process.
+  return draining.has(session.id);
 }
 
 /**
@@ -514,7 +521,9 @@ export function whenSessionFree<T>(
   session: ActiveSession,
   start: () => T,
 ): T | Promise<Awaited<T>> {
-  if (!draining.has(session.id)) {
+  // Clean-up takes as long as the user's ensure: blocks do, too long to wait out
+  // without a word: refused with the notice instead.
+  if (!draining.has(session.id) || clearHolds(session)) {
     ensureSessionFree(session);
     return start();
   }
@@ -565,8 +574,8 @@ export function holdSessionUntilSettled(
   session: ActiveSession,
   work: Promise<unknown>,
   onSettled?: () => void,
-): void {
-  awaitAbandonedRead(session, work, onSettled);
+): Promise<void> {
+  return awaitAbandonedRead(session, work, onSettled);
 }
 
 /**
@@ -616,7 +625,7 @@ function awaitAbandonedRead(
   session: ActiveSession,
   read: Promise<unknown>,
   onCollected?: () => void,
-): void {
+): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const done: Promise<void> = new Promise<void>((resolve) => {
     timer = setTimeout(() => {
@@ -635,6 +644,7 @@ function awaitAbandonedRead(
     if (draining.get(session.id) === done) draining.delete(session.id);
   });
   draining.set(session.id, done);
+  return done;
 }
 
 /**
@@ -642,37 +652,66 @@ function awaitAbandonedRead(
  * handler; the caller is long gone, so only log a throw.
  */
 function runCollectedHook(session: ActiveSession, hook: (() => void) | undefined): void {
-  const run = (cleanup: () => void): void => {
-    try {
-      cleanup();
-    } catch (e) {
-      logInfo(
-        `[Session ${session.id}] Cleanup after a cancelled run failed: ` +
-          (e instanceof Error ? e.message : String(e)),
-      );
-    }
-  };
-  if (hook) run(hook);
-  if (stoppedRunCollectedHandler) run(() => stoppedRunCollectedHandler?.(session));
+  runHook(session, hook);
+  if (stoppedRunCollectedHandler) runHook(session, () => stoppedRunCollectedHandler?.(session));
 }
 
-/**
- * Best-effort GciTsClearStack of the process an abandoned call stopped in.
- * The caller is already on its way out with NbCancelledError, so a failure
- * here is logged, never thrown.
- */
-function clearStoppedProcess(session: ActiveSession, context: unknown): void {
-  if (context === undefined || context === null) return;
-  const gsProcess = BigInt(context as bigint | number);
-  if (gsProcess === OOP_NIL || gsProcess === 0n) return;
+/** Run one clean-up hook of a cancelled run's, logging a throw. */
+function runHook(session: ActiveSession, hook: (() => void) | undefined): void {
   try {
-    session.GciTsClearStack(gsProcess);
+    hook?.();
   } catch (e) {
     logInfo(
-      `[Session ${session.id}] Could not clear a cancelled run's process: ` +
+      `[Session ${session.id}] Cleanup after a cancelled run failed: ` +
         (e instanceof Error ? e.message : String(e)),
     );
   }
+}
+
+/** Sessions a {@link clearInBackground} is still clearing a process on. */
+const clearing = new Set<number>();
+
+/** Whether the session is held by a stopped run's clean-up rather than by a run. */
+export function clearHolds(session: ActiveSession): boolean {
+  return clearing.has(session.id);
+}
+
+/** Whether a GCI error's `context` names a process. */
+function isProcess(context: unknown): context is bigint | number {
+  if (typeof context !== 'bigint' && typeof context !== 'number') return false;
+  const oop = BigInt(context);
+  return oop !== OOP_NIL && oop !== 0n;
+}
+
+/**
+ * Clear a stopped run's paused process on a worker thread. Clearing runs the
+ * process's `ensure:` blocks inside the call, so on the main thread a slow one
+ * froze VS Code, for good if it never ended. Until it is done the session is
+ * held as for a stopped run: the next call waits or is refused with the Force
+ * Stop notice, and Force Stop ends clean-up that hangs. `then` runs once the
+ * session is free. Best-effort: a failure is logged, never thrown.
+ */
+export function clearInBackground(
+  session: ActiveSession,
+  context: unknown,
+  then?: () => void,
+): Promise<void> {
+  if (!isProcess(context)) {
+    runCollectedHook(session, then);
+    return Promise.resolve();
+  }
+  const gsProcess = BigInt(context);
+  const failed = (why: string): void =>
+    logInfo(`[Session ${session.id}] Could not clear a stopped run's process: ${why}`);
+  clearing.add(session.id);
+  const cleared = session.GciTsClearStackAsync(gsProcess).then(
+    ({ err }) => {
+      if (err.number !== 0) failed(err.message || `GemStone error ${err.number}`);
+    },
+    (e: unknown) => failed(e instanceof Error ? e.message : String(e)),
+  );
+  void cleared.finally(() => clearing.delete(session.id));
+  return awaitAbandonedRead(session, cleared, then);
 }
 
 /**
@@ -789,7 +828,7 @@ export function pollNbToCompletion<T>(
       if (reading) {
         // Nothing to drain, and the session must not be touched — see
         // awaitAbandonedRead.
-        awaitAbandonedRead(session, reading, opts.onAbandonedCollected);
+        void awaitAbandonedRead(session, reading, opts.onAbandonedCollected);
       } else {
         // The session counts the call as in progress until its result is collected.
         // Drain it, or the very next call on this session is refused with "session
@@ -861,9 +900,12 @@ export function pollNbToCompletion<T>(
           (e) => {
             // The gem answering a stop's soft break hands back a live process,
             // which settle swaps for NbCancelledError, so no caller is left to
-            // debug or clear it.
-            if (stopped && !settled && opts.disposableProcess === true) {
-              clearStoppedProcess(session, (e as { context?: unknown } | null)?.context);
+            // debug or clear it. The clear holds the session past the caller's
+            // own clean-up, which `onAbandonedCollected` does first instead.
+            const context = (e as { context?: unknown } | null)?.context;
+            if (stopped && !settled && opts.disposableProcess === true && isProcess(context)) {
+              runHook(session, opts.onAbandonedCollected);
+              void clearInBackground(session, context);
             }
             settle(() => reject(e));
           },

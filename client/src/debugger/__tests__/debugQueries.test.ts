@@ -1423,7 +1423,7 @@ describe('debugQueries', () => {
         })),
         GciTsCallInProgress: vi.fn(() => ({ result: 1, err: { ...noErr } })),
         GciTsBreak: vi.fn(() => ({ success: true, err: { ...noErr } })),
-        GciTsClearStack: vi.fn(() => ({ success: true, err: { ...noErr } })),
+        GciTsClearStackAsync: vi.fn(() => ({ success: true, err: { ...noErr } })),
       };
       const handle = {};
       const session = fakeActiveSession({
@@ -1472,7 +1472,7 @@ describe('debugQueries', () => {
 
       await cancelTwice(gci, (opts) => debug.stepOverNb(session, 0xaan, 1, opts));
 
-      expect(gci.GciTsClearStack).not.toHaveBeenCalled();
+      expect(gci.GciTsClearStackAsync).not.toHaveBeenCalled();
     });
 
     it('keeps the process a cancelled restart-frame trim stopped, for the same reason', async () => {
@@ -1480,7 +1480,7 @@ describe('debugQueries', () => {
 
       await cancelTwice(gci, (opts) => debug.trimStackToLevelNb(session, 0xaan, 2, opts));
 
-      expect(gci.GciTsClearStack).not.toHaveBeenCalled();
+      expect(gci.GciTsClearStackAsync).not.toHaveBeenCalled();
     });
 
     it('throws away the process a cancelled frame evaluation made for itself', async () => {
@@ -1490,7 +1490,7 @@ describe('debugQueries', () => {
 
       await cancelTwice(gci, (opts) => debug.evaluateInFrameNb(session, 0xaan, '3 + 4', 1, opts));
 
-      expect(gci.GciTsClearStack).toHaveBeenCalledWith(handle, STOPPED_PROCESS);
+      expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(handle, STOPPED_PROCESS);
     });
   });
 });

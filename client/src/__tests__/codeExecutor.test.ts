@@ -118,7 +118,7 @@ function makeGci(overrides: Record<string, unknown> = {}) {
           '(gci.executeAndFetchString as Mock).mockReturnValue(...) before triggering Display It.',
       );
     }),
-    GciTsClearStack: vi.fn(),
+    GciTsClearStackAsync: vi.fn(),
     GciTsObjExists: vi.fn(() => false),
     GciTsFetchClass: vi.fn(() => ({ result: 0n, err: { number: 0 } })),
     ...overrides,
@@ -796,7 +796,7 @@ describe('CodeExecutor', () => {
 
       await executor.debugIt();
 
-      expect(gci.GciTsClearStack).not.toHaveBeenCalled();
+      expect(gci.GciTsClearStackAsync).not.toHaveBeenCalled();
     });
 
     it('clears the stack if the GemStone Debugger panel fails to open', async () => {
@@ -808,7 +808,7 @@ describe('CodeExecutor', () => {
       await executor.debugIt();
 
       // Nothing owns the process when the panel throws, so it must be released.
-      expect(gci.GciTsClearStack).toHaveBeenCalledWith(handle, 0x123n);
+      expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(handle, 0x123n);
     });
   });
 
@@ -1642,7 +1642,32 @@ describe('CodeExecutor', () => {
       expect(vscode.debug.startDebugging).not.toHaveBeenCalled();
       expect(revealedView()).toBe(false);
       // The stalled GsProcess must be released so it does not linger.
-      expect(gci.GciTsClearStack).toHaveBeenCalledWith(handle, 0x123n);
+      expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(handle, 0x123n);
+    });
+
+    it('ends Transcript forwarding before clearing the dismissed run, and shows what its clean-up wrote', async () => {
+      // On 3.7.5 a clean-up that writes to the Transcript while forwarding is on
+      // stops at that write.
+      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue(undefined);
+      setup();
+      let finish: (v: unknown) => void = () => {};
+      const order: string[] = [];
+      (gci.GciTsClearStackAsync as Mock).mockImplementationOnce(() => {
+        order.push('clear');
+        return new Promise((resolve) => (finish = resolve));
+      });
+      (gci.executeAndFetchString as Mock).mockImplementation((_h: unknown, code: string) => {
+        if (code.includes('jasperEndClientForwarderMode')) order.push('end');
+        if (code.includes('jasperDrain')) order.push('drain');
+        return '';
+      });
+
+      await executor.executeIt();
+      expect(order.slice(order.indexOf('clear') - 1)).toEqual(['end', 'clear']);
+
+      finish({ success: true, err: { number: 0 } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(order.at(-1)).toBe('drain');
     });
 
     it('opens the GemStone Debugger panel (and not the DAP debugger) when the user clicks Debug', async () => {
@@ -1663,7 +1688,7 @@ describe('CodeExecutor', () => {
       // panel now owns the suspended process.
       expect(vscode.debug.startDebugging).not.toHaveBeenCalled();
       expect(revealedView()).toBe(false);
-      expect(gci.GciTsClearStack).not.toHaveBeenCalled();
+      expect(gci.GciTsClearStackAsync).not.toHaveBeenCalled();
     });
 
     it('passes a completion callback to the GemStone Debugger for a halted Display It', async () => {
@@ -2055,7 +2080,7 @@ describe('CodeExecutor', () => {
         cancelled: true,
       });
       expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
-      expect(mockOf(gci, 'GciTsClearStack')).toHaveBeenCalledWith(expect.anything(), 1234n);
+      expect(mockOf(gci, 'GciTsClearStackAsync')).toHaveBeenCalledWith(expect.anything(), 1234n);
     });
 
     it('reports a cancel that stopped the judgement as a cancel', async () => {
@@ -2072,8 +2097,11 @@ describe('CodeExecutor', () => {
         cancelled: true,
       });
       // The decider's own process, and then the run's: no debugger owns either.
-      expect(mockOf(gci, 'GciTsClearStack')).toHaveBeenCalledWith(expect.anything(), 601n);
-      expect(mockOf(gci, 'GciTsClearStack')).toHaveBeenCalledWith(expect.anything(), PROCESS_OOP);
+      expect(mockOf(gci, 'GciTsClearStackAsync')).toHaveBeenCalledWith(expect.anything(), 601n);
+      expect(mockOf(gci, 'GciTsClearStackAsync')).toHaveBeenCalledWith(
+        expect.anything(),
+        PROCESS_OOP,
+      );
     });
 
     it('lets a cancel the runner stopped waiting for through, without a warning', async () => {

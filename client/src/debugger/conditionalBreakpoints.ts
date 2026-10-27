@@ -11,6 +11,7 @@ import { gsStringLiteral as literal } from '../serverPlugin/installHelpers';
 import { logError, logInfo } from '../gciLog';
 import {
   cancelRunOn,
+  clearInBackground,
   EARLIEST_STOP_WAITING_MS,
   holdSessionUntilSettled,
   isRunning,
@@ -486,15 +487,11 @@ class DeciderError extends Error {
  * process of its own, never the developer's, so whatever stopped it — a break or
  * an error — leaves nothing anyone will resume.
  */
-function releaseProcess(session: ActiveSession, context: number | bigint | undefined): void {
-  if (context === undefined) return;
-  const process = toBigInt(context);
-  if (process === 0n || process === OOP_NIL) return;
-  try {
-    session.GciTsClearStack(process);
-  } catch (e) {
-    logError(session.id, `Could not release a stopped process: ${errorText(e)}`);
-  }
+function releaseProcess(
+  session: ActiveSession,
+  context: number | bigint | undefined,
+): Promise<void> {
+  return clearInBackground(session, context);
 }
 
 function errorText(e: unknown): string {
@@ -502,7 +499,11 @@ function errorText(e: unknown): string {
 }
 
 /** Compile this run's decider and answer the block. One doit per run or Resume. */
-function installDecider(session: ActiveSession, specs: BreakpointRule[], process: bigint): bigint {
+async function installDecider(
+  session: ActiveSession,
+  specs: BreakpointRule[],
+  process: bigint,
+): Promise<bigint> {
   const { result, err } = session.GciTsExecute(
     deciderSource(specs, process),
     session.utf8ClassOop(),
@@ -512,7 +513,7 @@ function installDecider(session: ActiveSession, specs: BreakpointRule[], process
     0,
   );
   if (err.number !== 0) {
-    releaseProcess(session, err.context);
+    await releaseProcess(session, err.context);
     throw new DeciderError(err.message || `GemStone error ${err.number}`, err.number);
   }
   return result;
@@ -540,7 +541,7 @@ async function decideWith(
     0,
   );
   if (err.number !== 0) {
-    releaseProcess(session, err.context);
+    await releaseProcess(session, err.context);
     throw new DeciderError(err.message || `GemStone error ${err.number}`, err.number);
   }
 
@@ -646,7 +647,7 @@ export async function applyBreakpointRules(
   const stopWaiting = (): boolean => {
     if (!inFlight || !giveUp) return false;
     logInfo(`[Session ${session.id}] Stopped waiting for the breakpoint rules' call.`);
-    holdSessionUntilSettled(session, inFlight);
+    void holdSessionUntilSettled(session, inFlight);
     const { onGivenUpSettled } = options;
     if (onGivenUpSettled) {
       // A judgement given up on leaves the run where it was, at this hit.
@@ -724,7 +725,7 @@ export async function applyBreakpointRules(
   // The runner has already rejected the run, so nobody else will release what
   // it stopped.
   const abandon = (): never => {
-    releaseProcess(session, process);
+    void releaseProcess(session, process);
     throw new NbCancelledError();
   };
 
@@ -770,7 +771,7 @@ export async function applyBreakpointRules(
       } else {
         calling = true;
         try {
-          decider ??= installDecider(session, specs, process);
+          decider ??= await installDecider(session, specs, process);
           decision = await onWorker(decideWith(session, decider, process));
         } catch (e) {
           if (e instanceof NbCancelledError) throw e;

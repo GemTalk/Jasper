@@ -2,7 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../gciLog', async (orig) => ({ ...(await orig()), logInfo: vi.fn() }));
-vi.mock('../nbRunner', () => ({ stoppedRunHolds: vi.fn(), isRunning: vi.fn(() => false) }));
+vi.mock('../nbRunner', () => ({
+  stoppedRunHolds: vi.fn(),
+  isRunning: vi.fn(() => false),
+  clearHolds: vi.fn(() => false),
+}));
 
 import type { ActiveSession } from '../activeSession';
 import {
@@ -14,15 +18,17 @@ import {
   SESSION_SIGNAL_ERROR,
 } from '../forceStop';
 import { GciLibraryError } from '../gciLibraryError';
-import { isRunning, stoppedRunHolds } from '../nbRunner';
+import { clearHolds, isRunning, stoppedRunHolds } from '../nbRunner';
 
 let nextId = 1;
 
 function fakeSession(serverSession = '42') {
   const executeAndFetchString = vi.fn((_code: string) => serverSession);
+  const GciTsBreak = vi.fn();
   return {
-    session: { id: nextId++, executeAndFetchString } as unknown as ActiveSession,
+    session: { id: nextId++, executeAndFetchString, GciTsBreak } as unknown as ActiveSession,
     executeAndFetchString,
+    GciTsBreak,
   };
 }
 
@@ -73,6 +79,27 @@ describe('Force Stop', () => {
       expect.stringMatching(/^System sendSignal: 1 to: 42 withMessage: /),
     );
     expect(sender.logout).toHaveBeenCalled();
+  });
+
+  it('also sends a hard break to clean-up code a clear is running, and only then', async () => {
+    // On 3.7.5 that clean-up takes neither the signal nor a soft break.
+    const run = fakeSession();
+    armForceStop(run.session);
+    await forceStop(run.session, fakeSender().deps);
+    expect(run.GciTsBreak).not.toHaveBeenCalled();
+
+    // Held when pressed and for two polls after the signal, by clean-up that
+    // only began once the signal had stopped the run.
+    vi.mocked(stoppedRunHolds)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true);
+    vi.mocked(clearHolds).mockReturnValueOnce(false).mockReturnValueOnce(true);
+    const cleanUp = fakeSession();
+    armForceStop(cleanUp.session);
+    await expect(forceStop(cleanUp.session, fakeSender().deps)).resolves.toBe(true);
+    expect(cleanUp.GciTsBreak).toHaveBeenCalledTimes(1);
+    expect(cleanUp.GciTsBreak).toHaveBeenCalledWith(true);
   });
 
   it('logs the short-lived login out even when the signal fails', async () => {

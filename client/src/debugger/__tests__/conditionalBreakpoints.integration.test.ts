@@ -191,12 +191,8 @@ describe('conditional breakpoints (integration)', () => {
   };
 
   /** Let go of a suspended process so the gem isn't left holding it. */
-  const release = (process: bigint): void => {
-    try {
-      debugQueries.clearStack(session(), process);
-    } catch {
-      /* already finished */
-    }
+  const release = async (process: bigint): Promise<void> => {
+    await debugQueries.clearStack(session(), process);
   };
 
   it('stops exactly where the condition first holds', async () => {
@@ -216,7 +212,7 @@ describe('conditional breakpoints (integration)', () => {
     const frame = debugQueries.getFrameInfo(session(), process, 1);
     const i = frame.argAndTempNames.indexOf('i');
     expect(printString(frame.argAndTempOops[i])).toBe('150');
-    release(process);
+    await release(process);
   });
 
   it('runs to completion, and answers the result, when the condition never holds', async () => {
@@ -248,7 +244,7 @@ describe('conditional breakpoints (integration)', () => {
     ]);
 
     expect(outcome).toEqual({ kind: 'stopped', context: process, skipped: 149 });
-    release(process);
+    await release(process);
   });
 
   it('resolves self and an instance variable in a non-inlined block', async () => {
@@ -271,7 +267,7 @@ describe('conditional breakpoints (integration)', () => {
     ]);
 
     expect(outcome).toEqual({ kind: 'stopped', context: process, skipped: 0 });
-    release(process);
+    await release(process);
   });
 
   it('resolves a home-method temporary from inside the block', async () => {
@@ -289,7 +285,7 @@ describe('conditional breakpoints (integration)', () => {
     // 1 + … + 100 = 5050 is the first total over 5000, read before each = 101.
     expect(outcome).toEqual({ kind: 'stopped', context: process, skipped: 100 });
     expect(valueInTopFrame(process, 'each')).toBe('101');
-    release(process);
+    await release(process);
   });
 
   it('resolves a home-method temporary the block never mentions', async () => {
@@ -316,7 +312,7 @@ describe('conditional breakpoints (integration)', () => {
     ]);
 
     expect(outcome).toEqual({ kind: 'stopped', context: process, skipped: 2 });
-    release(process);
+    await release(process);
   });
 
   it('judges a block against the receiver that made it, not a deeper activation', async () => {
@@ -344,7 +340,7 @@ describe('conditional breakpoints (integration)', () => {
     ]);
 
     expect(outcome).toEqual({ kind: 'stopped', context: process, skipped: 0 });
-    release(process);
+    await release(process);
   });
 
   it('judges a block whose home method has already returned', async () => {
@@ -361,7 +357,7 @@ describe('conditional breakpoints (integration)', () => {
     ]);
 
     expect(outcome).toEqual({ kind: 'stopped', context: process, skipped: 0 });
-    release(process);
+    await release(process);
   });
 
   it('still stops at an unconditional breakpoint reached while skipping', async () => {
@@ -383,7 +379,7 @@ describe('conditional breakpoints (integration)', () => {
 
     expect(outcome.kind).toBe('stopped');
     expect(debugQueries.getStepPoint(session(), process, 1)).toBe(returnStepPoint);
-    release(process);
+    await release(process);
   });
 
   it('judges several conditional breakpoints, each on its own condition', async () => {
@@ -413,7 +409,7 @@ describe('conditional breakpoints (integration)', () => {
 
     expect(outcome).toEqual({ kind: 'stopped', context: process, skipped: 20 });
     expect(debugQueries.getStepPoint(session(), process, 1)).toBe(returnStep);
-    release(process);
+    await release(process);
   });
 
   it('lets one condition hold while another never does', async () => {
@@ -437,7 +433,7 @@ describe('conditional breakpoints (integration)', () => {
 
     expect(outcome).toEqual({ kind: 'stopped', context: process, skipped: 149 });
     expect(debugQueries.getStepPoint(session(), process, 1)).toBe(loopStep);
-    release(process);
+    await release(process);
   });
 
   it('logs a line per hit and runs to completion, without ever stopping', async () => {
@@ -598,7 +594,7 @@ describe('conditional breakpoints (integration)', () => {
   ifNone: [nil]) notNil printString`,
       ),
     ).toBe('true');
-    release(outcome.context);
+    await release(outcome.context);
   });
 
   it('reports a condition that cannot be evaluated, instead of never stopping', async () => {
@@ -612,7 +608,7 @@ describe('conditional breakpoints (integration)', () => {
     expect(outcome.kind).toBe('conditionFailed');
     if (outcome.kind !== 'conditionFailed') return;
     expect(outcome.message).toContain('noSuchVariable');
-    release(process);
+    await release(process);
   });
 
   it('reports a condition that does not answer a Boolean', async () => {
@@ -629,7 +625,7 @@ describe('conditional breakpoints (integration)', () => {
     expect(outcome.kind).toBe('conditionFailed');
     if (outcome.kind !== 'conditionFailed') return;
     expect(outcome.message).toContain('not true or false');
-    release(process);
+    await release(process);
   });
 
   it('reports a condition that is not valid Smalltalk', async () => {
@@ -646,7 +642,7 @@ describe('conditional breakpoints (integration)', () => {
     if (outcome.kind !== 'conditionFailed') return;
     expect(outcome.skipped).toBe(0);
     expect(outcome.message).toMatch(/CompileError|expected/i);
-    release(process);
+    await release(process);
   });
 
   it('reports a condition that compiles but raises when it runs', async () => {
@@ -661,7 +657,7 @@ describe('conditional breakpoints (integration)', () => {
     if (outcome.kind !== 'conditionFailed') return;
     expect(outcome.skipped).toBe(0);
     expect(outcome.message).toContain('noSuchMessage');
-    release(process);
+    await release(process);
   });
 
   it('resolves frame variables inside a block the condition itself contains', async () => {
@@ -684,7 +680,7 @@ describe('conditional breakpoints (integration)', () => {
     // limit = 100; but each = 15 is odd, so the stop is at each = 16, total = 120.
     expect(outcome).toEqual({ kind: 'stopped', context: process, skipped: 15 });
     expect(valueInTopFrame(process, 'each')).toBe('16');
-    release(process);
+    await release(process);
   });
 
   // A condition compiles as workspace code does, so its string literals are
@@ -715,7 +711,7 @@ describe('conditional breakpoints (integration)', () => {
 
     expect(outcome).toEqual({ kind: 'stopped', context: process, skipped: 149 });
     expect(valueInTopFrame(process, 'i')).toBe('150');
-    release(process);
+    await release(process);
   });
 
   it('reports the String-to-Unicode comparison error, as a workspace would', async (ctx) => {
@@ -734,7 +730,7 @@ describe('conditional breakpoints (integration)', () => {
       'message',
       expect.stringContaining('Unicode argument disallowed'),
     );
-    release(process);
+    await release(process);
   });
 
   it('keeps non-ASCII text in the condition intact', async () => {
@@ -748,7 +744,7 @@ describe('conditional breakpoints (integration)', () => {
     ]);
 
     expect(outcome).toEqual({ kind: 'stopped', context: process, skipped: 149 });
-    release(process);
+    await release(process);
   });
 
   it('writes non-ASCII text in a logpoint message as it was typed', async () => {
@@ -787,7 +783,7 @@ describe('conditional breakpoints (integration)', () => {
 
     expect(outcome).toEqual({ kind: 'stopped', context: process, skipped: 149 });
     expect(valueInTopFrame(process, 'i')).toBe('150');
-    release(process);
+    await release(process);
   });
 
   it('stops at a breakpoint no condition claims', async () => {
@@ -802,7 +798,7 @@ describe('conditional breakpoints (integration)', () => {
     ]);
 
     expect(outcome).toEqual({ kind: 'stopped', context: process, skipped: 0 });
-    release(process);
+    await release(process);
   });
 
   it('degrades to stopping when a spec names a method that is gone', async () => {
@@ -818,7 +814,7 @@ describe('conditional breakpoints (integration)', () => {
     ]);
 
     expect(outcome).toEqual({ kind: 'stopped', context: process, skipped: 0 });
-    release(process);
+    await release(process);
   });
 
   it('keeps every other rule working when a spec names a class that is gone', async () => {
@@ -837,7 +833,7 @@ describe('conditional breakpoints (integration)', () => {
     ]);
 
     expect(outcome).toEqual({ kind: 'stopped', context: process, skipped: 149 });
-    release(process);
+    await release(process);
   });
 
   it('cuts a long non-ASCII log line between characters, and says it was cut', async () => {
@@ -933,7 +929,7 @@ describe('conditional breakpoints (integration)', () => {
 
       expect(outcome).toEqual({ kind: 'stopped', context: process, skipped: 4 });
       expect(written.join('')).toBe('1234');
-      release(process);
+      await release(process);
     } finally {
       endClientForwarderMode(session());
     }
@@ -967,7 +963,7 @@ describe('conditional breakpoints (integration)', () => {
         { suppressNotification: true },
       );
       expect(err.number).toBe(6005);
-      release(BigInt(err.context));
+      await release(BigInt(err.context));
     } finally {
       endClientForwarderMode(session());
     }
@@ -996,7 +992,7 @@ describe('conditional breakpoints (integration)', () => {
     } finally {
       clearInterval(ticker);
     }
-    release(process);
+    await release(process);
   });
 
   // ── Triggered breakpoints ──────────────────────────────────────────────
@@ -1092,7 +1088,7 @@ describe('conditional breakpoints (integration)', () => {
     // landed rather than arriving some iterations later.
     expect(outcome.skipped).toBe(1);
     expect(debugQueries.getStepPoint(session(), process, 1)).toBe(loopStep);
-    release(process);
+    await release(process);
   });
 
   /** `armThenCount:` with breakpoints on its trigger send and its loop. */
@@ -1152,7 +1148,7 @@ describe('conditional breakpoints (integration)', () => {
     expect(second).toEqual({ kind: 'stopped', context: process, skipped: 0 });
     expect(debugQueries.getStepPoint(session(), process, 1)).toBe(loopStep);
     expect(valueInTopFrame(process, 'i')).toBe('1');
-    release(process);
+    await release(process);
   });
 
   it('keeps that arming when a rule is edited while the debugger is open', async () => {
@@ -1176,7 +1172,7 @@ describe('conditional breakpoints (integration)', () => {
 
     expect(outcome).toEqual({ kind: 'stopped', context: process, skipped: 3 });
     expect(valueInTopFrame(process, 'i')).toBe('4');
-    release(process);
+    await release(process);
   });
 
   it('starts a new run with its triggers disarmed', async () => {
@@ -1194,7 +1190,7 @@ describe('conditional breakpoints (integration)', () => {
       ).err.context,
     );
     expect((await applyBreakpointRules(session(), firstRun, specs)).kind).toBe('stopped');
-    release(firstRun);
+    await release(firstRun);
 
     // Run two stops at its trigger, which this time never holds: the loop must
     // be passed over to the end of the run, whatever run one armed.
@@ -1235,14 +1231,14 @@ describe('conditional breakpoints (integration)', () => {
       ).err.context,
     );
     expect((await applyBreakpointRules(session(), runTwo, specs)).kind).toBe('stopped');
-    release(runTwo);
+    await release(runTwo);
 
     expect(resume(runOne).err.number).toBe(6005);
     const outcome = await applyBreakpointRules(session(), runOne, specs);
 
     expect(outcome).toEqual({ kind: 'stopped', context: runOne, skipped: 0 });
     expect(valueInTopFrame(runOne, 'i')).toBe('1');
-    release(runOne);
+    await release(runOne);
   });
 
   it('forgets a run once it has finished or been let go of', async () => {
@@ -1262,7 +1258,7 @@ describe('conditional breakpoints (integration)', () => {
     expect((await applyBreakpointRules(session(), finished, specs)).kind).toBe('completed');
     const letGo = start();
     await applyBreakpointRules(session(), letGo, [{ methodExpr, stepPoint: armStep }]);
-    release(letGo);
+    await release(letGo);
     const paused = start();
 
     await applyBreakpointRules(session(), paused, [{ methodExpr, stepPoint: armStep }]);
@@ -1275,7 +1271,7 @@ describe('conditional breakpoints (integration)', () => {
     expect(keys).toContain(String(paused));
     expect(keys).not.toContain(String(finished));
     expect(keys).not.toContain(String(letGo));
-    release(paused);
+    await release(paused);
   });
 
   it('applies the rules to a debugger Resume, start to finish', async () => {
@@ -1352,7 +1348,7 @@ describe('conditional breakpoints (integration)', () => {
 
     expect(outcome).toEqual({ kind: 'stopped', context: process, skipped: 20 });
     expect(debugQueries.getStepPoint(session(), process, 1)).toBe(returnStep);
-    release(process);
+    await release(process);
   });
 
   it('honours a triggered breakpoint\u2019s own condition as well as its trigger', async () => {
@@ -1404,7 +1400,7 @@ describe('conditional breakpoints (integration)', () => {
     // The value that proves it: stopped at i = 15 exactly, not at the first hit
     // after arming (which would mean the condition was ignored) and not later.
     expect(debugQueries.evaluateInFrame(session(), process, 'i', 1)).toBe('15');
-    release(process);
+    await release(process);
   });
 
   it('never arms from a hit the disarmed breakpoint was itself passed over on', async () => {
@@ -1473,7 +1469,7 @@ describe('conditional breakpoints (integration)', () => {
     // Only the trigger's own resume: the loop stopped on its first hit.
     expect(outcome).toEqual({ kind: 'stopped', context: process, skipped: 1 });
     expect(debugQueries.getStepPoint(session(), process, 1)).toBe(loopStep);
-    release(process);
+    await release(process);
   });
 });
 
@@ -1599,7 +1595,7 @@ describe('the manager and the gem, together (integration)', () => {
     });
 
     try {
-      debugQueries.clearStack(session(), process);
+      await debugQueries.clearStack(session(), process);
     } catch {
       /* already finished */
     }
@@ -1697,7 +1693,7 @@ describe('the manager and the gem, together (integration)', () => {
     expect(debugQueries.getStepPoint(session(), process, 1)).toBe(ret.stepPoint);
 
     try {
-      debugQueries.clearStack(session(), process);
+      await debugQueries.clearStack(session(), process);
     } catch {
       /* already finished */
     }

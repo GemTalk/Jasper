@@ -1738,6 +1738,28 @@ export class GciLibrary {
     return { success: result !== 0, err: err as unknown as GciError };
   }
 
+  /**
+   * GciTsClearStack on a koffi worker thread. Clearing runs the process's
+   * `ensure:` blocks inside the call, so on the main thread a slow one freezes
+   * the extension host. Same contract as {@link GciTsContinueWithAsync}: no
+   * blocking fallback.
+   */
+  GciTsClearStackAsync(
+    session: unknown,
+    gsProcess: bigint,
+  ): Promise<{ success: boolean; err: GciError }> {
+    const err: Record<string, unknown> = {};
+    return new Promise((resolve, reject) => {
+      this._GciTsClearStack.async(session, gsProcess, err, (asyncErr: unknown, result: number) => {
+        if (asyncErr) {
+          reject(asyncErr instanceof Error ? asyncErr : new Error(String(asyncErr)));
+          return;
+        }
+        resolve({ success: result !== 0, err: err as unknown as GciError });
+      });
+    });
+  }
+
   GciTsGemTrace(session: unknown, enable: number): { previousLevel: number; err: GciError } {
     const err: Record<string, unknown> = {};
     const previousLevel = this._GciTsGemTrace(session, enable, err);

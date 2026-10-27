@@ -1,7 +1,7 @@
 import { ActiveSession } from './sessionManager';
 import { defaultQueryExecutorUsing } from './browserQueries';
 import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from './gciConstants';
-import { NbRunOptions, runNbCall } from './nbRunner';
+import { clearInBackground, NbRunOptions, runNbCall } from './nbRunner';
 
 import {
   evalPython as sharedEvalPython,
@@ -31,13 +31,12 @@ export async function evalPythonInScopeNb(
   return await runNbCall(
     session,
     () => session.GciTsNbExecute(code, OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL, 0, 0),
-    () => {
+    async () => {
       const { result, err } = session.GciTsNbResult();
       if (err.number !== 0) {
         // The query catches every Smalltalk error, so this is a stop that got
         // past its handlers; nothing will debug the process, so clear it.
-        const context = BigInt(err.context);
-        if (context !== OOP_NIL && context !== 0n) session.GciTsClearStack(context);
+        await clearInBackground(session, err.context);
         throw new Error(err.message || `GCI error ${err.number}`);
       }
       const { data, err: fetchErr } = session.GciTsFetchUtf8(result, MAX_CELL_RESULT);

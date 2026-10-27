@@ -170,9 +170,9 @@ function stubSession(
       continues.push({ process, flags });
       return fake.GciTsContinueWithAsync(h, process, tos, e, flags);
     },
-    GciTsClearStack: (h: unknown, process: bigint) => {
+    GciTsClearStackAsync: (h: unknown, process: bigint) => {
       cleared.push(process);
-      return fake.GciTsClearStack(h, process);
+      return fake.GciTsClearStackAsync(h, process);
     },
     GciTsBreak: (h: unknown, hard: boolean) => {
       breaks.push(hard);
