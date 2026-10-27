@@ -81,25 +81,18 @@ describe('Force Stop', () => {
     expect(sender.logout).toHaveBeenCalled();
   });
 
-  it('also sends a hard break to clean-up code a clear is running, and only then', async () => {
-    // On 3.7.5 that clean-up takes neither the signal nor a soft break.
-    const run = fakeSession();
-    armForceStop(run.session);
-    await forceStop(run.session, fakeSender().deps);
-    expect(run.GciTsBreak).not.toHaveBeenCalled();
+  // One stop for every run: a run or clean-up the signal can't end goes on to
+  // Log Out, never to a hard break.
+  it("never sends a hard break, even while a stopped run's clean-up holds the session", async () => {
+    vi.mocked(stoppedRunHolds).mockReturnValueOnce(true).mockReturnValueOnce(true);
+    vi.mocked(clearHolds).mockReturnValue(true);
+    const { session, GciTsBreak } = fakeSession();
+    armForceStop(session);
 
-    // Held when pressed and for two polls after the signal, by clean-up that
-    // only began once the signal had stopped the run.
-    vi.mocked(stoppedRunHolds)
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(true);
-    vi.mocked(clearHolds).mockReturnValueOnce(false).mockReturnValueOnce(true);
-    const cleanUp = fakeSession();
-    armForceStop(cleanUp.session);
-    await expect(forceStop(cleanUp.session, fakeSender().deps)).resolves.toBe(true);
-    expect(cleanUp.GciTsBreak).toHaveBeenCalledTimes(1);
-    expect(cleanUp.GciTsBreak).toHaveBeenCalledWith(true);
+    await forceStop(session, fakeSender().deps);
+
+    expect(GciTsBreak).not.toHaveBeenCalled();
+    vi.mocked(clearHolds).mockReturnValue(false);
   });
 
   it('logs the short-lived login out even when the signal fails', async () => {
@@ -171,29 +164,6 @@ describe('Force Stop', () => {
       await expect(stopping).resolves.toBe(true);
     } finally {
       vi.useRealTimers();
-    }
-  });
-
-  it('gives a hard break sent to late clean-up a full wait of its own', async () => {
-    // The clean-up starts only once the signal has stopped the run, near the end
-    // of the wait; on 3.6.2 the hard break then takes about 1.5s to land.
-    vi.useFakeTimers();
-    try {
-      const { session } = fakeSession();
-      armForceStop(session);
-      const startedAt = Date.now();
-      const cleanUpFrom = startedAt + FORCE_STOP_WAIT_MS - 300;
-      const cleanUpEnds = cleanUpFrom + 1500;
-      vi.mocked(stoppedRunHolds).mockImplementation(() => Date.now() < cleanUpEnds);
-      vi.mocked(clearHolds).mockImplementation(() => Date.now() >= cleanUpFrom);
-
-      const stopping = forceStop(session, fakeSender().deps);
-      await vi.advanceTimersByTimeAsync(FORCE_STOP_WAIT_MS + 1500);
-
-      await expect(stopping).resolves.toBe(true);
-    } finally {
-      vi.useRealTimers();
-      vi.mocked(clearHolds).mockReset().mockReturnValue(false);
     }
   });
 

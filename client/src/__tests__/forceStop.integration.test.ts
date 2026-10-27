@@ -327,6 +327,24 @@ describe('Force Stop (integration)', () => {
       expect(await offTheStone(serial)).toBe(true);
     }, 30_000);
 
+    it('ends the gem of a run whose clean-up ignores the stop as well', async () => {
+      // The clean-up runs only once the run is stopped and thrown away, so the
+      // Force Stop signal has already been used on the run; logging out is the
+      // way out, as for any run Force Stop can't end.
+      const manager = new SessionManager();
+      const ignoresStop = '[[true] whileTrue: [nil]] on: Break do: [:e | e resume]';
+      const { own, serial } = await loggedInAndStopped(
+        manager,
+        `[${ignoresStop}] ensure: [${ignoresStop}]`,
+      );
+
+      const startedAt = Date.now();
+      await expect(manager.logout(own.id)).resolves.toBe(true);
+
+      expect(await offTheStone(serial)).toBe(true);
+      expect(Date.now() - startedAt).toBeLessThan(15_000);
+    }, 60_000);
+
     it('ends the gem of a run that ignores Force Stop too', async () => {
       const manager = new SessionManager();
       const { own, serial } = await loggedInAndStopped(
@@ -375,34 +393,6 @@ describe('Force Stop (integration)', () => {
       expect(ticks).toBeGreaterThan(10);
       expect(stoppedRunHolds(own)).toBe(false);
       expect(own.executeAndFetchString('(3 + 4) printString')).toBe('7');
-    }, 30_000);
-
-    it('lets Force Stop end clean-up that ignores the stop', async () => {
-      const own = armedSession();
-      const process = pausedWithCleanUp(own, '[[true] whileTrue] on: Break do: [:e | e resume]');
-      const clearing = clearInBackground(own, process);
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      expect(stoppedRunHolds(own)).toBe(true);
-
-      await expect(forceStop(own, deps)).resolves.toBe(true);
-      await clearing;
-      expect(own.executeAndFetchString('(3 + 4) printString')).toBe('7');
-    }, 30_000);
-
-    it('ends a run and the stuck clean-up its stop starts with one Force Stop', async () => {
-      // The clean-up starts only once the signal has stopped the run and the run
-      // is collected, so Force Stop has to notice it while it waits; on 3.7.5
-      // only a hard break gets through to it.
-      setStoppedRunCollectedHandler(rearmAfterForceStop);
-      const own = armedSession();
-      const ignoresStop = '[[true] whileTrue] on: Break do: [:e | e resume]';
-      await stopAndAbandon(own, `[${ignoresStop}] ensure: [${ignoresStop}]`);
-
-      await expect(forceStop(own, deps)).resolves.toBe(true);
-
-      expect(stoppedRunHolds(own)).toBe(false);
-      expect(own.executeAndFetchString('(3 + 4) printString')).toBe('7');
-      expect(armed(own)).toBe('true');
     }, 30_000);
 
     it("keeps a clean-up's Transcript writes when forwarding is ended before the clear, as Execute It does", async () => {

@@ -691,7 +691,8 @@ function isProcess(context: unknown): context is bigint | number {
  * process's `ensure:` blocks inside the call, so on the main thread a slow one
  * froze VS Code, for good if it never ended. Until it is done the session is
  * held as for a stopped run: the next call waits or is refused with the Force
- * Stop notice, and Force Stop ends clean-up that hangs. `then` runs once the
+ * Stop notice, and clean-up that hangs takes the same way out as a run that
+ * ignores the stop. `then` runs once the
  * session is free. Best-effort: a failure is logged, never thrown.
  */
 export function clearInBackground(

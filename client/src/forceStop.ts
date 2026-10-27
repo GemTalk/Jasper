@@ -1,7 +1,7 @@
 import type { ActiveSession } from './activeSession';
 import { GciLibraryError } from './gciLibraryError';
 import { logInfo } from './gciLog';
-import { clearHolds, isRunning, stoppedRunHolds } from './nbRunner';
+import { isRunning, stoppedRunHolds } from './nbRunner';
 
 /** The error a session raises when another session signals it (`InterSessionSignal`). */
 export const SESSION_SIGNAL_ERROR = 6010;
@@ -96,19 +96,8 @@ export async function forceStop(session: ActiveSession, deps: ForceStopDeps): Pr
   if (!stoppedRunHolds(session)) return true;
   sendStopSignal(session, serverSession, deps);
 
-  let deadline = Date.now() + FORCE_STOP_WAIT_MS;
-  let hardBreakSent = false;
+  const deadline = Date.now() + FORCE_STOP_WAIT_MS;
   while (stoppedRunHolds(session)) {
-    // On 3.7.5 clean-up run by clearing a stopped run takes neither the signal
-    // nor a soft break, only a hard break; the process is being thrown away, so
-    // the hard break costs nothing. Measured on 3.6.2 and 3.7.5. The clean-up
-    // can begin after the signal, once it has stopped the run, and the break
-    // gets a full wait of its own: on 3.6.2 it takes about 1.5s to land.
-    if (!hardBreakSent && clearHolds(session)) {
-      session.GciTsBreak(true);
-      hardBreakSent = true;
-      deadline = Date.now() + FORCE_STOP_WAIT_MS;
-    }
     if (Date.now() >= deadline) return false;
     await new Promise((resolve) => setTimeout(resolve, FORCE_STOP_POLL_MS));
   }
