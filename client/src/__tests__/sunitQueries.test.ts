@@ -8,12 +8,12 @@ vi.mock('vscode', () => ({
 
 import { ActiveSession } from '../sessionManager';
 import * as sunit from '../sunitQueries';
-import { sessionOn } from './fakeActiveSession';
+import { sessionOn, startNonBlockingCall } from './fakeActiveSession';
 
 function createMockGci(executeFetchData = '') {
   return {
     executeAndFetchString: vi.fn((_session: unknown, _code: string) => executeFetchData),
-    GciTsCallInProgress: vi.fn(() => ({ result: 0 })),
+    GciTsNbExecute: vi.fn(() => ({ success: true, err: { number: 0 } })),
   };
 }
 
@@ -390,8 +390,10 @@ describe('sunitQueries', () => {
     it('throws SunitQueryError when session is busy', () => {
       const gci = createMockGci('');
       const session = sessionOn(gci);
-      gci.GciTsCallInProgress.mockReturnValue({ result: 1 });
+      startNonBlockingCall(session);
+
       expect(() => sunit.discoverTestClasses(session)).toThrow('Session is busy');
+      expect(gci.executeAndFetchString).not.toHaveBeenCalled();
     });
   });
 });

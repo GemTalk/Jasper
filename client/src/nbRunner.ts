@@ -297,6 +297,7 @@ function drainAbandonedCall(
       if (failuresInARow >= COLLECT_FAILURES_TO_GIVE_UP) {
         // Persistent, not transient (a broken connection, say): hold nobody up
         // with a session that will never answer, and don't call it busy.
+        session.forgetUncollectedCall();
         logInfo(
           `[Session ${session.id}] Gave up collecting a cancelled call after ` +
             `${Date.now() - startedAt}ms (${reason ?? state}).`,
@@ -359,6 +360,8 @@ function collectLate(
     } else {
       // Nothing left to wait for: the caller's own call reports the session as
       // it is. Said, because a session left busy has nothing else to show why.
+      // A gone session is logged out, which already ends its busy count.
+      if (state === 'failed') session.forgetUncollectedCall();
       logInfo(
         `[Session ${session.id}] Gave up collecting a cancelled call after ` +
           `${Date.now() - startedAt}ms (${reason ?? state}).`,

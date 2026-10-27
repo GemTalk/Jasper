@@ -26,7 +26,7 @@ import { GEMSTONE_NOTEBOOK_TYPE } from '../gemstoneNotebookKernel';
 import { runNbCall, type NbRunOptions } from '../nbRunner';
 import { SessionManager } from '../sessionManager';
 import { SMALLTALK_LANGUAGE } from '../languageIds';
-import { fakeActiveSession } from './fakeActiveSession';
+import { fakeActiveSession, startNonBlockingCall } from './fakeActiveSession';
 
 // Cells run on the non-blocking execute path in clientForwarder mode. The mock
 // gci covers that path: NbExecute starts the doit, NbPoll reports ready,
@@ -34,7 +34,6 @@ import { fakeActiveSession } from './fakeActiveSession';
 // sink's start/end/drain calls go through executeAndFetchString.
 function makeGci(overrides: Record<string, unknown> = {}) {
   return {
-    GciTsCallInProgress: vi.fn(() => ({ result: 0, err: { number: 0 } })),
     GciTsNbExecute: vi.fn((..._args: unknown[]) => ({
       success: true,
       err: { number: 0, message: '' },
@@ -232,10 +231,11 @@ describe('SmalltalkNotebookController', () => {
   });
 
   it('reports a busy session as a cell error without starting the execute', async () => {
-    const gci = makeGci({
-      GciTsCallInProgress: vi.fn(() => ({ result: 1, err: { number: 0 } })),
-    });
-    const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
+    const gci = makeGci();
+    const session = makeSession(gci);
+    startNonBlockingCall(session);
+    vi.mocked(gci.GciTsNbExecute).mockClear();
+    const ctrl = new SmalltalkNotebookController(makeSessionManager(session));
 
     await runCells([makeCell('3 + 4')]);
 

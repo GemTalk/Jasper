@@ -113,8 +113,8 @@ vi.mock('../gciLibrary', () => ({
     executeAndFetchString(...args: unknown[]) {
       return executeAndFetchStringMock(...(args as []));
     }
-    GciTsCallInProgress() {
-      return { result: 0, err: { number: 0, message: '' } };
+    GciTsNbExecute() {
+      return { success: true, err: { number: 0, message: '' } };
     }
     GciTsAbort(...args: unknown[]) {
       return gciTsAbort(...(args as []));
@@ -155,6 +155,7 @@ import { SessionManager, evaluateLoginPolicy } from '../sessionManager';
 import { DEFAULT_LOGIN, loginLabel } from '../loginTypes';
 import { GciLibraryError } from '../gciLibraryError';
 import { stopCallsOn } from '../nbRunner';
+import { startNonBlockingCall } from './fakeActiveSession';
 
 describe('evaluateLoginPolicy', () => {
   it('allows the first login regardless of mode', () => {
@@ -422,6 +423,16 @@ describe('SessionManager', () => {
       manager.refreshTransactionState(session.id);
 
       expect(seen).toEqual([]);
+    });
+
+    it('leaves the state as it is while a call is still running', () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+      startNonBlockingCall(session);
+      executeAndFetchStringMock.mockClear();
+
+      manager.refreshTransactionState(session.id);
+
+      expect(executeAndFetchStringMock).not.toHaveBeenCalled();
     });
   });
 

@@ -42,8 +42,7 @@ export async function evalSmalltalk(session: ActiveSession, source: string): Pro
 }
 
 async function runCell(session: ActiveSession, source: string): Promise<string> {
-  const { result: inProgress } = session.GciTsCallInProgress();
-  if (inProgress !== 0) {
+  if (session.isBusy()) {
     throw new Error(
       'Session is busy with another operation. Please wait or use a different session.',
     );

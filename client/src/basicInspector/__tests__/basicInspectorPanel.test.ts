@@ -65,7 +65,7 @@ import * as queries from '../queries/basicInspectorQueries';
 import * as debug from '../../debugger/debugQueries';
 import { forgetSession as forgetSessionPins } from '../../exportSetPins';
 import type { ActiveSession } from '../../sessionManager';
-import { fakeActiveSession } from '../../__tests__/fakeActiveSession';
+import { fakeActiveSession, startNonBlockingCall } from '../../__tests__/fakeActiveSession';
 
 /**
  * The panel host: what it asks the stone for, what it posts back, and the
@@ -87,7 +87,6 @@ interface MockPanel {
 }
 
 let panel: MockPanel;
-let callInProgress: number;
 
 function makeMockPanel(): MockPanel {
   const p: MockPanel = {
@@ -106,7 +105,7 @@ function makeSession(): ActiveSession {
   return fakeActiveSession({
     id: 1,
     handle: {},
-    gci: { GciTsCallInProgress: () => ({ result: callInProgress }) },
+    gci: { GciTsNbExecute: () => ({ success: true, err: { number: 0 } }) },
   });
 }
 
@@ -143,7 +142,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   settings.loadAllPageLimit = undefined;
   settings.sessionMode = undefined;
-  callInProgress = 0;
   session = makeSession();
   panel = makeMockPanel();
   vi.mocked(vscode.window.createWebviewPanel).mockImplementation(
@@ -528,7 +526,7 @@ describe('editing a slot', () => {
   });
 
   it('refuses to write while the session is mid-call', () => {
-    callInProgress = 1;
+    startNonBlockingCall(session);
 
     send(EDIT);
 
@@ -664,7 +662,7 @@ describe('the evaluation pane', () => {
   });
 
   it('refuses to evaluate while the session is mid-call', () => {
-    callInProgress = 1;
+    startNonBlockingCall(session);
 
     send({ ...EVAL, mode: 'display' });
 
