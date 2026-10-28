@@ -3,6 +3,25 @@ import { execSync } from 'child_process';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
+// What the runner logs, kept so a test that fails can say what happened; GCI
+// output is not shown in CI otherwise.
+const trace = vi.hoisted(() => [] as string[]);
+vi.mock('../gciLog', async (orig) => {
+  const real = await orig<typeof import('../gciLog')>();
+  const at = (line: string): void => void trace.push(`${Date.now() % 100_000} ${line}`);
+  return {
+    ...real,
+    logInfo: (message: string) => {
+      at(message);
+      real.logInfo(message);
+    },
+    logError: (id: number, message: string) => {
+      at(`[${id}] ERROR ${message}`);
+      real.logError(id, message);
+    },
+  };
+});
+
 import type { ActiveSession } from '../activeSession';
 import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
 import { forceStop, FORCE_STOP_WAIT_MS, rearmAfterForceStop } from '../forceStop';
@@ -62,6 +81,7 @@ describe('Force Stop (integration)', () => {
   ])(
     'stops a run whose Cancel reached the gem before the run had started (%s)',
     async (_how, presses) => {
+      trace.length = 0;
       const own = armedSession();
       const pid = own
         .executeAndFetchString('((System descriptionOfSession: System session) at: 2) printString')
@@ -98,8 +118,27 @@ describe('Force Stop (integration)', () => {
       while (stoppedRunHolds(own) && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
-      expect(stoppedRunHolds(own)).toBe(false);
-      expect(own.executeAndFetchString('(3 + 4) printString')).toBe('7');
+      try {
+        expect(stoppedRunHolds(own)).toBe(false);
+        expect(own.executeAndFetchString('(3 + 4) printString')).toBe('7');
+      } catch (e) {
+        // How the session looks from here, a few times over, after the refusal.
+        for (let i = 0; i < 5; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 400));
+          let answer: string;
+          try {
+            answer = own.executeAndFetchString('(3 + 4) printString');
+          } catch (again) {
+            answer = `refused: ${(again as Error).message.slice(0, 60)}`;
+          }
+          trace.push(
+            `${Date.now() % 100_000} retry ${i}: holds=${stoppedRunHolds(own)} ` +
+              `busy=${own.isBusy()} inProgress=${own.GciTsCallInProgress().result} 3+4 ${answer}`,
+          );
+        }
+        console.error(`What the runner did:\n${trace.join('\n')}`);
+        throw e;
+      }
     },
     30_000,
   );

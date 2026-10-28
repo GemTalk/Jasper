@@ -2279,6 +2279,41 @@ describe('clearing a stopped run in the background', () => {
     );
   });
 
+  it('keeps the session held by a clear that the first collection of a stopped call starts', async () => {
+    // The call answered just as the runner stopped waiting, so the drain's very
+    // first poll collects it and starts the clear; the clear's hold must outlast
+    // the drain, or the next call meets the clear still running.
+    const { session, gci } = makeSession([{ result: 0 }]);
+    gci.GciTsNbResult.mockReturnValue({
+      result: 0n,
+      err: { ...noErr, number: 6003, context: 0x4242n },
+    } as never);
+    let finish: (v: unknown) => void = () => {};
+    gci.GciTsClearStackAsync.mockReturnValueOnce(
+      new Promise((resolve) => (finish = resolve)) as never,
+    );
+    let cancel: (() => void) | undefined;
+    const run = runNbCall(
+      session,
+      () => ({ success: true, err: noErr as never }),
+      () => 'unused',
+      { suppressNotification: true, disposableProcess: true, onStart: (c) => (cancel = c) },
+    );
+    run.catch(() => {});
+    cancel!();
+    gci.GciTsNbPoll.mockReturnValue({ result: 1, err: noErr });
+    cancel!(); // stop waiting now: the drain's first poll finds the answer
+    await expect(run).rejects.toBeInstanceOf(NbCancelledError);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(expect.anything(), 0x4242n);
+    expect(stoppedRunHolds(session)).toBe(true);
+
+    finish({ success: true, err: noErr });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(stoppedRunHolds(session)).toBe(false);
+  });
+
   it('runs `then` at once, holding nothing, when there is no process', async () => {
     const { session, gci } = makeSession([]);
     const then = vi.fn();

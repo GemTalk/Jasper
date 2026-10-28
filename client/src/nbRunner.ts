@@ -385,6 +385,7 @@ function drainAbandonedCall(
     }
   };
   let failuresInARow = 0;
+  let start: () => void = () => {};
   const done: Promise<void> = new Promise<void>((resolve) => {
     const attempt = (n: number): void => {
       // Forgotten on logout (forgetSession): stop, rather than poll a session
@@ -417,12 +418,16 @@ function drainAbandonedCall(
       }
       setTimeout(() => attempt(n + 1), DRAIN_INTERVAL_MS);
     };
-    attempt(0);
+    start = () => attempt(0);
   }).finally(() => {
     if (draining.get(session.id) === done) draining.delete(session.id);
   });
 
+  // Held before the first attempt, which can collect the call at once and hand
+  // the session to the clear of its process: set after, this hold would replace
+  // the clear's, and then drop it while the clear still runs.
   draining.set(session.id, done);
+  start();
   return done;
 }
 
