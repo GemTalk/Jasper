@@ -8,12 +8,12 @@ vi.mock('vscode', () => ({
 
 import { ActiveSession } from '../sessionManager';
 import * as queries from '../browserQueries';
-import { sessionOn } from './fakeActiveSession';
+import { sessionOn, startNonBlockingCall } from './fakeActiveSession';
 
 function createMockGci(executeFetchData = '') {
   return {
     executeAndFetchString: vi.fn((_session: unknown, _code: string) => executeFetchData),
-    GciTsCallInProgress: vi.fn(() => ({ result: 0 })),
+    GciTsNbExecute: vi.fn(() => ({ success: true, err: { number: 0 } })),
     GciTsPerform: vi.fn(),
   };
 }
@@ -344,9 +344,9 @@ describe('browserQueries', () => {
     });
 
     it('cannot tell when the session is busy with another operation', () => {
-      const gci = createMockGci('true');
-      const session = sessionOn(gci);
-      gci.GciTsCallInProgress.mockReturnValue({ result: 1 });
+      const session = createMockSession('true');
+      startNonBlockingCall(session);
+
       expect(queries.sessionNeedsCommit(session)).toBeUndefined();
     });
 

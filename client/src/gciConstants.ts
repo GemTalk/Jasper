@@ -53,6 +53,8 @@ export const GCI_ERR_OP_IN_PROGRESS = 2203;
 // The Data Curator is shutting this session down (gcierr.ht). A logout of a gem
 // the stone already stopped answers it.
 export const GS_ERR_SESSION_SHUTDOWN = 4059;
+// A Halt was signalled, e.g. by `self pause`.
+export const GS_ERR_HALT = 2709;
 
 // Class OOPs (from gcioop.ht)
 export const OOP_CLASS_STRING = 74753n;

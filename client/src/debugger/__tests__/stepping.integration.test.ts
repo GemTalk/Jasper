@@ -11,12 +11,12 @@ import {
   OOP_ILLEGAL,
   GCI_PERFORM_FLAG_ENABLE_DEBUG,
   GCI_PERFORM_FLAG_INTERPRETED,
+  GS_ERR_HALT,
 } from '../../gciConstants';
 import { stepOver, stepOverNb, continueExecution, clearStack } from '../debugQueries';
 import { runNbCall, NbCancelledError } from '../../nbRunner';
 import { testActiveSession } from '../../__tests__/testActiveSession';
 
-const GCI_ERR_HALT = 2709;
 const GCI_ERR_STEP_POINT = 6002; // "Single-step breakpoint encountered" — a successful step
 const OOP_FORTY_TWO = 338n; // SmallInteger 42: (42 << 3) | 2
 
@@ -65,7 +65,7 @@ cls compileMethod: 'outer self inner. ^ 42' dictionaries: System myUserProfile s
       GCI_PERFORM_FLAG_ENABLE_DEBUG | GCI_PERFORM_FLAG_INTERPRETED,
     );
 
-    expect(err.number).toBe(GCI_ERR_HALT);
+    expect(err.number).toBe(GS_ERR_HALT);
     expect(err.context).not.toBe(0n);
     return err.context;
   }
@@ -130,7 +130,7 @@ cls compileMethod: 'outer ^ self inner' dictionaries: System myUserProfile symbo
       'ZzStepCancelProbe new outer',
       GCI_PERFORM_FLAG_ENABLE_DEBUG | GCI_PERFORM_FLAG_INTERPRETED,
     );
-    expect(err.number).toBe(GCI_ERR_HALT);
+    expect(err.number).toBe(GS_ERR_HALT);
     expect(err.context).not.toBe(0n);
     return { gsProcess: err.context, outermostLevel: stackDepth(err.context) };
   }
