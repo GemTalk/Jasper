@@ -688,7 +688,7 @@
     "viewsWelcome": [
       {
         "view": "gemstoneLogins",
-        "contents": "Add a login to connect to a stone.\n[Add a Login](command:gemstone.addLogin)\nNo database yet? [Create one](command:gemstone.newDatabase)."
+        "contents": "Add a login to connect to a stone. A stone on another machine needs no database locally.\n[Add a Login](command:gemstone.addLogin)\nRunning GemStone on this machine? [Create a database](command:gemstone.newDatabase) first."
       },
       {
         "view": "gemstoneDatabases",
@@ -697,7 +697,7 @@
       },
       {
         "view": "gemstoneDatabases",
-        "contents": "No databases yet.\nSet one up in one step — Quick Setup downloads a version, creates a database, starts the stone, and adds a login.\n[Quick Setup](command:gemstone.quickSetup)\nOr choose the pieces yourself, in one form.\n[New Database...](command:gemstone.newDatabase)\nA stone on another machine needs no database here: add a login in Logins & Sessions.",
+        "contents": "No databases yet.\nSet one up in one step — Quick Setup downloads a version, creates a database, starts the stone, and adds a login.\n[Quick Setup](command:gemstone.quickSetup)\nOr choose the pieces yourself, in one form.\n[New Database...](command:gemstone.newDatabase)",
         "when": "!gemstone.isWindows || gemstone.wslAvailable"
       }
     ],
@@ -705,7 +705,7 @@
       {
         "id": "gemstoneGettingStarted",
         "title": "Get Started with GemStone",
-        "description": "Download GemStone, create a database, connect, and explore Smalltalk expressions in Jasper.",
+        "description": "Widen the window to see each step's details. Download GemStone, create a database, connect, and explore Smalltalk expressions in Jasper.",
         "steps": [
           {
             "id": "setup",

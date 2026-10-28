@@ -44,6 +44,14 @@ describe('Getting Started walkthrough content', () => {
   // legitimate `gemstone.addLogin`.
   const invokesConnectFromButton = /command:gemstone\.login\)/;
 
+  // VS Code draws a step's page beside the list only when the editor is wide
+  // enough, and says nothing when it is not. It also cuts this text off after
+  // three lines, so the note has to come first.
+  it("starts by telling the reader to widen the window to see a step's details", () => {
+    const description = (gettingStarted as { description?: string } | undefined)?.description;
+    expect(description).toMatch(/^Widen the window/);
+  });
+
   it('guides setup (download + database) before connecting', () => {
     const setupIndex = steps.findIndex((s) =>
       s.description.includes('command:gemstone.quickSetup'),
@@ -120,17 +128,14 @@ describe('Getting Started walkthrough content', () => {
     expect(databasesWelcome?.contents).toContain('command:gemstone.newDatabase');
   });
 
-  // Someone who only wants to reach a stone elsewhere lands here too, and the two
-  // buttons both make a database. A pointer, not a third button: what fills this
-  // view stays the only thing it offers.
+  // Said where it is always on screen: the Databases view's text runs past its
+  // height on a normal window, and a last line there goes unseen.
   it('tells someone reaching a stone elsewhere that they need a login, not a database', () => {
-    const contents = databasesWelcome?.contents ?? '';
-    expect(contents).toContain('another machine needs no database here');
-    expect(contents).toContain('add a login in Logins & Sessions');
-    expect(contents.match(/\]\(command:[^)]+\)/g)).toEqual([
-      '](command:gemstone.quickSetup)',
-      '](command:gemstone.newDatabase)',
-    ]);
+    const contents = loginsWelcome?.contents ?? '';
+    expect(contents).toContain('another machine needs no database locally');
+    expect(contents.indexOf('needs no database')).toBeLessThan(
+      contents.indexOf('command:gemstone.newDatabase'),
+    );
   });
 
   // The Databases view's + runs this command, and its title is all the + says on

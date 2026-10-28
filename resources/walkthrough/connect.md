@@ -13,15 +13,14 @@ order the login editor presents them:
 3. Fill in the fields, top to bottom:
    - **GemStone Version** — the version whose GCI client library to use. For one
      marked _(not yet downloaded)_, **Download files** under the dropdown fetches
-     just its client libraries, no server install. (Before 3.7 on macOS and Linux
-     there is no such download; the note there says to install the full version.)
+     just its client libraries, no server install.
    - **Gem Host** — the machine the stone runs on (`localhost` for a local stone).
    - **Stone** — the stone's name (e.g. `gs64stone`).
    - **NetLDI (name or port)** — a NetLDI service name (e.g. `gs64ldi`) or a port
      number (e.g. `50377`); a port is often easiest for a remote stone.
    - **GemStone User** / **GemStone Password** — your GemStone credentials (e.g.
      `DataCurator`). Leave the password blank to be prompted on each login.
-   - **Host User** / **Host Password** — _optional._ The OS account on the Gem's
+   - **Host User** / **Host Password** — *optional.* The OS account on the Gem's
      host machine, required only when the remote NetLDI requires host
      authentication. Leave blank for a local stone or a guest-mode NetLDI.
    - **Keep saved passwords in the OS keychain** — leave it checked to keep the
