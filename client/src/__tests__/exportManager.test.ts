@@ -494,6 +494,30 @@ describe('ExportManager (incremental sync)', () => {
       expect(fs.readFileSync(path.join(base, '.jasper-owner.json'), 'utf-8')).toBe(theirs);
     });
 
+    it('still claims on a filesystem without hard links', () => {
+      // exFAT, FAT and some SMB or FUSE mounts refuse link(); claiming must not fail there.
+      const dir = path.join(tmpDir, 'nolinks');
+      const refuse = () => {
+        throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+      };
+      expect(writeOwner(dir, 1, refuse)).toBe(true);
+      expect(JSON.parse(fs.readFileSync(path.join(dir, '.jasper-owner.json'), 'utf-8')).pid).toBe(
+        process.pid,
+      );
+      expect(writeOwner(dir, 2, refuse)).toBe(false);
+    });
+
+    it('keeps live sessions on their folders when the setting changes to the same place', () => {
+      const first = createMockSession();
+      const s2 = second();
+      const a = root(first);
+      const b = root(s2);
+      setConfig('mirrorFolder', mirrorDir);
+      manager.mirrorFolderChanged();
+      expect(root(s2)).toBe(b);
+      expect(root(first)).toBe(a);
+    });
+
     it('releases its holder record on release', () => {
       const first = createMockSession();
       const base = root(first);

@@ -266,10 +266,11 @@ Trusting the cert is per-machine, not per-workspace. You only do it once.
 Several Jasper windows can run side-by-side, but only one serves MCP at a
 time. In a passive window no session row is marked `· MCP`, the Databases
 header reads `MCP: other window`, and the MCP Server tab names the window that
-holds it and offers to switch to it through VS Code's window list. Taking the server over is **Ask It to Release**
-in the MCP Server tab, which has the owner let go and then claims here; failing
-that (an owner too old to answer), **Stop MCP** there and **Claim MCP Server**
-here. To run two MCP-serving windows simultaneously:
+holds it and offers to switch to it through VS Code's window list. Taking the
+server over is **Ask It to Release** in the MCP Server tab, which has the owner
+let go and then claims here; failing that (an owner too old to answer), **Stop
+MCP** there and **Claim MCP Server** here. To run two MCP-serving windows
+simultaneously:
 
 - The stdio surface is one-per-machine (fixed socket path).
 - Override `jasper.mcp.httpPort` in the second workspace's

@@ -106,6 +106,7 @@ export class ExportManager {
   private unwritableReported = new Set<number>();
   // Logged-out sessions, so a refresh queued just before logout can't claim a folder again.
   private releasedSessions = new Set<number>();
+  private claimedUnder: string | undefined;
   private noticesShown = false;
 
   constructor(private readonly options: ExportManagerOptions = {}) {}
@@ -174,6 +175,11 @@ export class ExportManager {
 
   /** `gemstone.mirrorFolder` changed: live sessions claim under the new folder on their next sync. */
   mirrorFolderChanged(): void {
+    const folder = this.mirrorFolder();
+    // An edit that resolves to the same folder must not reshuffle sessions into
+    // each other's `_N` folders, which would copy every class again.
+    if (folder === this.claimedUnder) return;
+    this.claimedUnder = folder;
     for (const id of [...this.assignedRoots.keys()]) this.dropClaim(id);
     this.unwritableReported.clear();
   }
@@ -195,6 +201,7 @@ export class ExportManager {
   private claimRoot(session: ActiveSession): { root: string; claimed: boolean } | undefined {
     const parent = this.mirrorFolder();
     if (!parent) return undefined;
+    this.claimedUnder = parent;
     const { gem_host, stone, gs_user } = session.login;
     const base = path.join(parent, safeSegment(gem_host), safeSegment(stone), safeSegment(gs_user));
     // Nothing is written for a login that doesn't sync, so it holds no folder.
@@ -852,16 +859,28 @@ function moveStaleRecordAside(dir: string, staleRaw: string): boolean {
 /**
  * Record this process as holding `dir`, failing if a record already exists. Written
  * under a temporary name and linked into place, so no reader sees it half-written.
- * Exported for tests.
+ * Exported for tests, which pass a `link` that refuses.
  */
-export function writeOwner(dir: string, sessionId: number): boolean {
+export function writeOwner(
+  dir: string,
+  sessionId: number,
+  link: (from: string, to: string) => void = fs.linkSync,
+): boolean {
   const record: OwnerRecord = { pid: process.pid, host: os.hostname(), sessionId };
+  const json = JSON.stringify(record);
   const target = path.join(dir, OWNER_FILE);
   const temp = `${target}.${process.pid}.tmp`;
   try {
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(temp, JSON.stringify(record), 'utf-8');
-    fs.linkSync(temp, target);
+    fs.writeFileSync(temp, json, 'utf-8');
+    try {
+      link(temp, target);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false;
+      // No hard links here (exFAT, FAT, some SMB or FUSE mounts): an exclusive
+      // create still claims, at the cost of a moment where the record is partial.
+      fs.writeFileSync(target, json, { encoding: 'utf-8', flag: 'wx' });
+    }
     return true;
   } catch {
     return false;
