@@ -32,6 +32,7 @@ import {
 } from '../transcriptSink';
 import { runNbCall, NbCancelledError, pollNbResultReady, stopCallsOn } from '../nbRunner';
 import { expectEventLoopToRemainResponsiveDuring } from './support/timers';
+import { loginSerialOf, stillOnStoneCode } from './leftoverGem';
 import {
   OOP_CLASS_STRING,
   OOP_CLASS_UTF8,
@@ -360,7 +361,7 @@ tmps := SessionTemps current.
     // start, since the write is reported just before the resume is queued.
     const { session: busy, err } = session().transientLogin(session().login);
     if (!busy) throw new Error(`Transient login failed: ${err.message}`);
-    const gemSession = busy.executeAndFetchString('System session printString');
+    const gemLogin = loginSerialOf(busy);
     expect(installTranscriptSink(busy)).toBe(true);
     let wroteOnce: () => void = () => {};
     const onWorker = new Promise<void>((resolve) => {
@@ -389,18 +390,14 @@ tmps := SessionTemps current.
       expect(firstLogout).toBe(false);
       expect(retry).toBe(true);
       await expect(run).rejects.toBeInstanceOf(NbCancelledError);
-      // The stone deregisters a gem shortly after its logout returns: well
-      // under 2s on Linux and macOS, but on the Windows runners, where the stone
-      // runs under WSL, over 2s now and then. The bound only has to tell "left"
-      // from "kept running", so it is generous, and a slow exit is reported.
+      // The stone deregisters a gem shortly after its logout returns. The bound
+      // only has to tell "left" from "kept running", so it is generous, and a
+      // slow exit is reported. By login serial: see leftoverGem.ts.
       const loggedOutAt = Date.now();
-      await vi.waitFor(
-        () =>
-          expect(exec(`(System currentSessions includes: ${gemSession}) printString`)).toBe(
-            'false',
-          ),
-        { timeout: 10_000, interval: 100 },
-      );
+      await vi.waitFor(() => expect(exec(stillOnStoneCode(gemLogin))).toBe('false'), {
+        timeout: 10_000,
+        interval: 100,
+      });
       const leftAfter = Date.now() - loggedOutAt;
       if (leftAfter > 2000) console.warn(`The gem took ${leftAfter}ms to leave after its logout.`);
     } finally {

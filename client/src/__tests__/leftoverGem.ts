@@ -12,13 +12,14 @@ export function loginSerialOf(own: ActiveSession): string {
   );
 }
 
-/** Whether the login with serial number `serial` is still on the stone, asked from `admin` (which needs SessionAccess). */
+/** Smalltalk answering whether the login with serial number `serial` is still on the stone ('true' or 'false'); needs SessionAccess. */
+export function stillOnStoneCode(serial: string): string {
+  return `(((System descriptionOfSessionSerialNum: ${serial}) at: 10) > 0) printString`;
+}
+
+/** Whether the login with serial number `serial` is still on the stone, asked from `admin`. */
 export function stillOnStone(admin: ActiveSession, serial: string): boolean {
-  return (
-    admin.executeAndFetchString(
-      `(((System descriptionOfSessionSerialNum: ${serial}) at: 10) > 0) printString`,
-    ) === 'true'
-  );
+  return admin.executeAndFetchString(stillOnStoneCode(serial)) === 'true';
 }
 
 /** End `own`'s gem when the test finishes, if it is still on the stone, from `admin`. */

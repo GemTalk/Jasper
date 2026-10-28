@@ -63,16 +63,11 @@ describe('a logged-out session (integration)', () => {
   it('refuses calls once a gem the stone already stopped is logged out', async () => {
     const stopped = transientSession();
     const id = stopped.executeAndFetchString('System session printString');
+    const serial = loginSerialOf(stopped);
     session.executeAndFetchString(`System stopSession: ${id}. 'ok'`);
     // The stone deregisters the stopped gem asynchronously, and a loaded machine
     // can take past waitFor's default second. 4s stays inside the test's own 5s.
-    await vi.waitFor(
-      () =>
-        expect(
-          session.executeAndFetchString(`(System currentSessions includes: ${id}) printString`),
-        ).toBe('false'),
-      { timeout: 4_000 },
-    );
+    await vi.waitFor(() => expect(stillOnStone(session, serial)).toBe(false), { timeout: 4_000 });
     // Succeeds, since it doesn't wait for the gem; the session must still refuse
     // every call afterwards.
     stopped.logout();
