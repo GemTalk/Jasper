@@ -101,7 +101,7 @@ describe('stopping a run that skips conditional breakpoints (integration)', () =
 
         await expect(skipping).rejects.toBeInstanceOf(NbCancelledError);
         expect(Date.now() - pressedAt).toBeLessThan(4000);
-        expect(told).toHaveBeenCalledWith(own);
+        await vi.waitFor(() => expect(told).toHaveBeenCalledWith(own));
         expect(stoppedRunHolds(own)).toBe(true);
         await expect(forceStop(own, deps)).resolves.toBe(true);
         expect(own.executeAndFetchString('(3 + 4) printString')).toBe('7');
@@ -136,7 +136,7 @@ describe('stopping a run that skips conditional breakpoints (integration)', () =
 
       await expect(resuming).rejects.toBeInstanceOf(NbCancelledError);
       expect(Date.now() - pressedAt).toBeLessThan(4000);
-      expect(told).toHaveBeenCalledWith(own);
+      await vi.waitFor(() => expect(told).toHaveBeenCalledWith(own));
       await expect(forceStop(own, deps)).resolves.toBe(true);
       // The debugger is told where the run stopped: in the loop, by the signal.
       await expect(endedAt).resolves.toMatchObject({ completed: false, errorNumber: 6010 });
@@ -245,7 +245,7 @@ describe('stopping a run that skips conditional breakpoints (integration)', () =
         expect.anything(),
       );
       await expect(run).rejects.toBeInstanceOf(NbCancelledError);
-      expect(told).toHaveBeenCalledWith(own);
+      await vi.waitFor(() => expect(told).toHaveBeenCalledWith(own));
       await expect(forceStop(own, deps)).resolves.toBe(true);
       expect(own.executeAndFetchString('(3 + 4) printString')).toBe('7');
     }, 30_000);

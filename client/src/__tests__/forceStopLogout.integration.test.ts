@@ -26,9 +26,10 @@ describe('Force Stop at logout (integration)', () => {
 
   const { armedSession, deps, listed, stopAndAbandon, settled } = forceStopSupport(() => session);
 
-  // GemStone gives out session numbers in turn, wrapping round at the stone's
-  // limit, so a gone gem's number goes to a later login.
-  it("does not end another login that has taken a gone gem's session number", async (ctx) => {
+  // GemStone gives a gone gem's session number to a later login (in turn, wrapping
+  // round at the stone's limit). Here that later login is stood in for by asking
+  // to end the gone gem under another live login's number.
+  it("does not end another login that has taken a gone gem's session number", async () => {
     const own = armedSession();
     const number = serverSessionOf(own.id)!;
     own.logout();
@@ -36,21 +37,14 @@ describe('Force Stop at logout (integration)', () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     expect(listed(number)).toBe(false);
-    let heir: ActiveSession | undefined;
-    for (let i = 0; i < 200 && !heir; i++) {
-      const { session: next } = session.transientLogin(session.login);
-      if (!next) continue;
-      if (next.executeAndFetchString('System session printString') === number) heir = next;
-      else next.logout();
-    }
-    // Another test's login took the number first: nothing to check.
-    if (!heir) ctx.skip();
-    onTestFinished(() => void heir!.logout());
+    const { session: other } = session.transientLogin(session.login);
+    onTestFinished(() => void other!.logout());
+    const othersNumber = other!.executeAndFetchString('System session printString');
 
-    endServerSession(own, number, deps);
+    endServerSession(own, othersNumber, deps);
 
-    expect(heir!.executeAndFetchString('(3 + 4) printString')).toBe('7');
-  }, 60_000);
+    expect(other!.executeAndFetchString('(3 + 4) printString')).toBe('7');
+  }, 30_000);
 
   describe('logging out a session whose stopped run is still going', () => {
     /** A logged-in session of its own, running `code` that the user has stopped. */

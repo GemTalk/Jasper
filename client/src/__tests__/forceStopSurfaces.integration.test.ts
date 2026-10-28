@@ -8,7 +8,6 @@ import { forceStop } from '../forceStop';
 import {
   NbCancelledError,
   runNbCall,
-  whenSessionFree,
   setRunInProgressHandler,
   setStillRunningHandler,
   setStoppedRunCollectedHandler,
@@ -79,7 +78,7 @@ describe('Force Stop from notebooks, the Explorer and saves (integration)', () =
     told.mockClear();
 
     expect(() => executeFetchString(own, '(3 + 4) printString')).toThrow(SESSION_BUSY_MESSAGE);
-    expect(told).toHaveBeenCalledWith(own);
+    await vi.waitFor(() => expect(told).toHaveBeenCalledWith(own));
 
     await expect(forceStop(own, deps)).resolves.toBe(true);
     expect(executeFetchString(own, '(3 + 4) printString')).toBe('7');
@@ -108,7 +107,7 @@ describe('Force Stop from notebooks, the Explorer and saves (integration)', () =
     run.catch(() => {});
 
     expect(() => executeFetchString(own, '(3 + 4) printString')).toThrow(SESSION_BUSY_MESSAGE);
-    expect(told).toHaveBeenCalledWith(own);
+    await vi.waitFor(() => expect(told).toHaveBeenCalledWith(own));
     // A save goes the same way, and says why it did not happen.
     expect(() =>
       queries.compileMethod(own, 'Object', false, 'jasper-test', 'jasperBusySave ^ 1'),
@@ -161,8 +160,9 @@ describe('Force Stop from notebooks, the Explorer and saves (integration)', () =
 
     cancel!();
     await run.catch(() => {});
-    // On a loaded machine the stopped run can still be finishing.
-    await whenSessionFree(own, () => {});
+    // On a loaded machine the stopped run, or the clean-up after it, can still be
+    // going.
+    await vi.waitFor(() => expect(stoppedRunHolds(own)).toBe(false), { timeout: 10_000 });
     expect(hasMethod()).toBe('false');
     save();
     expect(hasMethod()).toBe('true');

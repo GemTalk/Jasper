@@ -298,7 +298,7 @@ cls compileMethod: 'outer ^ self inner' dictionaries: System myUserProfile symbo
       await expect(within(step, 10_000, 'the cancelled step settling')).rejects.toBeInstanceOf(
         NbCancelledError,
       );
-      expect(told).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(told).toHaveBeenCalledTimes(1));
     } finally {
       setStillRunningHandler(undefined);
       // Wait out the bounded run; the next test needs the session.

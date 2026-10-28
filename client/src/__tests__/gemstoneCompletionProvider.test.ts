@@ -2,7 +2,16 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
+const quiet = vi.hoisted(() => ({ on: false }));
 vi.mock('../browserQueries', () => ({
+  quietly: <T>(query: () => T): T => {
+    quiet.on = true;
+    try {
+      return query();
+    } finally {
+      quiet.on = false;
+    }
+  },
   getAllClassNames: vi.fn(() => []),
   getInstVarNames: vi.fn(() => []),
   getAllSelectors: vi.fn(() => []),
@@ -186,6 +195,27 @@ describe('GemStoneCompletionProvider', () => {
       expect(methodItems).toHaveLength(0);
       expect(mockGetAllSelectors).not.toHaveBeenCalled();
     });
+  });
+
+  // A busy session would otherwise raise the Stop notice as the user types.
+  it('asks the stone quietly, for classes, inst vars and selectors', () => {
+    const quietly: boolean[] = [];
+    const record =
+      <T>(answer: T) =>
+      () => {
+        quietly.push(quiet.on);
+        return answer;
+      };
+    mockGetAllClassNames.mockImplementation(record([]));
+    mockGetInstVarNames.mockImplementation(record([]));
+    mockGetAllSelectors.mockImplementation(record([]));
+
+    new GemStoneCompletionProvider(makeSessionManager(true)).provideCompletionItems(
+      makeDocument('gemstone://1/Globals/Array/instance/accessing/size'),
+    );
+
+    expect(quietly).toHaveLength(3);
+    expect(quietly.every(Boolean)).toBe(true);
   });
 
   describe('caching', () => {

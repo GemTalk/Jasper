@@ -86,6 +86,30 @@ describe('browserQueries', () => {
       }
     });
 
+    // Hover, completion and CodeLens query as the mouse moves and the user types.
+    it('raises no notice for a query run quietly, though it is still refused', async () => {
+      const gci = createMockGci();
+      const session = sessionOn(gci, { id: 9032 });
+      startNonBlockingCall(session);
+      let finish: () => void = () => {};
+      const held = holdSessionUntilSettled(session, new Promise<void>((r) => (finish = r)));
+      const told = vi.fn();
+      setStillRunningHandler(told);
+      try {
+        expect(() => queries.quietly(() => queries.implementorsOf(session, 'foo', 0))).toThrow(
+          SESSION_BUSY_MESSAGE,
+        );
+        expect(told).not.toHaveBeenCalled();
+        // Only for the query it wraps.
+        expect(() => queries.implementorsOf(session, 'foo', 0)).toThrow(SESSION_BUSY_MESSAGE);
+        expect(told).toHaveBeenCalledWith(session);
+      } finally {
+        setStillRunningHandler(undefined);
+        finish();
+        await held;
+      }
+    });
+
     it('branches on isMeta inside the Smalltalk, not via a GCI perform', () => {
       const gci = createMockGci('ok');
       const session = sessionOn(gci);

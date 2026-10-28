@@ -715,6 +715,12 @@ export class SessionManager {
     return { success: err.number === 0, err };
   }
 
+  /** Whether session `id` has a run on it, going or stopped but still finishing. */
+  hasRun(id: number): boolean {
+    const s = this.sessions.get(id);
+    return s !== undefined && (isRunning(s) || stoppedRunHolds(s));
+  }
+
   /**
    * Stop the run on session `id`, if there is one, as logging out does: run first
    * so the logout's uncommitted-changes check can reach the session. Answers
@@ -723,7 +729,7 @@ export class SessionManager {
    */
   async stopRun(id: number, alreadyTried = false): Promise<boolean> {
     const s = this.sessions.get(id);
-    if (!s || !(isRunning(s) || stoppedRunHolds(s))) return false;
+    if (!s || !this.hasRun(id)) return false;
     if (alreadyTried) return true;
     // Without this a Log out click looks like it did nothing.
     return await vscode.window.withProgress(

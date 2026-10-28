@@ -49,17 +49,12 @@ export class NbCancelledError extends Error {
  * rather than anything the user did.
  */
 export class NbSessionBusyError extends Error {
-  /** Whether the run in the way is one the user stopped, which Force Stop can end. */
-  readonly stoppedRun: boolean;
-
   constructor(
     message = 'The stopped run is still finishing on the server, so this session cannot start ' +
       'another one yet. Try again in a moment, or use Force Stop.',
-    stoppedRun = true,
   ) {
     super(message);
     this.name = 'NbSessionBusyError';
-    this.stoppedRun = stoppedRun;
   }
 }
 
@@ -161,6 +156,31 @@ export interface NbRunOptions {
  */
 export const STOP_WAITING_AFTER_MS = 1500;
 export const EARLIEST_STOP_WAITING_MS = 2500;
+
+/**
+ * How long after a stop's soft break to stop waiting for a call that began at
+ * `startedAt` (a `performance.now()`, not `Date.now()`: this asks how much time
+ * has passed, which the wall clock can't answer once anything moves it).
+ */
+export function stopWaitingDelay(startedAt: number): number {
+  return Math.max(
+    STOP_WAITING_AFTER_MS,
+    EARLIEST_STOP_WAITING_MS - (performance.now() - startedAt),
+  );
+}
+
+/**
+ * How long the "still running" notice waits after Jasper stops waiting: a gem
+ * can answer the stop a moment later, as after a double-click on Cancel.
+ */
+export const NOTICE_GRACE_MS = 500;
+
+/** {@link sayStillRunning}, unless the stopped run lets go of the session within {@link NOTICE_GRACE_MS}. */
+export function sayStillRunningUnlessItEnds(session: ActiveSession): void {
+  setTimeout(() => {
+    if (stoppedRunHolds(session)) sayStillRunning(session);
+  }, NOTICE_GRACE_MS);
+}
 
 let stillRunningHandler: ((session: ActiveSession) => void) | undefined;
 let runInProgressHandler: ((session: ActiveSession) => void) | undefined;
@@ -271,6 +291,14 @@ const LATE_BREAKS = 5;
  * logged-in session alone: transient logins get ids of their own too.
  */
 const draining = new Map<number, Promise<void>>();
+
+/**
+ * How many times each session id has been forgotten at a logout, so work begun
+ * before one can tell. Not `draining`: a clear takes that over from a drain
+ * while the drain still collects.
+ */
+const logouts = new Map<number, number>();
+const logoutsOf = (sessionId: number): number => logouts.get(sessionId) ?? 0;
 
 /**
  * Sessions whose stopped call outlived the drain and is not collected yet, keyed
@@ -386,11 +414,12 @@ function drainAbandonedCall(
   };
   let failuresInARow = 0;
   let start: () => void = () => {};
+  const loggedOutBefore = logoutsOf(session.id);
   const done: Promise<void> = new Promise<void>((resolve) => {
     const attempt = (n: number): void => {
       // Forgotten on logout (forgetSession): stop, rather than poll a session
       // nobody is keeping any more.
-      if (n > 0 && draining.get(session.id) !== done) {
+      if (n > 0 && logoutsOf(session.id) !== loggedOutBefore) {
         resolve();
         return;
       }
@@ -515,7 +544,6 @@ export function ensureSessionFree(session: ActiveSession): void {
     throw new NbSessionBusyError(
       'Another run is still in progress on this session. Wait for it to finish, or stop ' +
         'it, before starting another.',
-      false,
     );
   }
   if (stoppedRunHolds(session)) {
@@ -543,7 +571,19 @@ export function abandonedRunHolds(session: ActiveSession): boolean {
   const pending = uncollected.get(session.id);
   if (pending !== undefined && !pending.collect()) return true;
   // Collecting the call may just have started clearing its process.
-  return draining.has(session.id);
+  if (draining.has(session.id)) return true;
+  // A call nothing runs any more that GemStone still counts: a worker that has
+  // outlived its hold (ABANDONED_READ_WAIT_MS), say.
+  return !live.has(session.id) && stillBusy(session);
+}
+
+/** Whether GemStone would refuse a call on `session`; false once it is logged out. */
+function stillBusy(session: ActiveSession): boolean {
+  try {
+    return session.isBusy();
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -633,6 +673,8 @@ export function forgetSession(sessionId: number): void {
   uncollected.get(sessionId)?.forget();
   draining.delete(sessionId);
   live.delete(sessionId);
+  clearing.delete(sessionId);
+  logouts.set(sessionId, logoutsOf(sessionId) + 1);
 }
 
 /**
@@ -715,8 +757,8 @@ function runHook(session: ActiveSession, hook: (() => void) | undefined): void {
   }
 }
 
-/** Sessions a {@link clearInBackground} is still clearing a process on. */
-const clearing = new Set<number>();
+/** Sessions a {@link clearInBackground} is still clearing a process on, by its own token. */
+const clearing = new Map<number, symbol>();
 
 /** Whether the session is held by a stopped run's clean-up rather than by a run. */
 export function clearHolds(session: ActiveSession): boolean {
@@ -775,16 +817,25 @@ export function clearInBackground(
   const gsProcess = BigInt(context);
   const failed = (why: string): void =>
     logInfo(`[Session ${session.id}] Could not clear a stopped run's process: ${why}`);
-  clearing.add(session.id);
+  const mine = Symbol('clear');
+  clearing.set(session.id, mine);
+  // A call still in progress goes first: a drain still collecting a stopped
+  // call, or a worker not back yet. The clear's hold takes over from theirs at
+  // once, so nothing else starts in between. Only then: a read that clears its
+  // own process runs inside the hold kept for it, and waiting on that would
+  // wait on itself.
+  const before = stillBusy(session) ? draining.get(session.id) : undefined;
   // Never rejects: whatever goes wrong is logged, and the session let go.
   const cleared = (async (): Promise<void> => {
     try {
+      if (before) await before;
       const { err } = await session.GciTsClearStackAsync(gsProcess);
       if (err.number !== 0) failed(err.message || `GemStone error ${err.number}`);
     } catch (e) {
       failed(e instanceof Error ? e.message : String(e));
     } finally {
-      clearing.delete(session.id);
+      // Only its own: a logout forgets it, and the id can come back for another login.
+      if (clearing.get(session.id) === mine) clearing.delete(session.id);
     }
   })();
   return awaitAbandonedRead(session, cleared, then);
@@ -917,7 +968,7 @@ export function pollNbToCompletion<T>(
         );
       }
       settle(() => reject(new NbCancelledError()));
-      if (!stopped) sayStillRunning(session);
+      if (!stopped) sayStillRunningUnlessItEnds(session);
     });
 
     const requestCancel = settleOnThrow(() => {
@@ -950,16 +1001,10 @@ export function pollNbToCompletion<T>(
           logInfo(`[Session ${session.id}] Could not show "Stopping…": ${String(e)}`);
         }
       }
-      // performance.now, not Date.now: this asks how much time has elapsed, which
-      // the wall clock can't answer once anything on the system moves it.
-      const waitFor = Math.max(
-        STOP_WAITING_AFTER_MS,
-        EARLIEST_STOP_WAITING_MS - (performance.now() - startedAt),
-      );
       stopWaitingTimer = setTimeout(() => {
         stopWaitingTimer = null;
         stopWaiting();
-      }, waitFor);
+      }, stopWaitingDelay(startedAt));
     });
     if (opts.onStart) opts.onStart(requestCancel, () => softBreakSent);
 

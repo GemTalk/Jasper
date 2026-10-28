@@ -900,7 +900,7 @@ describe('SunitTestController', () => {
     it('reports a debug run refused because the session is busy as not run', async () => {
       const debugExecutor = makeDebugExecutor();
       debugExecutor.executeWithDebugger.mockRejectedValueOnce(
-        new NbSessionBusyError('Another run is still in progress on this session.', false),
+        new NbSessionBusyError('Another run is still in progress on this session.'),
       );
       const ctrl = new SunitTestController(makeSessionManager(true), debugExecutor);
 
@@ -1370,7 +1370,7 @@ describe('SunitTestController', () => {
 
     it('refuses a run of several tests once, adding no warning of its own', async () => {
       vi.mocked(whenSessionFree).mockImplementationOnce(() => {
-        throw new NbSessionBusyError('Another run is still in progress on this session.', false);
+        throw new NbSessionBusyError('Another run is still in progress on this session.');
       });
       const ctrl = new SunitTestController(makeSessionManager(true));
 
@@ -1384,7 +1384,7 @@ describe('SunitTestController', () => {
     it('reports a run refused because the session is busy as not run', async () => {
       // It never started: calling that the test erroring would blame the test.
       vi.mocked(sunit.runTestMethodNb).mockRejectedValueOnce(
-        new NbSessionBusyError('Another run is still in progress on this session.', false),
+        new NbSessionBusyError('Another run is still in progress on this session.'),
       );
       const ctrl = new SunitTestController(makeSessionManager(true));
 

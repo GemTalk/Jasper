@@ -12,17 +12,16 @@ import { logError, logInfo } from '../gciLog';
 import {
   cancelRunOn,
   clearInBackground,
-  EARLIEST_STOP_WAITING_MS,
   holdSessionUntilSettled,
   isRunning,
   NbCancelledError,
   resendSoftBreak,
-  sayStillRunning,
-  STOP_WAITING_AFTER_MS,
+  sayStillRunningUnlessItEnds,
+  stopWaitingDelay,
   trackRun,
 } from '../nbRunner';
 import { continueThroughForwarderSends } from '../transcriptSink';
-import { FRAME_SELF_SMALLTALK } from './debugQueries';
+import { FRAME_SELF_SMALLTALK, stepResultOf } from './debugQueries';
 import type { StepResult } from './debugQueries';
 import type { GciError } from '../gciLibrary';
 import { appendLogpoint, showLogpointChannel } from './logpointChannel';
@@ -683,7 +682,7 @@ export async function applyBreakpointRules(
     if (cancelled) {
       // A second press stops waiting at once, as the runner's does.
       clearTimeout(stopWaitingTimer);
-      if (stopWaiting()) sayStillRunning(session);
+      if (stopWaiting()) sayStillRunningUnlessItEnds(session);
       return;
     }
     cancelled = true;
@@ -693,12 +692,9 @@ export async function applyBreakpointRules(
     } catch (e) {
       logError(session.id, `Could not send a soft break: ${errorText(e)}`);
     }
-    stopWaitingTimer = setTimeout(
-      () => {
-        if (stopWaiting()) sayStillRunning(session);
-      },
-      Math.max(STOP_WAITING_AFTER_MS, EARLIEST_STOP_WAITING_MS - (performance.now() - startedAt)),
-    );
+    stopWaitingTimer = setTimeout(() => {
+      if (stopWaiting()) sayStillRunningUnlessItEnds(session);
+    }, stopWaitingDelay(startedAt));
   };
   options.onStart?.(cancel, () => cancelled);
   const untrack = enclosingRun
@@ -1001,17 +997,6 @@ export async function resolveBreakpointStop(
     default:
       return { ...stopHere, context: outcome.context };
   }
-}
-
-/** A resume's GCI answer as the debugger reads it. */
-function stepResultOf({ result, err }: { result: bigint; err: GciError }): StepResult {
-  if (err.number === 0) return { completed: true, resultOop: result };
-  return {
-    completed: false,
-    errorMessage: err.message || `GemStone error ${err.number}`,
-    errorContext: toBigInt(err.context ?? 0n),
-    errorNumber: err.number,
-  };
 }
 
 /**

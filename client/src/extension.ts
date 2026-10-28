@@ -389,6 +389,42 @@ export async function confirmLogoutWithUncommittedChanges(
   return choice === 'Logout Anyway' ? 'proceed' : 'cancel';
 }
 
+export const STOP_AND_LOG_OUT = 'Stop and Log Out';
+
+/**
+ * Ask what logging `session` out needs asked, stopping its run only once the
+ * user has said to: Cancel at either question leaves the session as it was,
+ * except that a run already stopped stays stopped. The run is stopped before the
+ * uncommitted-changes question, which it would otherwise block.
+ */
+export async function decideLogout(
+  session: ActiveSession,
+  manager: Pick<SessionManager, 'hasRun' | 'stopRun'> & {
+    commit: Parameters<typeof confirmLogoutWithUncommittedChanges>[3];
+  },
+  needsCommit: (session: ActiveSession) => boolean | undefined,
+): Promise<{ logOut: boolean; runIgnoresStop: boolean }> {
+  const label = loginLabel(session.login);
+  if (manager.hasRun(session.id)) {
+    const choice = await vscode.window.showWarningMessage(
+      `A run is still going on session ${session.id} — ${label}. Stop it and log out?`,
+      { modal: true },
+      STOP_AND_LOG_OUT,
+    );
+    if (choice !== STOP_AND_LOG_OUT) return { logOut: false, runIgnoresStop: false };
+  }
+  const runIgnoresStop = await manager.stopRun(session.id);
+  const decision = await confirmLogoutWithUncommittedChanges(
+    session.id,
+    label,
+    runIgnoresStop ? undefined : needsCommit(session),
+    (id) => manager.commit(id),
+    session.inTransaction,
+    runIgnoresStop,
+  );
+  return { logOut: decision === 'proceed', runIgnoresStop };
+}
+
 /** The button on a refused-commit toast; also what the choice is compared against. */
 export const SHOW_CONFLICTS = 'Show Conflicts';
 
@@ -914,7 +950,8 @@ export function activate(context: vscode.ExtensionContext) {
       cleaningUp: clearHolds,
       forceStop: (s) =>
         forceStop(s, { loginTransient: (from) => sessionManager.loginTransient(from.login, from) }),
-      logout: (id) => sessionManager.logout(id),
+      // Force Stop has just failed: the logout need not try it again.
+      logout: (id) => sessionManager.logout(id, true),
     });
   });
   setRunInProgressHandler((session) => {
@@ -2732,17 +2769,10 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.window.showInformationMessage('No GemStone session to log out of.');
           return;
         }
-        // Stopped first, or the run would block the uncommitted-changes check.
-        const runIgnoresStop = await sessionManager.stopRun(session.id);
-        const decision = await confirmLogoutWithUncommittedChanges(
-          session.id,
-          loginLabel(session.login),
-          runIgnoresStop ? undefined : queries.sessionNeedsCommit(session),
-          (id) => sessionManager.commit(id),
-          session.inTransaction,
-          runIgnoresStop,
+        const { logOut, runIgnoresStop } = await decideLogout(session, sessionManager, (s) =>
+          queries.sessionNeedsCommit(s),
         );
-        if (decision === 'cancel') return;
+        if (!logOut) return;
         // The session's views close only once it is gone: GemStone can refuse
         // the logout, and the session then stays open with its views intact.
         try {

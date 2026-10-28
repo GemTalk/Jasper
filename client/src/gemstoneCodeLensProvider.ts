@@ -267,10 +267,11 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
       let count = 0;
       for (let env = 0; env <= maxEnv; env++) {
         try {
-          count +=
+          count += queries.quietly(() =>
             data.kind === 'senders'
               ? queries.sendersOf(session, data.selector, env).length
-              : queries.implementorsOf(session, data.selector, env).length;
+              : queries.implementorsOf(session, data.selector, env).length,
+          );
         } catch {
           // Session may be busy or selector not found in this env
         }

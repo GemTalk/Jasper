@@ -5,7 +5,9 @@ import {
   OOP_ILLEGAL,
   GCI_PERFORM_FLAG_ENABLE_DEBUG,
   GCI_PERFORM_FLAG_INTERPRETED,
+  toBigInt,
 } from '../gciConstants';
+import type { GciError } from '../gciLibrary';
 import { logInfo, logError } from '../gciLog';
 import { explainGciError } from '../gciLibraryError';
 import { clearInBackground, runNbCall, NbRunOptions } from '../nbRunner';
@@ -1093,6 +1095,17 @@ export interface StepResult {
   errorNumber?: number;
 }
 
+/** A GCI call's answer as a {@link StepResult}, an error said in plain words. */
+export function stepResultOf({ result, err }: { result: bigint; err: GciError }): StepResult {
+  if (err.number === 0) return { completed: true, resultOop: result };
+  return {
+    completed: false,
+    errorMessage: explainGciError(err) || `GemStone error ${err.number}`,
+    errorContext: toBigInt(err.context ?? 0n),
+    errorNumber: err.number,
+  };
+}
+
 // ── Interpreted execution for stepping ───────────────────────────────────────
 //
 // GemStone cannot single-step or set breakpoints in NATIVE code (error 6014):
@@ -1127,16 +1140,8 @@ function performStep(
     STEP_FLAGS,
     0,
   );
-  if (err.number !== 0) {
-    return {
-      completed: false,
-      errorMessage: explainGciError(err) || `GemStone error ${err.number}`,
-      errorContext: err.context,
-      errorNumber: err.number,
-    };
-  }
   // gciStep…FromLevel: returns the completion result when the process finishes.
-  return { completed: true, resultOop: result };
+  return stepResultOf({ result, err });
 }
 
 export function stepOver(session: ActiveSession, gsProcess: bigint, level: number): StepResult {
@@ -1192,16 +1197,7 @@ function performStepNb(
         0,
       ),
     () => {
-      const { result, err } = session.GciTsNbResult();
-      if (err.number !== 0) {
-        return {
-          completed: false,
-          errorMessage: explainGciError(err) || `GemStone error ${err.number}`,
-          errorContext: err.context,
-          errorNumber: err.number,
-        };
-      }
-      return { completed: true, resultOop: result };
+      return stepResultOf(session.GciTsNbResult());
     },
     // No `disposableProcess`: a break here stops the process the debugger
     // is showing, and clearing it would unwind the stack the panel still offers
@@ -1271,16 +1267,8 @@ export function continueExecution(session: ActiveSession, gsProcess: bigint): St
   // its TOS with nil corrupts the frame, so continuing it never returns (the gem
   // hangs). OOP_ILLEGAL handles both cases correctly.
   const { result, err } = session.GciTsContinueWith(gsProcess, OOP_ILLEGAL, null, STEP_FLAGS);
-  if (err.number !== 0) {
-    return {
-      completed: false,
-      errorMessage: explainGciError(err) || `GemStone error ${err.number}`,
-      errorContext: err.context,
-      errorNumber: err.number,
-    };
-  }
   // On normal completion GciTsContinueWith returns the process's result oop.
-  return { completed: true, resultOop: result };
+  return stepResultOf({ result, err });
 }
 
 /**

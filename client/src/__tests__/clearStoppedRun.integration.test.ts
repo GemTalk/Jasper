@@ -67,7 +67,7 @@ describe('clearing a stopped run in the background (integration)', () => {
       const startedAt = Date.now();
       const clearing = clearInBackground(own, process);
       expect(() => executeFetchString(own, '3 printString')).toThrow(SESSION_BUSY_MESSAGE);
-      expect(told).toHaveBeenCalledWith(own);
+      await vi.waitFor(() => expect(told).toHaveBeenCalledWith(own));
       await clearing;
 
       expect(Date.now() - startedAt).toBeGreaterThanOrEqual(1900);

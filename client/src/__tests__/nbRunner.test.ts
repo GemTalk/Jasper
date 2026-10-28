@@ -17,6 +17,7 @@ import {
   ensureSessionFree,
   STOP_WAITING_AFTER_MS,
   EARLIEST_STOP_WAITING_MS,
+  NOTICE_GRACE_MS,
   setStillRunningHandler,
   setStoppedRunCollectedHandler,
   setRunInProgressHandler,
@@ -470,11 +471,29 @@ describe('telling the user a stopped run is still running', () => {
     try {
       const { session, told, run, cancel } = setup();
       cancel();
-      await vi.advanceTimersByTimeAsync(EARLIEST_STOP_WAITING_MS + 100);
+      await vi.advanceTimersByTimeAsync(EARLIEST_STOP_WAITING_MS + NOTICE_GRACE_MS + 100);
 
       await expect(run).rejects.toBeInstanceOf(NbCancelledError);
       expect(told).toHaveBeenCalledTimes(1);
       expect(told).toHaveBeenCalledWith(session);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  // A double-click on Cancel stops waiting at once, before the gem has had time to answer.
+  it('tells nothing when the gem answers just after a second press', async () => {
+    vi.useFakeTimers();
+    try {
+      const { told, run, cancel } = setup([{ result: 0 }, { result: 0 }, { result: 1 }]);
+      cancel();
+      cancel();
+      await expect(run).rejects.toBeInstanceOf(NbCancelledError);
+
+      await vi.advanceTimersByTimeAsync(NOTICE_GRACE_MS + 100);
+
+      expect(told).not.toHaveBeenCalled();
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();
@@ -520,7 +539,7 @@ describe('telling the user a stopped run is still running', () => {
       });
       const { told, run, cancel } = setup();
       cancel();
-      await vi.advanceTimersByTimeAsync(EARLIEST_STOP_WAITING_MS + 100);
+      await vi.advanceTimersByTimeAsync(EARLIEST_STOP_WAITING_MS + NOTICE_GRACE_MS + 100);
 
       await expect(run).rejects.toBeInstanceOf(NbCancelledError);
       expect(told).toHaveBeenCalledTimes(1);
@@ -1287,6 +1306,7 @@ describe('a session whose stopped call is still being drained', () => {
       poll.mockReturnValue({ result: 0, err: noErr });
       await stopAndStayInTheDrain(session);
 
+      session.logout();
       forgetSession(session.id);
       const pollsAtLogout = poll.mock.calls.length;
       await vi.advanceTimersByTimeAsync(60_000);
@@ -1411,6 +1431,94 @@ describe('a stopped call whose collection hits a poll error', () => {
   });
 });
 
+describe('a clean-up started while something else holds the session', () => {
+  // Closing the debugger within the drain of a step the user cancelled, say.
+  it('waits for a drain still collecting a stopped call, which keeps collecting', async () => {
+    vi.useFakeTimers();
+    try {
+      const { session, gci } = makeSession([{ result: 0 }]);
+      const poll = gci.GciTsNbPoll as ReturnType<typeof vi.fn>;
+      poll.mockReturnValue({ result: 0, err: noErr });
+      let cancel: (() => void) | undefined;
+      const run = runNbCall(
+        session,
+        () => session.GciTsNbExecute('x', OOP_ILLEGAL, OOP_ILLEGAL, OOP_NIL, 0, 0),
+        () => 'x',
+        { suppressNotification: true, onStart: (c) => (cancel = c) },
+      );
+      run.catch(() => {});
+      cancel!();
+      cancel!();
+      await vi.advanceTimersByTimeAsync(100);
+
+      const clearing = clearInBackground(session, 0x4242n);
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(gci.GciTsClearStackAsync).not.toHaveBeenCalled();
+      const pollsWhileClearWaits = poll.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(200);
+      expect(poll.mock.calls.length).toBeGreaterThan(pollsWhileClearWaits);
+      expect(stoppedRunHolds(session)).toBe(true);
+
+      poll.mockReturnValue({ result: 1, err: noErr });
+      await vi.advanceTimersByTimeAsync(100);
+      await clearing;
+      expect(gci.GciTsNbResult).toHaveBeenCalledTimes(1);
+      expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(expect.anything(), 0x4242n);
+      expect(stoppedRunHolds(session)).toBe(false);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('waits for a worker not back yet, holding the session meanwhile', async () => {
+    const { session, gci } = makeSession([]);
+    let finish: (v: unknown) => void = () => {};
+    Object.assign(gci, {
+      GciTsContinueWithAsync: vi.fn(() => new Promise((resolve) => (finish = resolve))),
+    });
+    const resumed = session.GciTsContinueWithAsync(0x4141n, OOP_NIL, null, 0);
+    void holdSessionUntilSettled(session, resumed);
+
+    const clearing = clearInBackground(session, 0x4242n);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(gci.GciTsClearStackAsync).not.toHaveBeenCalled();
+    expect(stoppedRunHolds(session)).toBe(true);
+    finish({ result: OOP_NIL, err: noErr });
+    await clearing;
+    expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(expect.anything(), 0x4242n);
+    expect(stoppedRunHolds(session)).toBe(false);
+  });
+});
+
+describe('a stopped call that outlives its hold on the session', () => {
+  it('still counts as holding the session while its worker has not returned', async () => {
+    vi.useFakeTimers();
+    try {
+      const { session, gci } = makeSession([]);
+      let finish: (v: unknown) => void = () => {};
+      Object.assign(gci, {
+        GciTsContinueWithAsync: vi.fn(() => new Promise((resolve) => (finish = resolve))),
+      });
+      const resumed = session.GciTsContinueWithAsync(0x4242n, OOP_NIL, null, 0);
+      void holdSessionUntilSettled(session, resumed);
+
+      await vi.advanceTimersByTimeAsync(31_000);
+
+      // Force Stop, the notice and logout all ask this.
+      expect(stoppedRunHolds(session)).toBe(true);
+      finish({ result: OOP_NIL, err: noErr });
+      await resumed;
+      expect(stoppedRunHolds(session)).toBe(false);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('forgetSession', () => {
   it('stops polling for a logged-out session, and leaves nothing behind for its id', async () => {
     vi.useFakeTimers();
@@ -1421,6 +1529,7 @@ describe('forgetSession', () => {
       await stopRun(session);
       await vi.advanceTimersByTimeAsync(PAST_DRAIN_BUDGET_MS);
 
+      session.logout();
       forgetSession(session.id);
       const pollsAtLogout = poll.mock.calls.length;
       await vi.advanceTimersByTimeAsync(10 * LATE_COLLECT_INTERVAL_MS);
@@ -1431,6 +1540,28 @@ describe('forgetSession', () => {
       vi.clearAllTimers();
       vi.useRealTimers();
     }
+  });
+
+  it("forgets a clean-up that never ends, which then leaves a later login's own alone", async () => {
+    const { session, gci } = makeSession([]);
+    let finishOld: (v: unknown) => void = () => {};
+    let finishNew: (v: unknown) => void = () => {};
+    gci.GciTsClearStackAsync.mockReturnValueOnce(
+      new Promise((resolve) => (finishOld = resolve)) as never,
+    ).mockReturnValueOnce(new Promise((resolve) => (finishNew = resolve)) as never);
+    const old = clearInBackground(session, 0x4242n);
+
+    forgetSession(session.id);
+
+    expect(clearHolds(session)).toBe(false);
+    // A later login with the same id clears a process of its own.
+    const later = clearInBackground(session, 0x4343n);
+    finishOld({ success: true, err: noErr });
+    await old;
+    expect(clearHolds(session)).toBe(true);
+    finishNew({ success: true, err: noErr });
+    await later;
+    expect(clearHolds(session)).toBe(false);
   });
 });
 
@@ -1573,7 +1704,6 @@ describe('ensureSessionFree', () => {
       }
       expect(() => ensureSessionFree(session)).toThrow(NbSessionBusyError);
 
-      expect(refusal).toMatchObject({ stoppedRun: true });
       expect(String(refusal)).toMatch(/Force Stop/);
       expect(told).toHaveBeenCalledTimes(2);
       expect(told).toHaveBeenCalledWith(session);
@@ -1634,9 +1764,7 @@ describe('ensureSessionFree', () => {
       );
       running.catch(() => {});
 
-      expect(() => ensureSessionFree(session)).toThrow(
-        expect.objectContaining({ stoppedRun: false }),
-      );
+      expect(() => ensureSessionFree(session)).toThrow(/Another run is still in progress/);
       expect(stoppedRunHolds(session)).toBe(false);
       expect(told).not.toHaveBeenCalled();
     } finally {
@@ -1878,7 +2006,8 @@ describe('stopping while the result is being read', () => {
       await expect(run).rejects.toBeInstanceOf(NbCancelledError);
 
       finishOnReady();
-      await vi.advanceTimersByTimeAsync(0);
+      // Past the notice's own short wait.
+      await vi.advanceTimersByTimeAsync(NOTICE_GRACE_MS);
 
       expect(vi.getTimerCount()).toBe(0);
     } finally {

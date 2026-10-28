@@ -524,7 +524,7 @@ describe('CodeExecutor', () => {
       async (command) => {
         setActiveEditor(makeEditor('3 + 4'));
         vi.mocked(whenSessionFree).mockImplementationOnce(() => {
-          throw new NbSessionBusyError('Another run is still in progress on this session.', false);
+          throw new NbSessionBusyError('Another run is still in progress on this session.');
         });
 
         await executor[command]();

@@ -375,14 +375,35 @@ export function executeFetchString(session: ActiveSession, code: string): string
   throw refusedAsBusy(session);
 }
 
+/** Set while {@link quietly} runs a query. */
+let quiet = false;
+
+/**
+ * Run `query`, refused without the busy notice if the session is busy: for the
+ * queries VS Code makes by itself (hover, completion, CodeLens), which would
+ * otherwise raise it every couple of seconds while a run goes on. Synchronous,
+ * so the setting can't carry over to anyone else's query.
+ */
+export function quietly<T>(query: () => T): T {
+  const was = quiet;
+  quiet = true;
+  try {
+    return query();
+  } finally {
+    quiet = was;
+  }
+}
+
 /**
  * The error for a query a busy session refused, said in plain words, with the
  * notice that lets the user stop what holds the session.
  */
 function refusedAsBusy(session: ActiveSession): BrowserQueryError {
   logError(session.id, SESSION_BUSY_MESSAGE);
-  if (abandonedRunHolds(session)) sayStillRunning(session);
-  else if (isRunning(session)) sayRunInProgress(session);
+  if (!quiet) {
+    if (abandonedRunHolds(session)) sayStillRunning(session);
+    else if (isRunning(session)) sayRunInProgress(session);
+  }
   return new BrowserQueryError(SESSION_BUSY_MESSAGE, GCI_ERR_OP_IN_PROGRESS);
 }
 
