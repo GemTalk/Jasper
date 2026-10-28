@@ -8,10 +8,12 @@ export const SESSION_SIGNAL_ERROR = 6010;
 
 /**
  * Lets the session be signalled from another one, answering its GemStone session
- * number. GemStone switches this off each time a signal arrives, so it is run
- * again after every Force Stop.
+ * number and its login's serial number. GemStone switches this off each time a
+ * signal arrives, so it is run again after every Force Stop.
  */
-const ARM_CODE = 'System enableSignaledGemStoneSessionError. System session printString';
+const ARM_CODE =
+  'System enableSignaledGemStoneSessionError. System session printString, ' +
+  "' ', ((System descriptionOfSession: System session) at: 9) printString";
 
 /**
  * How long Force Stop waits for the run to end after the signal. The gem takes
@@ -24,6 +26,12 @@ const FORCE_STOP_POLL_MS = 100;
 /** GemStone's session number for each armed session, by Jasper session id. */
 const serverSessions = new Map<number, string>();
 
+/**
+ * The serial number of each armed session's login. GemStone gives a session
+ * number to the next login once its gem has gone; a serial number is never reused.
+ */
+const loginSerials = new Map<number, string>();
+
 /** Sessions sent a signal that has not been answered by a re-arm yet. */
 const signalled = new Set<number>();
 
@@ -33,7 +41,9 @@ const signalled = new Set<number>();
  */
 export function armForceStop(session: ActiveSession): void {
   try {
-    serverSessions.set(session.id, session.executeAndFetchString(ARM_CODE));
+    const [serverSession, serial] = session.executeAndFetchString(ARM_CODE).split(' ');
+    serverSessions.set(session.id, serverSession);
+    loginSerials.set(session.id, serial);
   } catch (e) {
     logInfo(
       `[Session ${session.id}] Force Stop is not available: ` +
@@ -74,6 +84,7 @@ export function serverSessionOf(sessionId: number): string | undefined {
 /** Forget a session that has logged out. */
 export function forgetForceStop(sessionId: number): void {
   serverSessions.delete(sessionId);
+  loginSerials.delete(sessionId);
   signalled.delete(sessionId);
 }
 
@@ -133,17 +144,35 @@ export const NO_PRIVILEGE_ERROR = 2151;
  * already be logged out: the last resort for a run that caught Force Stop, whose
  * gem a logout leaves running. Needs the SessionAccess privilege
  * ({@link NO_PRIVILEGE_ERROR} otherwise).
+ *
+ * Ends it only while the session number still belongs to `from`'s login: once
+ * the gem has gone, the number can already be another login's. Force Stop's
+ * signal needs no such check, being sent while `from` is still logged in, and
+ * could not have it: looking up another session needs SessionAccess.
  */
 export function endServerSession(
   from: ActiveSession,
   serverSession: string,
   deps: ForceStopDeps,
 ): void {
+  const serial = loginSerials.get(from.id);
+  if (serial === undefined) {
+    throw new Error(`Session ${from.id}'s login is not known, so its gem can't be told apart.`);
+  }
   const sender = deps.loginTransient(from);
+  let ended: string;
   try {
-    sender.session.executeAndFetchString(`System stopSession: ${serverSession}. 'ok'`);
+    ended = sender.session.executeAndFetchString(
+      `| now | now := (System descriptionOfSessionSerialNum: ${serial}) at: 10. ` +
+        `now = ${serverSession} ifTrue: [System stopSession: now]. ` +
+        `(now = ${serverSession}) printString`,
+    );
   } finally {
     sender.logout();
   }
-  logInfo(`[Session ${from.id}] Ended its server session ${serverSession}.`);
+  logInfo(
+    ended === 'true'
+      ? `[Session ${from.id}] Ended its server session ${serverSession}.`
+      : `[Session ${from.id}] Its server session ${serverSession} had already ended.`,
+  );
 }

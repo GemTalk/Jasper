@@ -48,8 +48,9 @@ function stoneAnswer(..._args: unknown[]): string {
   if (code.includes('System transactionMode asString,')) return transactionStateAnswer;
   const switchTo = /System transactionMode: #(\w+)\./.exec(code);
   if (switchTo) return switchAnswer ?? switchTo[1];
-  // Force Stop's arming, answering the session's number on the stone.
-  if (code.includes('enableSignaledGemStoneSessionError')) return '42';
+  // Force Stop's arming, answering the session's number on the stone and its
+  // login's serial number.
+  if (code.includes('enableSignaledGemStoneSessionError')) return '42 7';
   return 'installed';
 }
 // Restored in beforeEach: a test that swaps the implementation must not leave
@@ -745,7 +746,7 @@ describe('SessionManager', () => {
 
       await manager.logout(session.id);
 
-      expect(ran('System stopSession: 42')).toBe(true);
+      expect(ran('descriptionOfSessionSerialNum: 7')).toBe(true);
       expect(vi.mocked(stopCallsOn).mock.calls[0][0]).toBe(session);
       expect(manager.getSession(session.id)).toBeUndefined();
     });
@@ -879,7 +880,7 @@ describe('SessionManager', () => {
       await logOutPastForceStop(session.id);
 
       expect(ran('System sendSignal: 1 to: 42')).toBe(true);
-      expect(ran('System stopSession: 42')).toBe(true);
+      expect(ran('descriptionOfSessionSerialNum: 7')).toBe(true);
       expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
       expect(manager.getSession(session.id)).toBeUndefined();
     });
@@ -949,7 +950,7 @@ describe('SessionManager', () => {
 
       await manager.logout(session.id);
 
-      expect(ran('System stopSession: 42')).toBe(true);
+      expect(ran('descriptionOfSessionSerialNum: 7')).toBe(true);
       expect(manager.getSession(session.id)).toBeUndefined();
     });
   });
@@ -997,7 +998,7 @@ describe('SessionManager', () => {
       await manager.logout(session.id, true);
 
       expect(signals()).toBe(1);
-      expect(ran('System stopSession: 42')).toBe(true);
+      expect(ran('descriptionOfSessionSerialNum: 7')).toBe(true);
       expect(manager.getSession(session.id)).toBeUndefined();
     });
 
@@ -1053,7 +1054,7 @@ describe('SessionManager', () => {
       manager.dispose();
 
       expect(ran('System sendSignal: 1 to: 42')).toBe(true);
-      expect(ran('System stopSession: 42')).toBe(true);
+      expect(ran('descriptionOfSessionSerialNum: 7')).toBe(true);
     });
 
     it('touches nothing else for an idle session', () => {

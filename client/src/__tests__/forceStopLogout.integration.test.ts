@@ -6,9 +6,11 @@ import type { ActiveSession } from '../activeSession';
 import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
 import { runNbCall, setStillRunningHandler, setStoppedRunCollectedHandler } from '../nbRunner';
 import { SessionManager } from '../sessionManager';
+import { endServerSession, serverSessionOf } from '../forceStop';
 import { testActiveSession } from './testActiveSession';
 import { useIntegrationTest } from './useIntegrationTest';
 import { forceStopSupport } from './forceStopSupport';
+import { endGemAfterTest } from './leftoverGem';
 
 describe('Force Stop at logout (integration)', () => {
   let session: ActiveSession;
@@ -22,7 +24,33 @@ describe('Force Stop at logout (integration)', () => {
     setStillRunningHandler(undefined);
   });
 
-  const { listed, stopAndAbandon, settled } = forceStopSupport(() => session);
+  const { armedSession, deps, listed, stopAndAbandon, settled } = forceStopSupport(() => session);
+
+  // GemStone gives out session numbers in turn, wrapping round at the stone's
+  // limit, so a gone gem's number goes to a later login.
+  it("does not end another login that has taken a gone gem's session number", async (ctx) => {
+    const own = armedSession();
+    const number = serverSessionOf(own.id)!;
+    own.logout();
+    for (let i = 0; i < 40 && listed(number); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(listed(number)).toBe(false);
+    let heir: ActiveSession | undefined;
+    for (let i = 0; i < 200 && !heir; i++) {
+      const { session: next } = session.transientLogin(session.login);
+      if (!next) continue;
+      if (next.executeAndFetchString('System session printString') === number) heir = next;
+      else next.logout();
+    }
+    // Another test's login took the number first: nothing to check.
+    if (!heir) ctx.skip();
+    onTestFinished(() => void heir!.logout());
+
+    endServerSession(own, number, deps);
+
+    expect(heir!.executeAndFetchString('(3 + 4) printString')).toBe('7');
+  }, 60_000);
 
   describe('logging out a session whose stopped run is still going', () => {
     /** A logged-in session of its own, running `code` that the user has stopped. */
@@ -33,9 +61,7 @@ describe('Force Stop at logout (integration)', () => {
     ) {
       const own = manager.login(session.login, process.env.VITE_GEMSTONE_GCI_LIBRARY_PATH!);
       const serial = own.executeAndFetchString('System session printString');
-      onTestFinished(() => {
-        if (listed(serial)) session.executeAndFetchString(`System stopSession: ${serial}. 'ok'`);
-      });
+      endGemAfterTest(() => session, own);
       await stop(own, code);
       return { own, serial };
     }

@@ -22,7 +22,7 @@ import { clearHolds, isRunning, stoppedRunHolds } from '../nbRunner';
 
 let nextId = 1;
 
-function fakeSession(serverSession = '42') {
+function fakeSession(serverSession = '42 7') {
   const executeAndFetchString = vi.fn((_code: string) => serverSession);
   const GciTsBreak = vi.fn();
   return {
@@ -68,7 +68,7 @@ describe('Force Stop', () => {
   });
 
   it('signals the session from a short-lived login, and logs that login out', async () => {
-    const { session } = fakeSession('42');
+    const { session } = fakeSession('42 7');
     armForceStop(session);
     const sender = fakeSender();
 

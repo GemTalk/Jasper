@@ -1,8 +1,9 @@
-import { expect, onTestFinished } from 'vitest';
+import { expect } from 'vitest';
 import type { ActiveSession } from '../activeSession';
 import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
 import { armForceStop } from '../forceStop';
 import { NbCancelledError, runNbCall, stoppedRunHolds } from '../nbRunner';
+import { endGemAfterTest } from './leftoverGem';
 
 /** What the Force Stop stone tests share, for the session `getSession` answers. */
 export function forceStopSupport(getSession: () => ActiveSession) {
@@ -15,10 +16,7 @@ export function forceStopSupport(getSession: () => ActiveSession) {
   function armedSession(): ActiveSession {
     const { session: own, err } = getSession().transientLogin(getSession().login);
     if (!own) throw new Error(`Login failed: ${err.message}`);
-    const serial = own.executeAndFetchString('System session printString');
-    onTestFinished(() => {
-      if (listed(serial)) getSession().executeAndFetchString(`System stopSession: ${serial}. 'ok'`);
-    });
+    endGemAfterTest(getSession, own);
     armForceStop(own);
     return own;
   }

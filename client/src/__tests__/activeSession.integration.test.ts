@@ -7,6 +7,7 @@ import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL, GS_ERR_HALT } from '../gciConstan
 import { pollNbResultReady, runNbCall } from '../nbRunner';
 import { testActiveSession } from './testActiveSession';
 import { useIntegrationTest } from './useIntegrationTest';
+import { endGemAfterTest } from './leftoverGem';
 
 /**
  * Each call below would hand a freed native session to the GCI library if it
@@ -154,9 +155,7 @@ describe('logging out never waits for the gem (integration)', () => {
     if (!transient) throw new Error(`Transient login failed: ${err.message}`);
     const serial = transient.executeAndFetchString('System session printString');
     // Ends a gem the test leaves behind, so a failure can't strand it.
-    onTestFinished(() => {
-      if (listed(serial)) session.executeAndFetchString(`System stopSession: ${serial}. 'ok'`);
-    });
+    endGemAfterTest(() => session, transient);
     return { transient, serial };
   }
 
