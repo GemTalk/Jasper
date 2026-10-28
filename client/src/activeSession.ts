@@ -112,6 +112,12 @@ export class ActiveSession {
    * handle throws, a second logout included. A failed logout usually frees it
    * too; only a refusal because a call is still in progress leaves it usable.
    *
+   * A non-blocking call whose result is not collected yet does not stop the
+   * logout, but it can outlive it: a gem whose run has resumed a soft break
+   * keeps running after its session logs out. To end such a run, ask whether
+   * the session is busy before logging out, and stop the run first; once the
+   * session is gone, that question throws.
+   *
    * @returns whether the session is gone; false only for that refusal.
    */
   logout(): boolean {
