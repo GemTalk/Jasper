@@ -640,6 +640,28 @@ describe('DebuggerView.init — progress indicator (#9)', () => {
     }
   });
 
+  it('takes one Cancel click: the button then reads "Cancelling…" and is disabled until the op ends', () => {
+    vi.useFakeTimers();
+    try {
+      const { refs } = setupIdle();
+      const button = refs.busyCancel as HTMLButtonElement;
+
+      markCancellable();
+      selectAFrame(refs);
+      vi.advanceTimersByTime(500);
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+      expect(button.textContent).toBe('Cancelling…');
+      expect(button.disabled).toBe(true);
+
+      respond();
+      expect(button.textContent).toBe('Cancel');
+      expect(button.disabled).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('hides the Cancel button when the op completes', () => {
     vi.useFakeTimers();
     try {
@@ -665,7 +687,7 @@ describe('DebuggerView.init — progress indicator (#9)', () => {
       selectAFrame(refs);
       vi.advanceTimersByTime(500);
       // The Cancel-click acknowledgement is a 'flash' posted mid-op; it must NOT end
-      // the span — otherwise the spinner vanishes and a 2nd Cancel (hard break) is impossible.
+      // the span — otherwise the spinner vanishes while the op is still running.
       window.dispatchEvent(
         new MessageEvent('message', { data: { command: 'flash', text: 'Break sent…' } }),
       );

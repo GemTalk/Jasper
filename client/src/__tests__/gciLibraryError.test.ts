@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { GciLibraryError, explainGciError } from '../gciLibraryError';
+import { GciLibraryError, explainGciError, SESSION_BUSY_MESSAGE } from '../gciLibraryError';
 import {
   ERR_GEM_AUTO_ABORT,
   ERR_GEM_AUTO_LOST_OT,
@@ -54,6 +54,20 @@ describe('explaining a GCI error', () => {
 
     expect(text).toContain('Transactionless');
     expect(text).toContain('switch modes');
+  });
+
+  // Both of GemStone's texts for a busy session are about GCI internals; neither
+  // says a run is in the way, or what to do about it.
+  it.each([
+    'session has a GciTsNb operation in progress',
+    'session has call in progress by another C thread',
+  ])('says a busy session (2203, "%s") is busy with a run, and what to do', (message) => {
+    const text = explainGciError(gciError(2203, message));
+
+    expect(text).toBe(SESSION_BUSY_MESSAGE);
+    expect(text).not.toContain('GciTs');
+    expect(text).toMatch(/still going/);
+    expect(text).toMatch(/stop it/);
   });
 
   it('leaves every other error in the stone’s own words', () => {

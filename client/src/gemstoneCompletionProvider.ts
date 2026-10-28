@@ -150,7 +150,7 @@ export class GemStoneCompletionProvider implements vscode.CompletionItemProvider
     if (cached) return cached;
 
     try {
-      const entries = queries.getAllClassNames(session);
+      const entries = queries.quietly(() => queries.getAllClassNames(session));
       const seen = new Set<string>();
       const items: vscode.CompletionItem[] = [];
       for (const e of entries) {
@@ -173,7 +173,7 @@ export class GemStoneCompletionProvider implements vscode.CompletionItemProvider
     if (cached) return cached;
 
     try {
-      const names = queries.getInstVarNames(session, className);
+      const names = queries.quietly(() => queries.getInstVarNames(session, className));
       const items = names.map((name) => {
         const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Field);
         item.detail = `${className} inst var`;
@@ -192,7 +192,7 @@ export class GemStoneCompletionProvider implements vscode.CompletionItemProvider
     if (cached) return cached;
 
     try {
-      const selectors = queries.getAllSelectors(session, className);
+      const selectors = queries.quietly(() => queries.getAllSelectors(session, className));
       const items = selectors.map(
         (sel) => new vscode.CompletionItem(sel, vscode.CompletionItemKind.Method),
       );

@@ -1,6 +1,7 @@
 import type { GciError } from './gciLibrary';
+import { clearInBackground } from './nbRunner';
 import type { ActiveSession } from './sessionManager';
-import { OOP_ILLEGAL, OOP_NIL, toBigInt } from './gciConstants';
+import { OOP_ILLEGAL, toBigInt } from './gciConstants';
 import { logError, logInfo } from './gciLog';
 
 /**
@@ -34,7 +35,7 @@ import { logError, logInfo } from './gciLog';
  * clientForwarder mode belongs to one process, the one running the code the
  * caller started it for, never to the session. A write is forwarded when it
  * comes from that process or from any process while that process is still
- * running; once it completes, halts, or is cleared by a hard break, the next
+ * running; once it completes, halts, or is cleared, the next
  * write finds it gone and the mode ends by itself. Left on, a 2336 in the
  * calls that follow would fail a blocking call and hand its answer to the next
  * one ([#665](https://github.com/GemTalk/Jasper/issues/665)).
@@ -45,11 +46,11 @@ import { logError, logInfo } from './gciLog';
  * - a soft-broken process, suspended for the debugger but still reading as
  *   waiting. The caller's `finally` ends the mode, and succeeds, because the
  *   session is idle.
- * - a hard break that lands in a fork. It stops whichever process is running,
- *   so the process the mode belongs to can be left parked, still reading as
- *   waiting. The `finally`'s end is refused at that point (the cancelled call
- *   is still being collected), so the runner ends the mode again once it has
- *   collected the call (`NbRunOptions.onAbandonedCollected`).
+ * - a break that lands in a fork. It stops whichever process is running, so
+ *   the process the mode belongs to can be left parked, still reading as
+ *   waiting. If the runner has stopped waiting, the `finally`'s end is refused
+ *   (the cancelled call is still being collected), so the runner ends the mode
+ *   again once it has collected the call (`NbRunOptions.onAbandonedCollected`).
  *
  * ClientForwarder sends bypass Smalltalk exception handlers (verified: an
  * `on: AbstractException do:` around the send still surfaces 2336 to the GCI),
@@ -98,12 +99,12 @@ const MAX_TRANSCRIPT_FETCH = 1024 * 1024;
  * `terminationStarted`, so `suspended` and `on delayQueue` count as running
  * too; both only occur while the call is still in flight. Once its call has
  * returned to the client its status reads `debug` (the scheduler's own word
- * for "the GCI application holds it"), or `terminated` once a hard break has
- * been cleared. A completed process is not
+ * for "the GCI application holds it"), or `terminated` once it has been
+ * cleared. A completed process is not
  * marked terminated, and one resumed by GciTsContinueWith even keeps its
  * frames, so neither `_isTerminated` nor the stack depth can tell. A process
- * that returned soft-broken, or that a hard break left parked because it
- * stopped a fork instead, can still read as waiting, which is why the explicit
+ * that returned soft-broken, or that a break left parked because it stopped a
+ * fork instead, can still read as waiting, which is why the explicit
  * end is kept.
  *
  * No String literal is compared with a runtime String: this doit is sent as
@@ -298,8 +299,8 @@ export function startClientForwarderMode(session: ActiveSession, source: string)
 
 /**
  * End clientForwarder mode and return anything drained in the transition, so
- * writes that raced the end are not lost. GemStone refuses it while a
- * hard-broken call is still being collected; callers therefore also run it once
+ * writes that raced the end are not lost. GemStone refuses it while a stopped
+ * call is still being collected; callers therefore also run it once
  * the call has been collected (see the module doc). Failure is logged, never
  * thrown.
  */
@@ -414,10 +415,11 @@ export async function settleNbResult(
  * write queue on the semaphore first and clearing is no longer enough, because
  * the signal is handed to that now-dead waiter. Hence "immediately".
  *
- * `abandoned` is the runner's hard-break signal (see `pollNbToCompletion`).
- * Once it fires the caller already has NbCancelledError, so nobody else will
- * clear what the break stopped: a writer caught between sends is cleared
- * rather than resumed, and the process a hard break stops is cleared too —
+ * `abandoned` is the runner's signal that it stopped waiting (see
+ * `pollNbToCompletion`). Once it fires the caller already has NbCancelledError,
+ * so nobody else will clear what the break stopped: a writer caught between
+ * sends is cleared rather than resumed, and the process the break stops is
+ * cleared too —
  * stopped inside a write, it holds the semaphore just the same (measured on
  * 3.6.2 and 3.7.5).
  */
@@ -432,7 +434,7 @@ export async function continueThroughForwarderSends(
   while (isForwarderSendError(err)) {
     const suspended = toBigInt(err.context);
     if (abandoned?.aborted) {
-      clearSuspendedWriter(session, suspended);
+      await clearSuspendedWriter(session, suspended);
       return { result, err };
     }
     try {
@@ -440,12 +442,12 @@ export async function continueThroughForwarderSends(
       if (text !== null && text.length > 0) onTranscript(text);
       ({ result, err } = await session.GciTsContinueWithAsync(suspended, OOP_ILLEGAL, null, flags));
     } catch (e) {
-      clearSuspendedWriter(session, suspended);
+      await clearSuspendedWriter(session, suspended);
       throw e;
     }
   }
   if (abandoned?.aborted && err.number !== 0) {
-    clearSuspendedWriter(session, toBigInt(err.context));
+    await clearSuspendedWriter(session, toBigInt(err.context));
   }
   return { result, err };
 }
@@ -453,17 +455,9 @@ export async function continueThroughForwarderSends(
 /**
  * Release the Transcript semaphore held by a process we are about to abandon.
  * Best-effort: the session may already be unusable, and the caller is on its
- * way out with the real error, which must not be replaced by this one.
+ * way out with the real error, which must not be replaced by this one. Waited
+ * for, so the caller's next call does not meet the clear still running.
  */
-function clearSuspendedWriter(session: ActiveSession, gsProcess: bigint): void {
-  if (gsProcess === OOP_NIL || gsProcess === 0n) return;
-  try {
-    session.GciTsClearStack(gsProcess);
-  } catch (e) {
-    logError(
-      session.id,
-      `Could not clear the suspended Transcript writer; later Transcript writes in this ` +
-        `session may deadlock until logout: ${e instanceof Error ? e.message : String(e)}`,
-    );
-  }
+async function clearSuspendedWriter(session: ActiveSession, gsProcess: bigint): Promise<void> {
+  await clearInBackground(session, gsProcess);
 }

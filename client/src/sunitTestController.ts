@@ -59,9 +59,6 @@ async function setTestRunningContext(running: boolean): Promise<void> {
   await vscode.commands.executeCommand('setContext', 'gemstone.testRunning', running);
 }
 
-/** How long to wait for a soft break to land before escalating to a hard one. */
-const HARD_BREAK_AFTER_MS = 1500;
-
 /**
  * How a test was launched. Everything above the innermost "execute one test"
  * step is shared between the two — discovery, id parsing, reporting, and the
@@ -88,7 +85,7 @@ export interface SunitDebugExecutor {
 export interface SunitDebugOutcome {
   /** True when the test raised and the suspended process went to a debugger. */
   raised: boolean;
-  /** True when the user cancelled the run (a soft or hard break). Distinct from
+  /** True when the user cancelled the run. Distinct from
    *  `raised`: a cancel is the user's decision, not a test outcome, so the caller
    *  leaves no verdict rather than blaming the test. */
   cancelled?: boolean;
@@ -349,9 +346,9 @@ export class SunitTestController implements vscode.Disposable {
   }
 
   /**
-   * Breaks the run currently executing in the stone — soft on the first call,
-   * hard on a second, the same escalation the progress notification's Cancel
-   * does. Set while a run is in flight and cleared when it settles.
+   * Stops the run currently executing in the stone, the way the progress
+   * notification's Cancel does. Set while a run is in flight and cleared when it
+   * settles.
    */
   private activeCancel: (() => void) | undefined;
   /** How many runs are in flight, so the row ■ stays while any of them is. */
@@ -380,15 +377,6 @@ export class SunitTestController implements vscode.Disposable {
     // Stop cancels the run's token as well; a row's ■ only comes here, and without
     // this the rest of the queue would run on, or be refused one by one.
     this.queueStops.forEach((stop) => stop());
-    // A soft break is the right first move — it lets the gem stop at a safe point
-    // and leaves the session healthy. But a test spinning in a tight loop never
-    // reaches one, and making the user press stop a second time to find that out
-    // is a poor trade. Escalate on their behalf, unless the run settled first.
-    setTimeout(() => {
-      if (this.activeCancel !== cancel) return;
-      logInfo('SUnit: the run is still going — escalating to a hard break.');
-      cancel();
-    }, HARD_BREAK_AFTER_MS);
     return true;
   }
 
@@ -930,8 +918,9 @@ export class SunitTestController implements vscode.Disposable {
   }
 
   /**
-   * Whether a failed run failed because it was stopped. A hard break rejects with
-   * NbCancelledError. A soft break lets the gem raise a Break instead: a class
+   * Whether a failed run failed because it was stopped. A run the runner stopped
+   * waiting for rejects with NbCancelledError. One that answered the soft break
+   * raises a Break instead: a class
    * run's SUnit does not catch it, so the run fails like any other, while a single
    * test's runner catches it and answers it as the test's error. Either is
    * indistinguishable from a real one except that a stop was asked for, so
@@ -947,9 +936,8 @@ export class SunitTestController implements vscode.Disposable {
    * test — so it leaves no verdict, as a stopped run does.
    */
   private wasRefused(e: unknown): boolean {
-    if (!(e instanceof NbSessionBusyError)) return false;
-    vscode.window.showWarningMessage(e.message);
-    return true;
+    // Already told: the refusal raises its own notice, with a way to stop the run.
+    return e instanceof NbSessionBusyError;
   }
 
   /**
@@ -1006,7 +994,7 @@ export class SunitTestController implements vscode.Disposable {
       );
 
       if (outcome.cancelled) {
-        // The user cancelled the debug run (a soft or hard break). That was
+        // The user cancelled the debug run. That was
         // their decision, not a test outcome — leave no verdict, exactly as a
         // stopped ordinary run does (see runSingleTest / wasStopped).
         this.reportSkipped(run, item);

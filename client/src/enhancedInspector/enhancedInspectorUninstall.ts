@@ -41,6 +41,7 @@ import {
   isEnhancedInspectorInstalled,
   ENHANCED_INSPECTOR_DICTIONARY,
 } from './enhancedInspectorInstall';
+import { explainGciError } from '../gciLibraryError';
 
 export interface EnhancedInspectorUninstallResult {
   /** True only when the removal ran, the commit succeeded, and the end-state
@@ -135,7 +136,7 @@ export async function uninstallEnhancedInspectorSupport(
       success: false,
       committed: false,
       verified: false,
-      message: `Commit failed: ${err.message || `GCI error ${err.number}`}`,
+      message: `Commit failed: ${explainGciError(err) || `GCI error ${err.number}`}`,
     };
   }
 

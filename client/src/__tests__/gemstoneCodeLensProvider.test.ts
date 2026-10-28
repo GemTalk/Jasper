@@ -4,7 +4,16 @@ import * as path from 'path';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
+const quiet = vi.hoisted(() => ({ on: false }));
 vi.mock('../browserQueries', () => ({
+  quietly: <T>(query: () => T): T => {
+    quiet.on = true;
+    try {
+      return query();
+    } finally {
+      quiet.on = false;
+    }
+  },
   sendersOf: vi.fn(() => []),
   implementorsOf: vi.fn(() => []),
 }));
@@ -334,6 +343,26 @@ foo
       expect(provider.resolveCodeLens(lens).command?.title).toContain('$(loading~spin)');
       vi.runAllTimers(); // the deferred lookup runs and caches the count
       expect(provider.resolveCodeLens(lens).command?.title).toBe('2 senders');
+    });
+
+    // A busy session would otherwise raise the Stop notice for every lens counted.
+    it('counts quietly', () => {
+      const session = createMockSession();
+      sessionManager.getSelectedSession = () => session;
+      const quietly: boolean[] = [];
+      (queries.sendersOf as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        quietly.push(quiet.on);
+        return [{}];
+      });
+      const doc = createMockDocument(`method: MyClass
+foo
+  ^ 42
+%`);
+
+      resolveCount(methodLenses(provider.provideCodeLenses(doc))[0]);
+
+      expect(quietly.length).toBeGreaterThan(0);
+      expect(quietly.every(Boolean)).toBe(true);
     });
 
     it('returns "No session" when no session is selected', () => {

@@ -1,16 +1,22 @@
 import { describe, it, expect, vi } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
+vi.mock('../../nbRunner', async (original) => ({
+  ...(await original<typeof import('../../nbRunner')>()),
+  isRunning: vi.fn(() => false),
+}));
 
 import {
   BreakpointRule,
   DECISION,
+  resumeOnWorker,
   deciderSource,
   decodeDecision,
   applyBreakpointRules,
   logMessageExpression,
 } from '../conditionalBreakpoints';
 import { OOP_NIL } from '../../gciConstants';
-import { NbCancelledError } from '../../nbRunner';
+import { isRunning, NbCancelledError } from '../../nbRunner';
+import type { StepResult } from '../debugQueries';
 import * as vscode from 'vscode';
 import { fakeActiveSession } from '../../__tests__/fakeActiveSession';
 import {
@@ -166,9 +172,9 @@ function stubSession(
       continues.push({ process, flags });
       return fake.GciTsContinueWithAsync(h, process, tos, e, flags);
     },
-    GciTsClearStack: (h: unknown, process: bigint) => {
+    GciTsClearStackAsync: (h: unknown, process: bigint) => {
       cleared.push(process);
-      return fake.GciTsClearStack(h, process);
+      return fake.GciTsClearStackAsync(h, process);
     },
     GciTsBreak: (h: unknown, hard: boolean) => {
       breaks.push(hard);
@@ -492,7 +498,7 @@ describe('applyBreakpointRules', () => {
     });
   });
 
-  describe('hard-broken by the run it belongs to', () => {
+  describe('given up on by the run it belongs to', () => {
     it('releases the process and stops, rather than resuming a rejected run', async () => {
       const abandoned = new AbortController();
       const { session, continues, cleared } = stubSession(
@@ -515,7 +521,7 @@ describe('applyBreakpointRules', () => {
       const abandoned = new AbortController();
       const { session, cleared } = stubSession(
         [DECISION.Go],
-        [{ err: { number: 6004, message: 'hard break', context: 8n } }],
+        [{ err: { number: 6003, message: 'soft break', context: 8n } }],
         '',
         { duringResume: () => abandoned.abort() },
       );
@@ -548,6 +554,45 @@ describe('applyBreakpointRules', () => {
     const { session, performed } = stubSession([DECISION.Stop], []);
     await applyBreakpointRules(session, 7n, [spec()]);
     expect(performed).toHaveLength(1);
+  });
+
+  it("resumes first for the debugger's Resume, judging only the stop it lands on", async () => {
+    const { session, performed, continues } = stubSession([DECISION.Stop], [hitsBreakpoint(8n)]);
+
+    const outcome = await applyBreakpointRules(session, 7n, [spec()], { resumeFirst: true });
+
+    expect(continues.map((c) => c.process)).toEqual([7n]);
+    expect(performed).toHaveLength(1);
+    expect(outcome).toEqual({ kind: 'stopped', context: 8n, skipped: 0 });
+  });
+
+  it('with no rules, stops at the first breakpoint a Resume reaches, compiling nothing', async () => {
+    const { session, executed } = stubSession([], [hitsBreakpoint(8n)]);
+
+    const outcome = await applyBreakpointRules(session, 7n, [], { resumeFirst: true });
+
+    expect(executed).toEqual([]);
+    expect(outcome).toMatchObject({ kind: 'stopped', context: 8n });
+  });
+
+  it('shows no notification of its own inside a run, which has one already', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(isRunning).mockReturnValueOnce(true);
+      vi.mocked(vscode.window.withProgress).mockClear();
+      const { session, gci } = stubSession([DECISION.Go, DECISION.Stop], [hitsBreakpoint(8n)]);
+      const resume = gci.GciTsContinueWithAsync;
+      gci.GciTsContinueWithAsync = (...args: Parameters<typeof resume>) =>
+        new Promise((resolve) => setTimeout(() => resolve(resume(...args)), 3000));
+
+      const run = applyBreakpointRules(session, 7n, [spec()]);
+      await vi.advanceTimersByTimeAsync(5000);
+      await run;
+
+      expect(vscode.window.withProgress).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('updates its progress now and then, counting skipped and logged hits apart', async () => {
@@ -588,5 +633,112 @@ describe('applyBreakpointRules', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('a run the loop gave up waiting for', () => {
+  /** Cancel `run`, then wait out the loop's give-up; it rejects with NbCancelledError. */
+  async function giveUp(run: Promise<unknown>, cancel: () => void): Promise<void> {
+    run.catch(() => {});
+    await vi.advanceTimersByTimeAsync(100);
+    cancel();
+    await vi.advanceTimersByTimeAsync(3000);
+    await expect(run).rejects.toBeInstanceOf(NbCancelledError);
+  }
+
+  it('tells the debugger the run finished after all, once a resume it gave up on completes', async () => {
+    // So the debugger closes, as after an ordinary Resume.
+    vi.useFakeTimers();
+    try {
+      const { session, gci } = stubSession([DECISION.Stop], []);
+      let finish: (v: unknown) => void = () => {};
+      gci.GciTsContinueWithAsync = () => new Promise((resolve) => (finish = resolve)) as never;
+      let cancel: () => void = () => {};
+      const ended = vi.fn<(r: StepResult) => void>();
+
+      await giveUp(
+        applyBreakpointRules(session, 7n, [spec()], {
+          resumeFirst: true,
+          onStart: (c) => (cancel = c),
+          onGivenUpSettled: ended,
+        }),
+        () => cancel(),
+      );
+      expect(ended).not.toHaveBeenCalled();
+
+      finish({ result: 0x55n, err: { number: 0, message: '', context: 0n } });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(ended).toHaveBeenCalledWith({ completed: true, resultOop: 0x55n });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('sends the soft break again as it gives up, in case the first never reached the gem', async () => {
+    // A soft break that reaches the gem before it has started the call is lost.
+    vi.useFakeTimers();
+    try {
+      const { session, gci, breaks } = stubSession([DECISION.Stop], []);
+      gci.GciTsContinueWithAsync = () => new Promise(() => {}) as never;
+      let cancel: () => void = () => {};
+
+      await giveUp(
+        applyBreakpointRules(session, 7n, [spec()], {
+          resumeFirst: true,
+          onStart: (c) => (cancel = c),
+        }),
+        () => cancel(),
+      );
+
+      expect(breaks).toEqual([false, false]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('tells the debugger the run is parked at its hit, once a judgement it gave up on ends', async () => {
+    // The condition ran in a process of its own; the developer's run never moved.
+    vi.useFakeTimers();
+    try {
+      const { session, gci } = stubSession([DECISION.Go], []);
+      let finish: (v: unknown) => void = () => {};
+      gci.GciTsPerformAsync = (() => new Promise((resolve) => (finish = resolve))) as never;
+      let cancel: () => void = () => {};
+      const ended = vi.fn<(r: StepResult) => void>();
+
+      await giveUp(
+        applyBreakpointRules(session, 7n, [spec()], {
+          onStart: (c) => (cancel = c),
+          onGivenUpSettled: ended,
+        }),
+        () => cancel(),
+      );
+
+      finish({ result: OOP_NIL, err: { number: 6003, message: 'a Break', context: 0n } });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(ended).toHaveBeenCalledWith(
+        expect.objectContaining({ completed: false, errorContext: 7n, errorNumber: 6005 }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("the debugger's Resume", () => {
+  it('says the run was stopped by Cancel when Cancel lands before the process has moved', async () => {
+    // The breakpoint wording would not hold: the process is still at its halt.
+    const { session, continues } = stubSession([DECISION.Stop], [hitsBreakpoint(8n)]);
+
+    const result = await resumeOnWorker(session, 7n, { onStart: (cancel) => cancel() });
+
+    expect(continues).toHaveLength(0);
+    expect(result).toEqual(
+      expect.objectContaining({
+        completed: false,
+        errorMessage: 'Stopped by Cancel.',
+        errorContext: 7n,
+      }),
+    );
   });
 });

@@ -37,6 +37,7 @@ import {
   toLocalGemPath,
   yieldToEventLoop,
 } from '../serverPlugin/installHelpers';
+import { explainGciError } from '../gciLibraryError';
 
 /**
  * Minimum GemStone version the Enhanced Inspector support is limited to.
@@ -470,7 +471,7 @@ export async function installEnhancedInspectorSupport(
       verified: false,
       filedIn,
       keptDifferent: [],
-      message: `Commit failed: ${err.message || `GCI error ${err.number}`}`,
+      message: `Commit failed: ${explainGciError(err) || `GCI error ${err.number}`}`,
     };
   }
 

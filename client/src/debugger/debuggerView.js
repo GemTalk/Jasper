@@ -400,7 +400,10 @@
         busyTimer = null;
       }
       showBusyOverlay(false);
-      if (busyCancel) busyCancel.textContent = 'Cancel'; // reset for the next op
+      if (busyCancel) {
+        busyCancel.textContent = 'Cancel'; // reset for the next op
+        busyCancel.disabled = false;
+      }
     }
     function applyBusy(on) {
       if (on) beginBusy();
@@ -414,9 +417,10 @@
     }
     if (busyCancel) {
       busyCancel.addEventListener('click', function () {
-        // Each click escalates host-side: first = soft break, second = hard break.
+        // One click: the host sends the break and stops waiting by itself.
         vscode.postMessage({ command: 'cancelOp' });
-        busyCancel.textContent = 'Cancelling… (click again to force)';
+        busyCancel.textContent = 'Cancelling…';
+        busyCancel.disabled = true;
       });
     }
     // Single send path: starts the busy span for server-bound requests, then posts.
@@ -942,8 +946,8 @@
       }
       // `flash`/`banner` are transient status the host posts DURING an op (e.g. the
       // "Break sent…" acknowledgement on Cancel) — they must NOT end the busy span,
-      // or the spinner + Cancel would vanish mid-op and the second Cancel click
-      // (hard break) would be unreachable. Every other message is a genuine reply,
+      // or the spinner would vanish while the op is still running. Every other
+      // message is a genuine reply,
       // so it ends the span the send path started.
       if (msg.command !== 'flash' && msg.command !== 'banner') endBusy();
       if (msg.command === 'init') {

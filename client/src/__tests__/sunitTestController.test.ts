@@ -950,17 +950,18 @@ describe('SunitTestController', () => {
       ctrl.dispose();
     });
 
-    it('reports a debug run refused because the session is busy as not run, and says why', async () => {
+    it('reports a debug run refused because the session is busy as not run', async () => {
       const debugExecutor = makeDebugExecutor();
-      debugExecutor.executeWithDebugger.mockRejectedValueOnce(new NbSessionBusyError());
+      debugExecutor.executeWithDebugger.mockRejectedValueOnce(
+        new NbSessionBusyError('Another run is still in progress on this session.'),
+      );
       const ctrl = new SunitTestController(makeSessionManager(true), debugExecutor);
 
       await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd'], 'debug');
 
       expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toBeUndefined();
-      expect(window.showWarningMessage).toHaveBeenCalledWith(
-        expect.stringMatching(/still finishing/),
-      );
+      // The refusal raises its own notice, from the runner.
+      expect(window.showWarningMessage).not.toHaveBeenCalled();
       ctrl.dispose();
     });
 
@@ -1028,7 +1029,7 @@ describe('SunitTestController', () => {
     });
 
     it('reports a cancelled debug run as skipped, not as a test error', async () => {
-      // Cancelling a debug run (a soft or hard break) is the user's decision,
+      // Cancelling a debug run is the user's decision,
       // not a test failure — it must leave no verdict, like a stopped run,
       // rather than storing an error and blaming the test.
       const debugExecutor = makeDebugExecutor({ raised: false, cancelled: true });
@@ -1420,30 +1421,42 @@ describe('SunitTestController', () => {
       ctrl.dispose();
     });
 
-    it('refuses a run of several tests once, with one warning', async () => {
+    it('refuses a run of several tests once, adding no warning of its own', async () => {
       vi.mocked(whenSessionFree).mockImplementationOnce(() => {
-        throw new NbSessionBusyError();
+        throw new NbSessionBusyError('Another run is still in progress on this session.');
       });
       const ctrl = new SunitTestController(makeSessionManager(true));
 
       await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd', 'testRemove']);
 
-      expect(window.showWarningMessage).toHaveBeenCalledTimes(1);
+      expect(window.showWarningMessage).not.toHaveBeenCalled();
       expect(sunit.runTestMethodNb).not.toHaveBeenCalled();
       ctrl.dispose();
     });
 
-    it('reports a run refused because the session is busy as not run, and says why', async () => {
+    it('reports a run refused because the session is busy as not run', async () => {
       // It never started: calling that the test erroring would blame the test.
+      vi.mocked(sunit.runTestMethodNb).mockRejectedValueOnce(
+        new NbSessionBusyError('Another run is still in progress on this session.'),
+      );
+      const ctrl = new SunitTestController(makeSessionManager(true));
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toBeUndefined();
+      // The refusal raises its own notice, from the runner.
+      expect(window.showWarningMessage).not.toHaveBeenCalled();
+      ctrl.dispose();
+    });
+
+    it('leaves the telling to the Force Stop notice when a stopped run holds the session', async () => {
       vi.mocked(sunit.runTestMethodNb).mockRejectedValueOnce(new NbSessionBusyError());
       const ctrl = new SunitTestController(makeSessionManager(true));
 
       await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
 
       expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toBeUndefined();
-      expect(window.showWarningMessage).toHaveBeenCalledWith(
-        expect.stringMatching(/still finishing/),
-      );
+      expect(window.showWarningMessage).not.toHaveBeenCalled();
       ctrl.dispose();
     });
 

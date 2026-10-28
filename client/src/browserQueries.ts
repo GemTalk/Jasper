@@ -1,7 +1,15 @@
 import { ActiveSession } from './sessionManager';
-import { OOP_ILLEGAL, OOP_NIL } from './gciConstants';
+import { GCI_ERR_OP_IN_PROGRESS, OOP_ILLEGAL, OOP_NIL } from './gciConstants';
+import { explainGciError, GciLibraryError, SESSION_BUSY_MESSAGE } from './gciLibraryError';
 import { logError } from './gciLog';
-import { runNbCall, NbRunOptions } from './nbRunner';
+import {
+  abandonedRunHolds,
+  isRunning,
+  runNbCall,
+  NbRunOptions,
+  sayRunInProgress,
+  sayStillRunning,
+} from './nbRunner';
 
 import { QueryExecutor } from './queries/types';
 
@@ -355,17 +363,48 @@ function resolveClassUtf8(session: ActiveSession): bigint {
 // single fixed-size buffer.
 export function executeFetchString(session: ActiveSession, code: string): string {
   try {
-    if (session.isBusy()) {
-      throw new Error(
-        'Session is busy with another operation. Please wait or use a different session.',
-      );
-    }
-    return session.executeAndFetchString(code);
+    // A call still in progress, a background clear say, would refuse this one.
+    if (!session.isBusy()) return session.executeAndFetchString(code);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    logError(session.id, msg);
-    throw new BrowserQueryError(msg);
+    if (!(e instanceof GciLibraryError && e.number === GCI_ERR_OP_IN_PROGRESS)) {
+      const msg = e instanceof Error ? e.message : String(e);
+      logError(session.id, msg);
+      throw new BrowserQueryError(msg);
+    }
   }
+  throw refusedAsBusy(session);
+}
+
+/** Set while {@link quietly} runs a query. */
+let quiet = false;
+
+/**
+ * Run `query`, refused without the busy notice if the session is busy: for the
+ * queries VS Code makes by itself (hover, completion, CodeLens), which would
+ * otherwise raise it every couple of seconds while a run goes on. Synchronous,
+ * so the setting can't carry over to anyone else's query.
+ */
+export function quietly<T>(query: () => T): T {
+  const was = quiet;
+  quiet = true;
+  try {
+    return query();
+  } finally {
+    quiet = was;
+  }
+}
+
+/**
+ * The error for a query a busy session refused, said in plain words, with the
+ * notice that lets the user stop what holds the session.
+ */
+function refusedAsBusy(session: ActiveSession): BrowserQueryError {
+  logError(session.id, SESSION_BUSY_MESSAGE);
+  if (!quiet) {
+    if (abandonedRunHolds(session)) sayStillRunning(session);
+    else if (isRunning(session)) sayRunInProgress(session);
+  }
+  return new BrowserQueryError(SESSION_BUSY_MESSAGE, GCI_ERR_OP_IN_PROGRESS);
 }
 
 // Non-blocking variant of executeFetchString for LONG-RUNNING queries (e.g. a
@@ -373,7 +412,7 @@ export function executeFetchString(session: ActiveSession, code: string): string
 // freeze the whole extension host for the duration; this one starts the
 // execution with GciTsNbExecute and polls via the shared nb runner, which keeps
 // VS Code responsive and, past ~2s, shows a cancellable progress notification
-// (soft break on first Cancel, hard break on second — see nbRunner). The result
+// (one Cancel stops it — see nbRunner). The result
 // must be a String, fetched verbatim (no printString quoting) for parity with
 // executeFetchString.
 export async function executeFetchStringNb(
@@ -382,8 +421,8 @@ export async function executeFetchStringNb(
   code: string,
   progressTitle?: string,
   suppressNotification = false,
-  // Handed a `cancel` fn once polling starts — soft break on the first call, hard
-  // on the second. Lets a caller drive the break from its own UI (the Testing
+  // Handed a `cancel` fn once polling starts, which stops the call the way the
+  // toast's Cancel does. Lets a caller drive the break from its own UI (the Testing
   // view's stop button, an Explorer row's ■) rather than only the ~2s toast.
   // See NbRunOptions.onStart for its second argument.
   onStart?: NbRunOptions['onStart'],
@@ -393,12 +432,7 @@ export async function executeFetchStringNb(
     // Every GCI call here, the busy check included, goes inside the start, which
     // runNbCall makes only once the session is free; see whenSessionFree.
     () => {
-      if (session.isBusy()) {
-        const msg =
-          'Session is busy with another operation. Please wait or use a different session.';
-        logError(session.id, msg);
-        throw new BrowserQueryError(msg);
-      }
+      if (session.isBusy()) throw refusedAsBusy(session);
       const oopClassUtf8 = resolveClassUtf8(session);
       return session.GciTsNbExecute(code, oopClassUtf8, OOP_ILLEGAL, OOP_NIL, 0, 0);
     },
@@ -440,11 +474,7 @@ export function executeFetchStringWithLimit(
   code: string,
   maxBytes: number,
 ): string {
-  if (session.isBusy()) {
-    const msg = 'Session is busy with another operation. Please wait or use a different session.';
-    logError(session.id, msg);
-    throw new BrowserQueryError(msg);
-  }
+  if (session.isBusy()) throw refusedAsBusy(session);
 
   const oopClassUtf8 = resolveClassUtf8(session);
 
@@ -457,8 +487,9 @@ export function executeFetchStringWithLimit(
     maxBytes,
   );
 
+  if (err.number === GCI_ERR_OP_IN_PROGRESS) throw refusedAsBusy(session);
   if (err.number !== 0) {
-    const msg = err.message || `GCI error ${err.number}`;
+    const msg = explainGciError(err) || `GCI error ${err.number}`;
     logError(session.id, msg);
     throw new BrowserQueryError(msg, err.number);
   }

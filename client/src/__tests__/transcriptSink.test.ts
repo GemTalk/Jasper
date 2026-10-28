@@ -60,7 +60,7 @@ function makeGci(overrides: Record<string, unknown> = {}) {
     executeAndFetchString: vi.fn(() => ''),
     GciTsNbResult: vi.fn(() => ({ result: 42n, err: { number: 0, context: 0n } })),
     GciTsContinueWithAsync: vi.fn(async () => ({ result: 42n, err: { number: 0, context: 0n } })),
-    GciTsClearStack: vi.fn(() => ({ success: true, err: { number: 0 } })),
+    GciTsClearStackAsync: vi.fn(() => ({ success: true, err: { number: 0 } })),
     ...overrides,
   };
 }
@@ -344,14 +344,14 @@ describe('transcriptSink', () => {
       expect(gci.GciTsContinueWithAsync).not.toHaveBeenCalled();
     });
 
-    describe('once the run has been hard-broken', () => {
+    describe('once the runner has given up on the run', () => {
       // The caller has already been handed NbCancelledError, so whatever the
       // break stopped is this loop's to clean up. A process stopped inside a
       // Transcript write holds the session's Transcript semaphore, and every
       // later write fails until it is cleared (measured on 3.6.2 and 3.7.5).
       it('clears the process the break stopped', async () => {
         const cancelled = new AbortController();
-        const brokenErr = { number: 6004, context: 0x4242n, message: 'hard break', args: [] };
+        const brokenErr = { number: 6003, context: 0x4242n, message: 'soft break', args: [] };
         const gci = makeGci({
           GciTsNbResult: vi.fn(() => ({ result: OOP_ILLEGAL, err: forwarderError() })),
           GciTsContinueWithAsync: vi.fn(async () => {
@@ -362,7 +362,7 @@ describe('transcriptSink', () => {
 
         await settleNbResult(makeSession(gci), vi.fn(), cancelled.signal);
 
-        expect(gci.GciTsClearStack).toHaveBeenCalledWith(expect.anything(), 0x4242n);
+        expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(expect.anything(), 0x4242n);
       });
 
       it('clears a suspended writer instead of resuming it', async () => {
@@ -383,7 +383,7 @@ describe('transcriptSink', () => {
         await settleNbResult(makeSession(gci), vi.fn(), cancelled.signal);
 
         expect(gci.GciTsContinueWithAsync).toHaveBeenCalledTimes(1);
-        expect(gci.GciTsClearStack).toHaveBeenCalledWith(expect.anything(), 0x888n);
+        expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(expect.anything(), 0x888n);
       });
 
       it('leaves a finished run alone', async () => {
@@ -398,7 +398,7 @@ describe('transcriptSink', () => {
 
         await settleNbResult(makeSession(gci), vi.fn(), cancelled.signal);
 
-        expect(gci.GciTsClearStack).not.toHaveBeenCalled();
+        expect(gci.GciTsClearStackAsync).not.toHaveBeenCalled();
       });
     });
   });

@@ -8,6 +8,7 @@ import * as queries from '../browserQueries';
 import type { ActiveSession } from '../sessionManager';
 import { useIntegrationTest } from './useIntegrationTest';
 import { testActiveSession } from './testActiveSession';
+import { SESSION_BUSY_MESSAGE } from '../gciLibraryError';
 
 /**
  * The System Browser's queries against a real stone. browserQueries.test.ts
@@ -499,7 +500,7 @@ describe('browser queries (integration)', () => {
 
       const query = () => queries.getDictionaryNames(transient);
 
-      expect(query).toThrow(/Session is busy/);
+      expect(query).toThrow(SESSION_BUSY_MESSAGE);
     });
 
     it('is answered again once the call finishes', async () => {

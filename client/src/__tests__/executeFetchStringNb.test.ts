@@ -4,6 +4,7 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 import { executeFetchStringNb, loadRowanProjectNb, BrowserQueryError } from '../browserQueries';
 import type { ActiveSession } from '../sessionManager';
+import { NbSessionBusyError } from '../nbRunner';
 import { fakeActiveSession, startNonBlockingCall } from './fakeActiveSession';
 
 // A fake session whose gci implements just the non-blocking execute path:
@@ -46,8 +47,9 @@ describe('executeFetchStringNb', () => {
     startNonBlockingCall(session);
     nbExecute.mockClear();
 
-    await expect(executeFetchStringNb(session, 'test', 'code')).rejects.toThrow(
-      /busy with another operation/,
+    // A call nothing is running any more: what a stopped run leaves behind.
+    await expect(executeFetchStringNb(session, 'test', 'code')).rejects.toBeInstanceOf(
+      NbSessionBusyError,
     );
     expect(nbExecute).not.toHaveBeenCalled();
   });
