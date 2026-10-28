@@ -3622,7 +3622,7 @@
         "command": "gemstone.displayIt",
         "key": "ctrl+k d",
         "mac": "cmd+k d",
-        "when": "editorTextFocus && gemstone.hasActiveSession && !gemstone.executing"
+        "when": "editorTextFocus && gemstone.hasActiveSession"
       },
       {
         "command": "gemstone.dismissDisplayResult",
@@ -3649,19 +3649,19 @@
         "command": "gemstone.executeIt",
         "key": "ctrl+k e",
         "mac": "cmd+k e",
-        "when": "editorTextFocus && gemstone.hasActiveSession && !gemstone.executing"
+        "when": "editorTextFocus && gemstone.hasActiveSession"
       },
       {
         "command": "gemstone.debugIt",
         "key": "ctrl+k r",
         "mac": "cmd+k r",
-        "when": "editorTextFocus && gemstone.hasActiveSession && !gemstone.executing"
+        "when": "editorTextFocus && gemstone.hasActiveSession"
       },
       {
         "command": "gemstone.inspectIt",
         "key": "ctrl+k i",
         "mac": "cmd+k i",
-        "when": "editorTextFocus && gemstone.hasActiveSession && !gemstone.executing"
+        "when": "editorTextFocus && gemstone.hasActiveSession"
       },
       {
         "command": "gemstone.openBrowser",

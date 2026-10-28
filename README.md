@@ -224,7 +224,7 @@ With an active session, execute Smalltalk code from any editor:
 
 By default, **Display It** shows its result as a non-destructive inline overlay — an annotation that is not part of the document, so the file is never modified. Hover the result for **Copy** and **Expand** actions; **Enter** inserts the full result into the document, **Backspace** or **Escape** dismisses it. Set `gemstone.displayItMode` to `"insert"` for the classic behavior of inserting the result as editable text.
 
-Long-running expressions show a progress notification with soft-break and hard-break options. The **GemStone Transcript** output channel captures transcript output from the session.
+Long-running expressions show a progress notification with a Cancel button. One press asks the gem to stop at a safe point; if the run is still going about 1.5 seconds later, Jasper stops waiting and frees the editor, and a notice says the stopped run is still going. Its **Force Stop** ends the run and keeps the session and its uncommitted changes; only code that catches every exception ignores it, and then Jasper offers to log the session out. Throwing a stopped run away runs its `ensure:` blocks, after Cancel or when you close the debugger on it; VS Code stays usable while they run, and one that hangs is handled like any run that ignores the stop: Force Stop, and if that can't end it, Log Out. The **GemStone Transcript** output channel captures transcript output from the session.
 
 ### GemStone Explorer
 
@@ -397,8 +397,11 @@ the thing it was set in goes away:
   frame and read the answer, one to resume), and a fourth when it logs. Over a
   slower link that grows with the latency, so a condition that skips tens of
   thousands of hits will be felt. Past a second and a half a cancellable progress
-  notification appears, and cancelling stops at whatever hit it has reached; a
+  notification appears (inside Execute It, Execute It's own notification stands
+  for it), and cancelling stops at whatever hit it has reached; a
   condition that runs slowly, or never finishes, can be cancelled the same way.
+  Code that ignores the stop is treated as anywhere else in Jasper: after about
+  1.5 seconds Jasper stops waiting and offers **Force Stop**.
   Your code is never rewritten or recompiled to make any of this work, and nothing
   is written to the repository. A breakpoint reached while skipping still stops if
   _it_ has no condition, and an error raised by your code while skipping opens the
@@ -519,7 +522,7 @@ The extension integrates with VS Code's native Test Explorer:
 - Run individual tests or entire test classes
 - Debug a test, or a whole class, under the GemStone debugger — a debug run omits SUnit's exception handler, so a failing test suspends on a live stack instead of being recorded and discarded
 - Pass/fail/error results with failure messages
-- Stop a long-running test: the Testing view's stop button, the ■ that replaces a row's ▶ in the Explorer while it runs, or the Cancel on the progress notification. First press asks the gem to stop at a safe point; a second interrupts it
+- Stop a long-running test: the Testing view's stop button, the ■ that replaces a row's ▶ in the Explorer while it runs, or the Cancel on the progress notification. One press asks the gem to stop at a safe point; a test that keeps going gets the same **Force Stop** notice as Execute It
 - Test items link to method source, and a run/status icon appears in the editor gutter beside an open test class or test method
 - Run from the GemStone Explorer too: a ▶ on a test class row (Classes or Hierarchy pane) or a test method row (Methods pane), each showing the outcome of its last run
 - Clicking a row in the Testing view opens the code without moving the Explorer; **Reveal in GemStone Explorer** — the ⊟ on the row, or its context menu — navigates the panes when you want it
@@ -539,6 +542,8 @@ Jasper registers notebook kernels for `.ipynb` files, in two languages: GemStone
 - Globals persist across cells (Jupyter REPL semantics): `x = 1` in one cell, `x + 2` in the next. Each notebook gets its own module scope within the session, so two open notebooks don't share variables.
 - **GemStone: Reset Grail Notebook Scope** (command palette) clears the active notebook's globals — the equivalent of restarting a kernel.
 - Without Grail in the stone, running a cell reports "Grail (GemStone-Python) not detected".
+
+In either language, a cell's own stop button stops it, the same way Cancel stops Execute It. The cell then says "Stopped.", and any cells queued after it don't run. A cell that keeps going gets the same **Force Stop** notice as the rest of Jasper, and VS Code stays usable while any cell runs.
 
 ### Class Sync (File Export)
 

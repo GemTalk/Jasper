@@ -32,6 +32,7 @@ vi.mock('../nbRunner', async (orig) => {
     ...actual,
     pollNbToCompletion: vi.fn(actual.pollNbToCompletion),
     whenSessionFree: vi.fn(actual.whenSessionFree),
+    sayRunInProgress: vi.fn(),
   };
 });
 vi.mock('../basicInspector/basicInspector', () => ({
@@ -49,6 +50,7 @@ import {
   whenSessionFree,
   forgetSession,
   NbSessionBusyError,
+  sayRunInProgress,
   type NbRunOptions,
 } from '../nbRunner';
 import { DebuggerPanel } from '../debugger/debuggerPanel';
@@ -116,7 +118,7 @@ function makeGci(overrides: Record<string, unknown> = {}) {
           '(gci.executeAndFetchString as Mock).mockReturnValue(...) before triggering Display It.',
       );
     }),
-    GciTsClearStack: vi.fn(),
+    GciTsClearStackAsync: vi.fn(),
     GciTsObjExists: vi.fn(() => false),
     GciTsFetchClass: vi.fn(() => ({ result: 0n, err: { number: 0 } })),
     ...overrides,
@@ -499,10 +501,10 @@ describe('CodeExecutor', () => {
       },
     );
 
-    // A stopped run the gem is still finishing makes GemStone refuse the start, and
-    // its message names a GCI condition, not anything the user did.
+    // A run still on the session makes GemStone refuse the start, and its message
+    // names a GCI condition, not anything the user did.
     it.each(['executeIt', 'displayIt', 'inspectIt'] as const)(
-      '%s says a stopped run is still finishing, and starts nothing',
+      '%s starts nothing while a stopped run holds the session, leaving the telling to its Force Stop notice',
       async (command) => {
         setActiveEditor(makeEditor('3 + 4'));
         vi.mocked(whenSessionFree).mockImplementationOnce(() => {
@@ -513,9 +515,22 @@ describe('CodeExecutor', () => {
 
         expect(gci.GciTsNbExecute).not.toHaveBeenCalled();
         expect(gci.executeAndFetchString).not.toHaveBeenCalled();
-        expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
-          expect.stringMatching(/still finishing/),
-        );
+        expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(['executeIt', 'displayIt', 'inspectIt'] as const)(
+      '%s starts nothing while another run holds the session, leaving the telling to its notice',
+      async (command) => {
+        setActiveEditor(makeEditor('3 + 4'));
+        vi.mocked(whenSessionFree).mockImplementationOnce(() => {
+          throw new NbSessionBusyError('Another run is still in progress on this session.');
+        });
+
+        await executor[command]();
+
+        expect(gci.GciTsNbExecute).not.toHaveBeenCalled();
+        expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
       },
     );
 
@@ -560,12 +575,12 @@ describe('CodeExecutor', () => {
       expect(gci.GciTsNbExecute).not.toHaveBeenCalled();
     });
 
-    // After a hard break the `finally`'s end is refused while the call is
+    // After the runner stops waiting, the `finally`'s end is refused while the call is
     // still being collected; the runner calls this hook once it has been. When
     // it runs is nbRunner.test.ts's to pin; here, that each caller hands one
     // over and that it ends the mode.
     it.each(['executeIt', 'displayIt', 'inspectIt'] as const)(
-      '%s ends clientForwarder mode once a hard-broken call is collected',
+      '%s ends clientForwarder mode once a stopped call is collected',
       async (command) => {
         setActiveEditor(makeEditor('3 + 4'));
         await executor[command]();
@@ -781,7 +796,7 @@ describe('CodeExecutor', () => {
 
       await executor.debugIt();
 
-      expect(gci.GciTsClearStack).not.toHaveBeenCalled();
+      expect(gci.GciTsClearStackAsync).not.toHaveBeenCalled();
     });
 
     it('clears the stack if the GemStone Debugger panel fails to open', async () => {
@@ -793,7 +808,7 @@ describe('CodeExecutor', () => {
       await executor.debugIt();
 
       // Nothing owns the process when the panel throws, so it must be released.
-      expect(gci.GciTsClearStack).toHaveBeenCalledWith(handle, 0x123n);
+      expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(handle, 0x123n);
     });
   });
 
@@ -1245,6 +1260,21 @@ describe('CodeExecutor', () => {
   // ── Execution busy-state indicators ───────────────────────
 
   describe('execution busy-state indicators', () => {
+    // The keys stay bound while a run goes on, so a second press reaches this
+    // rather than whatever VS Code binds to the same keys.
+    it.each(['executeIt', 'displayIt', 'inspectIt'] as const)(
+      '%s on a session still running one offers to stop that run, and starts nothing',
+      async (command) => {
+        setActiveEditor(makeEditor('3 + 4'));
+        (executor as unknown as { executing: Set<number> }).executing.add(session.id);
+
+        await executor[command]();
+
+        expect(gci.GciTsNbExecute).not.toHaveBeenCalled();
+        expect(sayRunInProgress).toHaveBeenCalledWith(session);
+      },
+    );
+
     it('sets gemstone.executing context to true on start and false on finish', async () => {
       const editor = makeEditor('3 + 4');
       setActiveEditor(editor);
@@ -1612,7 +1642,32 @@ describe('CodeExecutor', () => {
       expect(vscode.debug.startDebugging).not.toHaveBeenCalled();
       expect(revealedView()).toBe(false);
       // The stalled GsProcess must be released so it does not linger.
-      expect(gci.GciTsClearStack).toHaveBeenCalledWith(handle, 0x123n);
+      expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(handle, 0x123n);
+    });
+
+    it('ends Transcript forwarding before clearing the dismissed run, and shows what its clean-up wrote', async () => {
+      // On 3.7.5 a clean-up that writes to the Transcript while forwarding is on
+      // stops at that write.
+      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue(undefined);
+      setup();
+      let finish: (v: unknown) => void = () => {};
+      const order: string[] = [];
+      (gci.GciTsClearStackAsync as Mock).mockImplementationOnce(() => {
+        order.push('clear');
+        return new Promise((resolve) => (finish = resolve));
+      });
+      (gci.executeAndFetchString as Mock).mockImplementation((_h: unknown, code: string) => {
+        if (code.includes('jasperEndClientForwarderMode')) order.push('end');
+        if (code.includes('jasperDrain')) order.push('drain');
+        return '';
+      });
+
+      await executor.executeIt();
+      expect(order.slice(order.indexOf('clear') - 1)).toEqual(['end', 'clear']);
+
+      finish({ success: true, err: { number: 0 } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(order.at(-1)).toBe('drain');
     });
 
     it('opens the GemStone Debugger panel (and not the DAP debugger) when the user clicks Debug', async () => {
@@ -1633,7 +1688,7 @@ describe('CodeExecutor', () => {
       // panel now owns the suspended process.
       expect(vscode.debug.startDebugging).not.toHaveBeenCalled();
       expect(revealedView()).toBe(false);
-      expect(gci.GciTsClearStack).not.toHaveBeenCalled();
+      expect(gci.GciTsClearStackAsync).not.toHaveBeenCalled();
     });
 
     it('passes a completion callback to the GemStone Debugger for a halted Display It', async () => {
@@ -1777,7 +1832,7 @@ describe('CodeExecutor', () => {
       expect(sinkCalls[1]).toContain('jasperEndClientForwarderMode');
     });
 
-    it('ends clientForwarder mode once a hard-broken call is collected', async () => {
+    it('ends clientForwarder mode once a stopped call is collected', async () => {
       const gci = makeGci();
       const session = makeSession(gci);
       const executor = executorWith(makeSessionManager(session), NO_CONDITIONS);
@@ -2025,7 +2080,7 @@ describe('CodeExecutor', () => {
         cancelled: true,
       });
       expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
-      expect(mockOf(gci, 'GciTsClearStack')).toHaveBeenCalledWith(expect.anything(), 1234n);
+      expect(mockOf(gci, 'GciTsClearStackAsync')).toHaveBeenCalledWith(expect.anything(), 1234n);
     });
 
     it('reports a cancel that stopped the judgement as a cancel', async () => {
@@ -2042,11 +2097,14 @@ describe('CodeExecutor', () => {
         cancelled: true,
       });
       // The decider's own process, and then the run's: no debugger owns either.
-      expect(mockOf(gci, 'GciTsClearStack')).toHaveBeenCalledWith(expect.anything(), 601n);
-      expect(mockOf(gci, 'GciTsClearStack')).toHaveBeenCalledWith(expect.anything(), PROCESS_OOP);
+      expect(mockOf(gci, 'GciTsClearStackAsync')).toHaveBeenCalledWith(expect.anything(), 601n);
+      expect(mockOf(gci, 'GciTsClearStackAsync')).toHaveBeenCalledWith(
+        expect.anything(),
+        PROCESS_OOP,
+      );
     });
 
-    it('lets a hard-break cancel through, without a warning', async () => {
+    it('lets a cancel the runner stopped waiting for through, without a warning', async () => {
       const gci = haltingGci([DECISION.Go], []);
       mockOf(gci, 'GciTsContinueWithAsync').mockRejectedValue(new NbCancelledError());
       const session = makeSession(gci);

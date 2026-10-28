@@ -5,9 +5,12 @@ import {
   OOP_ILLEGAL,
   GCI_PERFORM_FLAG_ENABLE_DEBUG,
   GCI_PERFORM_FLAG_INTERPRETED,
+  toBigInt,
 } from '../gciConstants';
+import type { GciError } from '../gciLibrary';
 import { logInfo, logError } from '../gciLog';
-import { runNbCall, NbRunOptions } from '../nbRunner';
+import { explainGciError } from '../gciLibraryError';
+import { clearInBackground, runNbCall, NbRunOptions } from '../nbRunner';
 import {
   DUMP_PAYLOAD_TEMPS,
   dumpPayloadPrelude,
@@ -28,7 +31,7 @@ function gciPerform(
 ): bigint {
   const { result, err } = session.GciTsPerform(receiver, OOP_ILLEGAL, selector, args, 0, 0);
   if (err.number !== 0) {
-    throw new Error(err.message || `GCI error ${err.number} in ${selector}`);
+    throw new Error(explainGciError(err) || `GCI error ${err.number} in ${selector}`);
   }
   return result;
 }
@@ -41,7 +44,7 @@ function gciPerformFetchString(
 ): string {
   const { data, err } = session.GciTsPerformFetchBytes(receiver, selector, args, MAX_RESULT);
   if (err.number !== 0) {
-    throw new Error(err.message || `GCI error ${err.number} in ${selector}`);
+    throw new Error(explainGciError(err) || `GCI error ${err.number} in ${selector}`);
   }
   return data;
 }
@@ -53,7 +56,7 @@ function oopToInt(session: ActiveSession, oop: bigint): number {
 function intToOop(session: ActiveSession, n: number): bigint {
   const { result, err } = session.GciTsI64ToOop(BigInt(n));
   if (err.number !== 0) {
-    throw new Error(err.message || `GCI error ${err.number} in I64ToOop`);
+    throw new Error(explainGciError(err) || `GCI error ${err.number} in I64ToOop`);
   }
   return result;
 }
@@ -1092,6 +1095,17 @@ export interface StepResult {
   errorNumber?: number;
 }
 
+/** A GCI call's answer as a {@link StepResult}, an error said in plain words. */
+export function stepResultOf({ result, err }: { result: bigint; err: GciError }): StepResult {
+  if (err.number === 0) return { completed: true, resultOop: result };
+  return {
+    completed: false,
+    errorMessage: explainGciError(err) || `GemStone error ${err.number}`,
+    errorContext: toBigInt(err.context ?? 0n),
+    errorNumber: err.number,
+  };
+}
+
 // ── Interpreted execution for stepping ───────────────────────────────────────
 //
 // GemStone cannot single-step or set breakpoints in NATIVE code (error 6014):
@@ -1126,16 +1140,8 @@ function performStep(
     STEP_FLAGS,
     0,
   );
-  if (err.number !== 0) {
-    return {
-      completed: false,
-      errorMessage: err.message || `GemStone error ${err.number}`,
-      errorContext: err.context,
-      errorNumber: err.number,
-    };
-  }
   // gciStep…FromLevel: returns the completion result when the process finishes.
-  return { completed: true, resultOop: result };
+  return stepResultOf({ result, err });
 }
 
 export function stepOver(session: ActiveSession, gsProcess: bigint, level: number): StepResult {
@@ -1191,18 +1197,9 @@ function performStepNb(
         0,
       ),
     () => {
-      const { result, err } = session.GciTsNbResult();
-      if (err.number !== 0) {
-        return {
-          completed: false,
-          errorMessage: err.message || `GemStone error ${err.number}`,
-          errorContext: err.context,
-          errorNumber: err.number,
-        };
-      }
-      return { completed: true, resultOop: result };
+      return stepResultOf(session.GciTsNbResult());
     },
-    // No `disposableProcess`: a hard break here stops the process the debugger
+    // No `disposableProcess`: a break here stops the process the debugger
     // is showing, and clearing it would unwind the stack the panel still offers
     // to step. The step's caller resumes or terminates it instead.
     opts,
@@ -1270,28 +1267,21 @@ export function continueExecution(session: ActiveSession, gsProcess: bigint): St
   // its TOS with nil corrupts the frame, so continuing it never returns (the gem
   // hangs). OOP_ILLEGAL handles both cases correctly.
   const { result, err } = session.GciTsContinueWith(gsProcess, OOP_ILLEGAL, null, STEP_FLAGS);
-  if (err.number !== 0) {
-    return {
-      completed: false,
-      errorMessage: err.message || `GemStone error ${err.number}`,
-      errorContext: err.context,
-      errorNumber: err.number,
-    };
-  }
   // On normal completion GciTsContinueWith returns the process's result oop.
-  return { completed: true, resultOop: result };
+  return stepResultOf({ result, err });
 }
 
 /**
- * Clears the stack of a suspended process (aborts it).
+ * Clears the stack of a suspended process (aborts it), in the background: see
+ * {@link clearInBackground}, which `then` is handed to.
  */
-export function clearStack(session: ActiveSession, gsProcess: bigint): void {
+export function clearStack(
+  session: ActiveSession,
+  gsProcess: bigint,
+  then?: () => void,
+): Promise<void> {
   logInfo(`[Session ${session.id}] Debug: clearStack`);
-  try {
-    session.GciTsClearStack(gsProcess);
-  } catch {
-    // Ignore — process may already be gone
-  }
+  return clearInBackground(session, gsProcess, then);
 }
 
 /**
@@ -1332,7 +1322,9 @@ export async function trimStackToLevelNb(
     () => {
       const { err } = session.GciTsNbResult();
       if (err.number !== 0) {
-        throw new Error(err.message || `GemStone error ${err.number} in trimStackToLevel:`);
+        throw new Error(
+          explainGciError(err) || `GemStone error ${err.number} in trimStackToLevel:`,
+        );
       }
     },
     // No `disposableProcess`, for the reason in performStepNb: the trim runs in
@@ -1445,7 +1437,7 @@ export async function evaluateInFrameNb(
       if (err.number !== 0) {
         throw new Error(
           withSelfUnavailableNote(
-            err.message || `GCI error ${err.number} in ${selector}`,
+            explainGciError(err) || `GCI error ${err.number} in ${selector}`,
             selfIsUnavailable,
           ),
         );
@@ -1704,7 +1696,7 @@ export function evaluateWithReceiverToOop(
 ): bigint {
   const { result: exprOop, err } = session.GciTsNewString(expression);
   if (err.number !== 0) {
-    throw new Error(err.message || 'Cannot create expression string');
+    throw new Error(explainGciError(err) || 'Cannot create expression string');
   }
   return gciPerform(session, exprOop, 'evaluateInContext:symbolList:', [
     receiverOop,
@@ -1771,7 +1763,7 @@ export function saveObjs(session: ActiveSession, oops: bigint[]): void {
   if (oops.length === 0) return;
   const { success, err } = session.GciTsSaveObjs(oops);
   if (!success || err.number !== 0) {
-    throw new Error(err.message || 'GciTsSaveObjs failed');
+    throw new Error(explainGciError(err) || 'GciTsSaveObjs failed');
   }
 }
 
@@ -1784,7 +1776,7 @@ export function releaseObjs(session: ActiveSession, oops: bigint[]): void {
   if (oops.length === 0) return;
   const { success, err } = session.GciTsReleaseObjs(oops);
   if (!success || err.number !== 0) {
-    throw new Error(err.message || 'GciTsReleaseObjs failed');
+    throw new Error(explainGciError(err) || 'GciTsReleaseObjs failed');
   }
 }
 

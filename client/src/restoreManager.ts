@@ -112,6 +112,8 @@ export function preRestoreExtentName(stoneName: string): string {
 // Returns true when the full-logging 4046 auto-logout fired (a commitRestore step
 // is still needed); false when the stone returned normally (partial-logging, no
 // commit needed). Re-throws any genuine failure.
+// Offers no Cancel, deliberately: the GCI manual says a hard break during
+// restoreFromBackup: ends the whole session, not just the restore.
 async function runRestoreCall(session: RestoreSession, backupFile: string): Promise<boolean> {
   try {
     await session.run('restore: restoreFromBackup', restore.restoreFromBackupCode(backupFile));

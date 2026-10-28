@@ -7,6 +7,7 @@ import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL, GS_ERR_HALT } from '../gciConstan
 import { pollNbResultReady, runNbCall } from '../nbRunner';
 import { testActiveSession } from './testActiveSession';
 import { useIntegrationTest } from './useIntegrationTest';
+import { endGemAfterTest, loginSerialOf, stillOnStone } from './leftoverGem';
 
 /**
  * Each call below would hand a freed native session to the GCI library if it
@@ -59,25 +60,18 @@ describe('a logged-out session (integration)', () => {
     expect(() => loggedOut.executeAndFetchString('3 + 4')).toThrow(loggedOutError);
   });
 
-  it('refuses calls once a logout fails on a gem the stone already stopped', async () => {
+  it('refuses calls once a gem the stone already stopped is logged out', async () => {
     const stopped = transientSession();
     const id = stopped.executeAndFetchString('System session printString');
+    const serial = loginSerialOf(stopped);
     session.executeAndFetchString(`System stopSession: ${id}. 'ok'`);
     // The stone deregisters the stopped gem asynchronously, and a loaded machine
     // can take past waitFor's default second. 4s stays inside the test's own 5s.
-    await vi.waitFor(
-      () =>
-        expect(
-          session.executeAndFetchString(`(System currentSessions includes: ${id}) printString`),
-        ).toBe('false'),
-      { timeout: 4_000 },
-    );
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    onTestFinished(() => warn.mockRestore());
-
+    await vi.waitFor(() => expect(stillOnStone(session, serial)).toBe(false), { timeout: 4_000 });
+    // Succeeds, since it doesn't wait for the gem; the session must still refuse
+    // every call afterwards.
     stopped.logout();
 
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('GciTsLogout failed'));
     expect(() => stopped.GciTsFetchSize(1n)).toThrow(loggedOutError);
   });
 
@@ -129,6 +123,66 @@ describe('a logged-out session (integration)', () => {
 
     await expect(runningCall).rejects.toThrow(loggedOutError);
   });
+});
+
+describe('logging out never waits for the gem (integration)', () => {
+  let session: ActiveSession;
+
+  useIntegrationTest((testContext) => {
+    session = testActiveSession(testContext.gciLibrary, testContext.session);
+  });
+
+  /** Polls until `serial` is off the stone, or fails after `ms`; never a hung test. */
+  async function expectOffTheStone(serial: string, ms = 10_000): Promise<void> {
+    const deadline = Date.now() + ms;
+    while (stillOnStone(session, serial) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    expect(stillOnStone(session, serial)).toBe(false);
+  }
+
+  function transientWithSerial(): { transient: ActiveSession; serial: string } {
+    const { session: transient, err } = session.transientLogin(session.login);
+    if (!transient) throw new Error(`Transient login failed: ${err.message}`);
+    const serial = loginSerialOf(transient);
+    // Ends a gem the test leaves behind, so a failure can't strand it.
+    endGemAfterTest(() => session, transient);
+    return { transient, serial };
+  }
+
+  it('returns at once while a run that ignores stops is going, and the gem leaves', async () => {
+    const { transient, serial } = transientWithSerial();
+    const runningCall = runNbCall(
+      transient,
+      () =>
+        transient.GciTsNbExecute(
+          '[[true] whileTrue: [nil]] on: Break do: [:e | e resume]',
+          OOP_CLASS_UTF8,
+          OOP_ILLEGAL,
+          OOP_NIL,
+          0,
+          0,
+        ),
+      () => transient.GciTsNbResult(),
+      { suppressNotification: true },
+    );
+    runningCall.catch(() => {});
+
+    const startedAt = Date.now();
+    expect(transient.logout()).toBe(true);
+    expect(Date.now() - startedAt).toBeLessThan(1000);
+
+    await expect(runningCall).rejects.toThrow('The GemStone session is logged out.');
+    await expectOffTheStone(serial);
+  }, 20_000);
+
+  it('logs out an idle session, and the gem leaves', async () => {
+    const { transient, serial } = transientWithSerial();
+
+    expect(transient.logout()).toBe(true);
+
+    await expectOffTheStone(serial);
+  }, 20_000);
 });
 
 describe('whether a session is busy (integration)', () => {

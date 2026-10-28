@@ -19,7 +19,8 @@ import { OOP_NIL } from './gciConstants';
  * (Execute/Display It, via `pollNbToCompletion`) and the debugger's step/trim
  * (via `runNbCall`) so the cancel/break/backoff/progress behaviour can't drift
  * between the two. It does NOT cover Resume: GemStone 3.7.x has no
- * GciTsNbContinue, so a non-blocking Resume needs a worker thread (tracked).
+ * GciTsNbContinue, so the debugger's Resume runs on a worker thread instead
+ * (`resumeOnWorker` in debugger/conditionalBreakpoints).
  */
 
 // Poll cadence: start tight (steps usually finish in a few ms), then back off so
@@ -30,7 +31,10 @@ const MAX_INTERVAL = 500;
 // fast step never flashes a notification.
 const PROGRESS_THRESHOLD_MS = 2000;
 
-/** Thrown when the user cancels (hard-breaks) a non-blocking GemStone call. */
+/**
+ * Thrown when the user stopped a non-blocking GemStone call and the runner gave up
+ * waiting for it. The gem may still be finishing it; see {@link STOP_WAITING_AFTER_MS}.
+ */
 export class NbCancelledError extends Error {
   constructor(message = 'GemStone operation cancelled') {
     super(message);
@@ -47,7 +51,7 @@ export class NbCancelledError extends Error {
 export class NbSessionBusyError extends Error {
   constructor(
     message = 'The stopped run is still finishing on the server, so this session cannot start ' +
-      'another one yet. Try again in a moment, or log out to abandon it.',
+      'another one yet. Try again in a moment, or use Force Stop.',
   ) {
     super(message);
     this.name = 'NbSessionBusyError';
@@ -90,11 +94,12 @@ export interface NbRunOptions {
    */
   suppressNotification?: boolean;
   /**
-   * Called once when polling begins, handed a `cancel` fn. Invoking it requests
-   * a break — soft on the first call, hard on the second — exactly the escalation
-   * the progress notification's Cancel does. Lets a caller drive cancellation
-   * from its own UI (e.g. the debugger's in-panel Cancel button) instead of only
-   * the notification toast. The fn is a no-op once the call has settled.
+   * Called once when polling begins, handed a `cancel` fn. Invoking it stops the
+   * call exactly as the progress notification's Cancel does: a soft break, and the
+   * runner stops waiting if the call is still going (see
+   * {@link STOP_WAITING_AFTER_MS}). Lets a caller drive cancellation from its own UI
+   * (e.g. the debugger's in-panel Cancel button) instead of only the notification
+   * toast. The fn is a no-op once the call has settled.
    *
    * Also handed `stopRequested`, which answers whether a stop has been asked for
    * on this call by anyone, the notification's Cancel included: a caller whose
@@ -115,31 +120,127 @@ export interface NbRunOptions {
    */
   disposableProcess?: boolean;
   /**
-   * Called once a hard-broken call has been collected and the session is idle
-   * again, before any call waiting on the session starts. Execute It and
-   * notebook cells end clientForwarder mode here: their own `finally` runs
-   * while the call is still being collected, when GemStone refuses it, and a
-   * hard break does not always stop the process the mode belongs to — it stops
-   * whichever process was running, which may be a fork (see transcriptSink.ts).
-   * Not called if collection gives up. Anything it throws is logged.
+   * Called once a call the runner stopped waiting for has been collected and the
+   * session is idle again, before any call waiting on the session starts, and
+   * before a disposable process is cleared. Execute It and notebook cells end
+   * clientForwarder mode here: their own `finally` runs while the call is still
+   * being collected, when GemStone refuses it (see transcriptSink.ts), and on
+   * 3.7.5 a clean-up that writes to the Transcript while the mode is on stops at
+   * that write. Not called if collection gives up. Anything it throws is logged.
    */
   onAbandonedCollected?: () => void;
 }
 
 /**
- * The least time that may pass between a soft break and the hard break that
- * follows it. Sending both back-to-back crashes the client process outright — a
- * native fault in the GCI library, not an error that can be caught — so a second
- * cancel arriving too soon is deferred rather than obeyed. Found by an
- * integration test that pressed both at once and took the worker down with it.
+ * How long a soft break gets before the runner stops waiting for the call, so one
+ * press of any stop control gives the user back the editor. A gem answers a soft
+ * break within ~20ms unless the code it runs resumes the Break, or it is busy in
+ * an operation that answers breaks only when it ends (`markForCollection`, say);
+ * the call is then collected in the background, and the session says it is still
+ * finishing.
  *
- * Exported so the tests wait out the real gap instead of a magic number that has
- * to be remembered if this one ever changes.
+ * Never a hard break. Sent after a soft break, a hard break arrives as another
+ * soft one, so it stops nothing the soft break didn't; and where it does land as a
+ * hard break, no handler can catch it, which skips the code's own cleanup
+ * (measured on 3.6.2 and 3.7.5).
+ *
+ * The soft break is sent again as the runner stops waiting, and a few times more
+ * while the call is collected in the background: one that reaches the gem before
+ * it has started the call is lost (see {@link resendSoftBreak}).
+ *
+ * Never earlier than {@link EARLIEST_STOP_WAITING_MS} into the call either: a break
+ * sent in a call's first ~2s does not land until ~2s in, so measuring only from
+ * the soft break would give up before it had a chance.
+ *
+ * Exported so the tests step by them instead of repeating them.
  */
-export const MIN_HARD_BREAK_GAP_MS = 300;
+export const STOP_WAITING_AFTER_MS = 1500;
+export const EARLIEST_STOP_WAITING_MS = 2500;
 
 /**
- * How long the next call waits for a hard-broken call's result to be collected,
+ * How long after a stop's soft break to stop waiting for a call that began at
+ * `startedAt` (a `performance.now()`, not `Date.now()`: this asks how much time
+ * has passed, which the wall clock can't answer once anything moves it).
+ */
+export function stopWaitingDelay(startedAt: number): number {
+  return Math.max(
+    STOP_WAITING_AFTER_MS,
+    EARLIEST_STOP_WAITING_MS - (performance.now() - startedAt),
+  );
+}
+
+/**
+ * How long the "still running" notice waits after Jasper stops waiting: a gem
+ * can answer the stop a moment later, as after a double-click on Cancel.
+ */
+export const NOTICE_GRACE_MS = 500;
+
+/** {@link sayStillRunning}, unless the stopped run lets go of the session within {@link NOTICE_GRACE_MS}. */
+export function sayStillRunningUnlessItEnds(session: ActiveSession): void {
+  setTimeout(() => {
+    if (stoppedRunHolds(session)) sayStillRunning(session);
+  }, NOTICE_GRACE_MS);
+}
+
+let stillRunningHandler: ((session: ActiveSession) => void) | undefined;
+let runInProgressHandler: ((session: ActiveSession) => void) | undefined;
+let stoppedRunCollectedHandler: ((session: ActiveSession) => void) | undefined;
+
+/**
+ * Say what to do when a call the user stopped keeps the session busy: when the
+ * runner stops waiting for it, and each time it refuses a new call. Not called for
+ * {@link stopCallsOn}'s stops: their caller is already logging out.
+ */
+export function setStillRunningHandler(handler: typeof stillRunningHandler): void {
+  stillRunningHandler = handler;
+}
+
+/** Say what to do when a run nobody has stopped refuses a new call on its session. */
+export function setRunInProgressHandler(handler: typeof runInProgressHandler): void {
+  runInProgressHandler = handler;
+}
+
+/** Tell the user, through the {@link setRunInProgressHandler} handler, that a run holds the session. */
+export function sayRunInProgress(session: ActiveSession): void {
+  try {
+    runInProgressHandler?.(session);
+  } catch (e) {
+    logInfo(
+      `[Session ${session.id}] Could not say a run is in progress: ` +
+        (e instanceof Error ? e.message : String(e)),
+    );
+  }
+}
+
+/**
+ * Stop the run on `session` as its own Cancel would. Answers false when there is
+ * no run being polled to stop.
+ */
+export function cancelRunOn(session: ActiveSession): boolean {
+  const running = live.get(session.id);
+  running?.cancel();
+  return running !== undefined;
+}
+
+/** Say what to do once a call the runner stopped waiting for is collected. */
+export function setStoppedRunCollectedHandler(handler: typeof stoppedRunCollectedHandler): void {
+  stoppedRunCollectedHandler = handler;
+}
+
+/** Tell the user, through the {@link setStillRunningHandler} handler, that a stopped run holds the session. */
+export function sayStillRunning(session: ActiveSession): void {
+  try {
+    stillRunningHandler?.(session);
+  } catch (e) {
+    logInfo(
+      `[Session ${session.id}] Could not say the stopped run is still running: ` +
+        (e instanceof Error ? e.message : String(e)),
+    );
+  }
+}
+
+/**
+ * How long the next call waits for a stopped call's result to be collected,
  * and how often it is polled meanwhile: 2s, which a gem that stops at once
  * answers well within.
  */
@@ -168,6 +269,13 @@ export const LATE_COLLECT_LIMIT_MS = 5 * 60_000;
 const COLLECT_FAILURES_TO_GIVE_UP = 3;
 
 /**
+ * While a stopped call is collected in the background, its soft break is sent
+ * again every this many polls (2s), at most {@link LATE_BREAKS} times.
+ */
+const LATE_BREAK_EVERY_TICKS = 4;
+const LATE_BREAKS = 5;
+
+/**
  * Sessions still busy with a call we gave up on: its result is still being
  * collected ({@link drainAbandonedCall}), or its `onReady` is still resuming it
  * on a worker thread ({@link awaitAbandonedRead}). The next call on that
@@ -183,6 +291,14 @@ const COLLECT_FAILURES_TO_GIVE_UP = 3;
  * logged-in session alone: transient logins get ids of their own too.
  */
 const draining = new Map<number, Promise<void>>();
+
+/**
+ * How many times each session id has been forgotten at a logout, so work begun
+ * before one can tell. Not `draining`: a clear takes that over from a drain
+ * while the drain still collects.
+ */
+const logouts = new Map<number, number>();
+const logoutsOf = (sessionId: number): number => logouts.get(sessionId) ?? 0;
 
 /**
  * Sessions whose stopped call outlived the drain and is not collected yet, keyed
@@ -201,39 +317,52 @@ type CollectState = 'collected' | 'pending' | 'failed' | 'gone';
  * while yet, through a tearDown or an ensure: block. `stop` sends the call the
  * escalation that stops it, answering the call's own promise.
  */
-const live = new Map<number, { stopRequested: () => boolean; stop: () => Promise<unknown> }>();
+const live = new Map<number, TrackedRun>();
 
 /**
  * Stop the call in flight on `session`, if any, and wait until the session is
  * free.
  *
- * The call gets the same soft-then-hard break its Cancel would send, and a
- * call abandoned by the hard break is then waited out the way the next call on
- * the session waits for it. Both waits are bounded, so this always resolves; a
- * session still busy past them refuses its next call cleanly rather than
- * crashing.
+ * The call gets the soft break its Cancel sends, and the runner stops waiting
+ * for it at once; what is left of it is then waited out for at most
+ * {@link STOP_CALLS_WAIT_MS}, so a logout behind clean-up that ignores the stop
+ * moves on to Force Stop and ending the gem instead of sitting there. A session
+ * still busy past that refuses its next call cleanly rather than crashing.
  *
  * A call stopped here rejects with `NbCancelledError`, however it ended. The
- * gem usually answers the soft break before the hard one goes out, and that
- * answer is GemStone's Break error with a live context, which a caller would
- * offer to debug on a session that is about to go.
+ * gem's own answer to the soft break is a Break error with a live context,
+ * which a caller would offer to debug on a session that is about to go.
  */
 export async function stopCallsOn(session: ActiveSession): Promise<void> {
   await live
     .get(session.id)
     ?.stop()
     .catch(() => {});
-  await draining.get(session.id);
+  const holding = draining.get(session.id);
+  if (holding) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      holding,
+      new Promise<void>((resolve) => (timer = setTimeout(resolve, STOP_CALLS_WAIT_MS))),
+    ]);
+    clearTimeout(timer);
+  }
   uncollected.get(session.id)?.collect();
 }
+
+/**
+ * How long {@link stopCallsOn} waits for a stopped call to let go of the session:
+ * the drain's own budget, rather than the 30s a call waits for one that ignores
+ * the stop.
+ */
+export const STOP_CALLS_WAIT_MS = 2000;
 
 /**
  * Collect and discard the result of a call we gave up on, so the session goes
  * back to idle.
  *
- * A hard break stops the gem but does not, by itself, end the GCI call: until
- * something reads its result the session reports a call in progress and refuses
- * the next one. The result itself is thrown away. The promise settles once the
+ * Giving up on a call does not end it: until something reads its result the
+ * session reports a call in progress and refuses the next one. The result itself is thrown away. The promise settles once the
  * result is collected, or after the drain's 2s budget, so the next call waits
  * no longer than that. A result that is not in by then is collected later, in
  * the background or by the next call (see {@link collectLate}).
@@ -264,8 +393,12 @@ function drainAbandonedCall(
       const { result, err } = pollNbResultReady(session);
       if (result === 1) {
         const { err } = session.GciTsNbResult();
-        if (disposableProcess) clearStoppedProcess(session, err?.context);
-        runCollectedHook(session, onCollected);
+        if (disposableProcess) {
+          runHook(session, onCollected);
+          void clearInBackground(session, err?.context);
+        } else {
+          runCollectedHook(session, onCollected);
+        }
         return { state: 'collected' };
       }
       if (result === -1) {
@@ -280,11 +413,13 @@ function drainAbandonedCall(
     }
   };
   let failuresInARow = 0;
+  let start: () => void = () => {};
+  const loggedOutBefore = logoutsOf(session.id);
   const done: Promise<void> = new Promise<void>((resolve) => {
     const attempt = (n: number): void => {
       // Forgotten on logout (forgetSession): stop, rather than poll a session
       // nobody is keeping any more.
-      if (n > 0 && draining.get(session.id) !== done) {
+      if (n > 0 && logoutsOf(session.id) !== loggedOutBefore) {
         resolve();
         return;
       }
@@ -312,12 +447,16 @@ function drainAbandonedCall(
       }
       setTimeout(() => attempt(n + 1), DRAIN_INTERVAL_MS);
     };
-    attempt(0);
+    start = () => attempt(0);
   }).finally(() => {
     if (draining.get(session.id) === done) draining.delete(session.id);
   });
 
+  // Held before the first attempt, which can collect the call at once and hand
+  // the session to the clear of its process: set after, this hold would replace
+  // the clear's, and then drop it while the clear still runs.
   draining.set(session.id, done);
+  start();
   return done;
 }
 
@@ -372,6 +511,12 @@ function collectLate(
   const entry = { collect: settled, forget };
   const tick = (n: number): void => {
     if (settled()) return;
+    // The stop's soft breaks may all have reached the gem before it started the
+    // call (see resendSoftBreak): two quick presses send both at once. By now it
+    // has started.
+    if (n % LATE_BREAK_EVERY_TICKS === 0 && n / LATE_BREAK_EVERY_TICKS <= LATE_BREAKS) {
+      resendSoftBreak(session);
+    }
     if (n * LATE_COLLECT_INTERVAL_MS >= LATE_COLLECT_LIMIT_MS) {
       logInfo(
         `[Session ${session.id}] Stopped polling for a cancelled call after ` +
@@ -393,18 +538,52 @@ function collectLate(
  * can uses {@link whenSessionFree}, which waits out the drain first.
  */
 export function ensureSessionFree(session: ActiveSession): void {
-  if (draining.has(session.id)) throw new NbSessionBusyError();
   const running = live.get(session.id);
-  if (running) {
-    throw running.stopRequested()
-      ? new NbSessionBusyError()
-      : new NbSessionBusyError(
-          'Another run is still in progress on this session. Wait for it to finish, or stop ' +
-            'it, before starting another.',
-        );
+  if (running && !running.stopRequested()) {
+    sayRunInProgress(session);
+    throw new NbSessionBusyError(
+      'Another run is still in progress on this session. Wait for it to finish, or stop ' +
+        'it, before starting another.',
+    );
   }
+  if (stoppedRunHolds(session)) {
+    sayStillRunning(session);
+    throw clearHolds(session)
+      ? new NbSessionBusyError(
+          'A previous run is still cleaning up on the server, so this session cannot start ' +
+            'another one yet. Try again in a moment, or use Force Stop.',
+        )
+      : new NbSessionBusyError();
+  }
+}
+
+/**
+ * Whether a run the user stopped still holds the session, collecting it first if
+ * its result is in.
+ */
+export function stoppedRunHolds(session: ActiveSession): boolean {
+  return live.get(session.id)?.stopRequested() === true || abandonedRunHolds(session);
+}
+
+/** Like {@link stoppedRunHolds}, for a run the runner has already stopped waiting for. */
+export function abandonedRunHolds(session: ActiveSession): boolean {
+  if (draining.has(session.id)) return true;
   const pending = uncollected.get(session.id);
-  if (pending && !pending.collect()) throw new NbSessionBusyError();
+  if (pending !== undefined && !pending.collect()) return true;
+  // Collecting the call may just have started clearing its process.
+  if (draining.has(session.id)) return true;
+  // A call nothing runs any more that GemStone still counts: a worker that has
+  // outlived its hold (ABANDONED_READ_WAIT_MS), say.
+  return !live.has(session.id) && stillBusy(session);
+}
+
+/** Whether GemStone would refuse a call on `session`; false once it is logged out. */
+function stillBusy(session: ActiveSession): boolean {
+  try {
+    return session.isBusy();
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -427,17 +606,63 @@ export function whenSessionFree<T>(
   session: ActiveSession,
   start: () => T,
 ): T | Promise<Awaited<T>> {
-  if (!draining.has(session.id)) {
+  // Clean-up takes as long as the user's ensure: blocks do, too long to wait out
+  // without a word: refused with the notice instead.
+  if (!draining.has(session.id) || clearHolds(session)) {
     ensureSessionFree(session);
     return start();
   }
   return (async (): Promise<Awaited<T>> => {
     for (let pending = draining.get(session.id); pending; pending = draining.get(session.id)) {
+      // A drain's collected hook can start a clear: refused, as above.
+      if (clearHolds(session)) break;
       await pending;
     }
     ensureSessionFree(session);
     return await start();
   })();
+}
+
+/** Whether a call is still being polled on the session. */
+export function isRunning(session: ActiveSession): boolean {
+  return live.has(session.id);
+}
+
+/** What {@link trackRun} needs to stop a run, shaped like the runner's own. */
+export interface TrackedRun {
+  stopRequested: () => boolean;
+  /** What the run's own Cancel does. */
+  cancel: () => void;
+  /** Stop it and stop waiting at once, for a logout; settles when it has. */
+  stop: () => Promise<unknown>;
+}
+
+/**
+ * Count a run the runner is not polling (one resumed on a worker thread) as the
+ * session's run, so other calls are refused with a way to stop it. Answers the
+ * function that stops counting it, or undefined when the session already has a
+ * run: the one this is part of, whose stop covers it.
+ */
+export function trackRun(session: ActiveSession, run: TrackedRun): (() => void) | undefined {
+  if (live.has(session.id)) return undefined;
+  live.set(session.id, run);
+  return () => {
+    if (live.get(session.id) === run) live.delete(session.id);
+  };
+}
+
+/**
+ * Hold the session for `work` its caller has stopped waiting for, until it
+ * settles: the way the runner holds it for a call it gave up on (see
+ * awaitAbandonedRead), so the next call waits or is refused instead of reaching
+ * a session a worker thread still owns.
+ */
+export function holdSessionUntilSettled(
+  session: ActiveSession,
+  work: Promise<unknown>,
+  onSettled?: () => void,
+): Promise<void> {
+  return awaitAbandonedRead(session, work, onSettled);
 }
 
 /**
@@ -448,12 +673,14 @@ export function forgetSession(sessionId: number): void {
   uncollected.get(sessionId)?.forget();
   draining.delete(sessionId);
   live.delete(sessionId);
+  clearing.delete(sessionId);
+  logouts.set(sessionId, logoutsOf(sessionId) + 1);
 }
 
 /**
  * How long the next call on a session waits for an abandoned `onReady` to
  * finish. Only a backstop for one that never finishes at all: the wait ends the
- * moment `onReady`'s promise settles, which after a hard break is usually
+ * moment `onReady`'s promise settles, which after a soft break is usually
  * within milliseconds, so a generous bound costs nothing in the ordinary case.
  *
  * Generous because the alternative to waiting is worse than waiting. Give up
@@ -467,8 +694,8 @@ export function forgetSession(sessionId: number): void {
 const ABANDONED_READ_WAIT_MS = 30_000;
 
 /**
- * Hold the session for an `onReady` whose run was hard-broken, until that
- * `onReady` finishes.
+ * Hold the session for an `onReady` whose run the runner stopped waiting for,
+ * until that `onReady` finishes.
  *
  * There is nothing left to drain: `onReady` has already read the non-blocking
  * result. But it may be resuming the run on a koffi worker thread (the
@@ -478,7 +705,8 @@ const ABANDONED_READ_WAIT_MS = 30_000;
  * instead (see `ActiveSession.handleUnlessAWorkerOwnsIt`). So nothing here
  * touches the session; `onReady`'s own
  * promise is the only signal that it is free, and clearing whatever the break
- * stopped is left to `onReady`, which is told of the break through its signal.
+ * stopped is left to `onReady`, which is told the run was given up on through its
+ * signal.
  *
  * Bounded, so a worker that never returns cannot hold the session forever.
  * Past the bound a new call is refused cleanly by GemStone itself ("call in
@@ -488,7 +716,7 @@ function awaitAbandonedRead(
   session: ActiveSession,
   read: Promise<unknown>,
   onCollected?: () => void,
-): void {
+): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const done: Promise<void> = new Promise<void>((resolve) => {
     timer = setTimeout(() => {
@@ -507,13 +735,22 @@ function awaitAbandonedRead(
     if (draining.get(session.id) === done) draining.delete(session.id);
   });
   draining.set(session.id, done);
+  return done;
 }
 
-/** Run a caller's `onAbandonedCollected`; the caller is long gone, so only log a throw. */
+/**
+ * Run a caller's `onAbandonedCollected`, then the {@link setStoppedRunCollectedHandler}
+ * handler; the caller is long gone, so only log a throw.
+ */
 function runCollectedHook(session: ActiveSession, hook: (() => void) | undefined): void {
-  if (!hook) return;
+  runHook(session, hook);
+  if (stoppedRunCollectedHandler) runHook(session, () => stoppedRunCollectedHandler?.(session));
+}
+
+/** Run one clean-up hook of a cancelled run's, logging a throw. */
+function runHook(session: ActiveSession, hook: (() => void) | undefined): void {
   try {
-    hook();
+    hook?.();
   } catch (e) {
     logInfo(
       `[Session ${session.id}] Cleanup after a cancelled run failed: ` +
@@ -522,23 +759,88 @@ function runCollectedHook(session: ActiveSession, hook: (() => void) | undefined
   }
 }
 
+/** Sessions a {@link clearInBackground} is still clearing a process on, by its own token. */
+const clearing = new Map<number, symbol>();
+
+/** Whether the session is held by a stopped run's clean-up rather than by a run. */
+export function clearHolds(session: ActiveSession): boolean {
+  return clearing.has(session.id);
+}
+
 /**
- * Best-effort GciTsClearStack of the process an abandoned call stopped in.
- * The caller is already on its way out with NbCancelledError, so a failure
- * here is logged, never thrown.
+ * Send a stop's soft break again, for a call that is still going when the runner
+ * stops waiting, and now and then while it is collected in the background
+ * (see collectLate). A soft break that reaches the gem before it has started the call
+ * is lost, and the call runs on (measured on 3.6.8 and 3.7.5, with the gem held
+ * back while the call and the break were sent); a soft break the gem already has
+ * is harmless to repeat, since repeated ones never escalate. Best-effort: logged,
+ * never thrown.
  */
-function clearStoppedProcess(session: ActiveSession, context: unknown): void {
-  if (context === undefined || context === null) return;
-  const gsProcess = BigInt(context as bigint | number);
-  if (gsProcess === OOP_NIL || gsProcess === 0n) return;
+export function resendSoftBreak(session: ActiveSession): void {
   try {
-    session.GciTsClearStack(gsProcess);
+    const { success, err } = session.GciTsBreak(false);
+    logInfo(
+      `[Session ${session.id}] Soft break sent again: success=${success}` +
+        (err?.number ? ` err=${err.number} ${err.message ?? ''}` : ''),
+    );
   } catch (e) {
     logInfo(
-      `[Session ${session.id}] Could not clear a cancelled run's process: ` +
+      `[Session ${session.id}] Could not send the soft break again: ` +
         (e instanceof Error ? e.message : String(e)),
     );
   }
+}
+
+/** Whether a GCI error's `context` names a process. */
+function isProcess(context: unknown): context is bigint | number {
+  if (typeof context !== 'bigint' && typeof context !== 'number') return false;
+  const oop = BigInt(context);
+  return oop !== OOP_NIL && oop !== 0n;
+}
+
+/**
+ * Clear a stopped run's paused process on a worker thread. Clearing runs the
+ * process's `ensure:` blocks inside the call, so on the main thread a slow one
+ * froze VS Code, for good if it never ended. Until it is done the session is
+ * held as for a stopped run: the next call waits or is refused with the Force
+ * Stop notice, and clean-up that hangs takes the same way out as a run that
+ * ignores the stop. `then` runs once the
+ * session is free. Best-effort: a failure is logged, never thrown.
+ */
+export function clearInBackground(
+  session: ActiveSession,
+  context: unknown,
+  then?: () => void,
+): Promise<void> {
+  if (!isProcess(context)) {
+    runCollectedHook(session, then);
+    return Promise.resolve();
+  }
+  const gsProcess = BigInt(context);
+  const failed = (why: string): void =>
+    logInfo(`[Session ${session.id}] Could not clear a stopped run's process: ${why}`);
+  const mine = Symbol('clear');
+  clearing.set(session.id, mine);
+  // A call still in progress goes first: a drain still collecting a stopped
+  // call, or a worker not back yet. The clear's hold takes over from theirs at
+  // once, so nothing else starts in between. Only then: a read that clears its
+  // own process runs inside the hold kept for it, and waiting on that would
+  // wait on itself.
+  const before = stillBusy(session) ? draining.get(session.id) : undefined;
+  // Never rejects: whatever goes wrong is logged, and the session let go.
+  const cleared = (async (): Promise<void> => {
+    try {
+      if (before) await before;
+      const { err } = await session.GciTsClearStackAsync(gsProcess);
+      if (err.number !== 0) failed(err.message || `GemStone error ${err.number}`);
+    } catch (e) {
+      failed(e instanceof Error ? e.message : String(e));
+    } finally {
+      // Only its own: a logout forgets it, and the id can come back for another login.
+      if (clearing.get(session.id) === mine) clearing.delete(session.id);
+    }
+  })();
+  return awaitAbandonedRead(session, cleared, then);
 }
 
 /**
@@ -550,27 +852,24 @@ function clearStoppedProcess(session: ActiveSession, context: unknown): void {
  *                signal failure. May be async: when it returns a promise (e.g.
  *                the transcript-forwarding settle loop, which chains async
  *                GciTsContinueWith calls), the run only settles when that
- *                promise does — so the progress notification and its
- *                soft/hard-break Cancel keep working for the whole run,
- *                including the part of it spent inside `onReady`. Its `signal`
- *                aborts on a hard break: the run has been rejected by then, so
- *                an async `onReady` that is still working owns the cleanup of
- *                whatever the break stopped. The session stays held for the
+ *                promise does — so the progress notification and its Cancel
+ *                keep working for the whole run, including the part of it
+ *                spent inside `onReady`. Its `signal` aborts when the runner
+ *                stops waiting: the run has been rejected by then, so an async
+ *                `onReady` that is still working owns the cleanup of whatever
+ *                the break stopped. The session stays held for the
  *                next call until `onReady` finishes (see
  *                {@link awaitAbandonedRead}).
  *
  * If the call outlives `PROGRESS_THRESHOLD_MS` — measured from the start of the
  * call, not from the start of `onReady`, and in real time rather than in poll
- * intervals — a cancellable progress notification appears: the first cancel sends a soft break and updates the
- * notification so the user can see it registered; a second sends a hard break
- * and rejects with `NbCancelledError`. A second cancel that lands within
- * `MIN_HARD_BREAK_GAP_MS` of the soft break isn't obeyed immediately — the hard
- * break is deferred until that gap has elapsed, because sending both back-to-back
- * crashes the client. If the gem services the soft break while the hard one is
- * still deferred, the call settles first and the hard break is dropped: the run
- * then reports whatever the gem answered (a `Break` error, typically) instead of
- * rejecting. How fast the gem gets to a soft break varies by an order of
- * magnitude, so both endings are normal and a caller cannot pick which it gets.
+ * intervals — a cancellable progress notification appears. One cancel, from it or
+ * from `onStart`'s canceller, is enough: it sends a soft break, and if the call
+ * is still going after {@link STOP_WAITING_AFTER_MS} the runner stops waiting and
+ * rejects with `NbCancelledError`. A second cancel stops waiting at once. If the
+ * gem answers the soft break first, the run reports whatever it answered (a
+ * `Break` error, typically) instead of rejecting. How fast the gem gets to a soft
+ * break varies, so both endings are normal and a caller cannot pick which it gets.
  */
 export function pollNbToCompletion<T>(
   session: ActiveSession,
@@ -583,8 +882,8 @@ export function pollNbToCompletion<T>(
     let progressShown = false;
     let progressTimer: ReturnType<typeof setTimeout> | null = null;
     let softBreakSent = false;
-    let softBreakAt = 0;
-    let hardBreakScheduled = false;
+    let stopWaitingTimer: ReturnType<typeof setTimeout> | null = null;
+    const startedAt = performance.now();
     let progressResolve: (() => void) | null = null;
     const abandoned = new AbortController();
     // onReady's work, once it has begun: from then on the non-blocking result
@@ -593,9 +892,10 @@ export function pollNbToCompletion<T>(
     let stopped = false;
     const liveEntry = {
       stopRequested: (): boolean => softBreakSent,
-      // Twice, like pressing Cancel twice: a soft break, then a hard one once
-      // MIN_HARD_BREAK_GAP_MS has passed. A run the first press already settled
-      // (a hard break after an earlier Cancel) needs no second one.
+      // What the run's own Cancel does.
+      cancel: (): void => requestCancel(),
+      // Twice, like pressing Cancel twice: a soft break, then stop waiting. A run
+      // the first press already settled needs no second one.
       stop: (): Promise<T> => {
         stopped = true;
         requestCancel();
@@ -611,14 +911,21 @@ export function pollNbToCompletion<T>(
         progressResolve = null;
       }
     };
+    // Ends the "Stopping…" status-bar message the first cancel shows.
+    let stoppingDone: (() => void) | null = null;
     const settle = (fn: () => void): void => {
       if (settled) return;
       settled = true;
+      stoppingDone?.();
       if (live.get(session.id) === liveEntry) live.delete(session.id);
       if (stopped) fn = () => reject(new NbCancelledError());
       if (progressTimer) {
         clearTimeout(progressTimer);
         progressTimer = null;
+      }
+      if (stopWaitingTimer) {
+        clearTimeout(stopWaitingTimer);
+        stopWaitingTimer = null;
       }
       finishProgress();
       fn();
@@ -638,28 +945,24 @@ export function pollNbToCompletion<T>(
     // ~2s notification is showing (an external cancel can fire before then).
     let progressReport: ((value: { message?: string }) => void) | null = null;
 
-    // Soft-then-hard break, shared by the notification's Cancel and any external
-    // canceller handed out via opts.onStart. First call asks the gem to stop at a
-    // safe point; a second interrupts now and gives up on the call.
-    const sendHardBreak = settleOnThrow(() => {
+    // Shared by the notification's Cancel and any external canceller handed out via
+    // opts.onStart. The first call asks the gem to stop at a safe point; the runner
+    // stops waiting if the call is still going later, or at a second call.
+    const stopWaiting = settleOnThrow(() => {
       if (settled) return;
-      // Before the break, not after: a worker thread answers it within a
-      // millisecond, and onReady must already see the run as abandoned then.
+      resendSoftBreak(session);
       abandoned.abort();
-      const { success, err } = session.GciTsBreak(true);
       logInfo(
-        `[Session ${session.id}] Hard break sent: success=${success}` +
-          (err?.number ? ` err=${err.number} ${err.message ?? ''}` : ''),
+        `[Session ${session.id}] Stopped waiting for the call; the gem may still be finishing it.`,
       );
       if (reading) {
         // Nothing to drain, and the session must not be touched — see
         // awaitAbandonedRead.
-        awaitAbandonedRead(session, reading, opts.onAbandonedCollected);
+        void awaitAbandonedRead(session, reading, opts.onAbandonedCollected);
       } else {
-        // A hard break abandons the call, but the session still counts it as in
-        // progress until its (aborted) result is collected. Drain it, or the very
-        // next call on this session is refused with "session is busy" — which reads
-        // as the next run silently doing nothing.
+        // The session counts the call as in progress until its result is collected.
+        // Drain it, or the very next call on this session is refused with "session
+        // is busy" — which reads as the next run silently doing nothing.
         void drainAbandonedCall(
           session,
           opts.disposableProcess === true,
@@ -667,6 +970,7 @@ export function pollNbToCompletion<T>(
         );
       }
       settle(() => reject(new NbCancelledError()));
+      if (!stopped) sayStillRunningUnlessItEnds(session);
     });
 
     const requestCancel = settleOnThrow(() => {
@@ -674,35 +978,35 @@ export function pollNbToCompletion<T>(
         logInfo(`[Session ${session.id}] Break requested, but the call had already settled.`);
         return;
       }
-      if (!softBreakSent) {
-        // Logged because a break that the gem ignores is indistinguishable, from
-        // the outside, from a break that was never sent — and the difference is
-        // the whole diagnosis when a stop button appears to do nothing.
-        const { success, err } = session.GciTsBreak(false);
-        logInfo(
-          `[Session ${session.id}] Soft break sent: success=${success}` +
-            (err?.number ? ` err=${err.number} ${err.message ?? ''}` : ''),
-        );
-        softBreakSent = true;
-        // performance.now, not Date.now: this asks how much time has *elapsed*,
-        // and the wall clock answers a different question that anything on the
-        // system can change underneath us. An NTP step or a VM resume that
-        // shoves it forward between here and the second press would make the
-        // gap below look already served and send the hard break back-to-back —
-        // the exact native fault MIN_HARD_BREAK_GAP_MS exists to prevent.
-        softBreakAt = performance.now();
-        progressReport?.({ message: 'Soft break sent — waiting for the gem to stop…' });
-      } else {
-        if (hardBreakScheduled) return;
-        const waited = performance.now() - softBreakAt;
-        if (waited >= MIN_HARD_BREAK_GAP_MS) {
-          sendHardBreak();
-          return;
-        }
-        // Too soon after the soft break to be safe — see MIN_HARD_BREAK_GAP_MS.
-        hardBreakScheduled = true;
-        setTimeout(sendHardBreak, MIN_HARD_BREAK_GAP_MS - waited);
+      if (softBreakSent) {
+        stopWaiting();
+        return;
       }
+      // Logged because a break that the gem ignores is indistinguishable, from
+      // the outside, from a break that was never sent — and the difference is
+      // the whole diagnosis when a stop button appears to do nothing.
+      const { success, err } = session.GciTsBreak(false);
+      logInfo(
+        `[Session ${session.id}] Soft break sent: success=${success}` +
+          (err?.number ? ` err=${err.number} ${err.message ?? ''}` : ''),
+      );
+      softBreakSent = true;
+      progressReport?.({ message: 'Soft break sent — waiting for the gem to stop…' });
+      // Best-effort: a failure here must not keep the stop-waiting timer below unset.
+      if (!stopped) {
+        try {
+          vscode.window.setStatusBarMessage(
+            '$(loading~spin) Stopping…',
+            new Promise<void>((done) => (stoppingDone = done)),
+          );
+        } catch (e) {
+          logInfo(`[Session ${session.id}] Could not show "Stopping…": ${String(e)}`);
+        }
+      }
+      stopWaitingTimer = setTimeout(() => {
+        stopWaitingTimer = null;
+        stopWaiting();
+      }, stopWaitingDelay(startedAt));
     });
     if (opts.onStart) opts.onStart(requestCancel, () => softBreakSent);
 
@@ -717,15 +1021,7 @@ export function pollNbToCompletion<T>(
         reading = Promise.resolve(onReady(abandoned.signal));
         reading.then(
           (value) => settle(() => resolve(value)),
-          (e) => {
-            // The gem answering a stop's soft break hands back a live process,
-            // which settle swaps for NbCancelledError, so no caller is left to
-            // debug or clear it.
-            if (stopped && !settled && opts.disposableProcess === true) {
-              clearStoppedProcess(session, (e as { context?: unknown } | null)?.context);
-            }
-            settle(() => reject(e));
-          },
+          (e) => settle(() => reject(e)),
         );
         return;
       }
@@ -733,7 +1029,7 @@ export function pollNbToCompletion<T>(
         // Abandoning the call without collecting its result leaves the session
         // reporting a call in progress, and every later call on it refused. A
         // break that the gem turns into a poll error takes this path, so the
-        // drain belongs here as much as on the hard-break path.
+        // drain belongs here as much as on the stop-waiting path.
         void drainAbandonedCall(
           session,
           opts.disposableProcess === true,

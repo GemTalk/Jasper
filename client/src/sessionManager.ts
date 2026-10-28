@@ -8,7 +8,18 @@ import { GemStoneLogin, gemNrsFor, loginLabel, stoneNrsFor } from './loginTypes'
 import { logInfo, logWarning } from './gciLog';
 import { createSessionGciLibrary } from './enhancedInspector/enhancedInspectorPerfTracker';
 import { installTranscriptSink } from './transcriptSink';
-import { forgetSession, stopCallsOn } from './nbRunner';
+import { forgetSession, isRunning, stopCallsOn, stoppedRunHolds } from './nbRunner';
+import {
+  armForceStop,
+  endServerSession,
+  forceStop,
+  forgetForceStop,
+  NO_PRIVILEGE_ERROR,
+  sendStopSignal,
+  serverSessionOf,
+  type ForceStopDeps,
+} from './forceStop';
+import { GciLibraryError } from './gciLibraryError';
 import { installMethodHistory } from './methodHistory/methodHistoryServer';
 import {
   TransactionMode,
@@ -351,6 +362,8 @@ export class SessionManager {
     // capture is soft-guarded, so the session simply records no history.
     installMethodHistory(session);
 
+    armForceStop(session);
+
     // Clear the spurious "uncommitted changes" a fresh login carries. Beginning
     // the login transaction rebuilds the session-method dictionary, which bumps a
     // change-counter on the *persistent* singleton
@@ -486,49 +499,61 @@ export class SessionManager {
    * Log session `id` out and drop it from the manager, handing the selection on
    * when it was the current one.
    *
-   * GemStone refuses a logout while a koffi worker thread owns the session (an
-   * Execute It resuming on one to stream Transcript output). Dropping the
-   * session then would leave its gem running with nothing left to reach it, so
-   * the calls on it are stopped and the logout tried once more.
+   * A run still on the session is stopped first, with Force Stop if it ignores
+   * the stop: a gem whose run has resumed a soft break keeps running after its
+   * logout, for good (measured on 3.6.2 and 3.7.5). A run that ignores Force Stop
+   * too is ended on the server after the logout, which needs the SessionAccess
+   * privilege; without it the user is told what is left running.
    *
    * A logout of a session already being logged out waits for that one and
    * shares its outcome.
    *
+   * @param stopAlreadyTried - the caller's own {@link stopRun} has just answered
+   *   that the run ignores every stop, so it is not stopped again.
    * @returns whether this call logged the session out: false when the session
    *   was already gone or another logout of it did the work.
-   * @throws {Error} when the second logout is refused too; the session stays
-   *   open and registered.
+   * @throws {Error} when GemStone refuses the logout (a koffi worker thread
+   *   still owns the session); the session stays open and registered.
    */
-  async logout(id: number): Promise<boolean> {
+  async logout(id: number, stopAlreadyTried = false): Promise<boolean> {
     const pending = this.loggingOut.get(id);
     if (pending) return await pending.then(() => false);
     const s = this.sessions.get(id);
     if (!s) return false;
-    const done = this.logOutAndDrop(id, s).finally(() => this.loggingOut.delete(id));
+    const done = this.logOutAndDrop(id, s, stopAlreadyTried).finally(() =>
+      this.loggingOut.delete(id),
+    );
     this.loggingOut.set(id, done);
     return await done;
   }
 
-  private async logOutAndDrop(id: number, s: ActiveSession): Promise<boolean> {
+  private async logOutAndDrop(
+    id: number,
+    s: ActiveSession,
+    stopAlreadyTried: boolean,
+  ): Promise<boolean> {
     logInfo(`[Session ${id}] Logging out: ${s.login.gs_user}@${s.login.gem_host}/${s.login.stone}`);
+    const serverSession = serverSessionOf(id);
+    let stillRunning = await this.stopRun(id, stopAlreadyTried);
     if (!logOutOrFindGone(s)) {
-      logInfo(`[Session ${id}] Logout refused while a call runs; stopping it and retrying.`);
-      // Stopping the call can take a while (the gap before a hard break, then the
-      // drain), and without this a Log out click looks like it did nothing.
-      await vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: `Stopping the call running on ${loginLabel(s.login)} before logging out…`,
-        },
-        () => stopCallsOn(s),
-      );
+      // A worker thread still owns the session; ending the gem frees it.
+      const ended =
+        serverSession !== undefined && this.tryEndServerSession(s, serverSession) === undefined;
+      await stopCallsOn(s);
       if (!logOutOrFindGone(s)) {
         throw new Error(
-          `Could not log out session ${id}: a call is still running on it. The session is still open.`,
+          `Session ${id} could not be logged out: its run is ignoring every stop, and GemStone ` +
+            "won't log out a session while that run goes on. The session is still open. " +
+            `An administrator can end it with: System stopSession: ${serverSession ?? '<its number>'}`,
         );
       }
+      // Not when the logout got through only because the worker let go for a
+      // moment: the run can still be going.
+      if (ended) stillRunning = false;
     }
+    if (stillRunning) this.endLeftoverRun(s, serverSession);
     forgetSession(id);
+    forgetForceStop(id);
     this.sessions.delete(id);
     // Drop it from the selection order too, so it cannot be promoted later. This
     // is what makes that guarantee, for a background session as much as the
@@ -727,14 +752,110 @@ export class SessionManager {
     return { success: err.number === 0, err };
   }
 
+  /** Whether session `id` has a run on it, going or stopped but still finishing. */
+  hasRun(id: number): boolean {
+    const s = this.sessions.get(id);
+    return s !== undefined && (isRunning(s) || stoppedRunHolds(s));
+  }
+
+  /**
+   * Stop the run on session `id`, if there is one, as logging out does: run first
+   * so the logout's uncommitted-changes check can reach the session. Answers
+   * whether the run is still going anyway; with `alreadyTried`, whether it is
+   * still going, without stopping it again.
+   */
+  async stopRun(id: number, alreadyTried = false): Promise<boolean> {
+    const s = this.sessions.get(id);
+    if (!s || !this.hasRun(id)) return false;
+    if (alreadyTried) return true;
+    // Without this a Log out click looks like it did nothing.
+    return await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Stopping the run on ${loginLabel(s.login)} before logging out…`,
+      },
+      () => this.stopRunBeforeLogout(s),
+    );
+  }
+
+  private readonly forceStopDeps: ForceStopDeps = {
+    loginTransient: (from) => this.loginTransient(from.login, from),
+  };
+
+  /**
+   * Stop the run on `s` the way its Stop and then Force Stop would. Answers
+   * whether it is still running anyway.
+   */
+  private async stopRunBeforeLogout(s: ActiveSession): Promise<boolean> {
+    await stopCallsOn(s);
+    if (!stoppedRunHolds(s)) return false;
+    try {
+      return !(await forceStop(s, this.forceStopDeps));
+    } catch (e) {
+      logInfo(
+        `[Session ${s.id}] Force Stop before logout failed: ` +
+          (e instanceof Error ? e.message : String(e)),
+      );
+      return true;
+    }
+  }
+
+  /** End a logged-out session's gem whose run ignored every stop, or say why not. */
+  private endLeftoverRun(s: ActiveSession, serverSession: string | undefined): void {
+    const left = `Session ${s.id} is logged out, but its run ignored every stop and is still running on the server.`;
+    if (serverSession === undefined) {
+      void vscode.window.showWarningMessage(`${left} An administrator can end it.`);
+      return;
+    }
+    const failure = this.tryEndServerSession(s, serverSession);
+    if (failure === undefined) return;
+    void vscode.window.showWarningMessage(
+      failure instanceof GciLibraryError && failure.number === NO_PRIVILEGE_ERROR
+        ? `${left} Ending it needs the SessionAccess privilege, which ${s.login.gs_user} ` +
+            `doesn't have. An administrator can end it with: System stopSession: ${serverSession}`
+        : `${left} It could not be ended (${failure instanceof Error ? failure.message : String(failure)}). ` +
+            `An administrator can end it with: System stopSession: ${serverSession}`,
+    );
+  }
+
+  /** Answers the error, or undefined once the server session is ended. */
+  private tryEndServerSession(s: ActiveSession, serverSession: string): unknown {
+    try {
+      endServerSession(s, serverSession, this.forceStopDeps);
+      return undefined;
+    } catch (e) {
+      logInfo(
+        `[Session ${s.id}] Could not end server session ${serverSession}: ` +
+          (e instanceof Error ? e.message : String(e)),
+      );
+      return e;
+    }
+  }
+
   getSessions(): ActiveSession[] {
     return Array.from(this.sessions.values());
   }
 
   dispose(): void {
     for (const s of this.sessions.values()) {
+      // No waiting here: the window is closing. The signal ends a stopped run
+      // before the logout reaches the gem, which a resumed soft break would
+      // otherwise keep running.
+      const serverSession = serverSessionOf(s.id);
+      const busy = serverSession !== undefined && (isRunning(s) || stoppedRunHolds(s));
+      if (busy) {
+        try {
+          sendStopSignal(s, serverSession, this.forceStopDeps);
+        } catch (e) {
+          logInfo(`[Session ${s.id}] Could not signal its run at shutdown: ${String(e)}`);
+        }
+      }
       logOutOrFindGone(s);
+      // A run that caught the signal too: there is no one left to tell if this
+      // fails, so it is only logged.
+      if (busy) this.tryEndServerSession(s, serverSession);
       forgetSession(s.id);
+      forgetForceStop(s.id);
     }
     this.sessions.clear();
     // Both halves of the selection go with the sessions. getSelectedSession()

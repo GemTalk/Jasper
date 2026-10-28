@@ -56,7 +56,7 @@ export function runTestClass(session: ActiveSession, className: string, dictName
  * and the blocking call freezes the extension host for its whole duration —
  * which is why nothing, not even VS Code's own stop button, could interrupt a
  * run. These poll instead, so the UI stays live and `onStart`'s canceller can
- * break the gem (soft first, hard on a second call).
+ * stop the gem (see NbRunOptions.onStart).
  */
 export function runTestClassNb(
   session: ActiveSession,
