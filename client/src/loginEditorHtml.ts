@@ -237,9 +237,9 @@ export function loginEditorHtml(nonce: string): string {
   <div class="field-group">
     <div class="checkbox-row">
       <input type="checkbox" id="sync_classes" checked>
-      <label for="sync_classes" class="inline-label">Sync classes to local files (Find in Files, Go to Definition)</label>
+      <label for="sync_classes" class="inline-label">Keep a local copy of this login's classes as files</label>
     </div>
-    <div class="field-help">Keeps a read-only .gemstone mirror in sync on login/commit. Turn off for slow or remote connections where the initial sync isn't worth it — server-side search still works.</div>
+    <div class="field-help">Keeps a read-only copy of this login's classes as .gs files, in sync on login and commit. Turn off for slow or remote connections where the initial sync isn't worth it — GemStone Search still works.</div>
   </div>
 
   <div class="button-row">

@@ -200,7 +200,7 @@ vi.mock('vscode', () => {
   };
 });
 
-import { ExportManager, writeOwner } from '../exportManager';
+import { ExportManager, claimSlot, writeOwner } from '../exportManager';
 import { ActiveSession } from '../sessionManager';
 import { GemStoneLogin } from '../loginTypes';
 import * as vscode from 'vscode';
@@ -403,6 +403,7 @@ describe('ExportManager (incremental sync)', () => {
       expect(root(createMockSession())).toBe(`${base}_2`);
     });
 
+    // 2**22 is Linux's largest possible pid_max, so this pid can never be live.
     it('takes over a folder whose holder has exited', () => {
       const base = path.join(mirrorDir, 'localhost', 'gs64stone', 'DataCurator');
       fs.mkdirSync(base, { recursive: true });
@@ -427,8 +428,70 @@ describe('ExportManager (incremental sync)', () => {
       fs.mkdirSync(dir);
       const theirs = JSON.stringify({ pid: process.ppid, host: os.hostname(), sessionId: 9 });
       fs.writeFileSync(path.join(dir, '.jasper-owner.json'), theirs);
-      expect(writeOwner(dir, 1, { replace: false })).toBe(false);
+      expect(writeOwner(dir, 1)).toBe(false);
       expect(fs.readFileSync(path.join(dir, '.jasper-owner.json'), 'utf-8')).toBe(theirs);
+    });
+
+    it('moves a live session to a new mirrorFolder once the setting changes', async () => {
+      // The "can't write" error tells the user to change the setting; that has to work
+      // for the session it was shown about, without logging out.
+      const blocker = path.join(tmpDir, 'blocked');
+      fs.writeFileSync(blocker, '');
+      setConfig('mirrorFolder', blocker);
+      const session = createMockSession();
+      await manager.exportSession(session, true);
+      const fixed = path.join(tmpDir, 'fixed');
+      setConfig('mirrorFolder', fixed);
+      manager.mirrorFolderChanged();
+      await manager.refreshSession(session);
+      const r = path.join(fixed, 'localhost', 'gs64stone', 'DataCurator');
+      expect(root(session)).toBe(r);
+      expect(fs.existsSync(path.join(r, '1-UserGlobals', 'MyClass.gs'))).toBe(true);
+      expect(fs.existsSync(path.join(r, '.jasper-owner.json'))).toBe(true);
+    });
+
+    it('does not keep a folder it could not claim', async () => {
+      // A fallback folder has no holder record, so caching it would let another
+      // window's session take it too once it becomes writable.
+      const blocker = path.join(tmpDir, 'blocked');
+      fs.writeFileSync(blocker, '');
+      setConfig('mirrorFolder', blocker);
+      const session = createMockSession();
+      await manager.exportSession(session, true);
+      fs.rmSync(blocker);
+      await manager.refreshSession(session);
+      const r = path.join(blocker, 'localhost', 'gs64stone', 'DataCurator');
+      expect(fs.existsSync(path.join(r, '.jasper-owner.json'))).toBe(true);
+    });
+
+    it('does not claim a folder again for a session that has logged out', async () => {
+      // A refresh queued just before logout fires after it.
+      vi.useFakeTimers();
+      try {
+        const first = createMockSession();
+        const base = root(first);
+        manager.scheduleRefresh(first);
+        manager.releaseSession(first.id);
+        await vi.runAllTimersAsync();
+        expect(fs.existsSync(path.join(base, '.jasper-owner.json'))).toBe(false);
+        expect(manager.getSessionRoot(first)).toBeUndefined();
+        expect(root(fakeActiveSessionWithId(3))).toBe(base);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('moves on to _2 when another window takes over the same stale record first', () => {
+      // Both windows read the dead holder's record; only one may replace it.
+      const base = path.join(mirrorDir, 'localhost', 'gs64stone', 'DataCurator');
+      fs.mkdirSync(base, { recursive: true });
+      const dead = JSON.stringify({ pid: 2 ** 22 + 12345, host: os.hostname(), sessionId: 1 });
+      fs.writeFileSync(path.join(base, '.jasper-owner.json'), dead);
+      const theirs = JSON.stringify({ pid: process.ppid, host: os.hostname(), sessionId: 9 });
+      expect(
+        claimSlot(base, 1, () => fs.writeFileSync(path.join(base, '.jasper-owner.json'), theirs)),
+      ).toBe(false);
+      expect(fs.readFileSync(path.join(base, '.jasper-owner.json'), 'utf-8')).toBe(theirs);
     });
 
     it('releases its holder record on release', () => {

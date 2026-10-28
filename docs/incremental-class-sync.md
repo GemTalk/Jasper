@@ -82,7 +82,9 @@ classes that actually changed.
   live session with the same login — in this window or another — gets
   `{user}_2` (then `_3`, …), so two sessions never write one mirror. A
   `.jasper-owner.json` in each folder names the process holding it; a record
-  from a process that has exited is taken over.
+  from a process that has exited is taken over. A record from another machine
+  (a shared home over NFS) is never taken over, because its process can't be
+  probed, and spare `_N` folders are not cleaned up: each holds a full copy.
 - Foreground, **cancellable** progress; the loop yields between batches so the
   Cancel button stays responsive (the GCI calls are synchronous and block the
   event loop). A cancelled sync leaves a consistent partial mirror that the next
@@ -106,8 +108,8 @@ classes that actually changed.
 
 ## Keeping the mirror in step with mutations
 
-Every code mutation now updates the mirror immediately, so Find in Files reflects
-a change without waiting for the next commit/abort. `ExportManager` exposes three
+Every code mutation now updates the mirror immediately, so it reflects a change
+without waiting for the next commit/abort. `ExportManager` exposes three
 targeted operations, all of which update the persisted `.manifest.json` state:
 
 - `syncClass(session, dictName, className)` — re-file-out one class (resolving its

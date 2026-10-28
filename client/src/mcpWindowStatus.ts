@@ -1,3 +1,4 @@
+import * as path from 'path';
 import { loginLabel } from './loginTypes';
 import { McpOwnerInfo, NO_WORKSPACE_RECORDED } from './mcpOwnerSidecar';
 import { McpOwnership } from './mcpServerTreeProvider';
@@ -37,23 +38,23 @@ export interface McpOwnerReport {
 /**
  * What to pick in VS Code's window list to reach the owning window. Extensions
  * cannot focus another window or read its title, so the switch opens the list
- * and this says which entry it is. The title shows the workspace name; with no
- * name to go on, the GemStone login is what the user will recognise.
+ * and this says which entry it is. The list shows titles: the workspace name
+ * (or folder name) when there is one, otherwise only the active file — never the
+ * GemStone login, which is only added as context.
  */
 export function ownerLookFor(info: {
   workspaceName?: string;
   workspacePath: string;
-  workspaceFile?: string;
   selectedSession?: string;
 }): string {
-  if (info.workspaceName) return `the window titled "${info.workspaceName}"`;
-  const noFolder = !info.workspacePath || info.workspacePath === NO_WORKSPACE_RECORDED;
-  // A multi-root workspace's path is only its first folder, which the user won't recognise.
-  if ((noFolder || info.workspaceFile) && info.selectedSession) {
-    return `the window logged in to ${info.selectedSession}`;
+  if (info.workspaceName) return `the window whose title includes "${info.workspaceName}"`;
+  if (info.workspacePath && info.workspacePath !== NO_WORKSPACE_RECORDED) {
+    return `the window whose title includes "${path.basename(info.workspacePath)}" (${info.workspacePath})`;
   }
-  if (noFolder) return 'the window with no folder open';
-  return `the window with ${info.workspacePath} open`;
+  const folderless = 'the window with no folder open, whose title shows only its open file';
+  return info.selectedSession
+    ? `${folderless} (it is logged in to ${info.selectedSession})`
+    : folderless;
 }
 
 export interface McpReport {

@@ -85,7 +85,7 @@ const elsewhere: McpReportLike = {
     pid: 4242,
     claimedAt: '2026-01-01T00:00:00.000Z',
     selectedSession: 'bar (id 3)',
-    lookFor: 'the window titled "their-project"',
+    lookFor: 'the window whose title includes "their-project"',
   },
 };
 
@@ -179,12 +179,13 @@ describe('the MCP Server tab', () => {
     expect(posted).toEqual([{ command: 'revealOwner' }]);
   });
 
-  it('says what to pick in the window list', () => {
+  it('shows what to pick in the window list, not only on hover', () => {
+    // Once the list opens it covers the tab, so the answer has to be on screen first.
     view().render(root, elsewhere, '10:00:00', vscode);
-    const switchButton = Array.from(root.querySelectorAll('button')).find(
-      (b) => b.textContent === 'Switch to Owning Window…',
+    const dt = Array.from(root.querySelectorAll('dt')).find((d) => d.textContent === 'Look for');
+    expect(dt?.nextElementSibling?.textContent).toContain(
+      'the window whose title includes "their-project"',
     );
-    expect(switchButton?.title).toContain('the window titled "their-project"');
   });
 
   it('names the owning window the way its title bar does', () => {

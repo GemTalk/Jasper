@@ -69,8 +69,7 @@ The socket and HTTPS port are global resources, so only one Jasper window can se
   socket has to be live by the time it spawns the proxy on the same window
   reload. With the setting off, the window does none of this: no config is
   written, no socket or port is claimed, and the MCP commands are gated out of
-  the UI (`jasper.mcpAvailable`, which also covers the no-folder-open case)
-  rather than left to fail when used.
+  the UI (`jasper.mcpAvailable`) rather than left to fail when used.
 - **The successful claimant** becomes the **MCP owner** for the rest of that
   VS Code run, and writes a sidecar file at `~/.jasper/mcp.owner.json` so other
   Jasper windows can tell that someone else holds the role — and which window
@@ -136,17 +135,14 @@ It is also where the actions are, including the two that need each other:
   let go, then claims here. This is the action offered when another window
   holds the server, because Claim alone cannot succeed against a bound socket.
 - **Switch to Owning Window…** opens VS Code's own window list
-  (`workbench.action.switchWindow`), and the button's hint says which entry to
-  pick: the window's title when it recorded one, otherwise the GemStone login it
-  serves. An extension has no API to focus another window or read its title, so
-  this is the one route that reaches every owner — including one with no folder
-  open and a multi-root workspace, which reopening a recorded folder could not.
-
-  One case cannot be detected: one directory reachable by two paths — a symlink
-  or a bind mount, so that `/a/project` and `/mnt/a/project` are the same place.
-  Each window records the path it was opened with, and nothing can tell the two
-  apart, so the jump opens a second window. **Ask It to Release needs no
-  navigation and is unaffected** — it is the reliable route in every case.
+  (`workbench.action.switchWindow`), and the tab's **Look for** row says which
+  entry to pick. The list shows window titles, so that is the workspace or
+  folder name the owner recorded; for an owner with no folder open, whose title
+  shows only its open file, it says so and adds the GemStone login it serves as
+  context. An extension has no API to focus another window or read its title,
+  so this is the one route that reaches every owner — including one with no
+  folder open and a multi-root workspace, which reopening a recorded folder
+  could not.
 - **Refresh** re-reads ownership from the socket and sidecar.
 
 **Open MCP Inspector is deliberately not on the tab.** It shells out to `npx`,
@@ -270,7 +266,7 @@ Trusting the cert is per-machine, not per-workspace. You only do it once.
 Several Jasper windows can run side-by-side, but only one serves MCP at a
 time. In a passive window no session row is marked `· MCP`, the Databases
 header reads `MCP: other window`, and the MCP Server tab names the window that
-holds it and offers to open it. Taking the server over is **Ask It to Release**
+holds it and offers to switch to it through VS Code's window list. Taking the server over is **Ask It to Release**
 in the MCP Server tab, which has the owner let go and then claims here; failing
 that (an owner too old to answer), **Stop MCP** there and **Claim MCP Server**
 here. To run two MCP-serving windows simultaneously:
@@ -278,7 +274,13 @@ here. To run two MCP-serving windows simultaneously:
 - The stdio surface is one-per-machine (fixed socket path).
 - Override `jasper.mcp.httpPort` in the second workspace's
   `.vscode/settings.json` to give it its own HTTPS port. The two windows can
-  then both serve HTTPS, but only one serves stdio.
+  then both serve HTTPS, but only one serves stdio. A window with no folder
+  open has no workspace settings, so it always tries the default port.
+
+A window with no folder open claims the server at startup like any other, so
+a throwaway window — `code ~/.bashrc`, or VS Code as the git commit editor —
+can be the one that wins. **Ask It to Release** from the window you want, or
+**Stop MCP** in the throwaway one, hands it over.
 
 This is intentional. A single AI client should not be routed to two different
 GemStone sessions depending on timing — the ownership model makes the routing

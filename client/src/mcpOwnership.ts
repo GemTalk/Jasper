@@ -171,12 +171,14 @@ export class McpOwnershipController {
       await this.claim();
       return;
     }
-    const { pid, workspacePath } = owner.info;
+    const { pid } = owner.info;
     writeReleaseRequest(
       { ownerPid: pid, requesterPid: this.deps.pid, requestedAt: new Date().toISOString() },
       this.deps.releaseRequestPath,
     );
-    this.deps.notifier.log(`Asked MCP owner pid ${pid} (${workspacePath}) to release the server.`);
+    this.deps.notifier.log(
+      `Asked MCP owner pid ${pid} (${ownerLookFor(owner.info)}) to release the server.`,
+    );
 
     const released = await this.deps.notifier.progress(
       'Asking the other window to release MCP…',

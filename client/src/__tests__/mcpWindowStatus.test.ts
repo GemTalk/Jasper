@@ -79,7 +79,7 @@ describe('mcpReport', () => {
       pid: 4242,
       claimedAt: '2026-01-01T00:00:00.000Z',
       selectedSession: 'bar (id 3)',
-      lookFor: 'the window with /somewhere/else open',
+      lookFor: 'the window whose title includes "else" (/somewhere/else)',
     });
     // The handover leads, because it needs no trip to the other window at all.
     expect(report.detail).toContain('Ask it to release');
@@ -141,30 +141,31 @@ describe('naming the owning window', () => {
 });
 
 describe('what to pick in the window list', () => {
-  it('is the window name when the owner recorded one, since that is its title bar', () => {
+  // The list shows window titles: `<file> — <folder or workspace name> — Visual Studio
+  // Code`, or only `<file> — Visual Studio Code` with no folder. Logins never appear there.
+  it('is the window name when the owner recorded one, since its title includes it', () => {
     const report = mcpReport(ownedElsewhere('bar (id 3)', { workspaceName: 'myproj' }));
-    expect(report.owner?.lookFor).toContain('"myproj"');
+    expect(report.owner?.lookFor).toBe('the window whose title includes "myproj"');
   });
 
-  it('is the GemStone login when the owner has no folder open', () => {
-    const report = mcpReport(ownedElsewhere('bar (id 3)', { workspacePath: '(no workspace)' }));
-    expect(report.owner?.lookFor).toContain('bar (id 3)');
-    expect(report.owner?.lookFor).not.toContain('(no workspace)');
-  });
-
-  it('is the login, not the first folder, for a multi-root owner without a name', () => {
-    const report = mcpReport(
-      ownedElsewhere('bar (id 3)', { workspaceFile: '/their/proj.code-workspace' }),
+  it('is the folder name for an older owner that recorded only its path', () => {
+    expect(mcpReport(ownedElsewhere()).owner?.lookFor).toBe(
+      'the window whose title includes "else" (/somewhere/else)',
     );
-    expect(report.owner?.lookFor).toContain('bar (id 3)');
   });
 
-  it('is the folder for an older owner that recorded only its path', () => {
-    expect(mcpReport(ownedElsewhere()).owner?.lookFor).toContain('/somewhere/else');
+  it('says what a folderless title looks like, with the login only as context', () => {
+    const report = mcpReport(ownedElsewhere('bar (id 3)', { workspacePath: '(no workspace)' }));
+    expect(report.owner?.lookFor).toBe(
+      'the window with no folder open, whose title shows only its open file ' +
+        '(it is logged in to bar (id 3))',
+    );
   });
 
   it('still says something when the owner recorded neither a folder nor a session', () => {
     const report = mcpReport(ownedElsewhere(undefined, { workspacePath: '(no workspace)' }));
-    expect(report.owner?.lookFor).toContain('no folder open');
+    expect(report.owner?.lookFor).toBe(
+      'the window with no folder open, whose title shows only its open file',
+    );
   });
 });

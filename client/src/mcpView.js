@@ -51,7 +51,11 @@
       'Claude makes fails — even though sessions are logged in here.',
     ownerWindow:
       'What that window’s title bar says — how to pick it out of a row of VS Code windows.',
-    ownerWorkspace: 'The folder that window has open.',
+    ownerWorkspace:
+      'The folder that window has open, or the first folder of its multi-root workspace.',
+    lookFor:
+      'What to pick in the list Switch to Owning Window… opens. VS Code lists windows by title ' +
+      'and gives an extension no way to focus one directly.',
     ownerWorkspaceFile:
       'That window has a multi-root workspace open; this is the .code-workspace file it was ' +
       'opened from.',
@@ -156,7 +160,6 @@
     }
 
     if (report.state === 'other' && report.owner) {
-      var owner = report.owner;
       // Claim alone cannot succeed here — the socket is bound — so the action
       // that actually resolves it sits right beside it.
       actions.appendChild(
@@ -178,11 +181,9 @@
           function () {
             vscode.postMessage({ command: 'revealOwner' });
           },
-          'Opens VS Code’s window list. Pick ' +
-            owner.lookFor +
-            '. A bound socket is only ' +
-            'released by its owner, so Stop MCP has to be run there — or use Ask It to Release, ' +
-            'which has it let go from here.',
+          'Opens VS Code’s window list; pick the entry named under Look for. A bound socket is ' +
+            'only released by its owner, so Stop MCP has to be run there — or use Ask It to ' +
+            'Release, which has it let go from here.',
         ),
       );
     }
@@ -228,6 +229,7 @@
   function renderOwningWindow(root, report, vscode) {
     var owner = report.owner;
     var dl = section(root, 'Owning window');
+    row(dl, 'Look for', textValue(owner.lookFor), HINTS.lookFor);
     if (owner.workspaceName) {
       row(dl, 'Window', textValue(owner.workspaceName), HINTS.ownerWindow);
     }

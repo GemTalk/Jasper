@@ -372,6 +372,21 @@ describe('asking another window to release', () => {
     expect(h.warns[0].message).not.toContain('(no workspace)');
   });
 
+  it('logs the release request without the no-folder placeholder', async () => {
+    const h = harness({
+      startSucceeds: false,
+      ownership: () => ({
+        kind: 'other',
+        info: { ...theirs.info, workspacePath: '(no workspace)', selectedSession: 'bar (id 3)' },
+      }),
+    });
+
+    await h.controller.requestRelease();
+
+    expect(h.logs.join('\n')).not.toContain('(no workspace)');
+    expect(h.logs.join('\n')).toContain('bar (id 3)');
+  });
+
   it('just claims when nobody holds the server', async () => {
     const h = harness({ ownership: () => unowned });
 

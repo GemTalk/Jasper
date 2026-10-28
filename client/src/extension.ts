@@ -910,7 +910,8 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Answers "is this window serving MCP, and for which session" for the session
   // rows. Assigned by the MCP block later in activate(); until then — and for
-  // the whole run when `jasper.mcp.enabled` is off — it returns undefined and the rows show no MCP state at all.
+  // the whole run when `jasper.mcp.enabled` is off — it returns undefined and
+  // the rows show no MCP state at all.
   let mcpOwnership: () => McpOwnership | undefined = () => undefined;
   const treeProvider = new LoginTreeProvider(storage, sessionManager, () => mcpOwnership());
   // The acceptance harness seeds a plain-text login into most runs, and this
@@ -1009,6 +1010,9 @@ export function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(
     sessionManager.onDidRemoveSession((id) => exportManager.releaseSession(id)),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('gemstone.mirrorFolder')) exportManager.mirrorFolderChanged();
+    }),
   );
   // Create the Class Sync channel now so it joins the others in the dropdown.
   const classSyncChannel = exportManager.ensureLogChannel();
@@ -3664,11 +3668,11 @@ export function activate(context: vscode.ExtensionContext) {
     // MCP socket regardless of whether it has a session yet. Claude Code's
     // MCP client fails the proxy on a short timeout, so the socket needs to
     // be live by the time Claude Code spawns the proxy on the same window
-    // reload — deferring until first login lost that race. Tradeoff: if you
-    // open a non-GemStone workspace first, that window will own the socket
-    // and serve "no session selected" until you log in there or hand off
-    // ownership (disable Jasper in that workspace; click "Claim MCP Server"
-    // in the workspace you actually want).
+    // reload — deferring until first login lost that race. Tradeoff: if a
+    // non-GemStone window opens first — a project, or a throwaway window with
+    // no folder — it owns the socket and serves "no session selected" until you
+    // log in there or hand it off (Ask It to Release from the window you want,
+    // or Stop MCP in that one).
     // Bringing up the HTTPS/SSE listener, which rides along with socket
     // ownership. Kept here rather than in the controller because it owns the
     // TLS cert this extension also offers to install.

@@ -104,6 +104,8 @@ export class ExportManager {
   // with the same login the same folder.
   private assignedRoots = new Map<number, string>();
   private unwritableReported = new Set<number>();
+  // Logged-out sessions, so a refresh queued just before logout can't claim a folder again.
+  private releasedSessions = new Set<number>();
   private noticesShown = false;
 
   constructor(private readonly options: ExportManagerOptions = {}) {}
@@ -151,26 +153,37 @@ export class ExportManager {
 
   /** The session's mirror folder (parent of all dictionary directories). */
   getSessionRoot(session: ActiveSession): string | undefined {
+    if (this.releasedSessions.has(session.id)) return undefined;
     const assigned = this.assignedRoots.get(session.id);
     if (assigned) return assigned;
-    const root = this.claimRoot(session);
-    if (root && shouldSyncClasses(session.login)) this.assignedRoots.set(session.id, root);
+    const { root, claimed } = this.claimRoot(session) ?? {};
+    // A folder this session couldn't claim is not kept, so the next sync tries again.
+    if (root && claimed) this.assignedRoots.set(session.id, root);
     return root;
   }
 
-  /** Give up the session's mirror folder so a later session can take it. */
+  /** The session has logged out: give up its folder so a later session can take it. */
   releaseSession(sessionId: number): void {
+    this.releasedSessions.add(sessionId);
+    const timer = this.refreshTimers.get(sessionId);
+    if (timer) clearTimeout(timer);
+    this.refreshTimers.delete(sessionId);
+    this.unwritableReported.delete(sessionId);
+    this.dropClaim(sessionId);
+  }
+
+  /** `gemstone.mirrorFolder` changed: live sessions claim under the new folder on their next sync. */
+  mirrorFolderChanged(): void {
+    for (const id of [...this.assignedRoots.keys()]) this.dropClaim(id);
+    this.unwritableReported.clear();
+  }
+
+  private dropClaim(sessionId: number): void {
     const root = this.assignedRoots.get(sessionId);
     this.assignedRoots.delete(sessionId);
-    this.unwritableReported.delete(sessionId);
     if (!root) return;
     const owner = readOwner(root);
-    if (
-      owner &&
-      owner !== 'unreadable' &&
-      owner.pid === process.pid &&
-      owner.sessionId === sessionId
-    ) {
+    if (owner?.record?.pid === process.pid && owner.record.sessionId === sessionId) {
       try {
         fs.unlinkSync(path.join(root, OWNER_FILE));
       } catch {
@@ -179,26 +192,23 @@ export class ExportManager {
     }
   }
 
-  private claimRoot(session: ActiveSession): string | undefined {
+  private claimRoot(session: ActiveSession): { root: string; claimed: boolean } | undefined {
     const parent = this.mirrorFolder();
     if (!parent) return undefined;
     const { gem_host, stone, gs_user } = session.login;
     const base = path.join(parent, safeSegment(gem_host), safeSegment(stone), safeSegment(gs_user));
     // Nothing is written for a login that doesn't sync, so it holds no folder.
-    if (!shouldSyncClasses(session.login)) return base;
+    if (!shouldSyncClasses(session.login)) return { root: base, claimed: false };
     const heldHere = new Set(this.assignedRoots.values());
     for (let n = 1; n <= MAX_MIRROR_SLOTS; n++) {
       const candidate = n === 1 ? base : `${base}_${n}`;
-      if (heldHere.has(candidate)) continue;
-      const owner = readOwner(candidate);
-      if (owner !== undefined && heldByAnotherProcess(owner)) continue;
-      // A stale record is replaced; an absent one is created exclusively, so a
-      // window that wrote one since the read above keeps it.
-      if (writeOwner(candidate, session.id, { replace: owner !== undefined })) return candidate;
+      if (!heldHere.has(candidate) && claimSlot(candidate, session.id)) {
+        return { root: candidate, claimed: true };
+      }
     }
     // Every slot failed, most likely because the folder can't be written at all;
     // exportSession reports that against the plain folder.
-    return base;
+    return { root: base, claimed: false };
   }
 
   /** Can the mirror be written? Says so once per session when it can't. */
@@ -760,48 +770,107 @@ function openMirrorFolderSetting(): void {
   void vscode.commands.executeCommand('workbench.action.openSettings', 'gemstone.mirrorFolder');
 }
 
-function readOwner(dir: string): OwnerRecord | 'unreadable' | undefined {
+interface OwnerFile {
+  raw: string;
+  /** Undefined when the file can't be parsed. */
+  record?: OwnerRecord;
+}
+
+/** Undefined when there is no record; `{ raw: '' }` when it can't be read. */
+function readOwner(dir: string): OwnerFile | undefined {
   let raw: string;
   try {
     raw = fs.readFileSync(path.join(dir, OWNER_FILE), 'utf-8');
   } catch (e) {
-    return (e as NodeJS.ErrnoException).code === 'ENOENT' ? undefined : 'unreadable';
+    return (e as NodeJS.ErrnoException).code === 'ENOENT' ? undefined : { raw: '' };
   }
   try {
     const parsed = JSON.parse(raw) as Partial<OwnerRecord>;
     if (typeof parsed.pid === 'number' && typeof parsed.host === 'string') {
-      return { pid: parsed.pid, host: parsed.host, sessionId: Number(parsed.sessionId) };
+      return {
+        raw,
+        record: { pid: parsed.pid, host: parsed.host, sessionId: Number(parsed.sessionId) },
+      };
     }
   } catch {
     /* fall through */
   }
-  return 'unreadable';
+  return { raw };
 }
 
 // A record we can't read, or one from another machine (whose process we can't
 // probe), counts as held: the cost is a spare `_N` folder, never a shared one.
-function heldByAnotherProcess(owner: OwnerRecord | 'unreadable'): boolean {
-  if (owner === 'unreadable' || owner.host !== os.hostname()) return true;
-  if (owner.pid === process.pid) return false;
-  return isPidAlive(owner.pid);
+function heldByAnotherProcess({ record }: OwnerFile): boolean {
+  if (!record || record.host !== os.hostname()) return true;
+  if (record.pid === process.pid) return false;
+  return isPidAlive(record.pid);
 }
 
-/** Record this process as holding `dir`. Exported for tests. */
-export function writeOwner(
-  dir: string,
-  sessionId: number,
-  { replace }: { replace: boolean },
-): boolean {
+/**
+ * Claim `dir` for this session unless another live process holds it. Exported for
+ * tests; `beforeWrite` lets a test act as another window between the check and the write.
+ */
+export function claimSlot(dir: string, sessionId: number, beforeWrite?: () => void): boolean {
+  const owner = readOwner(dir);
+  if (owner !== undefined && heldByAnotherProcess(owner)) return false;
+  beforeWrite?.();
+  if (owner !== undefined && !moveStaleRecordAside(dir, owner.raw)) return false;
+  return writeOwner(dir, sessionId);
+}
+
+// Two windows taking over the same dead holder's record: a rename succeeds for
+// only one of them, and a record that changed since it was read is put back.
+function moveStaleRecordAside(dir: string, staleRaw: string): boolean {
+  const record = path.join(dir, OWNER_FILE);
+  const aside = `${record}.${process.pid}.stale`;
+  try {
+    fs.renameSync(record, aside);
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'ENOENT';
+  }
+  let movedRaw = '';
+  try {
+    movedRaw = fs.readFileSync(aside, 'utf-8');
+  } catch {
+    /* treat as changed */
+  }
+  if (movedRaw !== staleRaw) {
+    try {
+      fs.linkSync(aside, record);
+    } catch {
+      /* someone has written a newer record already */
+    }
+  }
+  try {
+    fs.unlinkSync(aside);
+  } catch {
+    /* already gone */
+  }
+  return movedRaw === staleRaw;
+}
+
+/**
+ * Record this process as holding `dir`, failing if a record already exists. Written
+ * under a temporary name and linked into place, so no reader sees it half-written.
+ * Exported for tests.
+ */
+export function writeOwner(dir: string, sessionId: number): boolean {
   const record: OwnerRecord = { pid: process.pid, host: os.hostname(), sessionId };
+  const target = path.join(dir, OWNER_FILE);
+  const temp = `${target}.${process.pid}.tmp`;
   try {
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, OWNER_FILE), JSON.stringify(record), {
-      encoding: 'utf-8',
-      flag: replace ? 'w' : 'wx',
-    });
+    fs.writeFileSync(temp, JSON.stringify(record), 'utf-8');
+    fs.linkSync(temp, target);
     return true;
   } catch {
     return false;
+  } finally {
+    try {
+      fs.unlinkSync(temp);
+    } catch {
+      /* never written */
+    }
   }
 }
 
