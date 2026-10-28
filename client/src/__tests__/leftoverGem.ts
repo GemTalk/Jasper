@@ -1,16 +1,29 @@
 import { onTestFinished } from 'vitest';
 import type { ActiveSession } from '../activeSession';
 
-/**
- * End `own`'s gem when the test finishes, if it is still on the stone, from
- * `admin` (which needs SessionAccess). Goes by the login's serial number, never
- * reused, rather than the session number, which the next login gets once the gem
- * has gone: stopping by number can end another test's session.
- */
-export function endGemAfterTest(admin: () => ActiveSession, own: ActiveSession): void {
-  const serial = own.executeAndFetchString(
+// Gems are told apart by their login's serial number, which GemStone never gives
+// another login, not by session number, which the next login gets once the gem
+// has gone: a test that goes by number can check, or end, another test's session.
+
+/** The serial number of `own`'s login. */
+export function loginSerialOf(own: ActiveSession): string {
+  return own.executeAndFetchString(
     '((System descriptionOfSession: System session) at: 9) printString',
   );
+}
+
+/** Whether the login with serial number `serial` is still on the stone, asked from `admin` (which needs SessionAccess). */
+export function stillOnStone(admin: ActiveSession, serial: string): boolean {
+  return (
+    admin.executeAndFetchString(
+      `(((System descriptionOfSessionSerialNum: ${serial}) at: 10) > 0) printString`,
+    ) === 'true'
+  );
+}
+
+/** End `own`'s gem when the test finishes, if it is still on the stone, from `admin`. */
+export function endGemAfterTest(admin: () => ActiveSession, own: ActiveSession): void {
+  const serial = loginSerialOf(own);
   onTestFinished(() => {
     admin().executeAndFetchString(
       `| now | now := (System descriptionOfSessionSerialNum: ${serial}) at: 10. ` +
