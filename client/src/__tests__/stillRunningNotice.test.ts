@@ -4,7 +4,7 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 import { window } from '../__mocks__/vscode';
 import type { ActiveSession } from '../activeSession';
-import { DEFAULT_LOGIN } from '../loginTypes';
+import { DEFAULT_LOGIN, loginLabel } from '../loginTypes';
 import {
   FORCE_STOP,
   LOG_OUT,
@@ -19,9 +19,10 @@ let clock = Date.parse('2026-10-26T12:00:00Z');
 
 const session = { id: 3, login: { ...DEFAULT_LOGIN, stone: 'gs64stone' } } as ActiveSession;
 
-function deps(registered = true, stops = true) {
+function deps(registered = true, stops = true, cleaningUp = false) {
   return {
     isRegistered: vi.fn(() => registered),
+    cleaningUp: vi.fn(() => cleaningUp),
     forceStop: vi.fn(async () => stops),
     logout: vi.fn(async () => true),
   };
@@ -49,6 +50,17 @@ describe('the "stopped run is still running" notice', () => {
 
     expect(window.showWarningMessage).toHaveBeenCalledWith(
       expect.stringMatching(/^Session 3 — .*still running on the server/),
+      FORCE_STOP,
+    );
+  });
+
+  // Closing a debugger clears its process in the background, with no stop pressed.
+  it('names a clean-up as one, and still offers Force Stop', async () => {
+    await showStillRunning(session, deps(true, true, true));
+
+    expect(window.showWarningMessage).toHaveBeenCalledWith(
+      `Session 3 — ${loginLabel(session.login)}: a previous run is still cleaning up on the ` +
+        'server. Nothing else can run on this session until it ends.',
       FORCE_STOP,
     );
   });
@@ -203,6 +215,7 @@ describe('the "a run is still going" notice', () => {
     await showRunInProgress(session, runDeps());
     await showStillRunning(session, {
       isRegistered: () => true,
+      cleaningUp: () => false,
       forceStop: async () => true,
       logout: async () => true,
     });

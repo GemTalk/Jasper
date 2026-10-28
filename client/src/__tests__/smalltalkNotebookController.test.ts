@@ -23,6 +23,7 @@ import {
   SMALLTALK_CONTROLLER_LABEL,
 } from '../smalltalkNotebookController';
 import { GEMSTONE_NOTEBOOK_TYPE } from '../gemstoneNotebookKernel';
+import { MAX_CELL_RESULT } from '../notebookCellResult';
 import { runNbCall, type NbRunOptions } from '../nbRunner';
 import { SessionManager } from '../sessionManager';
 import { SMALLTALK_LANGUAGE } from '../languageIds';
@@ -126,6 +127,12 @@ describe('SmalltalkNotebookController', () => {
     const item = execution.replaceOutput.mock.calls[0][0][0].items[0];
     expect(item.mime).toBe('text/plain');
     expect(new TextDecoder().decode(item.data)).toBe('7');
+    // The limit Python cells use too.
+    expect(gci.GciTsFetchUtf8).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      MAX_CELL_RESULT,
+    );
     ctrl.dispose();
   });
 

@@ -520,7 +520,12 @@ export function ensureSessionFree(session: ActiveSession): void {
   }
   if (stoppedRunHolds(session)) {
     sayStillRunning(session);
-    throw new NbSessionBusyError();
+    throw clearHolds(session)
+      ? new NbSessionBusyError(
+          'A previous run is still cleaning up on the server, so this session cannot start ' +
+            'another one yet. Try again in a moment, or use Force Stop.',
+        )
+      : new NbSessionBusyError();
   }
 }
 
@@ -569,6 +574,8 @@ export function whenSessionFree<T>(
   }
   return (async (): Promise<Awaited<T>> => {
     for (let pending = draining.get(session.id); pending; pending = draining.get(session.id)) {
+      // A drain's collected hook can start a clear: refused, as above.
+      if (clearHolds(session)) break;
       await pending;
     }
     ensureSessionFree(session);
@@ -967,18 +974,7 @@ export function pollNbToCompletion<T>(
         reading = Promise.resolve(onReady(abandoned.signal));
         reading.then(
           (value) => settle(() => resolve(value)),
-          (e) => {
-            // The gem answering a stop's soft break hands back a live process,
-            // which settle swaps for NbCancelledError, so no caller is left to
-            // debug or clear it. The clear holds the session past the caller's
-            // own clean-up, which `onAbandonedCollected` does first instead.
-            const context = (e as { context?: unknown } | null)?.context;
-            if (stopped && !settled && opts.disposableProcess === true && isProcess(context)) {
-              runHook(session, opts.onAbandonedCollected);
-              void clearInBackground(session, context);
-            }
-            settle(() => reject(e));
-          },
+          (e) => settle(() => reject(e)),
         );
         return;
       }

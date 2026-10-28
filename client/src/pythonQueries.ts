@@ -1,7 +1,8 @@
 import { ActiveSession } from './sessionManager';
 import { defaultQueryExecutorUsing } from './browserQueries';
 import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from './gciConstants';
-import { clearInBackground, NbRunOptions, runNbCall } from './nbRunner';
+import { NbRunOptions, runNbCall } from './nbRunner';
+import { failCell, fetchCellResult } from './notebookCellResult';
 
 import {
   evalPython as sharedEvalPython,
@@ -13,8 +14,6 @@ import {
 export function evalPython(session: ActiveSession, source: string) {
   return sharedEvalPython(defaultQueryExecutorUsing(session), source);
 }
-
-const MAX_CELL_RESULT = 256 * 1024;
 
 /**
  * Run a Python cell in its notebook's module scope (see `evalPythonInScope` in
@@ -33,17 +32,8 @@ export async function evalPythonInScopeNb(
     () => session.GciTsNbExecute(code, OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL, 0, 0),
     async () => {
       const { result, err } = session.GciTsNbResult();
-      if (err.number !== 0) {
-        // The query catches every Smalltalk error, so this is a stop that got
-        // past its handlers; nothing will debug the process, so clear it.
-        await clearInBackground(session, err.context);
-        throw new Error(err.message || `GCI error ${err.number}`);
-      }
-      const { data, err: fetchErr } = session.GciTsFetchUtf8(result, MAX_CELL_RESULT);
-      if (fetchErr.number !== 0) {
-        throw new Error(fetchErr.message || `GCI error ${fetchErr.number}`);
-      }
-      return data;
+      if (err.number !== 0) return await failCell(session, err);
+      return fetchCellResult(session, result);
     },
     { title: 'GemStone: Running cell…', disposableProcess: true, onStart },
   );

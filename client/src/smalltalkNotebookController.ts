@@ -4,7 +4,8 @@ import { wrapExecuteCode } from './queries/executeCode';
 import { GemStoneNotebookKernel, GEMSTONE_NOTEBOOK_TYPE } from './gemstoneNotebookKernel';
 import { startClientForwarderMode, endClientForwarderMode, settleNbResult } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
-import { clearInBackground, NbRunOptions, runNbCall, whenSessionFree } from './nbRunner';
+import { NbRunOptions, runNbCall, whenSessionFree } from './nbRunner';
+import { failCell, fetchCellResult } from './notebookCellResult';
 import { OOP_ILLEGAL, OOP_NIL, OOP_CLASS_UTF8 } from './gciConstants';
 import { SMALLTALK_LANGUAGE } from './languageIds';
 import { sessionKernelId } from './sessionKernels';
@@ -29,8 +30,6 @@ export const SMALLTALK_CONTROLLER_LABEL = 'GemStone Smalltalk';
 // is not a compiled method, so it is deliberately NOT gemstone-method and is
 // offered no breakpoint gutter (see client/src/languageIds.ts).
 export const SMALLTALK_LANGUAGE_ID = SMALLTALK_LANGUAGE;
-
-const MAX_CELL_RESULT = 256 * 1024;
 
 // Cells run on the NON-BLOCKING execute path in clientForwarder mode, so
 // `Transcript show:` output streams to the GemStone Transcript channel while
@@ -94,8 +93,7 @@ async function runCell(
           // semaphore, and there is no notebook debugger to hand it to, so
           // leaving it suspended leaks both (#646). Execute It makes the same
           // call after the user declines its Debug prompt.
-          await clearInBackground(session, err.context);
-          throw new Error(err.message || `GCI error ${err.number}`);
+          return await failCell(session, err);
         }
         return result;
       },
@@ -110,11 +108,7 @@ async function runCell(
     );
 
     // wrapExecuteCode printStrings server-side, so the result IS a string.
-    const { data, err: fetchErr } = session.GciTsFetchUtf8(resultOop, MAX_CELL_RESULT);
-    if (fetchErr.number !== 0) {
-      throw new Error(fetchErr.message || `GCI error ${fetchErr.number}`);
-    }
-    return data;
+    return fetchCellResult(session, resultOop);
   } finally {
     appendTranscriptOutput(endClientForwarderMode(session));
   }

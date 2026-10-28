@@ -82,6 +82,7 @@ import {
 } from './rowanLoad';
 import {
   cancelRunOn,
+  clearHolds,
   NbCancelledError,
   setRunInProgressHandler,
   setStillRunningHandler,
@@ -910,6 +911,7 @@ export function activate(context: vscode.ExtensionContext) {
   setStillRunningHandler((session) => {
     void showStillRunning(session, {
       isRegistered: (id) => sessionManager.getSession(id) !== undefined,
+      cleaningUp: clearHolds,
       forceStop: (s) =>
         forceStop(s, { loginTransient: (from) => sessionManager.loginTransient(from.login, from) }),
       logout: (id) => sessionManager.logout(id),
@@ -2745,7 +2747,7 @@ export function activate(context: vscode.ExtensionContext) {
         // the logout, and the session then stays open with its views intact.
         try {
           // A second click, or a stale tree item, finds the work already done.
-          if (!(await sessionManager.logout(session.id))) return;
+          if (!(await sessionManager.logout(session.id, runIgnoresStop))) return;
         } catch (e) {
           vscode.window.showErrorMessage(e instanceof Error ? e.message : String(e));
           return;

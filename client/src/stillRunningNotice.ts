@@ -9,6 +9,8 @@ export const STOP = 'Stop';
 export interface StillRunningDeps {
   /** Whether the session is one the user can see and log out. */
   isRegistered(sessionId: number): boolean;
+  /** Whether what holds the session is a stopped process being cleared. */
+  cleaningUp(session: ActiveSession): boolean;
   /** Answers whether the run ended; see forceStop.ts. */
   forceStop(session: ActiveSession): Promise<boolean>;
   logout(sessionId: number): Promise<unknown>;
@@ -61,16 +63,20 @@ export async function showRunInProgress(
  * Tell the user a stopped run is still running, and offer Force Stop. A run that
  * ignores that too can only be ended by logging out, which is offered next,
  * asking first. Jasper's own short-lived logins get no notice: they aren't the
- * user's to stop.
+ * user's to stop. A clean-up is named as one: closing a debugger starts one too,
+ * with nothing stopped by the user.
  */
 export async function showStillRunning(
   session: ActiveSession,
   deps: StillRunningDeps,
 ): Promise<void> {
   if (!deps.isRegistered(session.id) || !mayShow('stopped', session.id)) return;
+  const what = deps.cleaningUp(session)
+    ? 'a previous run is still cleaning up on the server'
+    : 'the stopped run is still running on the server';
   const pick = await vscode.window.showWarningMessage(
-    `Session ${session.id} — ${loginLabel(session.login)}: the stopped run is still running on ` +
-      'the server. Nothing else can run on this session until it ends.',
+    `Session ${session.id} — ${loginLabel(session.login)}: ${what}. Nothing else can run on ` +
+      'this session until it ends.',
     FORCE_STOP,
   );
   if (pick !== FORCE_STOP || !deps.isRegistered(session.id)) return;

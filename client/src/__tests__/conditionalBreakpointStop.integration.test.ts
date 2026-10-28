@@ -11,6 +11,8 @@ import {
   runNbCall,
   setStillRunningHandler,
   setStoppedRunCollectedHandler,
+  STOP_CALLS_WAIT_MS,
+  stopCallsOn,
   stoppedRunHolds,
 } from '../nbRunner';
 import { executeFetchString } from '../browserQueries';
@@ -138,6 +140,59 @@ describe('stopping a run that skips conditional breakpoints (integration)', () =
       await expect(forceStop(own, deps)).resolves.toBe(true);
       // The debugger is told where the run stopped: in the loop, by the signal.
       await expect(endedAt).resolves.toMatchObject({ completed: false, errorNumber: 6010 });
+      expect(own.executeAndFetchString('(3 + 4) printString')).toBe('7');
+    }, 30_000);
+
+    /** A Resume running into a loop that ignores the stop, with its Cancel. */
+    async function resumedIntoLoop(own: ActiveSession) {
+      const { process, rule } = haltedBeforeSpin(
+        own,
+        '[[true] whileTrue] on: Break do: [:e | e resume]',
+      );
+      queries.clearBreakAtStepPoint(own, CLASS, false, 'spinAfter:', rule('').stepPoint, 0);
+      let cancel: (() => void) | undefined;
+      const resuming = resumeOnWorker(own, process, {
+        onStart: (c) => (cancel = c),
+        suppressNotification: true,
+      });
+      resuming.catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      return { resuming, cancel: cancel! };
+    }
+
+    it('stops waiting at a second press, as the runner does', async () => {
+      setStillRunningHandler(vi.fn());
+      const own = armedSession();
+      const { resuming, cancel } = await resumedIntoLoop(own);
+
+      const pressedAt = Date.now();
+      cancel();
+      cancel();
+
+      await expect(resuming).rejects.toBeInstanceOf(NbCancelledError);
+      // A first press alone waits STOP_WAITING_AFTER_MS or more.
+      expect(Date.now() - pressedAt).toBeLessThan(1000);
+      await expect(forceStop(own, deps)).resolves.toBe(true);
+      expect(own.executeAndFetchString('(3 + 4) printString')).toBe('7');
+    }, 30_000);
+
+    it('lets a logout stop waiting for a Resume that ignores the stop', async () => {
+      setStillRunningHandler(vi.fn());
+      const own = armedSession();
+      const { resuming } = await resumedIntoLoop(own);
+
+      const startedAt = Date.now();
+      const outcome = await Promise.race([
+        stopCallsOn(own).then(() => 'stopped'),
+        new Promise((resolve) => setTimeout(() => resolve('still waiting'), 8000)),
+      ]);
+
+      expect(outcome).toBe('stopped');
+      expect(Date.now() - startedAt).toBeLessThan(STOP_CALLS_WAIT_MS + 1000);
+      await expect(resuming).rejects.toBeInstanceOf(NbCancelledError);
+      // Still held, so a logout goes on to Force Stop.
+      expect(stoppedRunHolds(own)).toBe(true);
+      await expect(forceStop(own, deps)).resolves.toBe(true);
       expect(own.executeAndFetchString('(3 + 4) printString')).toBe('7');
     }, 30_000);
 

@@ -475,28 +475,37 @@ export class SessionManager {
    * A logout of a session already being logged out waits for that one and
    * shares its outcome.
    *
+   * @param stopAlreadyTried - the caller's own {@link stopRun} has just answered
+   *   that the run ignores every stop, so it is not stopped again.
    * @returns whether this call logged the session out: false when the session
    *   was already gone or another logout of it did the work.
    * @throws {Error} when GemStone refuses the logout (a koffi worker thread
    *   still owns the session); the session stays open and registered.
    */
-  async logout(id: number): Promise<boolean> {
+  async logout(id: number, stopAlreadyTried = false): Promise<boolean> {
     const pending = this.loggingOut.get(id);
     if (pending) return await pending.then(() => false);
     const s = this.sessions.get(id);
     if (!s) return false;
-    const done = this.logOutAndDrop(id, s).finally(() => this.loggingOut.delete(id));
+    const done = this.logOutAndDrop(id, s, stopAlreadyTried).finally(() =>
+      this.loggingOut.delete(id),
+    );
     this.loggingOut.set(id, done);
     return await done;
   }
 
-  private async logOutAndDrop(id: number, s: ActiveSession): Promise<boolean> {
+  private async logOutAndDrop(
+    id: number,
+    s: ActiveSession,
+    stopAlreadyTried: boolean,
+  ): Promise<boolean> {
     logInfo(`[Session ${id}] Logging out: ${s.login.gs_user}@${s.login.gem_host}/${s.login.stone}`);
     const serverSession = serverSessionOf(id);
-    let stillRunning = await this.stopRun(id);
+    let stillRunning = await this.stopRun(id, stopAlreadyTried);
     if (!logOutOrFindGone(s)) {
       // A worker thread still owns the session; ending the gem frees it.
-      if (serverSession !== undefined) this.tryEndServerSession(s, serverSession);
+      const ended =
+        serverSession !== undefined && this.tryEndServerSession(s, serverSession) === undefined;
       await stopCallsOn(s);
       if (!logOutOrFindGone(s)) {
         throw new Error(
@@ -505,12 +514,13 @@ export class SessionManager {
             `An administrator can end it with: System stopSession: ${serverSession ?? '<its number>'}`,
         );
       }
-      stillRunning = false;
+      // Not when the logout got through only because the worker let go for a
+      // moment: the run can still be going.
+      if (ended) stillRunning = false;
     }
     if (stillRunning) this.endLeftoverRun(s, serverSession);
     forgetSession(id);
     forgetForceStop(id);
-    this.ignoringStop.delete(id);
     this.sessions.delete(id);
     // Drop it from the selection order too, so it cannot be promoted later. This
     // is what makes that guarantee, for a background session as much as the
@@ -705,31 +715,24 @@ export class SessionManager {
     return { success: err.number === 0, err };
   }
 
-  /** Sessions whose run ignored every stop {@link stopRun} tried. */
-  private readonly ignoringStop = new Set<number>();
-
   /**
    * Stop the run on session `id`, if there is one, as logging out does: run first
    * so the logout's uncommitted-changes check can reach the session. Answers
-   * whether the run is still going anyway.
+   * whether the run is still going anyway; with `alreadyTried`, whether it is
+   * still going, without stopping it again.
    */
-  async stopRun(id: number): Promise<boolean> {
+  async stopRun(id: number, alreadyTried = false): Promise<boolean> {
     const s = this.sessions.get(id);
-    if (!s || !(isRunning(s) || stoppedRunHolds(s))) {
-      this.ignoringStop.delete(id);
-      return false;
-    }
-    if (this.ignoringStop.has(id)) return true;
+    if (!s || !(isRunning(s) || stoppedRunHolds(s))) return false;
+    if (alreadyTried) return true;
     // Without this a Log out click looks like it did nothing.
-    const still = await vscode.window.withProgress(
+    return await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
         title: `Stopping the run on ${loginLabel(s.login)} before logging out…`,
       },
       () => this.stopRunBeforeLogout(s),
     );
-    if (still) this.ignoringStop.add(id);
-    return still;
   }
 
   private readonly forceStopDeps: ForceStopDeps = {

@@ -5,6 +5,7 @@ vi.mock('../gciLog', async (orig) => ({ ...(await orig()), logInfo: vi.fn() }));
 
 import { evalPythonInScopeNb } from '../pythonQueries';
 import { ensureSessionFree, NbSessionBusyError } from '../nbRunner';
+import { MAX_CELL_RESULT } from '../notebookCellResult';
 import { fakeActiveSession } from './fakeActiveSession';
 
 const noErr = { number: 0, message: '' };
@@ -46,5 +47,17 @@ describe('a Python cell stopped past its handlers', () => {
     finish({ success: true, err: noErr });
     await expect(cell).rejects.toThrow('a Break occurred');
     expect(() => ensureSessionFree(session)).not.toThrow();
+  });
+});
+
+describe('a Python cell that answers', () => {
+  it('fetches its printed result with the limit Smalltalk cells use', async () => {
+    const { session, gci } = stoppedCellSession(async () => ({ success: true, err: noErr }));
+    gci.GciTsNbResult.mockReturnValue({ result: 0x77n, err: noErr } as never);
+    const fetch = vi.fn((..._args: unknown[]) => ({ data: '42', err: noErr }));
+    Object.assign(gci, { GciTsFetchUtf8: fetch });
+
+    await expect(evalPythonInScopeNb(session, 'x = 42', 'file:///nb.ipynb')).resolves.toBe('42');
+    expect(fetch).toHaveBeenCalledWith(expect.anything(), 0x77n, MAX_CELL_RESULT);
   });
 });

@@ -614,8 +614,9 @@ export interface RuleRunOptions {
  * polls (Execute It), it is that run's Cancel. Otherwise it sends a soft break if
  * a call is running (a break in the resumed code comes back as a `raised` 6003)
  * and stops at the hit reached; a call that ignores the break is given up on
- * after STOP_WAITING_AFTER_MS, rejecting with `NbCancelledError` while the
- * session is held until the gem lets go, and the user is offered Force Stop.
+ * after STOP_WAITING_AFTER_MS, or at a second press, rejecting with
+ * `NbCancelledError` while the session is held until the gem lets go, and the
+ * user is offered Force Stop.
  */
 export async function applyBreakpointRules(
   session: ActiveSession,
@@ -647,6 +648,8 @@ export async function applyBreakpointRules(
   /** Answers whether there was a call to stop waiting for. */
   const stopWaiting = (): boolean => {
     if (!inFlight || !giveUp) return false;
+    const reject = giveUp;
+    giveUp = undefined;
     resendSoftBreak(session);
     logInfo(`[Session ${session.id}] Stopped waiting for the breakpoint rules' call.`);
     void holdSessionUntilSettled(session, inFlight);
@@ -668,16 +671,22 @@ export async function applyBreakpointRules(
         // A turn later, once the hold has let go of the session.
         .then((result) => setTimeout(() => onGivenUpSettled(result), 0));
     }
-    giveUp(new NbCancelledError());
+    reject(new NbCancelledError());
     return true;
   };
   const cancel = (): void => {
-    if (cancelled) return;
-    cancelled = true;
     if (enclosingRun) {
+      cancelled = true;
       cancelRunOn(session);
       return;
     }
+    if (cancelled) {
+      // A second press stops waiting at once, as the runner's does.
+      clearTimeout(stopWaitingTimer);
+      if (stopWaiting()) sayStillRunning(session);
+      return;
+    }
+    cancelled = true;
     if (!calling) return;
     try {
       session.GciTsBreak(false);
@@ -697,13 +706,12 @@ export async function applyBreakpointRules(
     : trackRun(session, {
         stopRequested: () => cancelled,
         cancel,
-        // A logout: stop waiting at once, without the notice.
+        // A logout: stop waiting at once, without the notice. stopWaiting holds the
+        // session until the call ends, so the logout's own bounded wait covers it.
         stop: async () => {
-          cancel();
+          if (!cancelled) cancel();
           clearTimeout(stopWaitingTimer);
-          const work = inFlight;
           stopWaiting();
-          await work?.catch(() => {});
         },
       });
 

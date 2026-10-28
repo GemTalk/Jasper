@@ -94,7 +94,6 @@ class DebuggableError extends Error {
   }
 }
 
-/** Refuse a second run on a session that is still running one, saying how to stop it. */
 export class CodeExecutor {
   private executing = new Set<number>();
   private diagnostics: vscode.DiagnosticCollection;
@@ -670,19 +669,6 @@ export class CodeExecutor {
     });
   }
 
-  /**
-   * Single shared notifier for a debuggable GemStone error. Offers ONE debugger
-   * — the GemStone Debugger panel — plus the implicit Cancel/dismiss. Debug
-   * OWNS the suspended `gsProcess`; dismissing clears the stack so the process
-   * is released.
-   *
-   * The DAP debugger is not offered here. Two buttons for "debug this" is a
-   * choice nobody wants at the moment their code broke, and the panel is the one
-   * with the frame list, the variable pane, inline values and step points. The
-   * `gemstone` debug type stays registered (see extension.ts) rather than being
-   * torn out, but this notifier was its only caller: attaching needs a live
-   * `gsProcess` OOP, which nothing else surfaces, so the DAP route is dormant.
-   */
   /** End clientForwarder mode now, unless a stopped run holds the session; see the callers. */
   private endForwarding(session: ActiveSession): void {
     if (abandonedRunHolds(session)) return;
@@ -701,6 +687,19 @@ export class CodeExecutor {
     void clearStack(session, gsProcess, () => appendTranscriptOutput(drainTranscript(session)));
   }
 
+  /**
+   * Single shared notifier for a debuggable GemStone error. Offers ONE debugger
+   * — the GemStone Debugger panel — plus the implicit Cancel/dismiss. Debug
+   * OWNS the suspended `gsProcess`; dismissing clears the stack so the process
+   * is released.
+   *
+   * The DAP debugger is not offered here. Two buttons for "debug this" is a
+   * choice nobody wants at the moment their code broke, and the panel is the one
+   * with the frame list, the variable pane, inline values and step points. The
+   * `gemstone` debug type stays registered (see extension.ts) rather than being
+   * torn out, but this notifier was its only caller: attaching needs a live
+   * `gsProcess` OOP, which nothing else surfaces, so the DAP route is dormant.
+   */
   private async promptDebuggableError(
     session: ActiveSession,
     gsProcess: bigint,

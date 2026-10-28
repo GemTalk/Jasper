@@ -2253,6 +2253,8 @@ describe('clearing a stopped run in the background', () => {
       const start = vi.fn();
 
       expect(() => whenSessionFree(session, start)).toThrow(NbSessionBusyError);
+      // Closing a debugger starts a clear too, with no stop pressed.
+      expect(() => whenSessionFree(session, start)).toThrow(/a previous run is still cleaning up/i);
       expect(start).not.toHaveBeenCalled();
       expect(told).toHaveBeenCalledWith(session);
 
@@ -2260,6 +2262,56 @@ describe('clearing a stopped run in the background', () => {
       await clearing;
     } finally {
       setStillRunningHandler(undefined);
+    }
+  });
+
+  it('refuses a call already waiting on a drain once the drain starts a clean-up', async () => {
+    vi.useFakeTimers();
+    const told = vi.fn();
+    setStillRunningHandler(told);
+    try {
+      const { session, gci } = makeSession([{ result: 0 }]);
+      const poll = gci.GciTsNbPoll as ReturnType<typeof vi.fn>;
+      poll.mockReturnValue({ result: 0, err: noErr });
+      let finish: (v: unknown) => void = () => {};
+      gci.GciTsClearStackAsync.mockReturnValueOnce(
+        new Promise((resolve) => (finish = resolve)) as never,
+      );
+      let cancel: (() => void) | undefined;
+      const run = runNbCall(
+        session,
+        () => ({ success: true, err: noErr as never }),
+        () => 'x',
+        {
+          suppressNotification: true,
+          onStart: (c) => (cancel = c),
+          onAbandonedCollected: () => void clearInBackground(session, 0x4242n),
+        },
+      );
+      run.catch(() => {});
+      cancel!();
+      cancel!();
+      await vi.advanceTimersByTimeAsync(SETTLE_MS);
+      const start = vi.fn();
+      const waiting = whenSessionFree(session, start);
+      const outcome = Promise.resolve(waiting).then(
+        () => 'started',
+        (e) => e,
+      );
+      told.mockClear();
+
+      poll.mockReturnValue({ result: 1, err: noErr });
+      await vi.advanceTimersByTimeAsync(200);
+
+      expect(gci.GciTsClearStackAsync).toHaveBeenCalled();
+      await expect(outcome).resolves.toBeInstanceOf(NbSessionBusyError);
+      expect(start).not.toHaveBeenCalled();
+      expect(told).toHaveBeenCalledWith(session);
+      finish({ success: true, err: noErr });
+    } finally {
+      setStillRunningHandler(undefined);
+      vi.clearAllTimers();
+      vi.useRealTimers();
     }
   });
 
