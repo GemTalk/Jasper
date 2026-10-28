@@ -165,6 +165,18 @@ describe('GlobalsBrowser', () => {
     it('does nothing when no panel exists for the session', () => {
       expect(() => GlobalsBrowser.disposeForSession(99)).not.toThrow();
     });
+
+    it('leaves another session’s panel open', async () => {
+      await GlobalsBrowser.showOrUpdate(session, 'Globals', 1);
+      const mine = mockPanel;
+      await GlobalsBrowser.showOrUpdate(makeSession(2), 'Globals', 1);
+      const theirs = mockPanel;
+
+      GlobalsBrowser.disposeForSession(session.id);
+
+      expect(mine.dispose).toHaveBeenCalled();
+      expect(theirs.dispose).not.toHaveBeenCalled();
+    });
   });
 
   describe('double-click to inspect', () => {

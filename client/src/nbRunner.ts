@@ -472,9 +472,11 @@ const ABANDONED_READ_WAIT_MS = 30_000;
  *
  * There is nothing left to drain: `onReady` has already read the non-blocking
  * result. But it may be resuming the run on a koffi worker thread (the
- * Transcript settle loop does), and while it is, any poll of the session from
- * the main thread kills the process — GciTsNbPoll on 3.7.5, GciTsNbResult on
- * 3.6.2, both measured. So nothing here touches the session; `onReady`'s own
+ * Transcript settle loop does), and while it is, a poll of the session from
+ * the main thread would kill the process — GciTsNbPoll on 3.7.5, GciTsNbResult
+ * on 3.6.2, both measured. The session now refuses such a poll with an error
+ * instead (see `ActiveSession.handleUnlessAWorkerOwnsIt`). So nothing here
+ * touches the session; `onReady`'s own
  * promise is the only signal that it is free, and clearing whatever the break
  * stopped is left to `onReady`, which is told of the break through its signal.
  *

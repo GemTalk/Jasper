@@ -35,6 +35,8 @@ The **GemStone Version** dropdown lists every version Jasper supports. Pick the 
 
 You can also point Jasper at a library you already have, with the `gemstone.gciLibraries` setting.
 
+**VS Code Remote-SSH isn't supported.** Run VS Code on your own machine and reach the stone on the other machine with a login, as above. A Remote-SSH window installs and runs Jasper on the remote machine instead, which is slow to set up and isn't tested.
+
 ### Full local setup (macOS, Linux, or Windows with WSL)
 
 To install, manage, and run a GemStone server locally:
@@ -43,7 +45,7 @@ To install, manage, and run a GemStone server locally:
 2. Open the **GemStone** sidebar (gem icon in the activity bar).
 3. Check the **OS Configuration** section: on macOS/Linux run the shared-memory setup if it warns; on Windows+WSL Jasper also surfaces WSL networking and services-file configuration here.
 4. Click **Manage Databases & Versions** in the **Databases** section title bar to open the panel, and install a GemStone version from its Versions list.
-5. Click **New Database** in the same title bar and fill in the form.
+5. Click **+** (**New Database on This Machine...**) in the same title bar and fill in the form.
 6. Start the stone and NetLDI from the database tree.
 7. Click **Create Login** on the database to generate a login configuration.
 8. Click **Login** to connect and start developing.
@@ -82,7 +84,7 @@ On Windows, a **Download Files** row action fetches the native Windows client fo
 
 ### Database Management
 
-The **Databases** view shows all databases under your GemStone root directory (configurable via `gemstone.rootPath`, default `~/Documents/GemStone`). Click **New Database** in its title bar to open the **Databases & Versions** panel on a form asking for the GemStone version, the base extent, a stone name and a NetLDI name — all on screen at once, with the names already in use listed beside the fields that have to avoid them. Nothing is lost if you leave VS Code to look something up. A database is made by copying an installed version, so on a machine that has none the panel opens on the lists instead and says so, with **Install Version…** waiting in the Versions section below. You do not need one to adopt a database that already exists: **Register Existing…** in the panel header works on a machine with nothing installed.
+The **Databases** view shows all databases under your GemStone root directory (configurable via `gemstone.rootPath`, default `~/Documents/GemStone`). Click **+** (**New Database on This Machine...**) in its title bar to open the **Databases & Versions** panel on a form asking for the GemStone version, the base extent, a stone name and a NetLDI name — all on screen at once, with the names already in use listed beside the fields that have to avoid them. Nothing is lost if you leave VS Code to look something up. A database is made by copying an installed version, so on a machine that has none the panel opens on the lists instead and says so, with **Install Version…** waiting in the Versions section below. You do not need one to adopt a database that already exists: **Register Existing…** in the panel header works on a machine with nothing installed.
 
 The extension creates the full directory structure (`conf/`, `data/`, `log/`, `stat/`), writes configuration files (`system.conf`, `gem.conf`, stone config), copies the key file and base extent, and writes `database.yaml`.
 

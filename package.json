@@ -694,7 +694,7 @@
     "viewsWelcome": [
       {
         "view": "gemstoneLogins",
-        "contents": "Add a login to connect to a stone.\n[Add a Login](command:gemstone.addLogin)\nNo database yet? [Create one](command:gemstone.newDatabase)."
+        "contents": "Add a login to connect to a stone. A stone on another machine needs no database locally.\n[Add a Login](command:gemstone.addLogin)\nRunning GemStone on this machine? [Create a database](command:gemstone.newDatabase) first."
       },
       {
         "view": "gemstoneDatabases",
@@ -711,7 +711,7 @@
       {
         "id": "gemstoneGettingStarted",
         "title": "Get Started with GemStone",
-        "description": "Download GemStone, create a database, connect, and explore Smalltalk expressions in Jasper.",
+        "description": "Widen the window to see each step's details. Download GemStone, create a database, connect, and explore Smalltalk expressions in Jasper.",
         "steps": [
           {
             "id": "setup",
@@ -2101,7 +2101,7 @@
       },
       {
         "command": "gemstone.newDatabase",
-        "title": "New Database...",
+        "title": "New Database on This Machine...",
         "category": "GemStone",
         "icon": "$(add)"
       },
