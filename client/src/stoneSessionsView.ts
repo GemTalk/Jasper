@@ -40,8 +40,10 @@ export interface StoneSessionContext {
   jasperSession?: ActiveSession;
   /** A run the user stopped is still running on it. */
   stuck: boolean;
-  /** Its gem runs on this machine (in WSL, on Windows), where Kill can reach it. */
-  localGem?: boolean;
+  /** The login has the privileges `System stopSession:` needs. */
+  mayStop?: boolean;
+  /** Its gem runs on this machine (in WSL, on Windows) as a process this OS user may signal. */
+  canSignalGem?: boolean;
   /** It holds back a commit-record backlog the stone already asks sessions to abort over. */
   backlog?: { count: number; threshold: number };
 }
@@ -56,7 +58,7 @@ export class StoneSessionRowItem extends vscode.TreeItem {
   ) {
     const { id, serial, user, gemPid, host, loggedInAt, systemGem } = stoneSession;
     super(user || '(logging in or out)', vscode.TreeItemCollapsibleState.None);
-    const { jasperSession, stuck, localGem, backlog } = context;
+    const { jasperSession, stuck, mayStop, canSignalGem, backlog } = context;
     const age = sessionAge(loggedInAt, serverNow);
     const parts = [`gem ${gemPid}`, host, age];
     if (jasperSession) parts.push(`Jasper session ${jasperSession.id}`);
@@ -79,11 +81,13 @@ export class StoneSessionRowItem extends vscode.TreeItem {
               ? 'gear'
               : 'account',
     );
-    // Neither is offered on GemStone's own gems. Stop isn't offered on this
-    // window's own sessions, whose Log Out stops their run first; Kill is, once
-    // a stopped run holds one, for a gem nothing else can end.
-    const canStop = !jasperSession && !systemGem;
-    const canKill = !!localGem && !systemGem && (!jasperSession || stuck);
+    // Each is offered only where it can work, and neither on GemStone's own
+    // gems. Stop isn't offered on this window's own sessions, whose Log Out
+    // stops their run first; Kill is, once a stopped run holds one, for a gem
+    // nothing else can end.
+    const stoppable = !jasperSession && !systemGem;
+    const canStop = stoppable && !!mayStop;
+    const canKill = !!canSignalGem && !systemGem && (!jasperSession || stuck);
     this.contextValue = `stoneSession${canStop ? '.canStop' : ''}${canKill ? '.canKill' : ''}`;
 
     const tooltip = new vscode.MarkdownString();
@@ -105,6 +109,12 @@ export class StoneSessionRowItem extends vscode.TreeItem {
       );
     } else if (jasperSession) {
       tooltip.appendMarkdown(`Jasper session ${jasperSession.id} in this window.\n\n`);
+    }
+    if (stoppable && !mayStop) {
+      tooltip.appendMarkdown(
+        `Stopping it needs the SystemControl privilege, which ${parent.login.gs_user} ` +
+          "doesn't have.\n\n",
+      );
     }
     if (backlog) {
       tooltip.appendMarkdown(
@@ -187,7 +197,7 @@ export async function stopStoneSessionCommand(
     const administrator = `An administrator can end it with: System stopSession: ${id}`;
     void vscode.window.showWarningMessage(
       e instanceof GciLibraryError && e.number === NO_PRIVILEGE_ERROR
-        ? `Stopping a session needs the SessionAccess privilege, which ` +
+        ? `Stopping a session needs the SessionAccess and SystemControl privileges, which ` +
             `${row.parent.login.gs_user} doesn't have. ${administrator}`
         : `Session ${id} could not be stopped (${e instanceof Error ? e.message : String(e)}). ` +
             administrator,

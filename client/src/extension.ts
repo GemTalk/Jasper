@@ -90,7 +90,12 @@ import {
   stoppedRunHolds,
 } from './nbRunner';
 import { forceStop, rearmAfterForceStop, serverSessionOf } from './forceStop';
-import { killStoneSession, listStoneSessions, stopStoneSession } from './stoneSessions';
+import {
+  killableGems,
+  killStoneSession,
+  listStoneSessions,
+  stopStoneSession,
+} from './stoneSessions';
 import {
   killStoneSessionCommand,
   StoneSessionRowItem,
@@ -273,6 +278,7 @@ import {
   getWslNetworkInfoCached,
   refreshWslNetworkInfo,
   wslExec,
+  wslExecSync,
 } from './wslBridge';
 import { isWslInstalledAsync } from './wslInstall';
 import { recheckWsl } from './wslRecheck';
@@ -998,7 +1004,8 @@ export function activate(context: vscode.ExtensionContext) {
     read: (through) => listStoneSessions(transientLoginOn(through)),
     stuck: stoppedRunHolds,
     serverSessionOf,
-    isLocalGemHost: isThisMachine,
+    killableGems: (sessions) =>
+      killableGems(sessions, isThisMachine, (command) => wslExecSync(command)),
   });
   // A collected run takes its flag off the session list.
   setStoppedRunCollectedHandler((session) => {

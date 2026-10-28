@@ -5,6 +5,7 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 import type { ActiveSession } from '../activeSession';
 import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
 import {
+  killableGems,
   killStoneSession,
   listStoneSessions,
   StoneSession,
@@ -69,6 +70,29 @@ describe('Stone sessions (integration)', () => {
   it('places a gem of this machine on this machine', () => {
     const { serial } = otherSession();
     expect(isThisMachine(rowFor(listStoneSessions(loginAs()), serial)!.host)).toBe(true);
+  });
+
+  it('says whether the login may stop sessions, which takes SystemControl too', () => {
+    const list = listStoneSessions(loginAs());
+    if (list.kind !== 'sessions') throw new Error(list.kind);
+    const hasIt = session.executeAndFetchString(
+      '(System myUserProfile privileges includes: #SystemControl) printString',
+    );
+    expect(list.canStopSessions).toBe(hasIt === 'true');
+  });
+
+  // On Windows the gems, and so the check, are inside WSL.
+  it('offers Kill on a gem this OS user runs, and not on a process it may not signal', () => {
+    const { serial } = otherSession();
+    const row = rowFor(listStoneSessions(loginAs()), serial)!;
+    // Process 1 is init, which only root may signal.
+    const init = { ...row, gemPid: 1 };
+
+    const killable = killableGems([row, init], isThisMachine, (command) => wslExecSync(command));
+
+    // WSL on a CI runner can run as root, which may signal anything.
+    const root = wslExecSync('id -u').trim() === '0';
+    expect(killable).toEqual(new Set(root ? [row.gemPid, 1] : [row.gemPid]));
   });
 
   // Only real commits make commit records, and the harness's sessions refuse

@@ -30,6 +30,8 @@ export type StoneSessionList =
       commitRecordBacklog: number;
       /** The backlog at which the stone asks sessions to abort (`STN_SIGNAL_ABORT_CR_BACKLOG`). */
       abortThreshold: number;
+      /** The login has SystemControl, which `System stopSession:` needs besides SessionAccess. */
+      canStopSessions: boolean;
       sessions: StoneSession[];
     }
   /** The login lacks SessionAccess, without which another session can't be looked at. */
@@ -41,13 +43,15 @@ const NO_ACCESS = 'noSessionAccess';
  * Every session on the stone except the one asking, which is the short-lived
  * login the list is read through. One line per session, tab-separated; the
  * first line is the stone's clock, the commit-record backlog, the stone's abort
- * threshold and the sessions holding the oldest commit record. A session that
+ * threshold, whether the login has SystemControl, and the sessions holding the
+ * oldest commit record. A session that
  * logs out while the list is read answers a session number of 0 and is left out.
  */
 const LIST_CODE =
   '| out me noAccess | out := WriteStream on: String new. me := System session. ' +
   'noAccess := false. out print: System timeGmt; tab; print: System commitRecordBacklog; tab; ' +
-  'print: (System stoneConfigurationAt: #StnSignalAbortCrBacklog); tab. ' +
+  'print: (System stoneConfigurationAt: #StnSignalAbortCrBacklog); tab; ' +
+  'print: (System myUserProfile privileges includes: #SystemControl); tab. ' +
   'System sessionsReferencingOldestCr do: [:id | out print: id] separatedBy: [out space]. ' +
   'System currentSessions do: [:id | | d | id = me ifFalse: [' +
   'd := [System descriptionOfSession: id] on: Error do: [:e | ' +
@@ -68,7 +72,7 @@ const TRANSACTION: Record<string, StoneSession['transaction']> = {
 export function parseStoneSessions(text: string): StoneSessionList {
   if (text === NO_ACCESS) return { kind: 'noAccess' };
   const [header, ...lines] = text.split(/\r?\n|\r/);
-  const [now, backlog, threshold, holders = ''] = header.split('\t');
+  const [now, backlog, threshold, canStop, holders = ''] = header.split('\t');
   const holderIds = new Set(holders.split(' ').filter(Boolean).map(Number));
   const sessions = lines.map((line): StoneSession => {
     const [id, serial, user, gemPid, host, loggedInAt, transaction, systemGem] = line.split('\t');
@@ -89,6 +93,7 @@ export function parseStoneSessions(text: string): StoneSessionList {
     serverNow: Number(now),
     commitRecordBacklog: Number(backlog),
     abortThreshold: Number(threshold),
+    canStopSessions: canStop === 'true',
     sessions,
   };
 }
@@ -107,6 +112,32 @@ export function listStoneSessions(login: TransientLogin): StoneSessionList {
     return parseStoneSessions(reader.session.executeAndFetchString(LIST_CODE));
   } finally {
     reader.logout();
+  }
+}
+
+/**
+ * The gems among `sessions` that Kill can end: on this machine (inside WSL on
+ * Windows), and ones this OS user may signal, as `kill -0` answers; another OS
+ * user's gem refuses. Answers none when the check itself fails, so Kill is
+ * never offered on a guess.
+ */
+export function killableGems(
+  sessions: StoneSession[],
+  isLocalHost: (host: string) => boolean,
+  shellSync: (command: string) => string,
+): Set<number> {
+  const pids = sessions.filter((s) => !s.systemGem && isLocalHost(s.host)).map((s) => s.gemPid);
+  if (pids.length === 0) return new Set();
+  try {
+    const answer = shellSync(
+      `for p in ${pids.join(' ')}; do kill -0 $p 2>/dev/null && echo $p; done; true`,
+    );
+    return new Set(answer.split(/\s+/).filter(Boolean).map(Number));
+  } catch (e) {
+    logInfo(
+      `Could not tell which gems Kill can end: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    return new Set();
   }
 }
 
@@ -135,7 +166,7 @@ export type StopSessionOutcome = 'ended' | 'gone' | 'stuck';
  * End `target` with `System stopSession:` from a short-lived login. Its
  * uncommitted work is lost. Checked against the login's serial number first, so
  * a session number that has since passed to another login is left alone.
- * Needs SessionAccess ({@link NO_PRIVILEGE_ERROR} otherwise).
+ * Needs SessionAccess and SystemControl ({@link NO_PRIVILEGE_ERROR} otherwise).
  */
 export async function stopStoneSession(
   target: Pick<StoneSession, 'id' | 'serial'>,

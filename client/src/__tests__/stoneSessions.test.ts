@@ -8,6 +8,7 @@ import { GciLibraryError } from '../gciLibraryError';
 import { DEFAULT_LOGIN } from '../loginTypes';
 import {
   isGemCommand,
+  killableGems,
   killStoneSession,
   parseStoneSessions,
   sessionAge,
@@ -27,7 +28,7 @@ import {
 describe('parseStoneSessions', () => {
   it("reads the stone's clock, its commit-record backlog, and one session per line", () => {
     const text =
-      '1793224302\t34\t20\t7\n' +
+      '1793224302\t34\t20\ttrue\t7\n' +
       '2\t1\tGcUser\t3886706\tlocalhost\t1793224153\t0\treclaimgcgem\n' +
       '7\t12\tDataCurator\t41377\tthor\t1793223402\t1\t';
 
@@ -36,6 +37,7 @@ describe('parseStoneSessions', () => {
       serverNow: 1793224302,
       commitRecordBacklog: 34,
       abortThreshold: 20,
+      canStopSessions: true,
       sessions: [
         {
           id: 2,
@@ -64,18 +66,19 @@ describe('parseStoneSessions', () => {
   });
 
   it('reads a stone with no other session as an empty list', () => {
-    expect(parseStoneSessions('1793224302\t1\t20\t')).toEqual({
+    expect(parseStoneSessions('1793224302\t1\t20\tfalse\t')).toEqual({
       kind: 'sessions',
       serverNow: 1793224302,
       commitRecordBacklog: 1,
       abortThreshold: 20,
+      canStopSessions: false,
       sessions: [],
     });
   });
 
   it('reads a transactionless session, and one with no user yet', () => {
     const [row] = (
-      parseStoneSessions('100\t1\t20\t\n9\t30\t\t555\tlocalhost\t90\t-1\t') as {
+      parseStoneSessions('100\t1\t20\ttrue\t\n9\t30\t\t555\tlocalhost\t90\t-1\t') as {
         sessions: StoneSession[];
       }
     ).sessions;
@@ -120,7 +123,10 @@ describe('Stop Session', () => {
     holdsOldestCommitRecord: false,
   };
   const row = new StoneSessionRowItem(parent, target, 100, { stuck: false });
-  const localRow = new StoneSessionRowItem(parent, target, 100, { stuck: false, localGem: true });
+  const localRow = new StoneSessionRowItem(parent, target, 100, {
+    stuck: false,
+    canSignalGem: true,
+  });
 
   function deps(stop: () => Promise<'ended' | 'gone' | 'stuck'>) {
     return {
@@ -209,7 +215,8 @@ describe('Stop Session', () => {
     await stopStoneSessionCommand(row, d);
 
     expect(window.showWarningMessage).toHaveBeenLastCalledWith(
-      "Stopping a session needs the SessionAccess privilege, which Alice doesn't have. " +
+      'Stopping a session needs the SessionAccess and SystemControl privileges, which Alice ' +
+        "doesn't have. " +
         'An administrator can end it with: System stopSession: 7',
     );
     expect(d.refresh).toHaveBeenCalledWith(parent);
@@ -245,7 +252,7 @@ describe('Kill', () => {
     transaction: 'in',
     holdsOldestCommitRecord: false,
   };
-  const row = new StoneSessionRowItem(parent, target, 100, { stuck: false, localGem: true });
+  const row = new StoneSessionRowItem(parent, target, 100, { stuck: false, canSignalGem: true });
 
   function deps(kill: () => Promise<'ended' | 'gone' | 'stuck'>) {
     return {
@@ -291,7 +298,7 @@ describe('Kill', () => {
   it("logs out this window's own session once its gem is killed, and says so first", async () => {
     const mine = new StoneSessionRowItem(parent, target, 100, {
       stuck: true,
-      localGem: true,
+      canSignalGem: true,
       jasperSession: { id: 3 } as ActiveSession,
     });
     vi.mocked(window.showWarningMessage).mockResolvedValueOnce(KILL);
@@ -466,5 +473,48 @@ describe('isGemCommand', () => {
     ['/usr/bin/gem install rails', false],
   ])('%s → %s', (command, expected) => {
     expect(isGemCommand(command)).toBe(expected);
+  });
+});
+
+describe('killableGems', () => {
+  const gem = (overrides: Partial<StoneSession>): StoneSession => ({
+    id: 1,
+    serial: 1,
+    user: 'DataCurator',
+    gemPid: 100,
+    host: 'uffda',
+    loggedInAt: 0,
+    transaction: 'out',
+    holdsOldestCommitRecord: false,
+    ...overrides,
+  });
+  const isLocal = (host: string) => host === 'uffda';
+
+  it('asks kill -0 about the gems on this machine only, and keeps those it may signal', () => {
+    const shell = vi.fn(() => '100\n');
+
+    const killable = killableGems(
+      [gem({ gemPid: 100 }), gem({ gemPid: 200 }), gem({ gemPid: 300, host: 'thor' })],
+      isLocal,
+      shell,
+    );
+
+    expect(shell).toHaveBeenCalledWith(
+      'for p in 100 200; do kill -0 $p 2>/dev/null && echo $p; done; true',
+    );
+    expect(killable).toEqual(new Set([100]));
+  });
+
+  it("never asks about GemStone's own gems", () => {
+    const shell = vi.fn(() => '');
+    expect(killableGems([gem({ systemGem: 'symbolgem' })], isLocal, shell)).toEqual(new Set());
+    expect(shell).not.toHaveBeenCalled();
+  });
+
+  it('offers no Kill when the check itself fails', () => {
+    const killable = killableGems([gem({})], isLocal, () => {
+      throw new Error('wsl.exe not found');
+    });
+    expect(killable).toEqual(new Set());
   });
 });

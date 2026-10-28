@@ -142,8 +142,8 @@ export const NO_PRIVILEGE_ERROR = 2151;
 /**
  * End `serverSession`'s gem from a short-lived login of `from`'s, which may
  * already be logged out: the last resort for a run that caught Force Stop, whose
- * gem a logout leaves running. Needs the SessionAccess privilege
- * ({@link NO_PRIVILEGE_ERROR} otherwise).
+ * gem a logout leaves running. Needs the SessionAccess and SystemControl
+ * privileges ({@link NO_PRIVILEGE_ERROR} otherwise).
  *
  * Ends it only while the session number still belongs to `from`'s login: once
  * the gem has gone, the number can already be another login's. Force Stop's

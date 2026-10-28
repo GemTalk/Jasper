@@ -42,6 +42,14 @@ describe('All sessions on a stone, in Logins & Sessions', () => {
   let read: ReturnType<typeof vi.fn<(through: ActiveSession) => StoneSessionList>>;
   let provider: LoginTreeProvider;
 
+  const manager = () =>
+    ({
+      onDidChangeSelection: vi.fn(),
+      onDidChangeTransactionState: vi.fn(),
+      getSessions: () => sessions,
+      selectedId: 1,
+    }) as unknown as SessionManager;
+
   beforeEach(() => {
     __resetConfig();
     __setConfig('gemstone', 'logins', [dev]);
@@ -52,6 +60,7 @@ describe('All sessions on a stone, in Logins & Sessions', () => {
       serverNow: 7200,
       commitRecordBacklog: 1,
       abortThreshold: 20,
+      canStopSessions: true,
       sessions: [
         stoneSession({ id: 4, serial: 3, gemPid: 41022 }),
         stoneSession({ id: 5, serial: 9, user: 'ewinger', gemPid: 39811, host: 'thor' }),
@@ -59,18 +68,13 @@ describe('All sessions on a stone, in Logins & Sessions', () => {
       ],
     };
     read = vi.fn(() => list);
-    const manager = {
-      onDidChangeSelection: vi.fn(),
-      onDidChangeTransactionState: vi.fn(),
-      getSessions: () => sessions,
-      selectedId: 1,
-    } as unknown as SessionManager;
-    provider = new LoginTreeProvider(new LoginStorage(fakeSecretStorage()), manager, undefined, {
+    provider = new LoginTreeProvider(new LoginStorage(fakeSecretStorage()), manager(), undefined, {
       read,
       stuck: (s) => stuck.has(s.id),
       // Jasper session 1 is GemStone's session 4.
       serverSessionOf: (id) => (id === 1 ? '4' : undefined),
-      isLocalGemHost: (host) => host === 'localhost',
+      killableGems: (all) =>
+        new Set(all.filter((s) => s.host === 'localhost' && !s.systemGem).map((s) => s.gemPid)),
     });
   });
 
@@ -155,6 +159,42 @@ describe('All sessions on a stone, in Logins & Sessions', () => {
 
     expect(idle.contextValue).toBe('stoneSession');
     expect(held.contextValue).toBe('stoneSession.canKill');
+  });
+
+  it('offers Stop only to a login with SystemControl, and says why not', () => {
+    list = { ...listed(), canStopSessions: false };
+
+    const other = rows()[1];
+
+    expect(other.contextValue).toBe('stoneSession');
+    expect((other.tooltip as { value: string }).value).toContain(
+      "Stopping it needs the SystemControl privilege, which DataCurator doesn't have.",
+    );
+  });
+
+  it('offers Kill only on a gem this OS user may signal', () => {
+    listed().sessions[1].host = 'localhost';
+    const killable = vi.fn(() => new Set<number>());
+    provider = new LoginTreeProvider(new LoginStorage(fakeSecretStorage()), manager(), undefined, {
+      read,
+      stuck: () => false,
+      serverSessionOf: () => undefined,
+      killableGems: killable,
+    });
+
+    expect(rows()[1].contextValue).toBe('stoneSession.canStop');
+    expect(killable).toHaveBeenCalledTimes(1);
+    rows();
+    expect(killable).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the list again once a session of this window logs in or out', () => {
+    rows();
+    sessions = [makeSession(1), makeSession(2)];
+    provider.getChildren();
+    rows();
+    rows();
+    expect(read).toHaveBeenCalledTimes(2);
   });
 
   it('flags the session holding the oldest commit record once the stone asks for aborts', () => {
