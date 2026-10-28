@@ -3668,11 +3668,11 @@ export function activate(context: vscode.ExtensionContext) {
     // MCP socket regardless of whether it has a session yet. Claude Code's
     // MCP client fails the proxy on a short timeout, so the socket needs to
     // be live by the time Claude Code spawns the proxy on the same window
-    // reload — deferring until first login lost that race. Tradeoff: if a
-    // non-GemStone window opens first — a project, or a throwaway window with
-    // no folder — it owns the socket and serves "no session selected" until you
-    // log in there or hand it off (Ask It to Release from the window you want,
-    // or Stop MCP in that one).
+    // reload — deferring until first login lost that race. A window with no
+    // folder open does wait for a login (see claimAtStartup): it is most often a
+    // throwaway window. Tradeoff: if a non-GemStone project opens first, it owns
+    // the socket and serves "no session selected" until you log in there or hand
+    // it off (Ask It to Release from the window you want, or Stop MCP there).
     // Bringing up the HTTPS/SSE listener, which rides along with socket
     // ownership. Kept here rather than in the controller because it owns the
     // TLS cert this extension also offers to install.
@@ -3721,6 +3721,7 @@ export function activate(context: vscode.ExtensionContext) {
       startHttps: startMcpHttps,
       stopHttps: stopMcpHttps,
       ownership: () => resolveOwnership(mcpDeps),
+      hasFolder: () => !!vscode.workspace.workspaceFolders?.length,
       selectedSessionLabel: () => {
         const session = sessionManager.getSelectedSession();
         return session ? `session ${session.id} (${loginLabel(session.login)})` : undefined;
@@ -3758,13 +3759,13 @@ export function activate(context: vscode.ExtensionContext) {
     // session rows (none of which claim to serve MCP) and a re-claim attempt
     // for the case where a prior owner released ownership while we were idle.
     context.subscriptions.push(
-      sessionManager.onDidChangeSelection(() => {
+      sessionManager.onDidChangeSelection((id) => {
         mcpSocketServer.refreshSidecar();
         refreshMcpSurfaces();
-        void mcpController.tryClaim();
+        void mcpController.claimOnSessionChange(id !== null);
       }),
     );
-    void mcpController.tryClaim();
+    void mcpController.claimAtStartup();
 
     context.subscriptions.push(
       vscode.commands.registerCommand('jasper.claimMcpServer', () => mcpController.claim()),

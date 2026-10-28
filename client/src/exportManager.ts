@@ -35,7 +35,6 @@ const STATE_VERSION = 1;
 const OWNER_FILE = '.jasper-owner.json';
 const MAX_MIRROR_SLOTS = 50;
 
-const NOTICE_SHOWN_KEY = 'gemstone.mirrorNoticeShown';
 const EXPORT_PATH_NOTICE_SHOWN_KEY = 'gemstone.exportPathRetiredNoticeShown';
 const CHANGE_FOLDER = 'Change…';
 // Notifications render Markdown links, including command links.
@@ -43,7 +42,6 @@ const MIRROR_SETTING_LINK =
   '[gemstone.mirrorFolder](command:workbench.action.openSettings?' +
   encodeURIComponent(JSON.stringify(['gemstone.mirrorFolder'])) +
   ')';
-const OPEN_FOLDER = 'Open Folder';
 
 interface OwnerRecord {
   pid: number;
@@ -107,7 +105,7 @@ export class ExportManager {
   // Logged-out sessions, so a refresh queued just before logout can't claim a folder again.
   private releasedSessions = new Set<number>();
   private claimedUnder: string | undefined;
-  private noticesShown = false;
+  private exportPathNoticeChecked = false;
 
   constructor(private readonly options: ExportManagerOptions = {}) {}
 
@@ -243,37 +241,12 @@ export class ExportManager {
     }
   }
 
-  /** The one-time notices: where the mirror lives, and that exportPath is retired. */
-  private showNotices(): void {
-    if (this.noticesShown) return;
-    this.noticesShown = true;
+  /** Says once that the old exportPath setting is no longer used. */
+  private showExportPathRetiredNotice(): void {
+    if (this.exportPathNoticeChecked) return;
+    this.exportPathNoticeChecked = true;
     const memento = this.options.memento;
     const mirror = this.mirrorFolder();
-
-    if (memento && !memento.get<boolean>(NOTICE_SHOWN_KEY) && mirror) {
-      void memento.update(NOTICE_SHOWN_KEY, true);
-      const oldFolders = (vscode.workspace.workspaceFolders ?? [])
-        .map((f) => path.join(f.uri.fsPath, '.gemstone'))
-        .filter((p) => fs.existsSync(p));
-      const old = oldFolders.length
-        ? ` The copy Jasper used to keep in ${oldFolders.join(', ')} is no longer updated; ` +
-          'you can delete it.'
-        : '';
-      void vscode.window
-        .showInformationMessage(
-          `Jasper keeps a read-only copy of your classes as .gs files in ${mirror}, for ` +
-            `browsing class definitions. To keep it elsewhere, set ${MIRROR_SETTING_LINK}.` +
-            old,
-          OPEN_FOLDER,
-          CHANGE_FOLDER,
-        )
-        .then((choice) => {
-          if (choice === OPEN_FOLDER) {
-            void vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(mirror));
-          }
-          if (choice === CHANGE_FOLDER) openMirrorFolderSetting();
-        });
-    }
 
     const exportPath = vscode.workspace
       .getConfiguration('gemstone')
@@ -511,7 +484,7 @@ export class ExportManager {
     );
     // Not before: at login it would land among the connect, tip and progress
     // messages and be pushed out of view.
-    this.showNotices();
+    this.showExportPathRetiredNotice();
   }
 
   /** Re-sync after a commit or abort (another session's changes may be visible). */

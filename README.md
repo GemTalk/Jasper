@@ -540,7 +540,7 @@ Jasper registers notebook kernels for `.ipynb` files, in two languages: GemStone
 
 ### Class Sync (File Export)
 
-Jasper keeps a local mirror of a session's classes as read-only `.gs` files in Topaz format. It lives in Jasper's private storage, not in your open folder, so logging in needs no folder open; Jasper says where it is the first time. Files land in `<mirror folder>/{host}/{stone}/{user}/{index}-{dictName}/`; set `gemstone.mirrorFolder` to put them under a folder of your choice. If a second session with the same login is running, in this window or another, it gets its own `{user}_2` folder rather than sharing one. To search source, use **GemStone Search**, which asks the stone directly.
+Jasper keeps a local mirror of a session's classes as read-only `.gs` files in Topaz format. It lives in Jasper's private storage, not in your open folder, so logging in needs no folder open. Files land in `<mirror folder>/{host}/{stone}/{user}/{index}-{dictName}/`; set `gemstone.mirrorFolder` to put them under a folder of your choice. If a second session with the same login is running, in this window or another, it gets its own `{user}_2` folder rather than sharing one. To search source, use **GemStone Search**, which asks the stone directly.
 
 The mirror syncs **incrementally**: Jasper diffs a server-side manifest of per-class hashes against the last sync and re-fetches only what changed, so login/commit/abort stay fast even on a large schema over a slow connection. It's kept across logout (reconnecting re-syncs the difference) and is updated immediately as you edit, so it reflects a change before you commit. A per-login **Sync classes** toggle (on by default) turns the mirror off for slow/remote connections, where server-side search still works.
 

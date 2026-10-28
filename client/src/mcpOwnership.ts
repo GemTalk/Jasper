@@ -45,6 +45,8 @@ export interface McpOwnershipDeps {
   ownership: () => McpOwnership;
   /** The session this window would serve, for the message after a claim. */
   selectedSessionLabel: () => string | undefined;
+  /** Whether this window has a folder open; see {@link McpOwnershipController.claimAtStartup}. */
+  hasFolder: () => boolean;
   /** This extension host's pid — what a release request names. */
   pid: number;
   releaseRequestPath: string;
@@ -80,6 +82,20 @@ export class McpOwnershipController {
   /** True once this window has deliberately given the server up. */
   get releasedByUser(): boolean {
     return this.released;
+  }
+
+  /**
+   * The unprompted claim at activation. A window with no folder open is most often
+   * a throwaway one (the git commit editor, `code ~/.bashrc`), so it waits for a
+   * login rather than take the server from the window the user works in.
+   */
+  async claimAtStartup(): Promise<void> {
+    if (this.deps.hasFolder()) await this.tryClaim();
+  }
+
+  /** The unprompted re-claim on a session change, for an owner that let go meanwhile. */
+  async claimOnSessionChange(hasSession: boolean): Promise<void> {
+    if (hasSession || this.deps.hasFolder()) await this.tryClaim();
   }
 
   /**

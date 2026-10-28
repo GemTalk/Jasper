@@ -568,64 +568,13 @@ describe('ExportManager (incremental sync)', () => {
     });
   });
 
-  describe('first-login notice', () => {
-    const infoCalls = () =>
-      (vscode.window.showInformationMessage as unknown as { mock: { calls: unknown[][] } }).mock
-        .calls;
-    const noticeCalls = () => infoCalls().filter((c) => String(c[0]).includes('read-only copy'));
-
-    it('says where the mirror is and what it is for, once', async () => {
-      const session = createMockSession();
-      await manager.exportSession(session, true);
-      await manager.refreshSession(session);
-      expect(noticeCalls()).toHaveLength(1);
-      const [text, ...buttons] = noticeCalls()[0];
-      expect(text).toContain(mirrorDir);
-      expect(text).toContain(MIRROR_SETTING_LINK);
-      expect(buttons).toEqual(['Open Folder', 'Change…']);
-    });
-
-    it('waits until the sync has finished, so it is not buried among the login messages', async () => {
-      const order: string[] = [];
-      vi.mocked(vscode.window.withProgress).mockImplementationOnce(async (_opts, task) => {
-        order.push('sync started');
-        await task({ report: vi.fn() }, { isCancellationRequested: false } as never);
-        order.push('sync finished');
-      });
-      vi.mocked(vscode.window.showInformationMessage).mockImplementation(async (text: string) => {
-        if (text.includes('read-only copy')) order.push('notice');
-        return undefined;
-      });
-      await manager.exportSession(createMockSession(), true);
-      expect(order).toEqual(['sync started', 'sync finished', 'notice']);
-    });
-
-    it('is not repeated by a new manager sharing the same stored state', async () => {
-      const memento = fakeMemento();
-      const a = new ExportManager({ defaultMirrorDir: mirrorDir, memento });
-      await a.exportSession(createMockSession(), true);
-      a.dispose();
-      const b = new ExportManager({ defaultMirrorDir: mirrorDir, memento });
-      await b.exportSession(createMockSession(), true);
-      b.dispose();
-      expect(noticeCalls()).toHaveLength(1);
-    });
-
-    it('mentions an old .gemstone folder in the open folder, without deleting it', async () => {
+  describe('first login', () => {
+    // Nothing a user works with reads the mirror, so announcing where it lives is noise.
+    it('shows no message about the mirror', async () => {
       fs.mkdirSync(path.join(workspaceDir, '.gemstone'));
       await manager.exportSession(createMockSession(), true);
-      expect(noticeCalls()[0][0]).toContain(path.join(workspaceDir, '.gemstone'));
+      expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
       expect(fs.existsSync(path.join(workspaceDir, '.gemstone'))).toBe(true);
-    });
-
-    it('does not mention an old folder when there is none', async () => {
-      await manager.exportSession(createMockSession(), true);
-      expect(noticeCalls()[0][0]).not.toContain('.gemstone');
-    });
-
-    it('is not shown when class sync is off for the login', async () => {
-      await manager.exportSession(createMockSession({ sync_classes: false }), true);
-      expect(noticeCalls()).toHaveLength(0);
     });
   });
 

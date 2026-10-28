@@ -51,6 +51,7 @@ function harness(
     ownership?: () => McpOwnership;
     sessionLabel?: string;
     warnAnswers?: (string | undefined)[];
+    hasFolder?: boolean;
   } = {},
 ) {
   const socket = {
@@ -74,6 +75,7 @@ function harness(
     stopHttps: vi.fn(async () => {}),
     ownership: options.ownership ?? (() => (socket.isOwner ? ours : unowned)),
     selectedSessionLabel: () => options.sessionLabel,
+    hasFolder: () => options.hasFolder ?? true,
     pid: OUR_PID,
     releaseRequestPath: requestPath,
     notifier: {
@@ -225,6 +227,46 @@ describe('claiming', () => {
     await Promise.all([first, second]);
 
     expect(h.socket.start).toHaveBeenCalledTimes(1);
+  });
+});
+
+// A window with no folder open is most often a throwaway one: the git commit
+// editor, `code ~/.bashrc`, a new empty window. It must not take the server from
+// the window the user works in until it is used for GemStone.
+describe('claiming without being asked', () => {
+  it('claims at startup in a window with a folder', async () => {
+    const h = harness();
+
+    await h.controller.claimAtStartup();
+
+    expect(h.socket.isOwner).toBe(true);
+  });
+
+  it('waits for a login in a window with no folder open', async () => {
+    const h = harness({ hasFolder: false });
+
+    await h.controller.claimAtStartup();
+    await h.controller.claimOnSessionChange(false);
+
+    expect(h.socket.start).not.toHaveBeenCalled();
+  });
+
+  it('claims once a session is selected in a window with no folder open', async () => {
+    const h = harness({ hasFolder: false });
+
+    await h.controller.claimAtStartup();
+    await h.controller.claimOnSessionChange(true);
+
+    expect(h.socket.isOwner).toBe(true);
+  });
+
+  it('still re-claims on any session change in a window with a folder', async () => {
+    // A prior owner may have let go while this window was idle.
+    const h = harness();
+
+    await h.controller.claimOnSessionChange(false);
+
+    expect(h.socket.isOwner).toBe(true);
   });
 });
 

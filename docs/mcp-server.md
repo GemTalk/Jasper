@@ -64,10 +64,11 @@ The socket and HTTPS port are global resources, so only one Jasper window can se
   the well-known `mcpServers.jasper` entry into `~/.claude.json` and into
   Claude Desktop's global config. Both entries point at the **fixed** socket
   path, so they're correct no matter which window ends up owning it. Every
-  window then attempts to bind the socket and HTTPS port straight away, before
-  it has a session: Claude Code fails the proxy on a short timeout, so the
-  socket has to be live by the time it spawns the proxy on the same window
-  reload. With the setting off, the window does none of this: no config is
+  window with a folder open then attempts to bind the socket and HTTPS port
+  straight away, before it has a session: Claude Code fails the proxy on a
+  short timeout, so the socket has to be live by the time it spawns the proxy
+  on the same window reload. A window with no folder open waits until a
+  session is selected there (see **Multiple VS Code windows**). With the setting off, the window does none of this: no config is
   written, no socket or port is claimed, and the MCP commands are gated out of
   the UI (`jasper.mcpAvailable`) rather than left to fail when used.
 - **The successful claimant** becomes the **MCP owner** for the rest of that
@@ -278,10 +279,10 @@ simultaneously:
   then both serve HTTPS, but only one serves stdio. A window with no folder
   open has no workspace settings, so it always tries the default port.
 
-A window with no folder open claims the server at startup like any other, so
-a throwaway window — `code ~/.bashrc`, or VS Code as the git commit editor —
-can be the one that wins. **Ask It to Release** from the window you want, or
-**Stop MCP** in the throwaway one, hands it over.
+A window with no folder open does not claim the server at startup: it is most
+often a throwaway one — `code ~/.bashrc`, or VS Code as the git commit editor —
+and would take the server from the window you work in. It claims the server
+when a session is selected there, if no other window holds it.
 
 This is intentional. A single AI client should not be routed to two different
 GemStone sessions depending on timing — the ownership model makes the routing
