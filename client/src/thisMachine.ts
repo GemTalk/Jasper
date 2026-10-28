@@ -7,9 +7,11 @@ loopback.addSubnet('127.0.0.0', 8, 'ipv4');
 loopback.addAddress('::1', 'ipv6');
 
 /**
- * Whether a login's host names this machine, for telemetry's `serverLocation`.
- * Deliberately broader than `isLocalHost` in databaseForLogin.ts, which gates
- * starting a stone and must stay narrow. Names are never resolved through DNS:
+ * Whether a host names this machine: a login's, for telemetry's
+ * `serverLocation`, or a gem's as the stone reports it, for whether Kill is
+ * offered. Deliberately broader than `isLocalHost` in databaseForLogin.ts,
+ * which gates starting a stone and must stay narrow; Kill checks the process
+ * is a gem before it signals anything. Names are never resolved through DNS:
  * that would put a network round trip on the connect path.
  */
 export function isThisMachine(host: string): boolean {

@@ -90,12 +90,14 @@ import {
   stoppedRunHolds,
 } from './nbRunner';
 import { forceStop, rearmAfterForceStop, serverSessionOf } from './forceStop';
-import { listStoneSessions, stopStoneSession } from './stoneSessions';
+import { killStoneSession, listStoneSessions, stopStoneSession } from './stoneSessions';
 import {
+  killStoneSessionCommand,
   StoneSessionRowItem,
   StoneSessionsItem,
   stopStoneSessionCommand,
 } from './stoneSessionsView';
+import { isThisMachine } from './thisMachine';
 import { showRunInProgress, showStillRunning } from './stillRunningNotice';
 import { RowanRepoRegistry } from './rowanRepos';
 import {
@@ -270,6 +272,7 @@ import {
   invalidateWslCache,
   getWslNetworkInfoCached,
   refreshWslNetworkInfo,
+  wslExec,
 } from './wslBridge';
 import { isWslInstalledAsync } from './wslInstall';
 import { recheckWsl } from './wslRecheck';
@@ -954,6 +957,7 @@ export function activate(context: vscode.ExtensionContext) {
         forceStop(s, { loginTransient: (from) => sessionManager.loginTransient(from.login, from) }),
       // Force Stop has just failed: the logout need not try it again.
       logout: (id) => sessionManager.logout(id, true),
+      showInSessions: (s) => void showInSessions(s),
     });
   });
   setRunInProgressHandler((session) => {
@@ -983,10 +987,18 @@ export function activate(context: vscode.ExtensionContext) {
   let mcpOwnership: () => McpOwnership | undefined = () => undefined;
   const transientLoginOn = (through: ActiveSession) => () =>
     sessionManager.loginTransient(through.login, through);
+  const killRow = (row: StoneSessionRowItem) =>
+    killStoneSessionCommand(row, {
+      kill: (target, login) => killStoneSession(target, login, (command) => wslExec(command)),
+      transientLogin: transientLoginOn,
+      refresh: (item) => treeProvider.refreshStoneSessions(item),
+      logout: (id) => sessionManager.logout(id, true),
+    });
   const treeProvider = new LoginTreeProvider(storage, sessionManager, () => mcpOwnership(), {
     read: (through) => listStoneSessions(transientLoginOn(through)),
     stuck: stoppedRunHolds,
     serverSessionOf,
+    isLocalGemHost: isThisMachine,
   });
   // A collected run takes its flag off the session list.
   setStoppedRunCollectedHandler((session) => {
@@ -1075,9 +1087,21 @@ export function activate(context: vscode.ExtensionContext) {
         stop: stopStoneSession,
         transientLogin: transientLoginOn,
         refresh: (item) => treeProvider.refreshStoneSessions(item),
+        kill: killRow,
       }),
     ),
+    vscode.commands.registerCommand('gemstone.killStoneSession', killRow),
   );
+  async function showInSessions(session: ActiveSession): Promise<void> {
+    const row = treeProvider.stoneSessionRowOf(session);
+    if (!row) {
+      void vscode.window.showInformationMessage(
+        `Session ${session.id} isn't in the stone's session list, which needs it logged in.`,
+      );
+      return;
+    }
+    await treeView.reveal(row, { select: true, focus: true });
+  }
 
   // Auto-open the Getting Started walkthrough on the first activation after
   // install (see maybeOpenGettingStarted). Fires once per machine; reset via the

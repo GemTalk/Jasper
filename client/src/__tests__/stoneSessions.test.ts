@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
@@ -6,8 +6,18 @@ import { window } from '../__mocks__/vscode';
 import type { ActiveSession } from '../activeSession';
 import { GciLibraryError } from '../gciLibraryError';
 import { DEFAULT_LOGIN } from '../loginTypes';
-import { parseStoneSessions, sessionAge, StoneSession } from '../stoneSessions';
 import {
+  isGemCommand,
+  killStoneSession,
+  parseStoneSessions,
+  sessionAge,
+  StoneSession,
+  STOP_SESSION_WAIT_MS,
+  TransientLogin,
+} from '../stoneSessions';
+import {
+  KILL,
+  killStoneSessionCommand,
   STOP_SESSION,
   StoneSessionRowItem,
   StoneSessionsItem,
@@ -15,15 +25,17 @@ import {
 } from '../stoneSessionsView';
 
 describe('parseStoneSessions', () => {
-  it("reads the stone's clock and one session per line", () => {
+  it("reads the stone's clock, its commit-record backlog, and one session per line", () => {
     const text =
-      '1793224302\n' +
+      '1793224302\t34\t20\t7\n' +
       '2\t1\tGcUser\t3886706\tlocalhost\t1793224153\t0\treclaimgcgem\n' +
       '7\t12\tDataCurator\t41377\tthor\t1793223402\t1\t';
 
     expect(parseStoneSessions(text)).toEqual({
       kind: 'sessions',
       serverNow: 1793224302,
+      commitRecordBacklog: 34,
+      abortThreshold: 20,
       sessions: [
         {
           id: 2,
@@ -34,6 +46,7 @@ describe('parseStoneSessions', () => {
           loggedInAt: 1793224153,
           transaction: 'out',
           systemGem: 'reclaimgcgem',
+          holdsOldestCommitRecord: false,
         },
         {
           id: 7,
@@ -44,22 +57,25 @@ describe('parseStoneSessions', () => {
           loggedInAt: 1793223402,
           transaction: 'in',
           systemGem: undefined,
+          holdsOldestCommitRecord: true,
         },
       ],
     });
   });
 
   it('reads a stone with no other session as an empty list', () => {
-    expect(parseStoneSessions('1793224302')).toEqual({
+    expect(parseStoneSessions('1793224302\t1\t20\t')).toEqual({
       kind: 'sessions',
       serverNow: 1793224302,
+      commitRecordBacklog: 1,
+      abortThreshold: 20,
       sessions: [],
     });
   });
 
   it('reads a transactionless session, and one with no user yet', () => {
     const [row] = (
-      parseStoneSessions('100\n9\t30\t\t555\tlocalhost\t90\t-1\t') as {
+      parseStoneSessions('100\t1\t20\t\n9\t30\t\t555\tlocalhost\t90\t-1\t') as {
         sessions: StoneSession[];
       }
     ).sessions;
@@ -101,11 +117,18 @@ describe('Stop Session', () => {
     host: 'thor',
     loggedInAt: 0,
     transaction: 'in',
+    holdsOldestCommitRecord: false,
   };
   const row = new StoneSessionRowItem(parent, target, 100, { stuck: false });
+  const localRow = new StoneSessionRowItem(parent, target, 100, { stuck: false, localGem: true });
 
   function deps(stop: () => Promise<'ended' | 'gone' | 'stuck'>) {
-    return { stop: vi.fn(stop), transientLogin: vi.fn(), refresh: vi.fn() };
+    return {
+      stop: vi.fn(stop),
+      transientLogin: vi.fn(),
+      refresh: vi.fn(),
+      kill: vi.fn(async () => {}),
+    };
   }
 
   beforeEach(() => {
@@ -162,6 +185,21 @@ describe('Stop Session', () => {
     );
   });
 
+  it("offers Kill when the gem that didn't answer is on this machine", async () => {
+    vi.mocked(window.showWarningMessage)
+      .mockResolvedValueOnce(STOP_SESSION)
+      .mockResolvedValueOnce(KILL);
+    const d = deps(async () => 'stuck');
+
+    await stopStoneSessionCommand(localRow, d);
+
+    expect(window.showWarningMessage).toHaveBeenLastCalledWith(
+      expect.stringMatching(/still on the stone/),
+      KILL,
+    );
+    expect(d.kill).toHaveBeenCalledWith(localRow);
+  });
+
   it('says the privilege is missing, and what an administrator can run', async () => {
     vi.mocked(window.showWarningMessage).mockResolvedValueOnce(STOP_SESSION);
     const d = deps(async () => {
@@ -191,5 +229,242 @@ describe('Stop Session', () => {
       'Session 7 could not be stopped (the stone went away). ' +
         'An administrator can end it with: System stopSession: 7',
     );
+  });
+});
+
+describe('Kill', () => {
+  const through = { id: 1, login: DEFAULT_LOGIN } as ActiveSession;
+  const parent = new StoneSessionsItem(DEFAULT_LOGIN, 0, through, undefined);
+  const target: StoneSession = {
+    id: 7,
+    serial: 12,
+    user: 'ewinger',
+    gemPid: 39811,
+    host: 'uffda',
+    loggedInAt: 0,
+    transaction: 'in',
+    holdsOldestCommitRecord: false,
+  };
+  const row = new StoneSessionRowItem(parent, target, 100, { stuck: false, localGem: true });
+
+  function deps(kill: () => Promise<'ended' | 'gone' | 'stuck'>) {
+    return {
+      kill: vi.fn(kill),
+      transientLogin: vi.fn(),
+      refresh: vi.fn(),
+      logout: vi.fn(async () => true),
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(window.showWarningMessage).mockReset();
+  });
+
+  it('warns that the gem is ended and uncommitted work lost, and does nothing unless confirmed', async () => {
+    const d = deps(async () => 'ended');
+
+    await killStoneSessionCommand(row, d);
+
+    expect(window.showWarningMessage).toHaveBeenCalledWith(
+      'Kill session 7 (ewinger on uffda)? Its gem, process 39811, is ended on this machine, ' +
+        "and anything it hasn't committed is lost.",
+      { modal: true },
+      KILL,
+    );
+    expect(d.kill).not.toHaveBeenCalled();
+  });
+
+  it('kills the session once confirmed, and reads the list again', async () => {
+    vi.mocked(window.showWarningMessage).mockResolvedValueOnce(KILL);
+    const d = deps(async () => 'ended');
+
+    await killStoneSessionCommand(row, d);
+
+    expect(d.kill).toHaveBeenCalledWith(target, d.transientLogin.mock.results[0].value);
+    expect(d.transientLogin).toHaveBeenCalledWith(through);
+    expect(window.showInformationMessage).toHaveBeenCalledWith('Session 7 is killed.');
+    expect(d.refresh).toHaveBeenCalledWith(parent);
+    expect(d.logout).not.toHaveBeenCalled();
+  });
+
+  it("logs out this window's own session once its gem is killed, and says so first", async () => {
+    const mine = new StoneSessionRowItem(parent, target, 100, {
+      stuck: true,
+      localGem: true,
+      jasperSession: { id: 3 } as ActiveSession,
+    });
+    vi.mocked(window.showWarningMessage).mockResolvedValueOnce(KILL);
+    const d = deps(async () => 'ended');
+
+    await killStoneSessionCommand(mine, d);
+
+    expect(window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringMatching(/Jasper session 3 is logged out\.$/),
+      { modal: true },
+      KILL,
+    );
+    expect(d.logout).toHaveBeenCalledWith(3);
+  });
+
+  it('says why the gem could not be killed, and what someone allowed to can run', async () => {
+    vi.mocked(window.showWarningMessage).mockResolvedValueOnce(KILL);
+    const d = deps(async () => {
+      throw new Error('kill: (39811) - Operation not permitted');
+    });
+
+    await killStoneSessionCommand(row, d);
+
+    expect(window.showWarningMessage).toHaveBeenLastCalledWith(
+      'Session 7 could not be killed: kill: (39811) - Operation not permitted. ' +
+        'Someone allowed to end process 39811 on uffda can run: kill -9 39811',
+    );
+    expect(d.refresh).toHaveBeenCalledWith(parent);
+  });
+
+  it('says so when the gem outlives SIGKILL', async () => {
+    vi.mocked(window.showWarningMessage).mockResolvedValueOnce(KILL);
+
+    await killStoneSessionCommand(
+      row,
+      deps(async () => 'stuck'),
+    );
+
+    expect(window.showWarningMessage).toHaveBeenLastCalledWith(
+      expect.stringMatching(/still on the stone after its gem, process 39811, was sent SIGKILL/),
+    );
+  });
+});
+
+describe('killStoneSession', () => {
+  const target = { id: 7, serial: 12, gemPid: 39811 };
+  const GEM = '/opt/GemStone64Bit3.7.5-x86_64.Linux/sys/gem TCP 5';
+
+  /** A stone whose answer to "still there?" is `onStone()`, and a shell that records its commands. */
+  function setUp(onStone: () => boolean, shell: (command: string) => string) {
+    const asked: string[] = [];
+    const commands: string[] = [];
+    const logout = vi.fn();
+    const login: TransientLogin = () => ({
+      session: {
+        executeAndFetchString: (code: string) => {
+          asked.push(code);
+          return String(onStone());
+        },
+      } as unknown as ActiveSession,
+      logout,
+    });
+    const run = async (command: string) => {
+      commands.push(command);
+      return shell(command);
+    };
+    return { login, run, asked, commands, logout };
+  }
+
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('checks the login still has that session and gem before touching anything', async () => {
+    const { login, run, asked, commands, logout } = setUp(
+      () => false,
+      () => GEM,
+    );
+
+    await expect(killStoneSession(target, login, run)).resolves.toBe('gone');
+    expect(asked[0]).toMatch(/descriptionOfSessionSerialNum: 12\b.*at: 10\) = 7 .*at: 2\) = 39811/);
+    expect(commands).toEqual([]);
+    expect(logout).toHaveBeenCalled();
+  });
+
+  it('sends SIGTERM, which ends a busy gem', async () => {
+    let alive = true;
+    const { login, run, commands } = setUp(
+      () => alive,
+      (command) => {
+        if (command.startsWith('kill')) alive = false;
+        return command.startsWith('ps') ? GEM : '';
+      },
+    );
+
+    await expect(killStoneSession(target, login, run)).resolves.toBe('ended');
+    expect(commands).toEqual([
+      'ps -p 39811 -o command= 2>/dev/null || true',
+      'kill -TERM 39811 2>&1 || true',
+    ]);
+  });
+
+  it('follows with SIGKILL for a gem frozen for good', async () => {
+    let alive = true;
+    const { login, run, commands } = setUp(
+      () => alive,
+      (command) => {
+        if (command.startsWith('kill -KILL')) alive = false;
+        return command.startsWith('ps') ? GEM : '';
+      },
+    );
+
+    const outcome = killStoneSession(target, login, run);
+    await vi.advanceTimersByTimeAsync(STOP_SESSION_WAIT_MS + 1000);
+
+    await expect(outcome).resolves.toBe('ended');
+    expect(commands.at(-1)).toBe('kill -KILL 39811 2>&1 || true');
+  });
+
+  it('answers stuck when the session outlives SIGKILL', async () => {
+    const { login, run } = setUp(
+      () => true,
+      (command) => (command.startsWith('ps') ? GEM : ''),
+    );
+
+    const outcome = killStoneSession(target, login, run);
+    await vi.advanceTimersByTimeAsync(2 * STOP_SESSION_WAIT_MS + 1000);
+
+    await expect(outcome).resolves.toBe('stuck');
+  });
+
+  it('refuses a process id that is not a gem here, and signals nothing', async () => {
+    const { login, run, commands } = setUp(
+      () => true,
+      () => '/usr/bin/vim notes.txt\n',
+    );
+
+    await expect(killStoneSession(target, login, run)).rejects.toThrow(
+      'Process 39811 on this machine is not a GemStone gem (/usr/bin/vim notes.txt).',
+    );
+    expect(commands.some((c) => c.startsWith('kill'))).toBe(false);
+  });
+
+  it('refuses a process id with no process here, as a gem on another machine has', async () => {
+    const { login, run } = setUp(
+      () => true,
+      () => '',
+    );
+
+    await expect(killStoneSession(target, login, run)).rejects.toThrow(
+      'There is no process 39811 on this machine.',
+    );
+  });
+
+  it("passes on kill's complaint, rather than reading it as a gem that ignored the signal", async () => {
+    const { login, run } = setUp(
+      () => true,
+      (command) => (command.startsWith('ps') ? GEM : 'sh: kill: (39811) - Operation not permitted'),
+    );
+
+    await expect(killStoneSession(target, login, run)).rejects.toThrow(
+      'sh: kill: (39811) - Operation not permitted',
+    );
+  });
+});
+
+describe('isGemCommand', () => {
+  it.each([
+    ['/opt/GemStone64Bit3.7.5-x86_64.Linux/sys/gem TCP 5', true],
+    ['/opt/gs/sys/gem symbolgem gs64stone -T 20480', true],
+    ['/opt/gs/sys/gemnetobject', false],
+    ['/opt/gs/sys/stoned gs64stone', false],
+    ['/usr/bin/gem install rails', false],
+  ])('%s → %s', (command, expected) => {
+    expect(isGemCommand(command)).toBe(expected);
   });
 });

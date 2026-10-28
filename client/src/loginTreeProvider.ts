@@ -196,6 +196,8 @@ export interface StoneSessionsDeps {
   stuck(session: ActiveSession): boolean;
   /** GemStone's session number for a Jasper session, once known. */
   serverSessionOf(jasperId: number): string | undefined;
+  /** Whether a gem on `host` runs on this machine (in WSL, on Windows). */
+  isLocalGemHost(host: string): boolean;
 }
 
 /**
@@ -345,13 +347,53 @@ export class LoginTreeProvider implements vscode.TreeDataProvider<LoginTreeNode>
       const number = deps.serverSessionOf(s.id);
       if (number !== undefined) byServerSession.set(number, s);
     }
-    const { serverNow } = read;
+    const { serverNow, commitRecordBacklog: count, abortThreshold: threshold } = read;
+    // Some session always holds the oldest commit record; it is only news once
+    // the stone itself asks sessions to abort over the backlog.
+    const backlog = count >= threshold ? { count, threshold } : undefined;
     return read.sessions.map((stoneSession) => {
       const jasperSession = byServerSession.get(String(stoneSession.id));
       return new StoneSessionRowItem(item, stoneSession, serverNow, {
         jasperSession,
         stuck: jasperSession !== undefined && deps.stuck(jasperSession),
+        localGem: deps.isLocalGemHost(stoneSession.host),
+        backlog: stoneSession.holdsOldestCommitRecord ? backlog : undefined,
       });
     });
+  }
+
+  /** Needed by `TreeView.reveal`, and answered only for what it reveals. */
+  getParent(element: LoginTreeNode): LoginTreeNode | undefined {
+    if (element instanceof StoneSessionRowItem || element instanceof StoneSessionsMessageItem) {
+      return element.parent;
+    }
+    if (element instanceof StoneSessionsItem) {
+      return this.getChildren()[element.loginIndex];
+    }
+    return undefined;
+  }
+
+  /**
+   * The row of the stone's session that is Jasper session `session`, read
+   * fresh; undefined when the list can't show it.
+   */
+  stoneSessionRowOf(session: ActiveSession): StoneSessionRowItem | undefined {
+    const login = this.getChildren().find(
+      (l): l is GemStoneLoginItem =>
+        l instanceof GemStoneLoginItem &&
+        this.getChildren(l).some(
+          (n) => n instanceof GemStoneSessionItem && n.activeSession.id === session.id,
+        ),
+    );
+    if (!login) return undefined;
+    const list = this.getChildren(login).find(
+      (n): n is StoneSessionsItem => n instanceof StoneSessionsItem,
+    );
+    if (!list) return undefined;
+    this.forgetStoneSessions(list);
+    return this.getChildren(list).find(
+      (n): n is StoneSessionRowItem =>
+        n instanceof StoneSessionRowItem && n.context.jasperSession?.id === session.id,
+    );
   }
 }

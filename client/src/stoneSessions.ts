@@ -18,10 +18,20 @@ export interface StoneSession {
   transaction: 'in' | 'out' | 'transactionless';
   /** What GemStone calls one of its own gems (`reclaimgcgem`, `symbolgem`, …); undefined for a user's. */
   systemGem?: string;
+  /** Its view is the oldest commit record the stone keeps (`System sessionsReferencingOldestCr`). */
+  holdsOldestCommitRecord: boolean;
 }
 
 export type StoneSessionList =
-  | { kind: 'sessions'; serverNow: number; sessions: StoneSession[] }
+  | {
+      kind: 'sessions';
+      serverNow: number;
+      /** Commit records the stone keeps for views still in use (`System commitRecordBacklog`). */
+      commitRecordBacklog: number;
+      /** The backlog at which the stone asks sessions to abort (`STN_SIGNAL_ABORT_CR_BACKLOG`). */
+      abortThreshold: number;
+      sessions: StoneSession[];
+    }
   /** The login lacks SessionAccess, without which another session can't be looked at. */
   | { kind: 'noAccess' };
 
@@ -30,12 +40,15 @@ const NO_ACCESS = 'noSessionAccess';
 /**
  * Every session on the stone except the one asking, which is the short-lived
  * login the list is read through. One line per session, tab-separated; the
- * first line is the stone's clock. A session that logs out while the list is
- * read answers a session number of 0 and is left out.
+ * first line is the stone's clock, the commit-record backlog, the stone's abort
+ * threshold and the sessions holding the oldest commit record. A session that
+ * logs out while the list is read answers a session number of 0 and is left out.
  */
 const LIST_CODE =
   '| out me noAccess | out := WriteStream on: String new. me := System session. ' +
-  'noAccess := false. out print: System timeGmt. ' +
+  'noAccess := false. out print: System timeGmt; tab; print: System commitRecordBacklog; tab; ' +
+  'print: (System stoneConfigurationAt: #StnSignalAbortCrBacklog); tab. ' +
+  'System sessionsReferencingOldestCr do: [:id | out print: id] separatedBy: [out space]. ' +
   'System currentSessions do: [:id | | d | id = me ifFalse: [' +
   'd := [System descriptionOfSession: id] on: Error do: [:e | ' +
   `e number = ${NO_PRIVILEGE_ERROR} ifFalse: [e pass]. noAccess := true. nil]. ` +
@@ -54,7 +67,9 @@ const TRANSACTION: Record<string, StoneSession['transaction']> = {
 
 export function parseStoneSessions(text: string): StoneSessionList {
   if (text === NO_ACCESS) return { kind: 'noAccess' };
-  const [now, ...lines] = text.split(/\r?\n|\r/);
+  const [header, ...lines] = text.split(/\r?\n|\r/);
+  const [now, backlog, threshold, holders = ''] = header.split('\t');
+  const holderIds = new Set(holders.split(' ').filter(Boolean).map(Number));
   const sessions = lines.map((line): StoneSession => {
     const [id, serial, user, gemPid, host, loggedInAt, transaction, systemGem] = line.split('\t');
     return {
@@ -66,9 +81,16 @@ export function parseStoneSessions(text: string): StoneSessionList {
       loggedInAt: Number(loggedInAt),
       transaction: TRANSACTION[transaction] ?? 'out',
       systemGem: systemGem || undefined,
+      holdsOldestCommitRecord: holderIds.has(Number(id)),
     };
   });
-  return { kind: 'sessions', serverNow: Number(now), sessions };
+  return {
+    kind: 'sessions',
+    serverNow: Number(now),
+    commitRecordBacklog: Number(backlog),
+    abortThreshold: Number(threshold),
+    sessions,
+  };
 }
 
 /** A short-lived login to read through; the caller's `logout` ends it. */
@@ -88,9 +110,19 @@ export function listStoneSessions(login: TransientLogin): StoneSessionList {
   }
 }
 
-/** How long Stop Session waits for the session to leave the stone. */
+/** How long Stop Session, and each signal Kill sends, waits for the session to leave the stone. */
 export const STOP_SESSION_WAIT_MS = 3000;
 const STOP_SESSION_POLL_MS = 200;
+
+/** Whether `stillOnStone` turns false within {@link STOP_SESSION_WAIT_MS}. */
+async function leavesInTime(stillOnStone: () => boolean): Promise<boolean> {
+  const deadline = Date.now() + STOP_SESSION_WAIT_MS;
+  while (stillOnStone()) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, STOP_SESSION_POLL_MS));
+  }
+  return true;
+}
 
 /**
  * - `ended`  the session has left the stone.
@@ -121,12 +153,67 @@ export async function stopStoneSession(
     );
     if (sent === 'gone') return 'gone';
     logInfo(`Sent System stopSession: ${target.id} (login serial ${target.serial}).`);
-    const deadline = Date.now() + STOP_SESSION_WAIT_MS;
-    while (stillOnStone()) {
-      if (Date.now() >= deadline) return 'stuck';
-      await new Promise((resolve) => setTimeout(resolve, STOP_SESSION_POLL_MS));
+    return (await leavesInTime(stillOnStone)) ? 'ended' : 'stuck';
+  } finally {
+    sender.logout();
+  }
+}
+
+/** Whether `command`, as `ps -o command=` prints it, is a GemStone gem (`$GEMSTONE/sys/gem`). */
+export function isGemCommand(command: string): boolean {
+  return /(^|\/)sys\/gem(\s|$)/.test(command.trim());
+}
+
+/**
+ * Runs a shell command where the gems are: here on Linux and macOS, inside WSL
+ * on Windows. Rejects on a non-zero exit.
+ */
+export type GemHostShell = (command: string) => Promise<string>;
+
+/**
+ * End `target` by ending its gem's process on this machine (inside WSL on
+ * Windows): SIGTERM, which a busy gem obeys at once, then SIGKILL for a gem
+ * frozen for good, which the stone cleans up after. Its uncommitted work is
+ * lost. The stone is asked first that the login still has that session and
+ * gem, and `ps` that the process is a gem, so a reused session number or
+ * process id is left alone.
+ *
+ * @throws {Error} when the process isn't a gem here, or `kill` refuses
+ *   (another OS user's gem); the message says which.
+ */
+export async function killStoneSession(
+  target: Pick<StoneSession, 'id' | 'serial' | 'gemPid'>,
+  login: TransientLogin,
+  shell: GemHostShell,
+): Promise<StopSessionOutcome> {
+  const { id, serial, gemPid } = target;
+  const sender = login();
+  try {
+    const stillOnStone = () =>
+      sender.session.executeAndFetchString(
+        `| d | d := System descriptionOfSessionSerialNum: ${serial}. ` +
+          `((d at: 10) = ${id} and: [(d at: 2) = ${gemPid}]) printString`,
+      ) === 'true';
+    if (!stillOnStone()) return 'gone';
+    const command = (await shell(`ps -p ${gemPid} -o command= 2>/dev/null || true`)).trim();
+    if (!isGemCommand(command)) {
+      throw new Error(
+        command
+          ? `Process ${gemPid} on this machine is not a GemStone gem (${command}).`
+          : `There is no process ${gemPid} on this machine.`,
+      );
     }
-    return 'ended';
+    for (const signal of ['TERM', 'KILL']) {
+      // `|| true` keeps kill's complaint as output: an EPERM must not read as a
+      // gem that ignored the signal.
+      const complaint = (await shell(`kill -${signal} ${gemPid} 2>&1 || true`)).trim();
+      if (complaint && stillOnStone()) throw new Error(complaint);
+      logInfo(
+        `Sent SIG${signal} to gem process ${gemPid} of session ${id} (login serial ${serial}).`,
+      );
+      if (await leavesInTime(stillOnStone)) return 'ended';
+    }
+    return 'stuck';
   } finally {
     sender.logout();
   }

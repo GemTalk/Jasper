@@ -5,6 +5,7 @@ import { loginLabel } from './loginTypes';
 export const FORCE_STOP = 'Force Stop';
 export const LOG_OUT = 'Log Out';
 export const STOP = 'Stop';
+export const SHOW_IN_SESSIONS = 'Show in Sessions';
 
 export interface StillRunningDeps {
   /** Whether the session is one the user can see and log out. */
@@ -14,6 +15,8 @@ export interface StillRunningDeps {
   /** Answers whether the run ended; see forceStop.ts. */
   forceStop(session: ActiveSession): Promise<boolean>;
   logout(sessionId: number): Promise<unknown>;
+  /** Reveal the session's row in the stone's session list, where Kill is. */
+  showInSessions(session: ActiveSession): void;
 }
 
 /**
@@ -60,11 +63,13 @@ export async function showRunInProgress(
 }
 
 /**
- * Tell the user a stopped run is still running, and offer Force Stop. A run that
- * ignores that too can only be ended by logging out, which is offered next,
- * asking first. Jasper's own short-lived logins get no notice: they aren't the
- * user's to stop. A clean-up is named as one: closing a debugger starts one too,
- * with nothing stopped by the user.
+ * Tell the user a stopped run is still running, and offer Force Stop, or Show
+ * in Sessions for the session's row in the stone's session list. A run that
+ * ignores Force Stop too is ended by logging out, which is offered next, asking
+ * first; a gem frozen for good is ended by Kill on that row. Jasper's own
+ * short-lived logins get no notice: they aren't the user's to stop. A clean-up
+ * is named as one: closing a debugger starts one too, with nothing stopped by
+ * the user.
  */
 export async function showStillRunning(
   session: ActiveSession,
@@ -78,8 +83,14 @@ export async function showStillRunning(
     `Session ${session.id} — ${loginLabel(session.login)}: ${what}. Nothing else can run on ` +
       'this session until it ends.',
     FORCE_STOP,
+    SHOW_IN_SESSIONS,
   );
-  if (pick !== FORCE_STOP || !deps.isRegistered(session.id)) return;
+  if (!deps.isRegistered(session.id)) return;
+  if (pick === SHOW_IN_SESSIONS) {
+    deps.showInSessions(session);
+    return;
+  }
+  if (pick !== FORCE_STOP) return;
 
   let why: string;
   try {

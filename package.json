@@ -960,6 +960,12 @@
         "icon": "$(debug-stop)"
       },
       {
+        "command": "gemstone.killStoneSession",
+        "title": "Kill",
+        "category": "GemStone",
+        "icon": "$(close)"
+      },
+      {
         "command": "gemstone.selectSession",
         "title": "Select as Active Session",
         "category": "GemStone",
@@ -2275,6 +2281,10 @@
           "when": "false"
         },
         {
+          "command": "gemstone.killStoneSession",
+          "when": "false"
+        },
+        {
           "command": "gemstone.breakpoints.toggleAtStepPoint",
           "when": "false"
         },
@@ -3372,8 +3382,13 @@
         },
         {
           "command": "gemstone.stopStoneSession",
-          "when": "view == gemstoneLogins && viewItem == stoneSession.canStop",
+          "when": "view == gemstoneLogins && viewItem =~ /^stoneSession.*\\.canStop/",
           "group": "inline@1"
+        },
+        {
+          "command": "gemstone.killStoneSession",
+          "when": "view == gemstoneLogins && viewItem =~ /^stoneSession.*\\.canKill/",
+          "group": "inline@2"
         },
         {
           "command": "gemstone.setTransactionMode",

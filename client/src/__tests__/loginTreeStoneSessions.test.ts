@@ -30,6 +30,7 @@ function stoneSession(overrides: Partial<StoneSession>): StoneSession {
     host: 'localhost',
     loggedInAt: 0,
     transaction: 'out',
+    holdsOldestCommitRecord: false,
     ...overrides,
   };
 }
@@ -49,6 +50,8 @@ describe('All sessions on a stone, in Logins & Sessions', () => {
     list = {
       kind: 'sessions',
       serverNow: 7200,
+      commitRecordBacklog: 1,
+      abortThreshold: 20,
       sessions: [
         stoneSession({ id: 4, serial: 3, gemPid: 41022 }),
         stoneSession({ id: 5, serial: 9, user: 'ewinger', gemPid: 39811, host: 'thor' }),
@@ -67,6 +70,7 @@ describe('All sessions on a stone, in Logins & Sessions', () => {
       stuck: (s) => stuck.has(s.id),
       // Jasper session 1 is GemStone's session 4.
       serverSessionOf: (id) => (id === 1 ? '4' : undefined),
+      isLocalGemHost: (host) => host === 'localhost',
     });
   });
 
@@ -75,6 +79,7 @@ describe('All sessions on a stone, in Logins & Sessions', () => {
     return provider.getChildren(login).find((n) => n instanceof StoneSessionsItem)!;
   };
   const rows = () => provider.getChildren(listNode()) as StoneSessionRowItem[];
+  const listed = () => list as Extract<StoneSessionList, { kind: 'sessions' }>;
 
   it('hangs under a connected login, after its own sessions, without reading anything', () => {
     const [login] = provider.getChildren() as GemStoneLoginItem[];
@@ -131,6 +136,56 @@ describe('All sessions on a stone, in Logins & Sessions', () => {
     expect(other.contextValue).toBe('stoneSession.canStop');
     expect(system.description).toContain('system: symbolgem');
     expect(system.contextValue).toBe('stoneSession');
+  });
+
+  it("offers Kill on another session whose gem is on this machine, never on GemStone's own", () => {
+    listed().sessions[1].host = 'localhost';
+
+    const [, other, system] = rows();
+
+    expect(other.contextValue).toBe('stoneSession.canStop.canKill');
+    expect(system.contextValue).toBe('stoneSession');
+  });
+
+  it("offers Kill on this window's own session only once a stopped run holds it", () => {
+    const idle = rows()[0];
+    stuck.add(1);
+
+    const held = rows()[0];
+
+    expect(idle.contextValue).toBe('stoneSession');
+    expect(held.contextValue).toBe('stoneSession.canKill');
+  });
+
+  it('flags the session holding the oldest commit record once the stone asks for aborts', () => {
+    listed().sessions[1].holdsOldestCommitRecord = true;
+    const underThreshold = rows()[1];
+    provider.refreshStoneSessions(listNode());
+    list = { ...listed(), commitRecordBacklog: 20 };
+
+    const holder = rows()[1];
+
+    expect(underThreshold.description).not.toContain('⧗');
+    expect(holder.description).toContain('⧗ holds the oldest commit record');
+    expect((holder.tooltip as { value: string }).value).toContain(
+      'oldest of the 20 commit records',
+    );
+    expect(rows()[0].description).not.toContain('⧗');
+  });
+
+  it("finds the row of this window's session, read fresh, and its way back up the tree", () => {
+    rows();
+    const row = provider.stoneSessionRowOf(sessions[0])!;
+    expect(row.stoneSession.id).toBe(4);
+    expect(read).toHaveBeenCalledTimes(2);
+
+    const node = provider.getParent(row) as StoneSessionsItem;
+    expect(node).toBeInstanceOf(StoneSessionsItem);
+    expect(provider.getParent(node)).toBeInstanceOf(GemStoneLoginItem);
+  });
+
+  it('finds no row for a session the list does not show', () => {
+    expect(provider.stoneSessionRowOf(makeSession(2))).toBeUndefined();
   });
 
   it('flags a session still running a run its user stopped, and redraws when that ends', () => {

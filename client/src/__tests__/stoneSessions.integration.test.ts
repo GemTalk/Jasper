@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
-import { execSync } from 'child_process';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 import type { ActiveSession } from '../activeSession';
 import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
 import {
+  killStoneSession,
   listStoneSessions,
   StoneSession,
   StoneSessionList,
@@ -13,6 +13,8 @@ import {
   STOP_SESSION_WAIT_MS,
   TransientLogin,
 } from '../stoneSessions';
+import { isThisMachine } from '../thisMachine';
+import { wslExec, wslExecSync } from '../wslBridge';
 import { testActiveSession } from './testActiveSession';
 import { useIntegrationTest } from './useIntegrationTest';
 import { endGemAfterTest, loginSerialOf, stillOnStone } from './leftoverGem';
@@ -61,6 +63,47 @@ describe('Stone sessions (integration)', () => {
     });
     expect(rowFor(list, serial)!.host).not.toBe('');
   });
+
+  // Kill is offered only on a row Jasper judges to be on this machine, from the
+  // host the stone reports — on Windows, a gem inside WSL.
+  it('places a gem of this machine on this machine', () => {
+    const { serial } = otherSession();
+    expect(isThisMachine(rowFor(listStoneSessions(loginAs()), serial)!.host)).toBe(true);
+  });
+
+  // Only real commits make commit records, and the harness's sessions refuse
+  // them, so a login of the test's own writes a key and takes it out again.
+  it('reports the commit-record backlog, and the session whose old view holds it', () => {
+    const { own, serial } = otherSession();
+    own.executeAndFetchString('System beginTransaction. 0 printString');
+    const { session: writer, logout } = loginAs()();
+    const key = `JasperBacklogTest${serial}`;
+    const threshold = Number(
+      writer.executeAndFetchString(
+        '(System stoneConfigurationAt: #StnSignalAbortCrBacklog) printString',
+      ),
+    );
+    try {
+      for (let i = 0; i <= threshold; i++) {
+        writer.executeAndFetchString(
+          `UserGlobals at: #${key} put: ${i}. System commitTransaction printString`,
+        );
+      }
+
+      const list = listStoneSessions(loginAs());
+
+      if (list.kind !== 'sessions') throw new Error(list.kind);
+      expect(list.abortThreshold).toBe(threshold);
+      expect(list.commitRecordBacklog).toBeGreaterThanOrEqual(threshold);
+      expect(rowFor(list, serial)!.holdsOldestCommitRecord).toBe(true);
+    } finally {
+      own.executeAndFetchString('System abortTransaction. 0 printString');
+      writer.executeAndFetchString(
+        `UserGlobals removeKey: #${key} ifAbsent: []. System commitTransaction printString`,
+      );
+      logout();
+    }
+  }, 30_000);
 
   it("names GemStone's own gems, and leaves out the login it reads through", () => {
     let reader: number | undefined;
@@ -116,20 +159,65 @@ describe('Stone sessions (integration)', () => {
     await expect(stopStoneSession(row, loginAs())).resolves.toBe('gone');
   }, 30_000);
 
-  // A gem frozen for good is stood in for by one held with SIGSTOP, which
-  // Windows has no way to do.
-  it.skipIf(process.platform === 'win32')(
-    "says so when a frozen gem doesn't answer the stop",
-    async () => {
+  // A gem frozen for good is stood in for by one held with SIGSTOP, sent where
+  // the gems run: inside WSL on Windows.
+  it("says so when a frozen gem doesn't answer the stop", async () => {
+    const { serial } = otherSession();
+    const row = rowFor(listStoneSessions(loginAs()), serial)!;
+    wslExecSync(`kill -STOP ${row.gemPid}`);
+    try {
+      await expect(stopStoneSession(row, loginAs())).resolves.toBe('stuck');
+    } finally {
+      wslExecSync(`kill -CONT ${row.gemPid}`);
+    }
+  }, 30_000);
+
+  describe('Kill', () => {
+    const shell = (command: string) => wslExec(command);
+
+    it("ends a session busy with a run that ignores breaks, by its gem's process", async () => {
+      const { own, serial } = otherSession();
+      own.GciTsNbExecute(
+        '[[true] whileTrue: [nil]] on: Break do: [:e | e resume]',
+        OOP_CLASS_UTF8,
+        OOP_ILLEGAL,
+        OOP_NIL,
+        0,
+        0,
+      );
+      const row = rowFor(listStoneSessions(loginAs()), serial)!;
+
+      await expect(killStoneSession(row, loginAs(), shell)).resolves.toBe('ended');
+      expect(stillOnStone(session, String(serial))).toBe(false);
+    }, 30_000);
+
+    it('ends a gem frozen for good, which only SIGKILL reaches', async () => {
       const { serial } = otherSession();
       const row = rowFor(listStoneSessions(loginAs()), serial)!;
-      execSync(`kill -STOP ${row.gemPid}`);
-      try {
-        await expect(stopStoneSession(row, loginAs())).resolves.toBe('stuck');
-      } finally {
-        execSync(`kill -CONT ${row.gemPid}`);
+      wslExecSync(`kill -STOP ${row.gemPid}`);
+
+      await expect(killStoneSession(row, loginAs(), shell)).resolves.toBe('ended');
+      expect(stillOnStone(session, String(serial))).toBe(false);
+      expect(listStoneSessions(loginAs()).kind).toBe('sessions');
+    }, 30_000);
+
+    it('leaves alone a session that has already ended, signalling nothing', async () => {
+      const { own, serial } = otherSession();
+      const row = rowFor(listStoneSessions(loginAs()), serial)!;
+      own.logout();
+      const deadline = Date.now() + 5000;
+      while (stillOnStone(session, String(serial)) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
-    },
-    30_000,
-  );
+      const commands: string[] = [];
+
+      await expect(
+        killStoneSession(row, loginAs(), async (command) => {
+          commands.push(command);
+          return await shell(command);
+        }),
+      ).resolves.toBe('gone');
+      expect(commands).toEqual([]);
+    }, 30_000);
+  });
 });

@@ -8,6 +8,7 @@ import { DEFAULT_LOGIN, loginLabel } from '../loginTypes';
 import {
   FORCE_STOP,
   LOG_OUT,
+  SHOW_IN_SESSIONS,
   STOP,
   showRunInProgress,
   showStillRunning,
@@ -25,6 +26,7 @@ function deps(registered = true, stops = true, cleaningUp = false) {
     cleaningUp: vi.fn(() => cleaningUp),
     forceStop: vi.fn(async () => stops),
     logout: vi.fn(async () => true),
+    showInSessions: vi.fn(),
   };
 }
 
@@ -51,6 +53,7 @@ describe('the "stopped run is still running" notice', () => {
     expect(window.showWarningMessage).toHaveBeenCalledWith(
       expect.stringMatching(/^Session 3 — .*still running on the server/),
       FORCE_STOP,
+      SHOW_IN_SESSIONS,
     );
   });
 
@@ -62,7 +65,19 @@ describe('the "stopped run is still running" notice', () => {
       `Session 3 — ${loginLabel(session.login)}: a previous run is still cleaning up on the ` +
         'server. Nothing else can run on this session until it ends.',
       FORCE_STOP,
+      SHOW_IN_SESSIONS,
     );
+  });
+
+  it("shows the session's row in the stone's session list, where Kill is, and nothing else", async () => {
+    vi.mocked(window.showWarningMessage).mockResolvedValueOnce(SHOW_IN_SESSIONS);
+    const d = deps();
+
+    await showStillRunning(session, d);
+
+    expect(d.showInSessions).toHaveBeenCalledWith(session);
+    expect(d.forceStop).not.toHaveBeenCalled();
+    expect(window.showWarningMessage).toHaveBeenCalledTimes(1);
   });
 
   it('force-stops the run, keeps the session, and says so', async () => {
@@ -218,6 +233,7 @@ describe('the "a run is still going" notice', () => {
       cleaningUp: () => false,
       forceStop: async () => true,
       logout: async () => true,
+      showInSessions: () => {},
     });
 
     expect(window.showWarningMessage).toHaveBeenCalledTimes(2);
