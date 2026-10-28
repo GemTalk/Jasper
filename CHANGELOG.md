@@ -4,6 +4,10 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Added
+
+- **See every session on a stone, and stop one.** Under each connected login in Logins & Sessions, **All sessions on _stone_** lists everyone logged in to that stone: you, other people, topaz and other tools, and GemStone's own gems, with each one's user, gem process, host and how long ago it logged in. A session of yours that is still running a run you stopped is flagged there. **Stop Session** ends another session, after warning that whatever it hasn't committed is lost, and says so if its gem doesn't answer. Seeing and stopping other sessions needs the SessionAccess privilege, which DataCurator and SystemUser have; without it the list says so. (Part of [#279](https://github.com/GemTalk/Jasper/issues/279) and [#803](https://github.com/GemTalk/Jasper/issues/803))
+
 ### Changed
 
 - **A run that won't stop no longer leaves you stuck.** "Stopping…" shows while Jasper waits. If the run is still going, a notice says so and offers **Force Stop**, which ends it and keeps your session and its uncommitted changes. The notice comes back whenever the stopped run blocks something else. Code that catches every exception ignores Force Stop too; Jasper then offers to log the session out, asking first, since uncommitted changes are lost.

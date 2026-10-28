@@ -87,8 +87,15 @@ import {
   setRunInProgressHandler,
   setStillRunningHandler,
   setStoppedRunCollectedHandler,
+  stoppedRunHolds,
 } from './nbRunner';
-import { forceStop, rearmAfterForceStop } from './forceStop';
+import { forceStop, rearmAfterForceStop, serverSessionOf } from './forceStop';
+import { listStoneSessions, stopStoneSession } from './stoneSessions';
+import {
+  StoneSessionRowItem,
+  StoneSessionsItem,
+  stopStoneSessionCommand,
+} from './stoneSessionsView';
 import { showRunInProgress, showStillRunning } from './stillRunningNotice';
 import { RowanRepoRegistry } from './rowanRepos';
 import {
@@ -955,7 +962,6 @@ export function activate(context: vscode.ExtensionContext) {
       stop: cancelRunOn,
     });
   });
-  setStoppedRunCollectedHandler(rearmAfterForceStop);
 
   // De-duplicates connect clicks: the blocking GciTsLogin freezes the extension
   // host while it runs, so extra clicks during a slow login queue up and replay
@@ -975,7 +981,18 @@ export function activate(context: vscode.ExtensionContext) {
   // the whole run when `jasper.mcp.enabled` is off or no folder is open — it
   // returns undefined and the rows show no MCP state at all.
   let mcpOwnership: () => McpOwnership | undefined = () => undefined;
-  const treeProvider = new LoginTreeProvider(storage, sessionManager, () => mcpOwnership());
+  const transientLoginOn = (through: ActiveSession) => () =>
+    sessionManager.loginTransient(through.login, through);
+  const treeProvider = new LoginTreeProvider(storage, sessionManager, () => mcpOwnership(), {
+    read: (through) => listStoneSessions(transientLoginOn(through)),
+    stuck: stoppedRunHolds,
+    serverSessionOf,
+  });
+  // A collected run takes its flag off the session list.
+  setStoppedRunCollectedHandler((session) => {
+    rearmAfterForceStop(session);
+    treeProvider.refresh();
+  });
   // The acceptance harness seeds a plain-text login into most runs, and this
   // toast would sit over every one of them.
   if (!process.env.GEMSTONE_SUPPRESS_PASSWORD_OFFER) {
@@ -1044,7 +1061,23 @@ export function activate(context: vscode.ExtensionContext) {
     treeDataProvider: treeProvider,
     showCollapseAll: false,
   });
-  context.subscriptions.push(treeView);
+  context.subscriptions.push(
+    treeView,
+    // Collapsing drops the list, so expanding it again reads it fresh.
+    treeView.onDidCollapseElement(({ element }) => {
+      if (element instanceof StoneSessionsItem) treeProvider.forgetStoneSessions(element);
+    }),
+    vscode.commands.registerCommand('gemstone.refreshStoneSessions', (item: StoneSessionsItem) =>
+      treeProvider.refreshStoneSessions(item),
+    ),
+    vscode.commands.registerCommand('gemstone.stopStoneSession', (row: StoneSessionRowItem) =>
+      stopStoneSessionCommand(row, {
+        stop: stopStoneSession,
+        transientLogin: transientLoginOn,
+        refresh: (item) => treeProvider.refreshStoneSessions(item),
+      }),
+    ),
+  );
 
   // Auto-open the Getting Started walkthrough on the first activation after
   // install (see maybeOpenGettingStarted). Fires once per machine; reset via the

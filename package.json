@@ -948,6 +948,18 @@
         "icon": "$(debug-disconnect)"
       },
       {
+        "command": "gemstone.refreshStoneSessions",
+        "title": "Refresh Sessions",
+        "category": "GemStone",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "gemstone.stopStoneSession",
+        "title": "Stop Session",
+        "category": "GemStone",
+        "icon": "$(debug-stop)"
+      },
+      {
         "command": "gemstone.selectSession",
         "title": "Select as Active Session",
         "category": "GemStone",
@@ -2255,6 +2267,14 @@
       ],
       "commandPalette": [
         {
+          "command": "gemstone.refreshStoneSessions",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.stopStoneSession",
+          "when": "false"
+        },
+        {
           "command": "gemstone.breakpoints.toggleAtStepPoint",
           "when": "false"
         },
@@ -3344,6 +3364,16 @@
           "command": "gemstone.sessionLogout",
           "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/",
           "group": "inline@6"
+        },
+        {
+          "command": "gemstone.refreshStoneSessions",
+          "when": "view == gemstoneLogins && viewItem == stoneSessionList",
+          "group": "inline@1"
+        },
+        {
+          "command": "gemstone.stopStoneSession",
+          "when": "view == gemstoneLogins && viewItem == stoneSession.canStop",
+          "group": "inline@1"
         },
         {
           "command": "gemstone.setTransactionMode",
