@@ -1374,3 +1374,137 @@ describe('version status colors', () => {
     });
   }
 });
+
+describe("each stone's sessions", () => {
+  const DC = {
+    label: 'local',
+    gs_user: 'DataCurator',
+    stone: 'gs64stone',
+    gem_host: 'localhost',
+    version: '3.7.5',
+  };
+  const FAR = { ...DC, stone: 'far', gem_host: 'thor' };
+  const session = (id: number, login: typeof DC) => ({ id, login }) as unknown;
+
+  function withStoneSessions(logins: (typeof DC)[], open: unknown[], running = true) {
+    const stoneSessions = {
+      describe: vi.fn((key: string) => ({ key, kind: 'sessions', rows: [] })),
+      forget: vi.fn(),
+      forgetAll: vi.fn(),
+      stop: vi.fn(async () => {}),
+      kill: vi.fn(async () => {}),
+      rowOf: vi.fn((id: number) => (id === 1 ? { key: 'db:db-1', serial: 7 } : undefined)),
+      onDidChange: vi.fn(),
+    };
+    const base = makeDeps() as unknown as Record<string, Record<string, unknown>>;
+    const deps = {
+      ...base,
+      getLogins: () => logins,
+      processManager: { ...base.processManager, isStoneRunning: () => running },
+      sessionManager: { ...base.sessionManager, getSessions: () => open },
+      stoneSessions,
+    } as unknown as Parameters<typeof DatabasesPanel.show>[0];
+    return { deps, stoneSessions };
+  }
+
+  beforeEach(() => {
+    databases = [
+      {
+        dirName: 'db-1',
+        path: path.join(os.tmpdir(), 'jasper-no-such-db-1'),
+        config: { version: '3.7.5', stoneName: 'gs64stone', ldiName: 'gs64ldi' },
+      },
+    ];
+  });
+
+  const state = () =>
+    lastState() as unknown as {
+      databases: { stoneSessions?: { key: string; kind: string; message?: string } }[];
+      otherStoneSessions: { key: string; stone: string; host: string }[];
+    };
+
+  it("lists a running stone's sessions through a session of this window on it", async () => {
+    const mine = session(1, DC);
+    const { deps, stoneSessions } = withStoneSessions([DC], [mine]);
+    DatabasesPanel.show(deps);
+    await sendMessage({ command: 'ready' });
+
+    expect(stoneSessions.describe).toHaveBeenCalledWith('db:db-1', mine, [mine]);
+    expect(state().databases[0].stoneSessions).toEqual({
+      key: 'db:db-1',
+      kind: 'sessions',
+      rows: [],
+    });
+  });
+
+  it('asks for a login rather than reading a stone no session of this window is on', async () => {
+    const { deps, stoneSessions } = withStoneSessions([DC], []);
+    DatabasesPanel.show(deps);
+    await sendMessage({ command: 'ready' });
+
+    expect(stoneSessions.describe).not.toHaveBeenCalled();
+    expect(state().databases[0].stoneSessions).toMatchObject({
+      kind: 'message',
+      message: 'Log in to see the sessions on this stone',
+    });
+  });
+
+  it('shows no list for a stone that is down', async () => {
+    const { deps } = withStoneSessions([DC], [session(1, DC)], false);
+    DatabasesPanel.show(deps);
+    await sendMessage({ command: 'ready' });
+    expect(state().databases[0].stoneSessions).toBeUndefined();
+  });
+
+  it('lists a stone with no database here once, however many sessions reach it', async () => {
+    const { deps, stoneSessions } = withStoneSessions(
+      [FAR, { ...FAR, gs_user: 'SystemUser' }],
+      [session(2, FAR), session(3, { ...FAR, gs_user: 'SystemUser' })],
+    );
+    DatabasesPanel.show(deps);
+    await sendMessage({ command: 'ready' });
+
+    expect(state().otherStoneSessions).toEqual([
+      { key: 'stone:thor/far', kind: 'sessions', rows: [], stone: 'far', host: 'thor' },
+    ]);
+    expect(stoneSessions.describe).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes Refresh, Stop and Kill on to the row they name', async () => {
+    const { deps, stoneSessions } = withStoneSessions([DC], [session(1, DC)]);
+    DatabasesPanel.show(deps);
+    await sendMessage({ command: 'ready' });
+
+    await sendMessage({ command: 'refreshStoneSessions', name: 'db:db-1' });
+    await sendMessage({ command: 'stopStoneSession', name: 'db:db-1', serial: 9 });
+    await sendMessage({ command: 'killStoneSession', name: 'db:db-1', serial: 9 });
+
+    expect(stoneSessions.forget).toHaveBeenCalledWith('db:db-1');
+    expect(stoneSessions.stop).toHaveBeenCalledWith('db:db-1', 9);
+    expect(stoneSessions.kill).toHaveBeenCalledWith('db:db-1', 9);
+  });
+
+  it("opens at Show in Sessions' row, read fresh, once the state carrying it is drawn", async () => {
+    const { deps, stoneSessions } = withStoneSessions([DC], [session(1, DC)]);
+    DatabasesPanel.showStoneSession(deps, 1);
+    await sendMessage({ command: 'ready' });
+
+    expect(stoneSessions.forgetAll).toHaveBeenCalled();
+    const posted = vi.mocked(lastPanel().webview.postMessage).mock.calls.map((c) => c[0]);
+    const stateAt = posted.findIndex((m) => (m as { command: string }).command === 'state');
+    const revealAt = posted.findIndex(
+      (m) => (m as { command: string }).command === 'revealStoneSession',
+    );
+    expect(revealAt).toBeGreaterThan(stateAt);
+    expect(posted[revealAt]).toEqual({ command: 'revealStoneSession', key: 'db:db-1', serial: 7 });
+  });
+
+  it('says so when the session is in no list', async () => {
+    const { deps } = withStoneSessions([DC], [session(1, DC)]);
+    DatabasesPanel.showStoneSession(deps, 2);
+    await sendMessage({ command: 'ready' });
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      expect.stringMatching(/^Session 2 isn't in its stone's session list/),
+    );
+  });
+});

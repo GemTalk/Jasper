@@ -40,6 +40,7 @@ import { canBegin, canCommit, transactionStateLabelIfKnown } from '../queries/tr
 import { readWebviewScript } from '../webviewAssets';
 import { appendSysadmin, showSysadmin } from '../sysadminChannel';
 import { explainGciError } from '../gciLibraryError';
+import type { StoneSessions, StoneSessionsInfo } from '../stoneSessionsView';
 
 const databasesViewJs = readWebviewScript('databasesView.js', 'manager');
 
@@ -63,6 +64,8 @@ export interface DatabasesPanelDeps {
   getLogins: () => GemStoneLogin[];
   /** Live sessions — lets Connect show what is already connected, and which is current. */
   sessionManager: SessionManager;
+  /** Every session on each stone, for its Processes list. */
+  stoneSessions?: StoneSessions;
   /**
    * The admin views' change events. Every `gemstone.*` command that mutates the
    * environment refreshes those views, so listening here is what keeps the panel
@@ -164,6 +167,8 @@ interface DatabaseRow {
   stoneRunning: boolean;
   netldiRunning: boolean;
   processes: ProcInfo[];
+  /** Every session on the stone, under its stone and NetLDI; absent while the stone is down. */
+  stoneSessions?: StoneSessionsInfo;
   logins: LoginInfo[];
   /** Extents this database's version ships, for the header's extent chooser. */
   availableExtents: string[];
@@ -363,6 +368,11 @@ interface PanelState {
   databases: DatabaseRow[];
   /** Only used to mark which database the current session is working in. */
   logins: LoginTarget[];
+  /**
+   * Every session on each stone with no database here that a session of this
+   * window is logged in to: one list per stone, however many logins reach it.
+   */
+  otherStoneSessions: (StoneSessionsInfo & { stone: string; host: string })[];
   /** What the New Database form needs to offer, and to check answers against. */
   create: CreateOptions;
 }
@@ -432,6 +442,9 @@ type Inbound =
   | { command: 'deleteLogin'; login: string }
   | { command: 'copyNetldiHost'; dirName: string; name: string }
   | { command: 'deleteStaleLock'; dirName: string; name: string }
+  | { command: 'refreshStoneSessions'; name: string }
+  | { command: 'stopStoneSession'; name: string; serial: number }
+  | { command: 'killStoneSession'; name: string; serial: number }
   | { command: 'closePanel' };
 
 /**
@@ -493,6 +506,8 @@ export class DatabasesPanel {
    * pass from either can be the late one.
    */
   private stateSeq = 0;
+  /** A Jasper session whose row in its stone's session list the next state is to show. */
+  private revealJasperSession: number | undefined;
   private staleWhileHidden = false;
 
   /**
@@ -506,6 +521,22 @@ export class DatabasesPanel {
   /** Close the manager if one is open; a no-op otherwise. */
   static close(): void {
     DatabasesPanel.current?.dispose();
+  }
+
+  /** Redraw the open panel, if any: something its rows show has changed. */
+  static refreshIfOpen(): void {
+    DatabasesPanel.current?.markStale();
+  }
+
+  /**
+   * Open the panel at Jasper session `jasperId`'s row in its stone's session
+   * list, read fresh, or say why there is none.
+   */
+  static showStoneSession(deps: DatabasesPanelDeps, jasperId: number): void {
+    deps.stoneSessions?.forgetAll();
+    DatabasesPanel.show(deps);
+    const current = DatabasesPanel.current;
+    if (current) current.revealJasperSession = jasperId;
   }
 
   /**
@@ -585,6 +616,7 @@ export class DatabasesPanel {
     for (const onChange of this.deps.onAdminChange) {
       onChange(() => this.markStale(), null, this.disposables);
     }
+    this.deps.stoneSessions?.onDidChange(() => this.markStale(), null, this.disposables);
     // A change that arrives for a panel nobody is looking at is worth nothing
     // until the tab comes back, and this one is expensive to answer.
     this.panel.onDidChangeViewState(
@@ -711,6 +743,7 @@ export class DatabasesPanel {
         const state = await this.buildState('remote');
         if (seq !== this.stateSeq) continue;
         this.panel.webview.postMessage({ command: 'state', state });
+        this.revealPending();
       } while (this.rebuildAgain);
     } finally {
       // Clear both here so a pass that throws does not leave rebuildAgain set to
@@ -956,6 +989,18 @@ export class DatabasesPanel {
         await vscode.commands.executeCommand('gemstone.showSessionConfiguration', {
           sessionId: msg.sessionId,
         });
+        return;
+      case 'refreshStoneSessions':
+        this.deps.stoneSessions?.forget(msg.name);
+        await this.postState();
+        return;
+      case 'stopStoneSession':
+        await this.deps.stoneSessions?.stop(msg.name, Number(msg.serial));
+        await this.postState();
+        return;
+      case 'killStoneSession':
+        await this.deps.stoneSessions?.kill(msg.name, Number(msg.serial));
+        await this.postState();
         return;
       case 'closePanel':
         // Cancelling a form the panel was opened *for* leaves nothing behind:
@@ -1607,10 +1652,27 @@ export class DatabasesPanel {
     const state = await this.buildState('local');
     if (seq !== this.stateSeq) return;
     this.panel.webview.postMessage({ command: 'state', state });
+    this.revealPending();
 
     const versions = await this.buildVersions('remote');
     if (seq !== this.stateSeq) return;
     this.panel.webview.postMessage({ command: 'state', state: { ...state, versions } });
+  }
+
+  /** Scroll to the row Show in Sessions asked for, once a state carrying it is drawn. */
+  private revealPending(): void {
+    const jasperId = this.revealJasperSession;
+    if (jasperId === undefined) return;
+    this.revealJasperSession = undefined;
+    const row = this.deps.stoneSessions?.rowOf(jasperId);
+    if (row) {
+      void this.panel.webview.postMessage({ command: 'revealStoneSession', ...row });
+    } else {
+      void vscode.window.showInformationMessage(
+        `Session ${jasperId} isn't in its stone's session list, which needs a session of this ` +
+          'window logged in to that stone and the SessionAccess privilege.',
+      );
+    }
   }
 
   private async buildState(versionSource: VersionSource): Promise<PanelState> {
@@ -1691,6 +1753,12 @@ export class DatabasesPanel {
         stoneRunning: this.deps.processManager.isStoneRunning(cfg.stoneName, cfg.version),
         netldiRunning: this.deps.processManager.isNetldiRunning(cfg.ldiName, cfg.version),
         processes: dbProcs,
+        stoneSessions: this.stoneSessionsOf(
+          `db:${db.dirName}`,
+          this.deps.processManager.isStoneRunning(cfg.stoneName, cfg.version),
+          openSessions.find((sess) => dbLogins.some((l) => l.label === loginLabel(sess.login))),
+          openSessions,
+        ),
         logins: dbLogins,
         availableExtents: registered ? [] : this.deps.storage.getAvailableExtents(cfg.version),
         external: (['stone', 'netldi'] as const).flatMap((type) => {
@@ -1721,8 +1789,58 @@ export class DatabasesPanel {
       versions,
       databases,
       logins: this.buildLoginTargets(databases),
+      otherStoneSessions: this.otherStoneSessions(databases, openSessions),
       create: this.buildCreateOptions(databases),
     };
+  }
+
+  /** A running stone's session list, read through `through`, a session of this window on it. */
+  private stoneSessionsOf(
+    key: string,
+    running: boolean,
+    through: ActiveSession | undefined,
+    openSessions: ActiveSession[],
+  ): StoneSessionsInfo | undefined {
+    const stoneSessions = this.deps.stoneSessions;
+    if (!stoneSessions || !running) return undefined;
+    if (!through) {
+      // Only a logged-in session can ask the stone who else is on it.
+      return {
+        key,
+        kind: 'message',
+        message: 'Log in to see the sessions on this stone',
+        detail: 'GemStone lists a stone\u2019s sessions only to a session logged in to it.',
+      };
+    }
+    return stoneSessions.describe(key, through, openSessions);
+  }
+
+  /**
+   * One session list for each stone without a database here that a session of
+   * this window is logged in to, keyed by host and stone so two logins to it
+   * share one list.
+   */
+  private otherStoneSessions(
+    databases: DatabaseRow[],
+    openSessions: ActiveSession[],
+  ): PanelState['otherStoneSessions'] {
+    const lists: PanelState['otherStoneSessions'] = [];
+    const seen = new Set<string>();
+    for (const sess of openSessions) {
+      const { stone, gem_host: host } = sess.login;
+      // The same pairing buildLoginTargets uses: only a localhost login sits under a database.
+      const local =
+        host === 'localhost' &&
+        databases.some(
+          (d) => d.stoneName === stone && versionsMatch(d.version, sess.login.version),
+        );
+      const key = `stone:${host}/${stone}`;
+      if (local || seen.has(key)) continue;
+      seen.add(key);
+      const info = this.stoneSessionsOf(key, true, sess, openSessions);
+      if (info) lists.push({ ...info, stone, host });
+    }
+    return lists;
   }
 
   /**
@@ -2154,6 +2272,9 @@ th.v-num { text-align: right; }
 .db-line { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; padding: 5px 6px; margin: 0 -6px; border-radius: 4px; min-width: 0; }
 .db-line:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,.06)); }
 .db-line.row-warn { background: color-mix(in srgb, var(--gm-warn) 8%, transparent); }
+/* The row Show in Sessions opened the panel at. */
+.db-line.row-reveal { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.stone-sessions-caption { display: flex; align-items: center; justify-content: space-between; }
 .db-line-name { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .db-login-user, .proc-name { font-weight: 600; }
 .db-line-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; flex: none; }

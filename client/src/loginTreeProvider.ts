@@ -10,13 +10,6 @@ import {
   transactionStateLabelIfKnown,
 } from './queries/transactionMode';
 import { McpOwnership } from './mcpServerTreeProvider';
-import { StoneSession, StoneSessionList } from './stoneSessions';
-import {
-  StoneSessionRowItem,
-  StoneSessionsItem,
-  StoneSessionsMessageItem,
-  StoneSessionsRead,
-} from './stoneSessionsView';
 
 /** A configured login (tree root). Its active sessions appear as children. */
 export class GemStoneLoginItem extends vscode.TreeItem {
@@ -181,32 +174,7 @@ export class GemStoneSessionItem extends vscode.TreeItem {
   }
 }
 
-type LoginTreeNode =
-  | GemStoneLoginItem
-  | GemStoneSessionItem
-  | StoneSessionsItem
-  | StoneSessionRowItem
-  | StoneSessionsMessageItem;
-
-/** What the "All sessions on <stone>" node needs from outside the tree. */
-export interface StoneSessionsDeps {
-  /** Read the stone's sessions through a login of its own on `through`'s library; may throw. */
-  read(through: ActiveSession): StoneSessionList;
-  /** Whether a run the user stopped still holds `session`. */
-  stuck(session: ActiveSession): boolean;
-  /** GemStone's session number for a Jasper session, once known. */
-  serverSessionOf(jasperId: number): string | undefined;
-  /** The gem processes among `sessions` that Kill can end; see `killableGems`. */
-  killableGems(sessions: StoneSession[]): Set<number>;
-}
-
-/** A login's session list as last read. */
-interface StoneSessionsCacheEntry {
-  read: StoneSessionsRead;
-  killable: Set<number>;
-  /** This window's session ids when it was read: a login or logout here changes the list. */
-  windowSessions: string;
-}
+type LoginTreeNode = GemStoneLoginItem | GemStoneSessionItem;
 
 /**
  * Two-level tree: configured logins are roots, the sessions started from each
@@ -224,7 +192,6 @@ export class LoginTreeProvider implements vscode.TreeDataProvider<LoginTreeNode>
     // Read fresh on every render rather than cached: ownership can change in
     // another window, and the sidecar watcher answers that with a refresh.
     private mcpOwnership: () => McpOwnership | undefined = () => undefined,
-    private stoneSessions?: StoneSessionsDeps,
   ) {
     sessionManager?.onDidChangeSelection(() => this.refresh());
     // A mode switch changes what a session row says and which buttons it carries,
@@ -241,24 +208,8 @@ export class LoginTreeProvider implements vscode.TreeDataProvider<LoginTreeNode>
   // nothing able to clear it.
   private connecting = new Set<string>();
 
-  // Each connected login's session list as last read, by login label. Read only
-  // on expand and Refresh: reading it is a login, which blocks the window while
-  // it runs, and the tree redraws on every selection and transaction change.
-  private stoneSessionReads = new Map<string, StoneSessionsCacheEntry>();
-
   refresh(): void {
     this._onDidChangeTreeData.fire(undefined);
-  }
-
-  /** Read the login's session list again, now. */
-  refreshStoneSessions(item: StoneSessionsItem): void {
-    this.forgetStoneSessions(item);
-    this.refresh();
-  }
-
-  /** Read the login's session list again when it is next expanded. */
-  forgetStoneSessions(item: StoneSessionsItem): void {
-    this.stoneSessionReads.delete(loginLabel(item.login));
   }
 
   /** Show or hide the spinner on a login's row while a connect runs. */
@@ -284,141 +235,26 @@ export class LoginTreeProvider implements vscode.TreeDataProvider<LoginTreeNode>
     const sessions = this.sessionManager?.getSessions() ?? [];
 
     if (!element) {
-      const windowSessions = sessions.map((s) => s.id).join(',');
-      return logins.map((l, i) => {
-        const connected = sessionsForLogin(i, logins, sessions).length > 0;
-        // A list read before a logout must not come back at the next login.
-        const cached = this.stoneSessionReads.get(loginLabel(l));
-        if (!connected || cached?.windowSessions !== windowSessions) {
-          this.stoneSessionReads.delete(loginLabel(l));
-        }
-        return new GemStoneLoginItem(l, i, connected, this.connecting.has(loginLabel(l)));
-      });
+      return logins.map(
+        (l, i) =>
+          new GemStoneLoginItem(
+            l,
+            i,
+            sessionsForLogin(i, logins, sessions).length > 0,
+            this.connecting.has(loginLabel(l)),
+          ),
+      );
     }
 
     if (element instanceof GemStoneLoginItem) {
       const selectedId = this.sessionManager?.selectedId;
       const ownership = this.mcpOwnership();
-      const own = sessionsForLogin(element.index, logins, sessions);
-      const rows: LoginTreeNode[] = own.map((s) => {
+      return sessionsForLogin(element.index, logins, sessions).map((s) => {
         const isSelected = s.id === selectedId;
         return new GemStoneSessionItem(s, isSelected, sessionMcpState(ownership, s, isSelected));
       });
-      if (this.stoneSessions && own.length > 0) {
-        rows.push(
-          new StoneSessionsItem(
-            element.login,
-            element.index,
-            own[0],
-            this.stoneSessionReads.get(loginLabel(element.login))?.read,
-          ),
-        );
-      }
-      return rows;
-    }
-
-    if (element instanceof StoneSessionsItem) {
-      return this.stoneSessionRows(element, sessions);
     }
 
     return [];
-  }
-
-  private stoneSessionRows(
-    item: StoneSessionsItem,
-    jasperSessions: ActiveSession[],
-  ): LoginTreeNode[] {
-    const deps = this.stoneSessions!;
-    const key = loginLabel(item.login);
-    let entry = this.stoneSessionReads.get(key);
-    if (!entry) {
-      let read: StoneSessionsRead;
-      try {
-        read = deps.read(item.through);
-      } catch (e) {
-        read = { kind: 'error', message: e instanceof Error ? e.message : String(e) };
-      }
-      entry = {
-        read,
-        killable: read.kind === 'sessions' ? deps.killableGems(read.sessions) : new Set(),
-        windowSessions: jasperSessions.map((s) => s.id).join(','),
-      };
-      this.stoneSessionReads.set(key, entry);
-      // The node's own count was drawn before the list was read.
-      queueMicrotask(() => this.refresh());
-    }
-    const { read, killable } = entry;
-    if (read.kind === 'noAccess') {
-      return [
-        new StoneSessionsMessageItem(
-          item,
-          'Seeing other sessions needs the SessionAccess privilege',
-          `${item.login.gs_user} doesn't have the SessionAccess privilege, which GemStone ` +
-            'requires to look at any session but its own. DataCurator and SystemUser have it.',
-        ),
-      ];
-    }
-    if (read.kind === 'error') {
-      return [new StoneSessionsMessageItem(item, 'Could not read the sessions', read.message)];
-    }
-    const byServerSession = new Map<string, ActiveSession>();
-    for (const s of jasperSessions) {
-      const number = deps.serverSessionOf(s.id);
-      if (number !== undefined) byServerSession.set(number, s);
-    }
-    const {
-      serverNow,
-      commitRecordBacklog: count,
-      abortThreshold: threshold,
-      canStopSessions,
-    } = read;
-    // Some session always holds the oldest commit record; it is only news once
-    // the stone itself asks sessions to abort over the backlog.
-    const backlog = count >= threshold ? { count, threshold } : undefined;
-    return read.sessions.map((stoneSession) => {
-      const jasperSession = byServerSession.get(String(stoneSession.id));
-      return new StoneSessionRowItem(item, stoneSession, serverNow, {
-        jasperSession,
-        stuck: jasperSession !== undefined && deps.stuck(jasperSession),
-        mayStop: canStopSessions,
-        canSignalGem: killable.has(stoneSession.gemPid),
-        backlog: stoneSession.holdsOldestCommitRecord ? backlog : undefined,
-      });
-    });
-  }
-
-  /** Needed by `TreeView.reveal`, and answered only for what it reveals. */
-  getParent(element: LoginTreeNode): LoginTreeNode | undefined {
-    if (element instanceof StoneSessionRowItem || element instanceof StoneSessionsMessageItem) {
-      return element.parent;
-    }
-    if (element instanceof StoneSessionsItem) {
-      return this.getChildren()[element.loginIndex];
-    }
-    return undefined;
-  }
-
-  /**
-   * The row of the stone's session that is Jasper session `session`, read
-   * fresh; undefined when the list can't show it.
-   */
-  stoneSessionRowOf(session: ActiveSession): StoneSessionRowItem | undefined {
-    const login = this.getChildren().find(
-      (l): l is GemStoneLoginItem =>
-        l instanceof GemStoneLoginItem &&
-        this.getChildren(l).some(
-          (n) => n instanceof GemStoneSessionItem && n.activeSession.id === session.id,
-        ),
-    );
-    if (!login) return undefined;
-    const list = this.getChildren(login).find(
-      (n): n is StoneSessionsItem => n instanceof StoneSessionsItem,
-    );
-    if (!list) return undefined;
-    this.forgetStoneSessions(list);
-    return this.getChildren(list).find(
-      (n): n is StoneSessionRowItem =>
-        n instanceof StoneSessionRowItem && n.context.jasperSession?.id === session.id,
-    );
   }
 }

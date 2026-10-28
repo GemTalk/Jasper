@@ -20,8 +20,7 @@ import {
   KILL,
   killStoneSessionCommand,
   STOP_SESSION,
-  StoneSessionRowItem,
-  StoneSessionsItem,
+  StoneSessionTarget,
   stopStoneSessionCommand,
 } from '../stoneSessionsView';
 
@@ -106,12 +105,6 @@ describe('sessionAge', () => {
 
 describe('Stop Session', () => {
   const through = { id: 1, login: DEFAULT_LOGIN } as ActiveSession;
-  const parent = new StoneSessionsItem(
-    { ...DEFAULT_LOGIN, gs_user: 'Alice' },
-    0,
-    through,
-    undefined,
-  );
   const target: StoneSession = {
     id: 7,
     serial: 12,
@@ -122,18 +115,20 @@ describe('Stop Session', () => {
     transaction: 'in',
     holdsOldestCommitRecord: false,
   };
-  const row = new StoneSessionRowItem(parent, target, 100, { stuck: false });
-  const localRow = new StoneSessionRowItem(parent, target, 100, {
-    stuck: false,
-    canSignalGem: true,
-  });
+  const row: StoneSessionTarget = {
+    stoneSession: target,
+    canKill: false,
+    loginUser: 'Alice',
+    through,
+  };
+  const localRow: StoneSessionTarget = { ...row, canKill: true };
 
   function deps(stop: () => Promise<'ended' | 'gone' | 'stuck'>) {
     return {
       stop: vi.fn(stop),
+      kill: vi.fn(async () => 'ended' as const),
       transientLogin: vi.fn(),
       refresh: vi.fn(),
-      kill: vi.fn(async () => {}),
       logout: vi.fn(async () => true),
     };
   }
@@ -165,15 +160,11 @@ describe('Stop Session', () => {
     expect(d.stop).toHaveBeenCalledWith(target, d.transientLogin.mock.results[0].value);
     expect(d.transientLogin).toHaveBeenCalledWith(through);
     expect(window.showInformationMessage).toHaveBeenCalledWith('Session 7 is stopped.');
-    expect(d.refresh).toHaveBeenCalledWith(parent);
+    expect(d.refresh).toHaveBeenCalled();
   });
 
   it("logs out this window's own session once its gem is stopped, and says so first", async () => {
-    const mine = new StoneSessionRowItem(parent, target, 100, {
-      stuck: false,
-      mayStop: true,
-      jasperSession: { id: 3 } as ActiveSession,
-    });
+    const mine = { ...row, jasperSession: { id: 3 } as ActiveSession };
     vi.mocked(window.showWarningMessage).mockResolvedValueOnce(STOP_SESSION);
     const d = deps(async () => 'ended');
 
@@ -191,11 +182,7 @@ describe('Stop Session', () => {
   });
 
   it("leaves this window's session logged in when its gem would not stop", async () => {
-    const mine = new StoneSessionRowItem(parent, target, 100, {
-      stuck: false,
-      mayStop: true,
-      jasperSession: { id: 3 } as ActiveSession,
-    });
+    const mine = { ...row, jasperSession: { id: 3 } as ActiveSession };
     vi.mocked(window.showWarningMessage).mockResolvedValueOnce(STOP_SESSION);
     const d = deps(async () => 'stuck');
 
@@ -231,16 +218,25 @@ describe('Stop Session', () => {
   it("offers Kill when the gem that didn't answer is on this machine", async () => {
     vi.mocked(window.showWarningMessage)
       .mockResolvedValueOnce(STOP_SESSION)
+      .mockResolvedValueOnce(KILL)
       .mockResolvedValueOnce(KILL);
     const d = deps(async () => 'stuck');
 
     await stopStoneSessionCommand(localRow, d);
 
-    expect(window.showWarningMessage).toHaveBeenLastCalledWith(
+    expect(window.showWarningMessage).toHaveBeenNthCalledWith(
+      2,
       expect.stringMatching(/still on the stone/),
       KILL,
     );
-    expect(d.kill).toHaveBeenCalledWith(localRow);
+    // Kill asks for itself before it acts.
+    expect(window.showWarningMessage).toHaveBeenNthCalledWith(
+      3,
+      expect.stringMatching(/^Kill session 7/),
+      { modal: true },
+      KILL,
+    );
+    expect(d.kill).toHaveBeenCalledWith(target, d.transientLogin.mock.results[0].value);
   });
 
   it('says the privilege is missing, and what an administrator can run', async () => {
@@ -256,7 +252,7 @@ describe('Stop Session', () => {
         "doesn't have. " +
         'An administrator can end it with: System stopSession: 7',
     );
-    expect(d.refresh).toHaveBeenCalledWith(parent);
+    expect(d.refresh).toHaveBeenCalled();
   });
 
   it('passes on any other failure, with the same way out', async () => {
@@ -278,7 +274,6 @@ describe('Stop Session', () => {
 
 describe('Kill', () => {
   const through = { id: 1, login: DEFAULT_LOGIN } as ActiveSession;
-  const parent = new StoneSessionsItem(DEFAULT_LOGIN, 0, through, undefined);
   const target: StoneSession = {
     id: 7,
     serial: 12,
@@ -289,10 +284,16 @@ describe('Kill', () => {
     transaction: 'in',
     holdsOldestCommitRecord: false,
   };
-  const row = new StoneSessionRowItem(parent, target, 100, { stuck: false, canSignalGem: true });
+  const row: StoneSessionTarget = {
+    stoneSession: target,
+    canKill: true,
+    loginUser: DEFAULT_LOGIN.gs_user,
+    through,
+  };
 
   function deps(kill: () => Promise<'ended' | 'gone' | 'stuck'>) {
     return {
+      stop: vi.fn(async () => 'ended' as const),
       kill: vi.fn(kill),
       transientLogin: vi.fn(),
       refresh: vi.fn(),
@@ -328,16 +329,12 @@ describe('Kill', () => {
     expect(d.kill).toHaveBeenCalledWith(target, d.transientLogin.mock.results[0].value);
     expect(d.transientLogin).toHaveBeenCalledWith(through);
     expect(window.showInformationMessage).toHaveBeenCalledWith('Session 7 is killed.');
-    expect(d.refresh).toHaveBeenCalledWith(parent);
+    expect(d.refresh).toHaveBeenCalled();
     expect(d.logout).not.toHaveBeenCalled();
   });
 
   it("logs out this window's own session once its gem is killed, and says so first", async () => {
-    const mine = new StoneSessionRowItem(parent, target, 100, {
-      stuck: true,
-      canSignalGem: true,
-      jasperSession: { id: 3 } as ActiveSession,
-    });
+    const mine = { ...row, jasperSession: { id: 3 } as ActiveSession };
     vi.mocked(window.showWarningMessage).mockResolvedValueOnce(KILL);
     const d = deps(async () => 'ended');
 
@@ -363,7 +360,7 @@ describe('Kill', () => {
       'Session 7 could not be killed: kill: (39811) - Operation not permitted. ' +
         'Someone allowed to end process 39811 on uffda can run: kill -9 39811',
     );
-    expect(d.refresh).toHaveBeenCalledWith(parent);
+    expect(d.refresh).toHaveBeenCalled();
   });
 
   it('says so when the gem outlives SIGKILL', async () => {

@@ -2,7 +2,6 @@ import * as vscode from 'vscode';
 import type { ActiveSession } from './activeSession';
 import { GciLibraryError } from './gciLibraryError';
 import { NO_PRIVILEGE_ERROR } from './forceStop';
-import { GemStoneLogin } from './loginTypes';
 import {
   sessionAge,
   StoneSession,
@@ -11,123 +10,287 @@ import {
   TransientLogin,
 } from './stoneSessions';
 
-/** The list as last read, or why it couldn't be. */
-export type StoneSessionsRead = StoneSessionList | { kind: 'error'; message: string };
-
-/** The "All sessions on <stone>" node under a connected login. */
-export class StoneSessionsItem extends vscode.TreeItem {
-  constructor(
-    public readonly login: GemStoneLogin,
-    public readonly loginIndex: number,
-    /** A connected session of the login, whose GCI library the list is read through. */
-    public readonly through: ActiveSession,
-    read: StoneSessionsRead | undefined,
-  ) {
-    super(`All sessions on ${login.stone}`, vscode.TreeItemCollapsibleState.Collapsed);
-    this.id = `stoneSessions-${loginIndex}`;
-    this.iconPath = new vscode.ThemeIcon('organization');
-    this.contextValue = 'stoneSessionList';
-    if (read?.kind === 'sessions') this.description = `${read.sessions.length}`;
-    this.tooltip =
-      'Every session logged in to the stone, from any tool or user. Read when expanded; ' +
-      'Refresh reads it again.';
-  }
+/** What the stone's session lists need from outside them. */
+export interface StoneSessionsDeps {
+  /** Read the stone's sessions through a login of its own on `through`'s library; may throw. */
+  read(through: ActiveSession): StoneSessionList;
+  /** The gem processes among `sessions` that Kill can end; see `killableGems`. */
+  killableGems(sessions: StoneSession[]): Set<number>;
+  /** Whether a run the user stopped still holds `session`. */
+  stuck(session: ActiveSession): boolean;
+  /** GemStone's session number for a Jasper session, once known. */
+  serverSessionOf(jasperId: number): string | undefined;
+  transientLogin(through: ActiveSession): TransientLogin;
+  stop(target: StoneSession, login: TransientLogin): Promise<StopSessionOutcome>;
+  kill(target: StoneSession, login: TransientLogin): Promise<StopSessionOutcome>;
+  /** Drop this window's Jasper session whose gem was ended. */
+  logout(jasperId: number): Promise<unknown>;
 }
 
-/** What a row knows beyond the stone's own description of the session. */
-export interface StoneSessionContext {
-  /** The Jasper session in this window that is this stone session, if any. */
-  jasperSession?: ActiveSession;
+/** One session as the Databases & Versions panel draws it. */
+export interface StoneSessionRow {
+  id: number;
+  serial: number;
+  user: string;
+  gemPid: number;
+  host: string;
+  /** How long ago it logged in: `45s`, `14m`, `3h`, `2d`. */
+  age: string;
+  /** The Jasper session in this window that is this session, if any. */
+  jasperSessionId?: number;
+  systemGem?: string;
   /** A run the user stopped is still running on it. */
   stuck: boolean;
-  /** The login has the privileges `System stopSession:` needs. */
-  mayStop?: boolean;
-  /** Its gem runs on this machine (in WSL, on Windows) as a process this OS user may signal. */
-  canSignalGem?: boolean;
   /** It holds back a commit-record backlog the stone already asks sessions to abort over. */
-  backlog?: { count: number; threshold: number };
+  holdsBacklog: boolean;
+  canStop: boolean;
+  canKill: boolean;
+  /** The row's hover text. */
+  tip: string;
 }
 
-/** One session on the stone. */
-export class StoneSessionRowItem extends vscode.TreeItem {
-  constructor(
-    public readonly parent: StoneSessionsItem,
-    public readonly stoneSession: StoneSession,
-    serverNow: number,
-    public readonly context: StoneSessionContext,
-  ) {
-    const { id, serial, user, gemPid, host, loggedInAt, systemGem } = stoneSession;
-    super(user || '(logging in or out)', vscode.TreeItemCollapsibleState.None);
-    const { jasperSession, stuck, mayStop, canSignalGem, backlog } = context;
-    const age = sessionAge(loggedInAt, serverNow);
-    const parts = [`gem ${gemPid}`, host, age];
-    if (jasperSession) parts.push(`Jasper session ${jasperSession.id}`);
-    if (systemGem) parts.push(`system: ${systemGem}`);
-    if (stuck) parts.push('⚠ still running a stopped run');
-    if (backlog) parts.push('⧗ holds the oldest commit record');
-    this.description = parts.join(' · ');
-    // The flags are in the id so a row whose run is collected redraws.
-    this.id =
-      `stoneSession-${parent.loginIndex}-${serial}` +
-      `${stuck ? '-stuck' : ''}${backlog ? '-backlog' : ''}`;
-    this.iconPath = new vscode.ThemeIcon(
-      stuck
-        ? 'warning'
-        : backlog
-          ? 'history'
-          : jasperSession
-            ? 'plug'
-            : systemGem
-              ? 'gear'
-              : 'account',
-    );
-    // Each is offered where it can work, and neither on GemStone's own gems.
-    // Both are offered on this window's own sessions too, whose state Jasper
-    // can't always judge: the user decides, and the Jasper session is logged
-    // out after.
-    const canStop = !systemGem && !!mayStop;
-    const canKill = !!canSignalGem && !systemGem;
-    this.contextValue = `stoneSession${canStop ? '.canStop' : ''}${canKill ? '.canKill' : ''}`;
+/** One stone's session list, or the one line standing in for it. */
+export type StoneSessionsInfo =
+  | { key: string; kind: 'sessions'; rows: StoneSessionRow[] }
+  | { key: string; kind: 'message'; message: string; detail: string };
 
-    const tooltip = new vscode.MarkdownString();
-    tooltip.appendMarkdown(`**Session ${id}** — ${user || 'logging in or out'}\n\n`);
-    tooltip.appendMarkdown(
-      `Gem process ${gemPid} on ${host}, logged in ${age} ago, ` +
-        `${transactionWording(stoneSession.transaction)}.\n\n`,
-    );
-    if (systemGem) {
-      tooltip.appendMarkdown(`One of GemStone's own gems (${systemGem}).\n\n`);
+/** A row's session, with what acting on it needs. */
+export interface StoneSessionTarget {
+  stoneSession: StoneSession;
+  jasperSession?: ActiveSession;
+  canKill: boolean;
+  /** The GemStone user the list was read as, for the privilege messages. */
+  loginUser: string;
+  /** A session of this window on the stone, whose GCI library the action logs in on. */
+  through: ActiveSession;
+}
+
+/**
+ * How long after a session of this window logs out its list is read again. The
+ * stone lets a gem go a moment after the logout returns, so the read the logout
+ * itself causes can still list it.
+ */
+export const REREAD_AFTER_LOGOUT_MS = 2000;
+
+/** The list as last read, or why it couldn't be. */
+type StoneSessionsRead = StoneSessionList | { kind: 'error'; message: string };
+
+interface CacheEntry {
+  read: StoneSessionsRead;
+  killable: Set<number>;
+  /** This window's session ids when it was read: a login or logout here changes the list. */
+  windowSessions: string;
+}
+
+/**
+ * Each stone's session list, by a key naming the stone. Read on first showing,
+ * on Refresh, and when a session of this window logs in or out, and kept
+ * otherwise: a read is a login, which blocks the window while it runs, and the
+ * panel redraws on every selection and transaction change.
+ */
+export class StoneSessions {
+  private readonly cache = new Map<string, CacheEntry>();
+  private readonly targets = new Map<string, Map<number, StoneSessionTarget>>();
+  private readonly changed = new vscode.EventEmitter<void>();
+  /** A list was forgotten on its own, and should be shown again. */
+  readonly onDidChange = this.changed.event;
+
+  constructor(private readonly deps: StoneSessionsDeps) {}
+
+  /** The stone `key`'s list, read through `through` unless it is kept. */
+  describe(
+    key: string,
+    through: ActiveSession,
+    windowSessions: ActiveSession[],
+  ): StoneSessionsInfo {
+    const { deps } = this;
+    const seen = windowSessions.map((s) => s.id).join(',');
+    let entry = this.cache.get(key);
+    if (entry?.windowSessions !== seen) {
+      const loggedOut =
+        entry !== undefined &&
+        entry.windowSessions
+          .split(',')
+          .some((id) => id !== '' && !windowSessions.some((s) => String(s.id) === id));
+      if (loggedOut) {
+        setTimeout(() => {
+          this.forget(key);
+          this.changed.fire();
+        }, REREAD_AFTER_LOGOUT_MS);
+      }
+      let read: StoneSessionsRead;
+      try {
+        read = deps.read(through);
+      } catch (e) {
+        read = { kind: 'error', message: e instanceof Error ? e.message : String(e) };
+      }
+      const killable =
+        read.kind === 'sessions' ? deps.killableGems(read.sessions) : new Set<number>();
+      entry = { read, killable, windowSessions: seen };
+      this.cache.set(key, entry);
     }
-    if (stuck) {
-      tooltip.appendMarkdown(
-        `A run you stopped is still running on the server, so Jasper session ` +
-          `${jasperSession?.id} can't run anything else. Force Stop it, or log out ` +
-          'from the session row above.' +
-          (canKill ? ' If its gem is frozen for good, Kill ends it.' : '') +
-          '\n\n',
-      );
-    } else if (jasperSession) {
-      tooltip.appendMarkdown(
-        `Jasper session ${jasperSession.id} in this window. Stop or Kill here ends it ` +
-          "without asking about uncommitted changes, and logs it out; the session row's " +
-          'Logout asks first.\n\n',
-      );
+    const { read, killable } = entry;
+    const loginUser = through.login.gs_user;
+    if (read.kind === 'noAccess') {
+      this.targets.delete(key);
+      return {
+        key,
+        kind: 'message',
+        message: 'Seeing other sessions needs the SessionAccess privilege',
+        detail:
+          `${loginUser} doesn't have the SessionAccess privilege, which GemStone requires to ` +
+          'look at any session but its own. DataCurator and SystemUser have it.',
+      };
     }
-    if (!systemGem && !mayStop) {
-      tooltip.appendMarkdown(
-        `Stopping it needs the SystemControl privilege, which ${parent.login.gs_user} ` +
-          "doesn't have.\n\n",
-      );
+    if (read.kind === 'error') {
+      this.targets.delete(key);
+      return { key, kind: 'message', message: 'Could not read the sessions', detail: read.message };
     }
-    if (backlog) {
-      tooltip.appendMarkdown(
-        `Its view is the oldest of the ${backlog.count} commit records the stone is keeping, ` +
-          `past the ${backlog.threshold} at which the stone asks sessions to abort. Until it ` +
-          'commits or aborts, the stone can reclaim none of the space behind them.\n\n',
-      );
+
+    const byServerSession = new Map<string, ActiveSession>();
+    for (const s of windowSessions) {
+      const number = deps.serverSessionOf(s.id);
+      if (number !== undefined) byServerSession.set(number, s);
     }
-    this.tooltip = tooltip;
+    // Some session always holds the oldest commit record; it is only news once
+    // the stone itself asks sessions to abort over the backlog.
+    const backlog = read.commitRecordBacklog >= read.abortThreshold ? read : undefined;
+    const targets = new Map<number, StoneSessionTarget>();
+    const rows = read.sessions.map((stoneSession) => {
+      const jasperSession = byServerSession.get(String(stoneSession.id));
+      const row = describeRow(stoneSession, read.serverNow, {
+        jasperSession,
+        stuck: jasperSession !== undefined && deps.stuck(jasperSession),
+        mayStop: read.canStopSessions,
+        canSignalGem: killable.has(stoneSession.gemPid),
+        backlog: stoneSession.holdsOldestCommitRecord ? backlog : undefined,
+        loginUser,
+      });
+      targets.set(stoneSession.serial, {
+        stoneSession,
+        jasperSession,
+        canKill: row.canKill,
+        loginUser,
+        through,
+      });
+      return row;
+    });
+    this.targets.set(key, targets);
+    return { key, kind: 'sessions', rows };
   }
+
+  /** Read the stone `key`'s list again next time it is shown. */
+  forget(key: string): void {
+    this.cache.delete(key);
+  }
+
+  /** Forget every list, so each is read again next time it is shown. */
+  forgetAll(): void {
+    this.cache.clear();
+  }
+
+  /** The session behind a row last shown, or undefined for one no longer listed. */
+  target(key: string, serial: number): StoneSessionTarget | undefined {
+    return this.targets.get(key)?.get(serial);
+  }
+
+  /** Where Jasper session `jasperId`'s row was last shown. */
+  rowOf(jasperId: number): { key: string; serial: number } | undefined {
+    for (const [key, rows] of this.targets) {
+      for (const [serial, t] of rows) {
+        if (t.jasperSession?.id === jasperId) return { key, serial };
+      }
+    }
+    return undefined;
+  }
+
+  /** Stop Session on a row last shown; the list is read again after. */
+  async stop(key: string, serial: number): Promise<void> {
+    const target = this.target(key, serial);
+    if (target) await stopStoneSessionCommand(target, this.commandDeps(key));
+  }
+
+  /** Kill on a row last shown; the list is read again after. */
+  async kill(key: string, serial: number): Promise<void> {
+    const target = this.target(key, serial);
+    if (target?.canKill) await killStoneSessionCommand(target, this.commandDeps(key));
+  }
+
+  private commandDeps(key: string): StoneSessionCommandDeps {
+    const { stop, kill, transientLogin, logout } = this.deps;
+    return { stop, kill, transientLogin, logout, refresh: () => this.forget(key) };
+  }
+}
+
+interface RowContext {
+  jasperSession?: ActiveSession;
+  stuck: boolean;
+  /** The login has the privileges `System stopSession:` needs. */
+  mayStop: boolean;
+  /** Its gem runs on this machine (in WSL, on Windows) as a process this OS user may signal. */
+  canSignalGem: boolean;
+  backlog?: { commitRecordBacklog: number; abortThreshold: number };
+  loginUser: string;
+}
+
+export function describeRow(
+  stoneSession: StoneSession,
+  serverNow: number,
+  context: RowContext,
+): StoneSessionRow {
+  const { id, serial, user, gemPid, host, loggedInAt, systemGem } = stoneSession;
+  const { jasperSession, stuck, mayStop, canSignalGem, backlog, loginUser } = context;
+  const age = sessionAge(loggedInAt, serverNow);
+  // Each is offered where it can work, and neither on GemStone's own gems.
+  // Both are offered on this window's own sessions too, whose state Jasper
+  // can't always judge: the user decides, and the Jasper session is logged
+  // out after.
+  const canStop = !systemGem && mayStop;
+  const canKill = canSignalGem && !systemGem;
+
+  const tip = [
+    `Session ${id}: gem process ${gemPid} on ${host}, logged in ${age} ago, ` +
+      `${transactionWording(stoneSession.transaction)}.`,
+  ];
+  if (systemGem) tip.push(`One of GemStone's own gems (${systemGem}).`);
+  if (stuck) {
+    tip.push(
+      `A run you stopped is still running on the server, so Jasper session ` +
+        `${jasperSession?.id} can't run anything else. Force Stop it, or log it out.` +
+        (canKill ? ' If its gem is frozen for good, Kill ends it.' : ''),
+    );
+  } else if (jasperSession) {
+    tip.push(
+      `Jasper session ${jasperSession.id} in this window. Stop or Kill here ends it without ` +
+        "asking about uncommitted changes, and logs it out; the session's own Log out asks first.",
+    );
+  }
+  if (!systemGem && !mayStop) {
+    tip.push(`Stopping it needs the SystemControl privilege, which ${loginUser} doesn't have.`);
+  }
+  if (backlog) {
+    tip.push(
+      `Its view is the oldest of the ${backlog.commitRecordBacklog} commit records the stone ` +
+        `is keeping, past the ${backlog.abortThreshold} at which the stone asks sessions to ` +
+        'abort. Until it commits or aborts, the stone can reclaim none of the space behind them.',
+    );
+  }
+
+  return {
+    id,
+    serial,
+    user,
+    gemPid,
+    host,
+    age,
+    jasperSessionId: jasperSession?.id,
+    systemGem,
+    stuck,
+    holdsBacklog: !!backlog,
+    canStop,
+    canKill,
+    tip: tip.join('\n'),
+  };
 }
 
 function transactionWording(transaction: StoneSession['transaction']): string {
@@ -141,50 +304,30 @@ function transactionWording(transaction: StoneSession['transaction']): string {
   }
 }
 
-/** A row standing in for the list when it can't be shown. */
-export class StoneSessionsMessageItem extends vscode.TreeItem {
-  constructor(
-    public readonly parent: StoneSessionsItem,
-    label: string,
-    tooltip: string,
-  ) {
-    super(label, vscode.TreeItemCollapsibleState.None);
-    this.id = `stoneSessionsMessage-${parent.loginIndex}`;
-    this.iconPath = new vscode.ThemeIcon('info');
-    this.tooltip = tooltip;
-    this.contextValue = 'stoneSessionMessage';
-  }
-}
-
-export interface StopStoneSessionDeps {
+export interface StoneSessionCommandDeps {
   stop(target: StoneSession, login: TransientLogin): Promise<StopSessionOutcome>;
+  kill(target: StoneSession, login: TransientLogin): Promise<StopSessionOutcome>;
   transientLogin: (through: ActiveSession) => TransientLogin;
-  /** Read the list again. */
-  refresh(item: StoneSessionsItem): void;
-  /** Kill, for the gem a stop couldn't end. */
-  kill(row: StoneSessionRowItem): Promise<void>;
-  /** Drop this window's Jasper session whose gem was stopped. */
+  /** Drop this window's Jasper session whose gem was ended. */
   logout(jasperId: number): Promise<unknown>;
+  /** Have the list read again. */
+  refresh(): void;
 }
 
 export const STOP_SESSION = 'Stop Session';
 export const KILL = 'Kill';
 
-function canKill(row: StoneSessionRowItem): boolean {
-  return row.contextValue?.includes('.canKill') ?? false;
-}
-
 /**
- * End another session on the stone, after a warning that its uncommitted work
- * is lost. Where that can't work, says so and names what an administrator can
- * run, as logging out does.
+ * End a session on the stone, after a warning that its uncommitted work is
+ * lost. Where that can't work, says so and names what an administrator can run,
+ * as logging out does.
  */
 export async function stopStoneSessionCommand(
-  row: StoneSessionRowItem,
-  deps: StopStoneSessionDeps,
+  target: StoneSessionTarget,
+  deps: StoneSessionCommandDeps,
 ): Promise<void> {
-  const { id, user, gemPid, host } = row.stoneSession;
-  const { jasperSession } = row.context;
+  const { id, user, gemPid, host } = target.stoneSession;
+  const { jasperSession } = target;
   const who = `session ${id} (${user || 'unknown user'} on ${host}, gem ${gemPid})`;
   const confirmed = await vscode.window.showWarningMessage(
     `Stop ${who}? Anything it hasn't committed is lost.` +
@@ -198,22 +341,22 @@ export async function stopStoneSessionCommand(
   try {
     outcome = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: `Stopping session ${id}…` },
-      () => deps.stop(row.stoneSession, deps.transientLogin(row.parent.through)),
+      () => deps.stop(target.stoneSession, deps.transientLogin(target.through)),
     );
   } catch (e) {
     const administrator = `An administrator can end it with: System stopSession: ${id}`;
     void vscode.window.showWarningMessage(
       e instanceof GciLibraryError && e.number === NO_PRIVILEGE_ERROR
         ? `Stopping a session needs the SessionAccess and SystemControl privileges, which ` +
-            `${row.parent.login.gs_user} doesn't have. ${administrator}`
+            `${target.loginUser} doesn't have. ${administrator}`
         : `Session ${id} could not be stopped (${e instanceof Error ? e.message : String(e)}). ` +
             administrator,
     );
-    deps.refresh(row.parent);
+    deps.refresh();
     return;
   }
   if (jasperSession && outcome !== 'stuck') await logOutAfter(jasperSession, deps);
-  deps.refresh(row.parent);
+  deps.refresh();
   switch (outcome) {
     case 'ended':
       void vscode.window.showInformationMessage(`Session ${id} is stopped.`);
@@ -225,21 +368,15 @@ export async function stopStoneSessionCommand(
       const message =
         `Session ${id} was told to stop but is still on the stone: its gem isn't answering. ` +
         `Only ending its process will clear it — process ${gemPid} on ${host}.`;
-      if (!canKill(row)) {
+      if (!target.canKill) {
         void vscode.window.showWarningMessage(message);
         return;
       }
-      if ((await vscode.window.showWarningMessage(message, KILL)) === KILL) await deps.kill(row);
+      if ((await vscode.window.showWarningMessage(message, KILL)) === KILL) {
+        await killStoneSessionCommand(target, deps);
+      }
     }
   }
-}
-
-export interface KillStoneSessionDeps {
-  kill(target: StoneSession, login: TransientLogin): Promise<StopSessionOutcome>;
-  transientLogin: (through: ActiveSession) => TransientLogin;
-  refresh(item: StoneSessionsItem): void;
-  /** Drop this window's Jasper session whose gem was killed. */
-  logout(jasperId: number): Promise<unknown>;
 }
 
 /**
@@ -249,11 +386,11 @@ export interface KillStoneSessionDeps {
  * it was is logged out after.
  */
 export async function killStoneSessionCommand(
-  row: StoneSessionRowItem,
-  deps: KillStoneSessionDeps,
+  target: StoneSessionTarget,
+  deps: StoneSessionCommandDeps,
 ): Promise<void> {
-  const { id, user, gemPid, host } = row.stoneSession;
-  const { jasperSession } = row.context;
+  const { id, user, gemPid, host } = target.stoneSession;
+  const { jasperSession } = target;
   const confirmed = await vscode.window.showWarningMessage(
     `Kill session ${id} (${user || 'unknown user'} on ${host})? Its gem, process ${gemPid}, ` +
       "is ended on this machine, and anything it hasn't committed is lost." +
@@ -267,18 +404,18 @@ export async function killStoneSessionCommand(
   try {
     outcome = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: `Killing session ${id}…` },
-      () => deps.kill(row.stoneSession, deps.transientLogin(row.parent.through)),
+      () => deps.kill(target.stoneSession, deps.transientLogin(target.through)),
     );
   } catch (e) {
     void vscode.window.showWarningMessage(
       `Session ${id} could not be killed: ${(e instanceof Error ? e.message : String(e)).replace(/\.?$/, '.')} ` +
         `Someone allowed to end process ${gemPid} on ${host} can run: kill -9 ${gemPid}`,
     );
-    deps.refresh(row.parent);
+    deps.refresh();
     return;
   }
   if (jasperSession && outcome !== 'stuck') await logOutAfter(jasperSession, deps);
-  deps.refresh(row.parent);
+  deps.refresh();
   switch (outcome) {
     case 'ended':
       void vscode.window.showInformationMessage(`Session ${id} is killed.`);

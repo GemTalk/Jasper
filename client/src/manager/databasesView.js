@@ -15,6 +15,9 @@
   const expandedDbs = new Set();
   // dirNames whose Files group the user opened — Files starts closed.
   const expandedFiles = new Set();
+  // The session row Show in Sessions pointed at, kept marked across redraws
+  // until the next click.
+  let revealedRow = null;
   // Sections the user has opened or closed by hand, against whatever the panel
   // would have chosen — their answer, kept across re-renders.
   const sectionChoice = new Map();
@@ -247,6 +250,7 @@
       (a.login ? ` data-login="${esc(a.login)}"` : '') +
       (a.name ? ` data-name="${esc(a.name)}"` : '') +
       (a.session !== undefined ? ` data-session="${esc(String(a.session))}"` : '') +
+      (a.serial !== undefined ? ` data-serial="${esc(String(a.serial))}"` : '') +
       (a.cmd ? ` data-cmd="${esc(a.cmd)}"` : '') +
       (a.setting ? ` data-setting="${esc(a.setting)}"` : '');
     const tip = tipAttr(a.title || label);
@@ -863,8 +867,87 @@
   function renderProcesses(db) {
     return group(
       { title: 'Processes', open: true },
-      `${processRow(db, 'stone')}${processRow(db, 'netldi')}`,
+      `${processRow(db, 'stone')}${processRow(db, 'netldi')}${stoneSessionsBlock(db.stoneSessions, 'Sessions')}`,
     );
+  }
+
+  // Every session on the stone: other people's, tools', GemStone's own gems and
+  // this window's, each a process of the stone above. The host reads the list,
+  // and decides which rows may be stopped or killed; the buttons only name the
+  // row, by its login's serial number, which GemStone never reuses.
+  function stoneSessionRow(key, row) {
+    const state = row.stuck
+      ? mark('warning', 'warn', 'Still running a run you stopped')
+      : row.holdsBacklog
+        ? mark('history', 'warn', 'Holds the oldest commit record')
+        : row.jasperSessionId !== undefined
+          ? mark('plug', 'ok', `Jasper session ${row.jasperSessionId} in this window`)
+          : row.systemGem
+            ? mark('gear', 'off', 'One of GemStone\u2019s own gems')
+            : mark('account', 'off', 'A session');
+    const flags =
+      (row.jasperSessionId !== undefined ? badge(`Jasper session ${row.jasperSessionId}`) : '') +
+      (row.systemGem ? badge(`system: ${row.systemGem}`) : '') +
+      (row.stuck ? `<span class="svc-state">\u26a0 still running a stopped run</span>` : '') +
+      (row.holdsBacklog
+        ? `<span class="svc-state">\u29d7 holds the oldest commit record</span>`
+        : '');
+    const stop = row.canStop
+      ? btn('stopStoneSession', 'Stop Session', 'stop', 'btn-secondary', {
+          name: key,
+          serial: row.serial,
+          iconOnly: true,
+          extraClass: 'power-stop',
+          title: `Stop session ${row.id} \u2014 anything it hasn\u2019t committed is lost`,
+        })
+      : '';
+    const kill = row.canKill
+      ? btn('killStoneSession', 'Kill', 'close', 'btn-secondary', {
+          name: key,
+          serial: row.serial,
+          iconOnly: true,
+          title: `Kill session ${row.id} by ending its gem, process ${row.gemPid}, on this machine`,
+        })
+      : '';
+    const meta = `session ${row.id} \u00b7 gem ${row.gemPid} \u00b7 ${row.host} \u00b7 ${row.age}`;
+    return `<div class="db-line stone-session${row.stuck ? ' row-warn' : ''}" data-stone-session="${esc(`${key}|${row.serial}`)}"${tipAttr(row.tip)}>
+        <span class="db-line-name">${state}<span class="session-name">${esc(row.user || '(logging in or out)')}</span><span class="dim session-id mono">${esc(meta)}</span>${flags}</span>
+        <span class="db-line-actions">${stop}${kill}</span>
+      </div>`;
+  }
+
+  /** A stone's session list under `caption`, or the line standing in for it; nothing while it is down. */
+  function stoneSessionsBlock(info, caption) {
+    if (!info) return '';
+    const refresh = btn('refreshStoneSessions', 'Refresh', 'refresh', null, {
+      name: info.key,
+      iconOnly: true,
+      title: 'Read the stone\u2019s sessions again',
+    });
+    const count = info.kind === 'sessions' ? ` \u00b7 ${info.rows.length}` : '';
+    const body =
+      info.kind === 'sessions'
+        ? info.rows.map((row) => stoneSessionRow(info.key, row)).join('') ||
+          '<div class="db-empty">No other sessions.</div>'
+        : `<div class="db-line"${tipAttr(info.detail)}><span class="db-line-name">${mark('info', 'off', info.detail)}<span class="dim">${esc(info.message)}</span></span></div>`;
+    return `<div class="session-block stone-sessions" data-stone-sessions="${esc(info.key)}">
+        <div class="session-caption stone-sessions-caption"><span>${esc(caption)}${count}</span>${refresh}</div>
+        ${body}
+      </div>`;
+  }
+
+  /** Mark the row Show in Sessions asked for, opening what hides it, and scroll to it once. */
+  function markRevealedRow(scroll) {
+    if (!revealedRow) return;
+    const el = Array.from(els.root.querySelectorAll('[data-stone-session]')).find(
+      (e) => e.getAttribute('data-stone-session') === revealedRow,
+    );
+    if (!el) return;
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      if (p.tagName === 'DETAILS' && !p.open) p.open = true;
+    }
+    el.classList.add('row-reveal');
+    if (scroll && el.scrollIntoView) el.scrollIntoView({ block: 'center' });
   }
 
   // Each kind of file is a root in a tree — Logs, Config, Backups — rather than
@@ -1070,7 +1153,7 @@
    * it different — its stone, its host and the NetLDI that reaches it — because
    * without a database above it, the user name alone identifies nothing.
    */
-  function renderOtherLogins(logins, open) {
+  function renderOtherLogins(logins, open, stoneLists) {
     const rows = logins
       .map((l) => {
         // The label names the user, stone and host, the way every login row does.
@@ -1108,7 +1191,11 @@
         );
       })
       .join('');
-    const body = rows || '<div class="db-empty">None yet.</div>';
+    // One list per stone, however many of these logins reach it.
+    const lists = (stoneLists || [])
+      .map((l) => stoneSessionsBlock(l, `Sessions on ${l.stone} (${l.host})`))
+      .join('');
+    const body = (rows || '<div class="db-empty">None yet.</div>') + lists;
     // Its own +, because the per-database one prefills from the database it sits
     // under and there is none here — that is what puts a login in this section.
     const add = `<button type="button" class="icon-btn" data-action="addLogin" data-tip="New login" aria-label="New login">${ICONS.plus}</button>`;
@@ -1236,7 +1323,9 @@
     const unattached = (state.logins || []).filter((l) => !l.dirName);
     return [
       { html: renderDatabases(state.databases, true, currentDir, !nothingInstalled) },
-      { html: renderOtherLogins(unattached, unattached.length > 0) },
+      {
+        html: renderOtherLogins(unattached, unattached.length > 0, state.otherStoneSessions || []),
+      },
       { html: renderVersions(state.versions, true) },
     ];
   }
@@ -1598,6 +1687,8 @@
         else expandedFiles.delete(d.dataset.db);
       });
     });
+    // After the listeners above, so the disclosures it opens are remembered.
+    markRevealedRow(false);
 
     // Focus is returned to the field it was in (captured above, before the
     // rebuild) so a refresh arriving mid-type does not steal the cursor.
@@ -1859,6 +1950,7 @@
     // Whatever the click does, the tip belongs to the element under the pointer
     // a moment ago — and most clicks here redraw, which takes that element away.
     hideTip();
+    revealedRow = null;
     const el = e.target.closest('[data-action]');
     if (!el) return;
     // Prevent an action button inside a <summary> from also toggling the section.
@@ -1881,6 +1973,7 @@
       name: el.dataset.name,
       path: el.dataset.path,
       sessionId: el.dataset.session ? Number(el.dataset.session) : undefined,
+      serial: el.dataset.serial ? Number(el.dataset.serial) : undefined,
       action: el.dataset.cmd,
     });
   }
@@ -2031,6 +2124,7 @@
     createForm.seeded = false;
     // Nothing has been drawn yet, so nothing may be redrawn from memory.
     lastState = null;
+    revealedRow = null;
     // VS Code offers a webview the browser's Cut/Copy/Paste menu on right-click.
     // On a panel of buttons and rows that menu is noise — it appears over a login
     // name and offers to paste into it, which does nothing. It is left alone on
@@ -2086,6 +2180,9 @@
         hideTip();
         els.root.innerHTML = renderFailureOnly();
       }
+    } else if (msg.command === 'revealStoneSession') {
+      revealedRow = `${msg.key}|${msg.serial}`;
+      markRevealedRow(true);
     } else if (msg.command === 'pingResult') {
       setPingNotice(
         Number(msg.sessionId),

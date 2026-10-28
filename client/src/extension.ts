@@ -96,12 +96,7 @@ import {
   listStoneSessions,
   stopStoneSession,
 } from './stoneSessions';
-import {
-  killStoneSessionCommand,
-  StoneSessionRowItem,
-  StoneSessionsItem,
-  stopStoneSessionCommand,
-} from './stoneSessionsView';
+import { StoneSessions } from './stoneSessionsView';
 import { isThisMachine } from './thisMachine';
 import { showRunInProgress, showStillRunning } from './stillRunningNotice';
 import { RowanRepoRegistry } from './rowanRepos';
@@ -955,7 +950,24 @@ export function activate(context: vscode.ExtensionContext) {
   // SessionManager is created early so the Logins panel can mark the connected
   // login row (and swap its inline Login action for Logout) in single-session mode.
   sessionManager = new SessionManager();
+  // Every stone's session list, shown in the Databases & Versions panel.
+  const stoneSessions = new StoneSessions({
+    read: (through) => listStoneSessions(transientLoginOn(through)),
+    killableGems: (sessions) =>
+      killableGems(sessions, isThisMachine, (command) => wslExecSync(command)),
+    stuck: stoppedRunHolds,
+    serverSessionOf,
+    transientLogin: (through) => transientLoginOn(through),
+    stop: stopStoneSession,
+    kill: (target, login) => killStoneSession(target, login, (command) => wslExec(command)),
+    logout: (id) => sessionManager.logout(id, true),
+  });
+  function transientLoginOn(through: ActiveSession) {
+    return () => sessionManager.loginTransient(through.login, through);
+  }
   setStillRunningHandler((session) => {
+    // The session's row in the panel gains its flag.
+    DatabasesPanel.refreshIfOpen();
     void showStillRunning(session, {
       isRegistered: (id) => sessionManager.getSession(id) !== undefined,
       cleaningUp: clearHolds,
@@ -963,7 +975,7 @@ export function activate(context: vscode.ExtensionContext) {
         forceStop(s, { loginTransient: (from) => sessionManager.loginTransient(from.login, from) }),
       // Force Stop has just failed: the logout need not try it again.
       logout: (id) => sessionManager.logout(id, true),
-      showInSessions: (s) => void showInSessions(s),
+      showInSessions: (s) => DatabasesPanel.showStoneSession(databasesPanelDeps(), s.id),
     });
   });
   setRunInProgressHandler((session) => {
@@ -971,6 +983,11 @@ export function activate(context: vscode.ExtensionContext) {
       isRegistered: (id) => sessionManager.getSession(id) !== undefined,
       stop: cancelRunOn,
     });
+  });
+  setStoppedRunCollectedHandler((session) => {
+    rearmAfterForceStop(session);
+    // The session's row in the panel loses its flag.
+    DatabasesPanel.refreshIfOpen();
   });
 
   // De-duplicates connect clicks: the blocking GciTsLogin freezes the extension
@@ -991,27 +1008,7 @@ export function activate(context: vscode.ExtensionContext) {
   // the whole run when `jasper.mcp.enabled` is off or no folder is open — it
   // returns undefined and the rows show no MCP state at all.
   let mcpOwnership: () => McpOwnership | undefined = () => undefined;
-  const transientLoginOn = (through: ActiveSession) => () =>
-    sessionManager.loginTransient(through.login, through);
-  const killRow = (row: StoneSessionRowItem) =>
-    killStoneSessionCommand(row, {
-      kill: (target, login) => killStoneSession(target, login, (command) => wslExec(command)),
-      transientLogin: transientLoginOn,
-      refresh: (item) => treeProvider.refreshStoneSessions(item),
-      logout: (id) => sessionManager.logout(id, true),
-    });
-  const treeProvider = new LoginTreeProvider(storage, sessionManager, () => mcpOwnership(), {
-    read: (through) => listStoneSessions(transientLoginOn(through)),
-    stuck: stoppedRunHolds,
-    serverSessionOf,
-    killableGems: (sessions) =>
-      killableGems(sessions, isThisMachine, (command) => wslExecSync(command)),
-  });
-  // A collected run takes its flag off the session list.
-  setStoppedRunCollectedHandler((session) => {
-    rearmAfterForceStop(session);
-    treeProvider.refresh();
-  });
+  const treeProvider = new LoginTreeProvider(storage, sessionManager, () => mcpOwnership());
   // The acceptance harness seeds a plain-text login into most runs, and this
   // toast would sit over every one of them.
   if (!process.env.GEMSTONE_SUPPRESS_PASSWORD_OFFER) {
@@ -1080,36 +1077,7 @@ export function activate(context: vscode.ExtensionContext) {
     treeDataProvider: treeProvider,
     showCollapseAll: false,
   });
-  context.subscriptions.push(
-    treeView,
-    // Collapsing drops the list, so expanding it again reads it fresh.
-    treeView.onDidCollapseElement(({ element }) => {
-      if (element instanceof StoneSessionsItem) treeProvider.forgetStoneSessions(element);
-    }),
-    vscode.commands.registerCommand('gemstone.refreshStoneSessions', (item: StoneSessionsItem) =>
-      treeProvider.refreshStoneSessions(item),
-    ),
-    vscode.commands.registerCommand('gemstone.stopStoneSession', (row: StoneSessionRowItem) =>
-      stopStoneSessionCommand(row, {
-        stop: stopStoneSession,
-        transientLogin: transientLoginOn,
-        refresh: (item) => treeProvider.refreshStoneSessions(item),
-        kill: killRow,
-        logout: (id) => sessionManager.logout(id, true),
-      }),
-    ),
-    vscode.commands.registerCommand('gemstone.killStoneSession', killRow),
-  );
-  async function showInSessions(session: ActiveSession): Promise<void> {
-    const row = treeProvider.stoneSessionRowOf(session);
-    if (!row) {
-      void vscode.window.showInformationMessage(
-        `Session ${session.id} isn't in the stone's session list, which needs it logged in.`,
-      );
-      return;
-    }
-    await treeView.reveal(row, { select: true, focus: true });
-  }
+  context.subscriptions.push(treeView);
 
   // Auto-open the Getting Started walkthrough on the first activation after
   // install (see maybeOpenGettingStarted). Fires once per machine; reset via the
@@ -4723,6 +4691,7 @@ export function activate(context: vscode.ExtensionContext) {
       saveLogin: (login: GemStoneLogin) => storage.saveLogin(login),
       refreshAdminViews,
       sessionManager,
+      stoneSessions,
       onAdminChange: [
         databaseProvider.onDidChangeTreeData,
         processWatcher.onDidChange,
