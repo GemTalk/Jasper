@@ -7,6 +7,12 @@ vi.mock('../nbRunner', async (orig) => {
   return { ...actual, whenSessionFree: vi.fn(actual.whenSessionFree) };
 });
 
+// Call-through, so a test can make a test item's URI unbuildable.
+vi.mock('../gemstoneFileSystemProvider', async (orig) => {
+  const actual = await orig<typeof import('../gemstoneFileSystemProvider')>();
+  return { ...actual, buildMethodUri: vi.fn(actual.buildMethodUri) };
+});
+
 vi.mock('../sunitQueries', () => ({
   discoverTestClasses: vi.fn(() => [
     { dictName: 'UserGlobals', className: 'MyTestCase', testCount: 2 },
@@ -588,6 +594,132 @@ describe('SunitTestController', () => {
       );
 
       expect(sunit.runTestClassNb).toHaveBeenCalledTimes(2);
+      ctrl.dispose();
+    });
+  });
+
+  describe('where a failure message points', () => {
+    const lastRun = () => createdController().createTestRun.mock.results.at(-1)?.value;
+
+    function expectAtTestItem(call: unknown[]) {
+      const [item, message] = call as [
+        { uri: unknown },
+        { location?: { uri: unknown; range: { start: { line: number } } } },
+      ];
+      expect(message.location?.uri).toBe(item.uri);
+      expect(message.location?.range.start.line).toBe(0);
+    }
+
+    it('points a failed test in a class run at its method', async () => {
+      vi.mocked(sunit.runTestClassNb).mockResolvedValueOnce([
+        {
+          className: 'MyTestCase',
+          selector: 'testAdd',
+          status: 'passed',
+          message: '',
+          durationMs: 1,
+        },
+        {
+          className: 'MyTestCase',
+          selector: 'testRemove',
+          status: 'failed',
+          message: 'Expected true',
+          durationMs: 1,
+        },
+      ]);
+      const ctrl = new SunitTestController(makeSessionManager(true));
+
+      await ctrl.runClassByName('UserGlobals', 'MyTestCase');
+
+      const run = lastRun();
+      expect(run.failed).toHaveBeenCalledOnce();
+      expectAtTestItem(run.failed.mock.calls[0]);
+      ctrl.dispose();
+    });
+
+    it('points an errored single test at its method', async () => {
+      vi.mocked(sunit.runTestMethodNb).mockResolvedValueOnce({
+        className: 'MyTestCase',
+        selector: 'testAdd',
+        status: 'error',
+        message: 'ZeroDivide: divide by zero',
+        durationMs: 1,
+      });
+      const ctrl = new SunitTestController(makeSessionManager(true));
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+
+      const run = lastRun();
+      expect(run.errored).toHaveBeenCalledOnce();
+      expectAtTestItem(run.errored.mock.calls[0]);
+      ctrl.dispose();
+    });
+
+    it('points a test whose run could not complete at its method', async () => {
+      vi.mocked(sunit.runTestMethodNb).mockRejectedValueOnce(new Error('lost connection'));
+      const ctrl = new SunitTestController(makeSessionManager(true));
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+
+      const run = lastRun();
+      expect(run.errored).toHaveBeenCalledOnce();
+      expectAtTestItem(run.errored.mock.calls[0]);
+      ctrl.dispose();
+    });
+
+    it('points each error from a broken class run at its own test', async () => {
+      vi.mocked(sunit.runTestClassNb).mockRejectedValueOnce(new Error('lost connection'));
+      const ctrl = new SunitTestController(makeSessionManager(true));
+
+      await ctrl.runClassByName('UserGlobals', 'MyTestCase');
+
+      const run = lastRun();
+      expect(run.errored.mock.calls.map(([item]: [{ id: string }]) => item.id)).toEqual([
+        'sunit/1/UserGlobals/MyTestCase',
+        'sunit/1/UserGlobals/MyTestCase/testAdd',
+        'sunit/1/UserGlobals/MyTestCase/testRemove',
+      ]);
+      for (const call of run.errored.mock.calls) expectAtTestItem(call);
+      ctrl.dispose();
+    });
+
+    it('points a test that raised under the debugger at its method', async () => {
+      const debugExecutor = {
+        executeWithDebugger: vi.fn(async () => ({ raised: true, message: 'boom' })),
+      };
+      const ctrl = new SunitTestController(makeSessionManager(true), debugExecutor);
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd'], 'debug');
+
+      const run = lastRun();
+      expect(run.errored).toHaveBeenCalledOnce();
+      expect(run.errored.mock.calls[0][0].id).toBe('sunit/1/UserGlobals/MyTestCase/testAdd');
+      expectAtTestItem(run.errored.mock.calls[0]);
+      ctrl.dispose();
+    });
+
+    it('gives no location to a test with no code to point at', async () => {
+      const unbuildable = () => {
+        throw new Error('name cannot be a URI');
+      };
+      vi.mocked(buildMethodUri)
+        .mockImplementationOnce(unbuildable)
+        .mockImplementationOnce(unbuildable);
+      vi.mocked(sunit.runTestMethodNb).mockResolvedValueOnce({
+        className: 'MyTestCase',
+        selector: 'testAdd',
+        status: 'failed',
+        message: 'Expected true',
+        durationMs: 1,
+      });
+      const ctrl = new SunitTestController(makeSessionManager(true));
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+
+      const [item, message] = lastRun().failed.mock.calls[0];
+      expect(item.uri).toBeUndefined();
+      expect(message.location).toBeUndefined();
+      expect(message.message).toBe('Expected true');
       ctrl.dispose();
     });
   });
