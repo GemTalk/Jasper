@@ -1108,6 +1108,7 @@
         );
       })
       .join('');
+    const body = rows || '<div class="db-empty">None yet.</div>';
     // Its own +, because the per-database one prefills from the database it sits
     // under and there is none here — that is what puts a login in this section.
     const add = `<button type="button" class="icon-btn" data-action="addLogin" data-tip="New login" aria-label="New login">${ICONS.plus}</button>`;
@@ -1120,7 +1121,7 @@
         actions: add,
         open,
       },
-      rows,
+      body,
     );
   }
 
@@ -1230,10 +1231,12 @@
     // them under Versions read as the registration never having landed.
     // A login with no local database to sit under gets its own section rather
     // than being dropped: it is on this machine's list, so it belongs on screen.
+    // Drawn even when empty, closed, because its + is where a login to a stone
+    // on another machine starts, and this panel is where people come to set up.
     const unattached = (state.logins || []).filter((l) => !l.dirName);
     return [
       { html: renderDatabases(state.databases, true, currentDir, !nothingInstalled) },
-      ...(unattached.length ? [{ html: renderOtherLogins(unattached, true) }] : []),
+      { html: renderOtherLogins(unattached, unattached.length > 0) },
       { html: renderVersions(state.versions, true) },
     ];
   }
