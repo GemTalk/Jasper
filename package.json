@@ -697,7 +697,7 @@
       },
       {
         "view": "gemstoneDatabases",
-        "contents": "No databases yet.\nSet one up in one step — Quick Setup downloads a version, creates a database, starts the stone, and adds a login.\n[Quick Setup](command:gemstone.quickSetup)\nOr choose the pieces yourself, in one form.\n[New Database...](command:gemstone.newDatabase)",
+        "contents": "No databases yet.\nSet one up in one step — Quick Setup downloads a version, creates a database, starts the stone, and adds a login.\n[Quick Setup](command:gemstone.quickSetup)\nOr choose the pieces yourself, in one form.\n[New Database...](command:gemstone.newDatabase)\nA stone on another machine needs no database here: add a login in Logins & Sessions.",
         "when": "!gemstone.isWindows || gemstone.wslAvailable"
       }
     ],
@@ -2095,7 +2095,7 @@
       },
       {
         "command": "gemstone.newDatabase",
-        "title": "New Database...",
+        "title": "New Database on This Machine...",
         "category": "GemStone",
         "icon": "$(add)"
       },

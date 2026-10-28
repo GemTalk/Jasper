@@ -12,7 +12,9 @@ import * as path from 'path';
 //      (no item) it throws and nothing happens. Creating a new login is
 //      `gemstone.addLogin`.
 // These tests read the real package.json and guard both, plus keep the Reset
-// command's title aligned with how the walkthrough actually re-triggers.
+// command's title aligned with how the walkthrough actually re-triggers, and keep
+// the way to a stone on another machine (a login and client libraries, not a
+// database) said where a first-time user looks.
 
 describe('Getting Started walkthrough content', () => {
   const repoRoot = path.resolve(__dirname, '..', '..', '..');
@@ -116,6 +118,41 @@ describe('Getting Started walkthrough content', () => {
   it('offers Quick Setup and a new database from the Databases view welcome', () => {
     expect(databasesWelcome?.contents).toContain('command:gemstone.quickSetup');
     expect(databasesWelcome?.contents).toContain('command:gemstone.newDatabase');
+  });
+
+  // Someone who only wants to reach a stone elsewhere lands here too, and the two
+  // buttons both make a database. A pointer, not a third button: what fills this
+  // view stays the only thing it offers.
+  it('tells someone reaching a stone elsewhere that they need a login, not a database', () => {
+    const contents = databasesWelcome?.contents ?? '';
+    expect(contents).toContain('another machine needs no database here');
+    expect(contents).toContain('add a login in Logins & Sessions');
+    expect(contents.match(/\]\(command:[^)]+\)/g)).toEqual([
+      '](command:gemstone.quickSetup)',
+      '](command:gemstone.newDatabase)',
+    ]);
+  });
+
+  // The Databases view's + runs this command, and its title is all the + says on
+  // hover, so it has to say the database is made here.
+  it('names the new-database command as making a database on this machine', () => {
+    const newDatabase = commands.find((c) => c.command === 'gemstone.newDatabase');
+    expect(newDatabase?.title).toBe('New Database on This Machine...');
+  });
+
+  // The page has to say how to get a version's client libraries, in the words the
+  // login editor uses, or a remote user reads the version list as needing a full
+  // install.
+  it('tells the connect page’s reader how to fetch a version’s client libraries', () => {
+    const page = fs.readFileSync(path.join(repoRoot, 'resources/walkthrough/connect.md'), 'utf8');
+    const editorHtml = fs.readFileSync(
+      path.join(repoRoot, 'client/src/loginEditorHtml.ts'),
+      'utf8',
+    );
+    const button = /id="downloadVersionBtn"[^>]*>([^<]+)</.exec(editorHtml)?.[1];
+    expect(button).toBeDefined();
+    expect(page).toContain(`**${button}**`);
+    expect(page).toContain('(not yet downloaded)');
   });
 
   // Reset re-arms two first-run surfaces: the walkthrough (auto-opens on startup)
