@@ -466,9 +466,10 @@ function assertIsValidUriPath(parameterName: string, value: string) {
 /**
  * Close every open editor tab backed by a gemstone:// document for `sessionId`
  * — class definitions, class comments, method source, and override-diff views.
- * Used when a browser (or its session) goes away so its companion editors don't
- * linger against a closed session. A dirty tab still prompts to save (VS Code's
- * default for tabGroups.close).
+ * Used when a browser goes away, so its companion editors don't linger, and when
+ * a tab asks for a session that no longer exists (see `getSession`). A logout
+ * leaves its tabs to the stale-tab reaper. A dirty tab still prompts to save
+ * (VS Code's default for tabGroups.close).
  */
 export async function closeGemstoneTabsForSession(sessionId: number): Promise<void> {
   const authority = String(sessionId);
@@ -576,11 +577,12 @@ export function installStaleGemstoneTabReaper(sessionManager: SessionManager): v
     // dead tab the moment the user touches the tab bar.
     vscode.window.tabGroups.onDidChangeTabs(() => reap()),
   ];
-  // Session lifecycle: a logout — or the session dying (e.g. the host going
-  // unresponsive) — fires NO tab event, so without this a now-dead session's
-  // gemstone:// tabs would linger unservable. Reaping here removes them as soon
-  // as the session leaves the manager. onDidRemoveSession catches *any* session
-  // leaving (including a non-selected one, which onDidChangeSelection misses).
+  // Session lifecycle: a logout — the Logout command, stopping the session's
+  // stone, a logical restore, any other — fires NO tab event, so without this a
+  // logged-out session's gemstone:// tabs would linger unservable. Reaping here
+  // removes them as soon as the session leaves the manager. onDidRemoveSession
+  // catches *any* session leaving (including a non-selected one, which
+  // onDidChangeSelection misses).
   if (sessionManager?.onDidChangeSelection) {
     subscriptions.push(sessionManager.onDidChangeSelection(() => reap()));
   }

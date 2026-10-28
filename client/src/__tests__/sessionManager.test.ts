@@ -1069,11 +1069,332 @@ describe('SessionManager', () => {
     });
   });
 
+  // Stopping a stone logs out every session on it at once. Logged out one by
+  // one, the first to go could make current another that is leaving too.
+  describe('logging several sessions out together', () => {
+    // Refuse `times` logouts of the session from the `index`th login (0-based),
+    // matched by its handle rather than by call order, which other logouts in
+    // the same run can interleave with.
+    const refuseLogoutOf = (index: number, times: number) => {
+      const handle = gciTsLogin.mock.results[index].value.session;
+      let left = times;
+      gciLogout.mockImplementation((h: unknown) => ({
+        sessionFreed: !(h === handle && left-- > 0),
+      }));
+    };
+    afterEach(() => gciLogout.mockImplementation(() => ({ sessionFreed: true })));
+    const notices = () =>
+      vi
+        .mocked(vscode.window.showInformationMessage)
+        .mock.calls.map(([m]) => m)
+        .filter((m) => m.includes('is now the current session'));
+    const loginN = (n: number) => {
+      configValues['sessionMode'] = 'multiple';
+      return Array.from({ length: n }, (_, i) =>
+        manager.login({ ...DEFAULT_LOGIN, label: `Session ${i + 1}` }, '/mock/lib'),
+      );
+    };
+    // Worked in 3, then 2, then 1: 1 is current and 2 is next in line.
+    const threeWorkedIn = () => {
+      const [a, b, c] = loginN(3);
+      manager.selectSession(c.id);
+      manager.selectSession(b.id);
+      manager.selectSession(a.id);
+      vi.mocked(vscode.window.showInformationMessage).mockClear();
+      return [a, b, c];
+    };
+
+    it('makes current only the session that stays, once', async () => {
+      const [a, b, c] = threeWorkedIn();
+      const madeCurrent: (number | null)[] = [];
+      manager.onDidChangeSelection((id) => madeCurrent.push(id));
+
+      await manager.logoutAll([a.id, b.id]);
+
+      expect(madeCurrent).toEqual([c.id]);
+      expect(notices()).toEqual([expect.stringContaining(`Session ${c.id} —`)]);
+    });
+
+    it('does not make a leaving session current while its logout waits on a run', async () => {
+      const [a, b, c] = threeWorkedIn();
+      // b is refused once, and waits for its run to stop.
+      refuseLogoutOf(1, 1);
+      let currentWhileWaiting: number | undefined;
+      vi.mocked(stopCallsOn).mockImplementationOnce(async () => {
+        currentWhileWaiting = manager.getSelectedSession()?.id;
+      });
+
+      await manager.logoutAll([a.id, b.id]);
+
+      expect(currentWhileWaiting).toBe(c.id);
+      expect(manager.getSession(b.id)).toBeUndefined();
+    });
+
+    // A command run meanwhile must not find the window claiming a current session
+    // it no longer has.
+    it('says there is no current session while only leaving sessions remain', async () => {
+      const [a, b] = loginN(2);
+      manager.selectSession(a.id);
+      vi.mocked(vscode.commands.executeCommand).mockClear();
+      const madeCurrent: (number | null)[] = [];
+      manager.onDidChangeSelection((id) => madeCurrent.push(id));
+      // b is refused once, and waits for its run to stop.
+      refuseLogoutOf(1, 1);
+      let whileWaiting: { current: unknown; announced: (number | null)[]; context: unknown[] } = {
+        current: 'unread',
+        announced: [],
+        context: [],
+      };
+      vi.mocked(stopCallsOn).mockImplementationOnce(async () => {
+        whileWaiting = {
+          current: manager.getSelectedSession(),
+          announced: [...madeCurrent],
+          context: vi.mocked(vscode.commands.executeCommand).mock.calls.slice(),
+        };
+      });
+
+      await manager.logoutAll([a.id, b.id]);
+
+      expect(whileWaiting.current).toBeUndefined();
+      expect(whileWaiting.announced).toEqual([null]);
+      expect(whileWaiting.context).toContainEqual([
+        'setContext',
+        'gemstone.hasActiveSession',
+        false,
+      ]);
+    });
+
+    it('makes a leaving session current when its logout is refused and nothing else stays', async () => {
+      const [a, b] = loginN(2);
+      manager.selectSession(a.id);
+      vi.mocked(vscode.window.showInformationMessage).mockClear();
+      // b is refused every time, so it stays.
+      refuseLogoutOf(1, Infinity);
+
+      const outcomes = await manager.logoutAll([a.id, b.id]);
+
+      expect(outcomes.map((o) => o.status)).toEqual(['fulfilled', 'rejected']);
+      expect(manager.getSelectedSession()?.id).toBe(b.id);
+      expect(notices()).toEqual([expect.stringContaining(`Session ${b.id} —`)]);
+    });
+
+    it('leaves nothing current, said once, when every session goes', async () => {
+      const [a, b] = loginN(2);
+      manager.selectSession(a.id);
+      vi.mocked(vscode.commands.executeCommand).mockClear();
+      const madeCurrent: (number | null)[] = [];
+      manager.onDidChangeSelection((id) => madeCurrent.push(id));
+
+      await manager.logoutAll([a.id, b.id]);
+
+      expect(manager.getSelectedSession()).toBeUndefined();
+      expect(madeCurrent).toEqual([null]);
+      expect(
+        vi
+          .mocked(vscode.commands.executeCommand)
+          .mock.calls.filter(
+            ([cmd, key]) => cmd === 'setContext' && key === 'gemstone.hasActiveSession',
+          ),
+      ).toEqual([['setContext', 'gemstone.hasActiveSession', false]]);
+    });
+
+    it('leaves the current session alone when it is not one of them', async () => {
+      const [a, b, c] = threeWorkedIn();
+      manager.selectSession(c.id);
+      vi.mocked(vscode.window.showInformationMessage).mockClear();
+
+      await manager.logoutAll([a.id, b.id]);
+
+      expect(manager.getSelectedSession()?.id).toBe(c.id);
+      expect(notices()).toEqual([]);
+    });
+
+    it('makes the session that stays current, not one a refused logout kept', async () => {
+      const [a, b, c] = threeWorkedIn();
+      refuseLogoutOf(1, Infinity);
+
+      const outcomes = await manager.logoutAll([a.id, b.id]);
+
+      expect(outcomes.map((o) => o.status)).toEqual(['fulfilled', 'rejected']);
+      expect(manager.getSession(b.id)).toBe(b);
+      expect(manager.getSelectedSession()?.id).toBe(c.id);
+      expect(notices()).toEqual([expect.stringContaining(`Session ${c.id} —`)]);
+    });
+
+    // A session still marked as leaving could never be made current again.
+    it('lets a session its logout kept be made current by a later logout', async () => {
+      const [a, b, c] = threeWorkedIn();
+      refuseLogoutOf(1, Infinity);
+      await manager.logoutAll([a.id, b.id]);
+
+      await manager.logout(c.id);
+
+      expect(manager.getSelectedSession()?.id).toBe(b.id);
+    });
+
+    it('answers false for a session that is already gone, and changes nothing else', async () => {
+      const [a, b] = loginN(2);
+      manager.selectSession(a.id);
+      await manager.logout(b.id);
+      vi.mocked(vscode.window.showInformationMessage).mockClear();
+      const madeCurrent: (number | null)[] = [];
+      manager.onDidChangeSelection((id) => madeCurrent.push(id));
+
+      const outcomes = await manager.logoutAll([b.id, 999]);
+
+      expect(outcomes).toEqual([
+        { status: 'fulfilled', value: false },
+        { status: 'fulfilled', value: false },
+      ]);
+      expect(manager.getSelectedSession()?.id).toBe(a.id);
+      expect(madeCurrent).toEqual([]);
+      expect(notices()).toEqual([]);
+    });
+
+    it('does nothing for no sessions', async () => {
+      const [a] = loginN(1);
+      manager.selectSession(a.id);
+      vi.mocked(vscode.commands.executeCommand).mockClear();
+      const madeCurrent: (number | null)[] = [];
+      manager.onDidChangeSelection((id) => madeCurrent.push(id));
+
+      expect(await manager.logoutAll([])).toEqual([]);
+
+      expect(madeCurrent).toEqual([]);
+      expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
+    });
+
+    it('announces the removal of each of them, and of no other', async () => {
+      const [a, b] = threeWorkedIn();
+      const removed: number[] = [];
+      manager.onDidRemoveSession((id) => removed.push(id));
+
+      await manager.logoutAll([a.id, b.id]);
+
+      expect(removed).toEqual([a.id, b.id]);
+    });
+
+    // Two stones stopped one after the other: the second group finishing must
+    // not free the first group's sessions to be made current.
+    it('keeps an earlier group’s sessions out of reach while a later group finishes', async () => {
+      const [s1, s2, s3, s4] = loginN(4);
+      for (const s of [s4, s3, s2, s1]) manager.selectSession(s.id);
+      const madeCurrent: (number | null)[] = [];
+      manager.onDidChangeSelection((id) => madeCurrent.push(id));
+      // s2 is refused once, so the first group stays open until its run stops.
+      refuseLogoutOf(1, 1);
+      let releaseRun!: () => void;
+      vi.mocked(stopCallsOn).mockImplementationOnce(
+        () => new Promise<void>((resolve) => (releaseRun = resolve)),
+      );
+
+      const first = manager.logoutAll([s1.id, s2.id]);
+      await vi.waitFor(() => expect(stopCallsOn).toHaveBeenCalled());
+      await manager.logoutAll([s3.id]);
+      // The last session that stays goes too, while s2 is still leaving.
+      await manager.logout(s4.id);
+      releaseRun();
+      await first;
+
+      expect(madeCurrent).not.toContain(s2.id);
+      expect(madeCurrent.at(-1)).toBeNull();
+      expect(manager.getSessions()).toEqual([]);
+    });
+
+    // The window has no current session while only leaving ones remain, so a
+    // login made then is the only session that stays.
+    describe('a login made while they are leaving', () => {
+      // a and b are leaving, b waiting on its run; `refusals` decides whether
+      // b's retry is refused too. Logs c in while b waits.
+      const loginWhileLeaving = async (refusals: number) => {
+        const [a, b] = loginN(2);
+        manager.selectSession(a.id);
+        refuseLogoutOf(1, refusals);
+        let c: ReturnType<typeof manager.login> | undefined;
+        let currentAfterLogin: number | undefined;
+        vi.mocked(stopCallsOn).mockImplementationOnce(async () => {
+          c = manager.login({ ...DEFAULT_LOGIN, label: 'Fresh' }, '/mock/lib');
+          currentAfterLogin = manager.getSelectedSession()?.id;
+        });
+        vi.mocked(vscode.window.showInformationMessage).mockClear();
+        const outcomes = await manager.logoutAll([a.id, b.id]);
+        return { a, b, c: c!, currentAfterLogin, outcomes };
+      };
+
+      it('is made current at once', async () => {
+        const { c, currentAfterLogin } = await loginWhileLeaving(1);
+
+        expect(currentAfterLogin).toBe(c.id);
+        expect(manager.getSelectedSession()?.id).toBe(c.id);
+      });
+
+      it('stays current when a leaving session’s logout is refused', async () => {
+        const { b, c, outcomes } = await loginWhileLeaving(Infinity);
+
+        expect(outcomes.map((o) => o.status)).toEqual(['fulfilled', 'rejected']);
+        expect(manager.getSession(b.id)).toBe(b);
+        expect(manager.getSelectedSession()?.id).toBe(c.id);
+        expect(notices()).toEqual([]);
+      });
+
+      it('hands the window to the session a refused logout kept, once it goes', async () => {
+        const { b, c } = await loginWhileLeaving(Infinity);
+
+        await manager.logout(c.id);
+
+        expect(manager.getSelectedSession()?.id).toBe(b.id);
+      });
+    });
+
+    it('leaves the current session current when another login arrives', () => {
+      const [a] = loginN(1);
+
+      manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
+
+      expect(manager.getSelectedSession()?.id).toBe(a.id);
+    });
+
+    // Sessions never switched between leave no order to go by, only their ids.
+    it('falls back past a leaving session to the lowest one that stays', async () => {
+      const [a, b, c] = loginN(3);
+      expect(manager.getSelectedSession()?.id).toBe(a.id);
+
+      await manager.logoutAll([a.id, b.id]);
+
+      expect(manager.getSelectedSession()?.id).toBe(c.id);
+    });
+  });
+
+  // Everything that tears a session down on its removal — its panels, its
+  // breakpoints, its tabs — counts on these two facts to never wait on the gem.
+  describe('announcing a removal', () => {
+    it('comes only once the session is out of the manager and logged out', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Gone' }, '/mock/lib');
+      let seen: { registered: unknown; call: string } | undefined;
+      manager.onDidRemoveSession((id) => {
+        let call: string;
+        try {
+          session.GciTsAbort();
+          call = 'reached GemStone';
+        } catch (e) {
+          call = e instanceof Error ? e.message : String(e);
+        }
+        seen = { registered: manager.getSession(id), call };
+      });
+      gciTsAbort.mockClear();
+
+      await manager.logout(session.id);
+
+      expect(seen).toEqual({ registered: undefined, call: 'The GemStone session is logged out.' });
+      expect(gciTsAbort).not.toHaveBeenCalled();
+    });
+  });
+
   // The property the palette's Commit and Abort are built on: they read the
   // current session directly, with no picker behind them, because a window with
   // any session logged in always HAS a current one. That is held up by two
-  // separate branches in two files (login auto-selects the first; logout
-  // promotes a surviving session), so pin the property itself — a later
+  // separate branches in two files (login makes itself current when none is;
+  // logout promotes a surviving session), so pin the property itself — a later
   // "deselect", or a crash-cleanup path that drops a session without re-electing
   // one, would put a QuickPick back in the middle of a Commit.
   describe('a window with sessions always has a current one', () => {

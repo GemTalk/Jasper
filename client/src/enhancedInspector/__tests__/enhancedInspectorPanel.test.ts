@@ -156,6 +156,28 @@ describe('EnhancedInspector', () => {
       expect(mock2.panel.dispose).toHaveBeenCalled();
     });
 
+    it('disposeForSession() leaves another session’s panels open', () => {
+      const other = fakeActiveSession({
+        id: 2,
+        gci: {},
+        handle: {},
+        login: { label: 'Other' },
+        stoneVersion: '3.7.5',
+      });
+      const mock2 = makeMockPanel();
+      vi.mocked(vscode.window.createWebviewPanel)
+        .mockReturnValueOnce(mock.panel as unknown as vscode.WebviewPanel)
+        .mockReturnValueOnce(mock2.panel as unknown as vscode.WebviewPanel);
+      EnhancedInspector.create(session, 1000n, 'mine');
+      EnhancedInspector.create(other, 2000n, 'theirs');
+
+      EnhancedInspector.disposeForSession(session.id);
+
+      expect(mock.panel.dispose).toHaveBeenCalled();
+      expect(mock2.panel.dispose).not.toHaveBeenCalled();
+      EnhancedInspector.disposeForSession(other.id);
+    });
+
     it('disposeForSession() is a no-op for an unknown session id', () => {
       expect.assertions(1);
       expect(() => EnhancedInspector.disposeForSession(9999)).not.toThrow();
