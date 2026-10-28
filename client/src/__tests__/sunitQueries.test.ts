@@ -6,6 +6,7 @@ vi.mock('vscode', () => ({
   },
 }));
 
+import { SESSION_BUSY_MESSAGE } from '../gciLibraryError';
 import { ActiveSession } from '../sessionManager';
 import * as sunit from '../sunitQueries';
 import { sessionOn, startNonBlockingCall } from './fakeActiveSession';
@@ -392,7 +393,7 @@ describe('sunitQueries', () => {
       const session = sessionOn(gci);
       startNonBlockingCall(session);
 
-      expect(() => sunit.discoverTestClasses(session)).toThrow('Session is busy');
+      expect(() => sunit.discoverTestClasses(session)).toThrow(SESSION_BUSY_MESSAGE);
       expect(gci.executeAndFetchString).not.toHaveBeenCalled();
     });
   });

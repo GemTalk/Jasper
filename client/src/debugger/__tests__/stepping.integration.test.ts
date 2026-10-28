@@ -13,8 +13,19 @@ import {
   GCI_PERFORM_FLAG_INTERPRETED,
   GS_ERR_HALT,
 } from '../../gciConstants';
-import { stepOver, stepOverNb, continueExecution, clearStack } from '../debugQueries';
-import { runNbCall, NbCancelledError } from '../../nbRunner';
+import {
+  stepOver,
+  stepOverNb,
+  continueExecution,
+  clearStack,
+  evaluateInFrameNb,
+} from '../debugQueries';
+import {
+  runNbCall,
+  NbCancelledError,
+  NbSessionBusyError,
+  setStillRunningHandler,
+} from '../../nbRunner';
 import { testActiveSession } from '../../__tests__/testActiveSession';
 
 const GCI_ERR_STEP_POINT = 6002; // "Single-step breakpoint encountered" — a successful step
@@ -70,7 +81,7 @@ cls compileMethod: 'outer self inner. ^ 42' dictionaries: System myUserProfile s
     return err.context;
   }
 
-  it('single-steps a process halted inside a compiled method', () => {
+  it('single-steps a process halted inside a compiled method', async () => {
     let gsProcess = haltedProcess();
     let ranToCompletion = false;
     const stepErrorNumbers: number[] = [];
@@ -93,7 +104,7 @@ cls compileMethod: 'outer self inner. ^ 42' dictionaries: System myUserProfile s
         }
       }
     } finally {
-      if (!ranToCompletion) clearStack(session(), gsProcess);
+      if (!ranToCompletion) await clearStack(session(), gsProcess);
     }
 
     expect(ranToCompletion).toBe(true);
@@ -107,13 +118,10 @@ cls compileMethod: 'outer self inner. ^ 42' dictionaries: System myUserProfile s
    * the level to step from -- the outermost frame, so the step has to run
    * everything below it rather than advancing one step point.
    *
-   * The loop is what makes the cancel land mid-step every time. It sends
-   * nothing, so the soft break has no safe point to be delivered at and the
-   * call is still in flight when the hard break follows it; a fixture that
-   * waits on Delays instead is stopped by the soft break and settles before the
-   * second press, and never reaches the path under test. Verified on 3.6.2: the
-   * process is left `status=debug` with its stack, and against the code this
-   * guards, `status=terminated` with no stack at all.
+   * The loop is what makes the cancel land mid-step every time: the step can't
+   * finish before the cancel arrives. Verified on 3.6.2: the process is left
+   * `status=debug` with its stack, and against the code this guards,
+   * `status=terminated` with no stack at all.
    */
   function haltedInLongLoop(): { gsProcess: bigint; outermostLevel: number } {
     const compiled = exec(
@@ -160,8 +168,8 @@ cls compileMethod: 'outer ^ self inner' dictionaries: System myUserProfile symbo
 
   it('leaves the debugged process intact when its step is cancelled', async () => {
     // A step performs its message ON the process the debugger is showing, so the
-    // process a hard break stops is the user's stack, not litter belonging to
-    // the call. Clearing it would unwind that stack to nothing while the panel
+    // process a break stops is the user's stack, not litter belonging to the
+    // call. Clearing it would unwind that stack to nothing while the panel
     // says "Step cancelled." and still offers to step, resume and inspect it.
     //
     // Asserted on the process itself rather than on which GCI calls were made,
@@ -183,7 +191,8 @@ cls compileMethod: 'outer ^ self inner' dictionaries: System myUserProfile symbo
       // Required, not tolerated: a step that finished on its own was never
       // interrupted mid-call, and would leave this test asserting nothing.
       await expect(step).rejects.toBeInstanceOf(NbCancelledError);
-      await waitForSessionFree();
+      // Retried: under load the step can outlive the drain, which refuses once.
+      await within(untilSessionFree(), 20_000, 'the session to be free after the cancel');
 
       expect(stackDepth(gsProcess)).toBeGreaterThan(0);
       // Not merely a surviving oop: still a process the panel can drive.
@@ -197,12 +206,131 @@ cls compileMethod: 'outer ^ self inner' dictionaries: System myUserProfile symbo
     } finally {
       cancel?.();
       await step.catch(() => {});
-      await waitForSessionFree().catch(() => {});
-      clearStack(session(), gsProcess);
+      await within(untilSessionFree(), 20_000, 'the session coming free').catch(() => {});
+      await clearStack(session(), gsProcess);
     }
-    // Same reason as the transcript sink's hard-break test: the cancel is
-    // followed by a drain the next call waits out, and a loaded runner makes
-    // that wait longer than the 5s default allows.
+    // The cancel is followed by a drain the next call waits out, and a loaded
+    // runner makes that wait longer than the 5s default allows.
+  }, 30_000);
+
+  /** Resolves once the session is free, retrying while a stopped run still finishes. */
+  async function untilSessionFree(): Promise<void> {
+    for (;;) {
+      try {
+        return await waitForSessionFree();
+      } catch (e) {
+        if (!(e instanceof NbSessionBusyError)) throw e;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
+  }
+
+  /** `promise`, or a failure naming `what` once `ms` pass: never a hung test. */
+  const within = <T>(promise: Promise<T>, ms: number, what: string): Promise<T> =>
+    Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) =>
+        setTimeout(() => reject(new Error(`${what} did not happen within ${ms}ms`)), ms),
+      ),
+    ]);
+
+  it('stops a stepped-over loop the user cancels once', async () => {
+    // The gem must actually stop, not just be let go of.
+    const { gsProcess, outermostLevel } = haltedInLongLoop();
+    let cancel: (() => void) | undefined;
+    const step = stepOverNb(session(), gsProcess, outermostLevel, {
+      suppressNotification: true,
+      onStart: (c) => {
+        cancel = c;
+      },
+    });
+    const settled = step.then(
+      () => 'answered',
+      (e) => (e instanceof NbCancelledError ? 'stopped waiting' : 'answered with an error'),
+    );
+    try {
+      cancel!();
+      await within(settled, 10_000, 'the cancelled step settling');
+      // The gem has stopped once the call is collected and the session is free.
+      await within(untilSessionFree(), 20_000, 'the gem stopping the cancelled step');
+
+      const after = gci.executeAndFetchString(
+        handle,
+        `(Object _objectForOop: ${gsProcess}) printString`,
+      );
+      expect(after).toContain('status=debug'); // suspended by the break, not finished
+      expect(stackDepth(gsProcess)).toBeGreaterThan(0);
+    } finally {
+      await within(untilSessionFree(), 20_000, 'the session coming free').catch(() => {});
+      await clearStack(session(), gsProcess);
+    }
+  }, 30_000);
+
+  it('says a stepped-over run that ignores the stop is still running', async () => {
+    // Bounded at 3.5s, so the run ends on its own and the session is free again.
+    const compiled = exec(
+      `| cls |
+cls := Object subclass: 'ZzStepIgnoresStop' instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals options: #().
+cls compileMethod: 'inner | t | self halt. t := Time millisecondClockValue. [[(Time millisecondClockValue - t) < 3500] whileTrue: []] on: Break do: [:e | e resume]. ^ 1' dictionaries: System myUserProfile symbolList category: #probe.
+cls compileMethod: 'outer ^ self inner' dictionaries: System myUserProfile symbolList category: #probe.
+'compiled'`,
+      0,
+    );
+    expect(compiled.err.number).toBe(0);
+    const { err } = exec(
+      'ZzStepIgnoresStop new outer',
+      GCI_PERFORM_FLAG_ENABLE_DEBUG | GCI_PERFORM_FLAG_INTERPRETED,
+    );
+    expect(err.number).toBe(GS_ERR_HALT);
+    const gsProcess = err.context;
+    const told = vi.fn();
+    setStillRunningHandler(told);
+    let cancel: (() => void) | undefined;
+    const step = stepOverNb(session(), gsProcess, stackDepth(gsProcess), {
+      suppressNotification: true,
+      onStart: (c) => {
+        cancel = c;
+      },
+    });
+    step.catch(() => {});
+    try {
+      cancel!();
+      await expect(within(step, 10_000, 'the cancelled step settling')).rejects.toBeInstanceOf(
+        NbCancelledError,
+      );
+      await vi.waitFor(() => expect(told).toHaveBeenCalledTimes(1));
+    } finally {
+      setStillRunningHandler(undefined);
+      // Wait out the bounded run; the next test needs the session.
+      await within(untilSessionFree(), 15_000, 'the bounded run ending');
+      await clearStack(session(), gsProcess);
+    }
+  }, 30_000);
+
+  it('stops an evaluation in a frame that the user cancels once', async () => {
+    const { gsProcess } = haltedInLongLoop();
+    let cancel: (() => void) | undefined;
+    const evaluation = evaluateInFrameNb(session(), gsProcess, '[true] whileTrue. 1', 1, {
+      suppressNotification: true,
+      onStart: (c) => {
+        cancel = c;
+      },
+    });
+    const settled = evaluation.then(
+      () => 'answered',
+      () => 'cancelled',
+    );
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 500)); // the loop is running
+      cancel!();
+      await within(settled, 10_000, 'the cancelled evaluation settling');
+      await within(untilSessionFree(), 20_000, 'the gem stopping the cancelled evaluation');
+
+      await expect(evaluateInFrameNb(session(), gsProcess, '3 + 4', 1)).resolves.toBe('7');
+    } finally {
+      await within(untilSessionFree(), 20_000, 'the session coming free').catch(() => {});
+      await clearStack(session(), gsProcess);
+    }
   }, 30_000);
 
   it('continues a halted process to normal completion with its result', () => {

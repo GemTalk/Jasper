@@ -169,6 +169,8 @@ export async function runLogicalBackup(deps: LogicalBackupDeps): Promise<boolean
       {
         location: vscode.ProgressLocation.Notification,
         title: `Full logical backup of "${deps.stoneName}"…`,
+        // No Cancel, deliberately: the GCI manual says a hard break during
+        // Repository>>fullBackupTo: ends the whole session, not just the backup.
         cancellable: false,
       },
       async () => (await deps.runBackup(backup.fullBackupCode(destination))).trim(),

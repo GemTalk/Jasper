@@ -8,7 +8,18 @@ import { GemStoneLogin, gemNrsFor, loginLabel, stoneNrsFor } from './loginTypes'
 import { logInfo, logWarning } from './gciLog';
 import { createSessionGciLibrary } from './enhancedInspector/enhancedInspectorPerfTracker';
 import { installTranscriptSink } from './transcriptSink';
-import { forgetSession, stopCallsOn } from './nbRunner';
+import { forgetSession, isRunning, stopCallsOn, stoppedRunHolds } from './nbRunner';
+import {
+  armForceStop,
+  endServerSession,
+  forceStop,
+  forgetForceStop,
+  NO_PRIVILEGE_ERROR,
+  sendStopSignal,
+  serverSessionOf,
+  type ForceStopDeps,
+} from './forceStop';
+import { GciLibraryError } from './gciLibraryError';
 import { installMethodHistory } from './methodHistory/methodHistoryServer';
 import {
   TransactionMode,
@@ -75,6 +86,8 @@ export class SessionManager {
   // Logouts still waiting for a refused session's calls to stop, so a second
   // logout of the same session joins the first instead of racing it.
   private loggingOut = new Map<number, Promise<boolean>>();
+  // Sessions a logoutAll is logging out, which must not be made current meanwhile.
+  private leaving = new Set<number>();
 
   private _selectedId: number | null = null;
   // Session ids in the order they were last made current, most recent last.
@@ -84,18 +97,20 @@ export class SessionManager {
   private _onDidChangeSelection = new vscode.EventEmitter<number | null>();
   readonly onDidChangeSelection = this._onDidChangeSelection.event;
 
-  // Fires with a session id whenever a session leaves the manager (logout or
-  // shutdown), regardless of whether it was the selected one. Unlike
-  // onDidChangeSelection (which only fires for the selected session), this lets
-  // listeners — e.g. the stale-tab reaper — react to *any* session going away.
+  // Fires with a session id whenever a logout drops a session from the manager,
+  // regardless of whether it was the selected one, and only once the logout has
+  // freed it (or found it already gone). Unlike onDidChangeSelection (which only fires for the selected
+  // session), this lets listeners — e.g. the stale-tab reaper and
+  // registerSessionTeardown — react to *any* session going away. Not fired at
+  // shutdown (`dispose`).
   private _onDidRemoveSession = new vscode.EventEmitter<number>();
   readonly onDidRemoveSession = this._onDidRemoveSession.event;
 
   // Fires with a session id whenever a session joins the manager. There was no
   // such signal: onDidChangeSelection is the only thing a new session fired, and
-  // finalizeSession auto-selects only the *first* one — so a second login was
-  // silent, and anything drawing session state (the panel's login rows) went on
-  // showing "Log in" for a login that was already connected.
+  // finalizeSession makes a login current only when nothing else is — so a
+  // second login was silent, and anything drawing session state (the panel's
+  // login rows) went on showing "Log in" for a login that was already connected.
   private _onDidAddSession = new vscode.EventEmitter<number>();
   readonly onDidAddSession = this._onDidAddSession.event;
 
@@ -347,6 +362,8 @@ export class SessionManager {
     // capture is soft-guarded, so the session simply records no history.
     installMethodHistory(session);
 
+    armForceStop(session);
+
     // Clear the spurious "uncommitted changes" a fresh login carries. Beginning
     // the login transaction rebuilds the session-method dictionary, which bumps a
     // change-counter on the *persistent* singleton
@@ -385,8 +402,10 @@ export class SessionManager {
     // whole reason this cannot wait for the user to switch modes by hand.
     this.refreshTransactionState(session.id);
 
-    // Auto-select when this is the only session
-    if (this.sessions.size === 1) {
+    // Not only the first login: while a logoutAll is under way the window can
+    // have no current session with leaving ones still registered, and a login
+    // made then must not lose the window to one whose logout is refused.
+    if (this._selectedId === null) {
       this.selectSession(session.id);
     }
 
@@ -426,76 +445,115 @@ export class SessionManager {
    * The session to hand the window to when the current one is logged out: the
    * one worked in most recently before it.
    *
-   * Discards entries for sessions that have gone as it scans, rather than
-   * stepping over them — a session that left without being pruned would
-   * otherwise be looked up again on every later logout, and the list would only
-   * grow. `logout` is the one path that removes a session and it prunes as it
-   * goes, so today nothing reaches this; it is what keeps a future removal path
-   * that forgets to prune from handing the window a logged-out session.
+   * Discards entries for sessions that have gone, rather than stepping over
+   * them — a session that left without being pruned would otherwise be looked
+   * up again on every later logout, and the list would only grow. `logout` is
+   * the one path that removes a session and it prunes as it goes, so today
+   * nothing reaches this; it is what keeps a future removal path that forgets
+   * to prune from handing the window a logged-out session.
+   *
+   * Steps over sessions a {@link logoutAll} is still logging out, without
+   * discarding them: one whose logout is refused stays, and stays a candidate.
    *
    * Falls back to the lowest remaining id when the order has no answer at all —
    * several sessions logged in and never switched between, since login makes a
-   * session current only when it is the first one.
+   * session current only when no other one is.
    */
   private sessionToPromote(): ActiveSession | undefined {
-    while (this.selectionOrder.length > 0) {
-      const candidate = this.sessions.get(this.selectionOrder[this.selectionOrder.length - 1]);
-      if (candidate) return candidate;
-      this.selectionOrder.pop();
+    this.selectionOrder = this.selectionOrder.filter((id) => this.sessions.has(id));
+    const remembered = this.selectionOrder.findLast((id) => !this.leaving.has(id));
+    if (remembered !== undefined) return this.sessions.get(remembered);
+    return [...this.sessions.values()]
+      .filter((s) => !this.leaving.has(s.id))
+      .reduce<ActiveSession | undefined>(
+        (best, s) => (best === undefined || s.id < best.id ? s : best),
+        undefined,
+      );
+  }
+
+  /**
+   * Log several sessions out together, as stopping their stone does.
+   *
+   * None of them is made current while they are going: the window moves
+   * straight to a session that stays, or to none. Only if a refused logout
+   * keeps one of them, and nothing else stays, is it made current at the end.
+   * Logged out one by one, the first to go could hand the window to another
+   * that is about to go too — current for as long as its logout waits on a run.
+   *
+   * @returns each logout's outcome, in the order of `ids`.
+   */
+  async logoutAll(ids: number[]): Promise<PromiseSettledResult<boolean>[]> {
+    for (const id of ids) this.leaving.add(id);
+    try {
+      return await Promise.allSettled(ids.map((id) => this.logout(id)));
+    } finally {
+      for (const id of ids) this.leaving.delete(id);
+      // Only leaving sessions were left to take over, and a refused logout kept one.
+      if (this.leaving.size === 0 && this._selectedId === null && this.sessions.size > 0) {
+        this.handOnSelection();
+      }
     }
-    return [...this.sessions.values()].reduce<ActiveSession | undefined>(
-      (best, s) => (best === undefined || s.id < best.id ? s : best),
-      undefined,
-    );
   }
 
   /**
    * Log session `id` out and drop it from the manager, handing the selection on
    * when it was the current one.
    *
-   * GemStone refuses a logout while a koffi worker thread owns the session (an
-   * Execute It resuming on one to stream Transcript output). Dropping the
-   * session then would leave its gem running with nothing left to reach it, so
-   * the calls on it are stopped and the logout tried once more.
+   * A run still on the session is stopped first, with Force Stop if it ignores
+   * the stop: a gem whose run has resumed a soft break keeps running after its
+   * logout, for good (measured on 3.6.2 and 3.7.5). A run that ignores Force Stop
+   * too is ended on the server after the logout, which needs the SessionAccess
+   * privilege; without it the user is told what is left running.
    *
    * A logout of a session already being logged out waits for that one and
    * shares its outcome.
    *
+   * @param stopAlreadyTried - the caller's own {@link stopRun} has just answered
+   *   that the run ignores every stop, so it is not stopped again.
    * @returns whether this call logged the session out: false when the session
    *   was already gone or another logout of it did the work.
-   * @throws {Error} when the second logout is refused too; the session stays
-   *   open and registered.
+   * @throws {Error} when GemStone refuses the logout (a koffi worker thread
+   *   still owns the session); the session stays open and registered.
    */
-  async logout(id: number): Promise<boolean> {
+  async logout(id: number, stopAlreadyTried = false): Promise<boolean> {
     const pending = this.loggingOut.get(id);
     if (pending) return await pending.then(() => false);
     const s = this.sessions.get(id);
     if (!s) return false;
-    const done = this.logOutAndDrop(id, s).finally(() => this.loggingOut.delete(id));
+    const done = this.logOutAndDrop(id, s, stopAlreadyTried).finally(() =>
+      this.loggingOut.delete(id),
+    );
     this.loggingOut.set(id, done);
     return await done;
   }
 
-  private async logOutAndDrop(id: number, s: ActiveSession): Promise<boolean> {
+  private async logOutAndDrop(
+    id: number,
+    s: ActiveSession,
+    stopAlreadyTried: boolean,
+  ): Promise<boolean> {
     logInfo(`[Session ${id}] Logging out: ${s.login.gs_user}@${s.login.gem_host}/${s.login.stone}`);
+    const serverSession = serverSessionOf(id);
+    let stillRunning = await this.stopRun(id, stopAlreadyTried);
     if (!logOutOrFindGone(s)) {
-      logInfo(`[Session ${id}] Logout refused while a call runs; stopping it and retrying.`);
-      // Stopping the call can take a while (the gap before a hard break, then the
-      // drain), and without this a Log out click looks like it did nothing.
-      await vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: `Stopping the call running on ${loginLabel(s.login)} before logging out…`,
-        },
-        () => stopCallsOn(s),
-      );
+      // A worker thread still owns the session; ending the gem frees it.
+      const ended =
+        serverSession !== undefined && this.tryEndServerSession(s, serverSession) === undefined;
+      await stopCallsOn(s);
       if (!logOutOrFindGone(s)) {
         throw new Error(
-          `Could not log out session ${id}: a call is still running on it. The session is still open.`,
+          `Session ${id} could not be logged out: its run is ignoring every stop, and GemStone ` +
+            "won't log out a session while that run goes on. The session is still open. " +
+            `An administrator can end it with: System stopSession: ${serverSession ?? '<its number>'}`,
         );
       }
+      // Not when the logout got through only because the worker let go for a
+      // moment: the run can still be going.
+      if (ended) stillRunning = false;
     }
+    if (stillRunning) this.endLeftoverRun(s, serverSession);
     forgetSession(id);
+    forgetForceStop(id);
     this.sessions.delete(id);
     // Drop it from the selection order too, so it cannot be promoted later. This
     // is what makes that guarantee, for a background session as much as the
@@ -512,25 +570,29 @@ export class SessionManager {
       // command that acts in "the current session" would otherwise have nothing
       // to act in, so a palette Commit or Abort would have to stop and ask which
       // session it means — mid-transaction, and unasked for.
-      const promoted = this.sessionToPromote();
-      if (promoted) {
-        this.selectSession(promoted.id);
-        // Said out loud, because the window has just moved out from under the
-        // user: everything that acts in "the current session" — Display It,
-        // Execute It, Debug It, a notebook cell, a search — now acts in a stone
-        // they did not choose, and most of those run without a confirmation of
-        // their own. The alternative was leaving nothing selected, which is what
-        // used to happen and which stopped those commands to ask which session
-        // they meant.
-        vscode.window.showInformationMessage(
-          `Session ${promoted.id} — ${loginLabel(promoted.login)} is now the current session.`,
-        );
-      } else {
-        this._onDidChangeSelection.fire(null);
-        vscode.commands.executeCommand('setContext', 'gemstone.hasActiveSession', false);
-      }
+      this.handOnSelection();
     }
     return true;
+  }
+
+  private handOnSelection(): void {
+    const promoted = this.sessionToPromote();
+    if (promoted) {
+      this.selectSession(promoted.id);
+      // Said out loud, because the window has just moved out from under the
+      // user: everything that acts in "the current session" — Display It,
+      // Execute It, Debug It, a notebook cell, a search — now acts in a stone
+      // they did not choose, and most of those run without a confirmation of
+      // their own. The alternative was leaving nothing selected, which is what
+      // used to happen and which stopped those commands to ask which session
+      // they meant.
+      vscode.window.showInformationMessage(
+        `Session ${promoted.id} — ${loginLabel(promoted.login)} is now the current session.`,
+      );
+    } else {
+      this._onDidChangeSelection.fire(null);
+      vscode.commands.executeCommand('setContext', 'gemstone.hasActiveSession', false);
+    }
   }
 
   /**
@@ -690,14 +752,110 @@ export class SessionManager {
     return { success: err.number === 0, err };
   }
 
+  /** Whether session `id` has a run on it, going or stopped but still finishing. */
+  hasRun(id: number): boolean {
+    const s = this.sessions.get(id);
+    return s !== undefined && (isRunning(s) || stoppedRunHolds(s));
+  }
+
+  /**
+   * Stop the run on session `id`, if there is one, as logging out does: run first
+   * so the logout's uncommitted-changes check can reach the session. Answers
+   * whether the run is still going anyway; with `alreadyTried`, whether it is
+   * still going, without stopping it again.
+   */
+  async stopRun(id: number, alreadyTried = false): Promise<boolean> {
+    const s = this.sessions.get(id);
+    if (!s || !this.hasRun(id)) return false;
+    if (alreadyTried) return true;
+    // Without this a Log out click looks like it did nothing.
+    return await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Stopping the run on ${loginLabel(s.login)} before logging out…`,
+      },
+      () => this.stopRunBeforeLogout(s),
+    );
+  }
+
+  private readonly forceStopDeps: ForceStopDeps = {
+    loginTransient: (from) => this.loginTransient(from.login, from),
+  };
+
+  /**
+   * Stop the run on `s` the way its Stop and then Force Stop would. Answers
+   * whether it is still running anyway.
+   */
+  private async stopRunBeforeLogout(s: ActiveSession): Promise<boolean> {
+    await stopCallsOn(s);
+    if (!stoppedRunHolds(s)) return false;
+    try {
+      return !(await forceStop(s, this.forceStopDeps));
+    } catch (e) {
+      logInfo(
+        `[Session ${s.id}] Force Stop before logout failed: ` +
+          (e instanceof Error ? e.message : String(e)),
+      );
+      return true;
+    }
+  }
+
+  /** End a logged-out session's gem whose run ignored every stop, or say why not. */
+  private endLeftoverRun(s: ActiveSession, serverSession: string | undefined): void {
+    const left = `Session ${s.id} is logged out, but its run ignored every stop and is still running on the server.`;
+    if (serverSession === undefined) {
+      void vscode.window.showWarningMessage(`${left} An administrator can end it.`);
+      return;
+    }
+    const failure = this.tryEndServerSession(s, serverSession);
+    if (failure === undefined) return;
+    void vscode.window.showWarningMessage(
+      failure instanceof GciLibraryError && failure.number === NO_PRIVILEGE_ERROR
+        ? `${left} Ending it needs the SessionAccess privilege, which ${s.login.gs_user} ` +
+            `doesn't have. An administrator can end it with: System stopSession: ${serverSession}`
+        : `${left} It could not be ended (${failure instanceof Error ? failure.message : String(failure)}). ` +
+            `An administrator can end it with: System stopSession: ${serverSession}`,
+    );
+  }
+
+  /** Answers the error, or undefined once the server session is ended. */
+  private tryEndServerSession(s: ActiveSession, serverSession: string): unknown {
+    try {
+      endServerSession(s, serverSession, this.forceStopDeps);
+      return undefined;
+    } catch (e) {
+      logInfo(
+        `[Session ${s.id}] Could not end server session ${serverSession}: ` +
+          (e instanceof Error ? e.message : String(e)),
+      );
+      return e;
+    }
+  }
+
   getSessions(): ActiveSession[] {
     return Array.from(this.sessions.values());
   }
 
   dispose(): void {
     for (const s of this.sessions.values()) {
+      // No waiting here: the window is closing. The signal ends a stopped run
+      // before the logout reaches the gem, which a resumed soft break would
+      // otherwise keep running.
+      const serverSession = serverSessionOf(s.id);
+      const busy = serverSession !== undefined && (isRunning(s) || stoppedRunHolds(s));
+      if (busy) {
+        try {
+          sendStopSignal(s, serverSession, this.forceStopDeps);
+        } catch (e) {
+          logInfo(`[Session ${s.id}] Could not signal its run at shutdown: ${String(e)}`);
+        }
+      }
       logOutOrFindGone(s);
+      // A run that caught the signal too: there is no one left to tell if this
+      // fails, so it is only logged.
+      if (busy) this.tryEndServerSession(s, serverSession);
       forgetSession(s.id);
+      forgetForceStop(s.id);
     }
     this.sessions.clear();
     // Both halves of the selection go with the sessions. getSelectedSession()

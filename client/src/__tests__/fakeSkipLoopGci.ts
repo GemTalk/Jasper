@@ -73,7 +73,7 @@ export function fakeSkipLoopGci(
       data: oop === 0x12n ? 'nextPutAll:' : TRANSCRIPT_TEXT,
       err: { number: 0 },
     })),
-    GciTsClearStack: vi.fn((_h: unknown, _process: bigint) => ({
+    GciTsClearStackAsync: vi.fn((_h: unknown, _process: bigint) => ({
       success: true,
       err: { number: 0 },
     })),

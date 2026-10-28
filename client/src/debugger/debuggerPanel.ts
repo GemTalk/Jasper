@@ -22,8 +22,9 @@ import { buildLineStarts, stepPointAtOffset, StepPointInfo } from './stepPointMo
 import { routeInspect, InspectorHandle } from '../inspectRouter';
 import { logError, logInfo, logWarning } from '../gciLog';
 import { buildMethodUri } from '../gemstoneFileSystemProvider';
-import { NbCancelledError, NbRunOptions } from '../nbRunner';
-import { honourRulesAfterResume, resumeNeedsRules } from './conditionalBreakpoints';
+import { NbCancelledError, NbRunOptions, stoppedRunHolds } from '../nbRunner';
+import { SESSION_SIGNAL_ERROR } from '../forceStop';
+import { resumeOnWorker } from './conditionalBreakpoints';
 import { extensionPathFrom } from '../extensionPath';
 import { readWebviewScript } from '../webviewAssets';
 import {
@@ -1566,16 +1567,15 @@ export class DebuggerPanel {
    */
   private nbBusy = false;
   /**
-   * Cancel handle for the in-flight non-blocking op (#9 cancel). Set from the nb
-   * runner's `onStart` while a cancellable op runs; calling it requests a soft
-   * break, then a hard break on a second call. Drives the in-panel Cancel button
+   * Cancel handle for the in-flight non-blocking op. Set from the nb runner's
+   * `onStart` while a cancellable op runs; calling it stops the op, soft break
+   * first, and the runner stops waiting if the op is still going. Drives the in-panel Cancel button
    * (which the webview shows only while the busy spinner is up). Undefined when
    * nothing cancellable is running.
    */
   private activeNbCancel: (() => void) | undefined;
-  /** How many times Cancel was clicked for the current op (1 = soft break, 2+ = hard).
-   *  Reset to 0 when a cancellable op begins; drives the acknowledgement wording. */
-  private cancelClicks = 0;
+  /** Cancel was clicked for the current op; later clicks do nothing. */
+  private cancelRequested = false;
   /** Set in dispose() so an in-flight Nb op's continuation skips touching a dead panel. */
   private disposed = false;
 
@@ -2809,8 +2809,8 @@ export class DebuggerPanel {
     this.nbBusy = true;
     // Reset here, not only in onStart: the blocking frame-setup inside
     // evaluateInFrameNb can fail BEFORE polling starts (so onStart never fires), and
-    // a stale count from a prior cancelled op would mislabel that error as cancelled.
-    this.cancelClicks = 0;
+    // a stale flag from a prior cancelled op would mislabel that error as cancelled.
+    this.cancelRequested = false;
     // The eval runs non-blocking so a runaway expression doesn't freeze the panel
     // and CAN be cancelled. The in-panel overlay owns cancel (suppressNotification),
     // and onStart marks it cancellable + captures the handle the Cancel button hits.
@@ -2826,12 +2826,13 @@ export class DebuggerPanel {
       });
     } catch (e: unknown) {
       const raw = e instanceof Error ? e.message : String(e);
-      if (this.cancelClicks > 0) {
-        // The user interrupted this eval. Show a clean header (with which break it
-        // was — soft = stop at a safe point, hard = forced) plus the raw gem error
-        // for context, in the eval-result area below the bar (no top-banner error).
-        const kind = this.cancelClicks === 1 ? 'soft break' : 'hard break';
-        value = `Evaluation Cancelled (${kind})${raw ? ` — ${raw}` : ''}`;
+      if (this.cancelRequested) {
+        // The user interrupted this eval. Show a clean header plus the gem's own
+        // answer for context, in the eval-result area below the bar (no top-banner
+        // error). NbCancelledError means the runner stopped waiting, so the gem
+        // gave no answer yet.
+        const detail = e instanceof NbCancelledError ? 'the gem is still finishing it' : raw;
+        value = `Evaluation Cancelled${detail ? ` — ${detail}` : ''}`;
       } else {
         value = `Error: ${raw}`;
       }
@@ -2882,15 +2883,12 @@ export class DebuggerPanel {
     this.panel.webview.postMessage({ command: 'cancellable', on });
   }
 
-  /** Webview Cancel button → request a break of the active nb op (soft, then hard). */
+  /** Webview Cancel button → stop the active nb op (see activeNbCancel). */
   private cancelActiveOp(): void {
-    if (!this.activeNbCancel) return;
-    this.cancelClicks += 1;
-    // Acknowledge the click so it visibly registers — the break is asynchronous
-    // (the gem stops at a safe point), so without this the Cancel feels unheard.
-    this.flash(
-      this.cancelClicks === 1 ? 'Break sent — waiting for the gem to stop…' : 'Forcing interrupt…',
-    );
+    if (!this.activeNbCancel || this.cancelRequested) return;
+    this.cancelRequested = true;
+    // Acknowledged, since the gem answers the break asynchronously.
+    this.flash('Break sent — waiting for the gem to stop…');
     this.activeNbCancel();
   }
 
@@ -3125,52 +3123,67 @@ export class DebuggerPanel {
   private resume(): void {
     if (this.guardStaleTopActivation('Resume')) return;
     if (this.guardUncontinuable()) return;
-    // Don't issue a blocking continue while a non-blocking step/trim is in flight
-    // (only one GCI call per session). Resume itself is still BLOCKING — 3.7.x has
-    // no GciTsNbContinue — so a long/looping Resume can still stall the host until
-    // it returns; making Resume non-blocking needs a worker thread (tracked).
     if (this.nbBusy) {
       this.notifyBusy('Resume');
       return;
     }
     // Leaving this halt: drop revert state + release pinned originals.
     this.clearUndoState();
-    const result = debug.continueExecution(this.session, this.gsProcess);
-    if (resumeNeedsRules(this.session, result)) {
-      void this.continueHonouringRules('Resume', result);
-      return;
-    }
-    this.handleContinueResult(result);
+    void this.resumeUnderOverlay('Resume');
   }
 
   /**
-   * Carry a Resume past the stops its breakpoint rules decline, keeping the
-   * run's trigger arming, on a worker thread under the busy overlay, whose
-   * Cancel stops at the hit reached. `after` runs once it settles, whatever the
-   * outcome; Run to Cursor clears its temporary breakpoint there.
+   * Resume on a worker thread under the busy overlay, past the stops the
+   * breakpoint rules decline: VS Code stays responsive however long the run
+   * goes, and the overlay's Cancel stops it as anywhere else. `after` runs once
+   * the run has ended, whatever the outcome; Run to Cursor clears its temporary
+   * breakpoint there.
    */
-  private async continueHonouringRules(
-    action: string,
-    first: debug.StepResult,
-    after?: () => void,
-  ): Promise<void> {
+  private async resumeUnderOverlay(action: string, after?: () => void): Promise<void> {
+    // A run still going after Cancel holds the session, which would refuse `after`.
+    let afterWhenRunEnds = false;
     await this.runNb(action, async (opts) => {
       try {
-        const result = await honourRulesAfterResume(this.session, first, {
+        const result = await resumeOnWorker(this.session, this.gsProcess, {
           suppressNotification: true,
           onStart: opts.onStart,
           onTranscript: (text) => appendTranscriptOutput(text),
+          onGivenUpSettled: (ended) => {
+            if (afterWhenRunEnds) after?.();
+            this.afterStoppedRunEnded(ended);
+          },
         });
         if (this.disposed) return;
         this.handleContinueResult(result);
+      } catch (e: unknown) {
+        // Only the banner: the stack would be refused by the busy session, and a
+        // full init re-selects the top frame, which calls GemStone for its
+        // variables. Both are reloaded once the run ends.
+        if (!(e instanceof NbCancelledError && stoppedRunHolds(this.session))) throw e;
+        afterWhenRunEnds = true;
+        if (this.disposed) return;
+        this.errorMessage =
+          `${action} cancelled, but the run is still going. ` +
+          'Use Force Stop in the notice to end it.';
+        this.panel.webview.postMessage({ command: 'banner', text: this.errorMessage });
       } finally {
-        after?.();
+        if (!afterWhenRunEnds) after?.();
       }
     });
   }
 
+  /** A Resume the user cancelled has ended after all: show where it stopped, or close. */
+  private afterStoppedRunEnded(ended: debug.StepResult): void {
+    if (this.disposed) return;
+    this.handleContinueResult(
+      ended.errorNumber === SESSION_SIGNAL_ERROR
+        ? { ...ended, errorMessage: 'Stopped by Force Stop.' }
+        : ended,
+    );
+  }
+
   /**
-   * Dispatch the outcome of a blocking `continueExecution` (Resume / Run to Cursor):
+   * Dispatch the outcome of a Resume or Run to Cursor:
    * close on completion, show the fixed Terminate-only banner if the process is
    * now uncontinuable (6011), else refresh on the new stop. Shared so Run to Cursor
    * lands a hit exactly like a Resume that re-halted.
@@ -3281,21 +3294,9 @@ export class DebuggerPanel {
         logError(this.sessionId, e instanceof Error ? e.message : String(e));
       }
     };
-    let result: debug.StepResult;
-    try {
-      result = debug.continueExecution(this.session, this.gsProcess);
-    } catch (e: unknown) {
-      releaseBreak();
-      throw e;
-    }
     // A stop the rules pass keeps running towards the cursor, so the temporary
     // breakpoint has to outlast that too.
-    if (resumeNeedsRules(this.session, result)) {
-      void this.continueHonouringRules('Run to Cursor', result, releaseBreak);
-      return;
-    }
-    releaseBreak();
-    this.handleContinueResult(result);
+    void this.resumeUnderOverlay('Run to Cursor', releaseBreak);
   }
 
   /**
@@ -3587,7 +3588,7 @@ export class DebuggerPanel {
       return;
     }
     this.nbBusy = true;
-    this.cancelClicks = 0; // reset before the op (onStart may not fire if start fails)
+    this.cancelRequested = false; // reset before the op (onStart may not fire if start fails)
     // Hand the op nb options that (a) suppress the 2s toast — the in-panel overlay
     // owns cancel for debugger ops — and (b) wire the in-panel Cancel button: when
     // the op forwards these to its nb call, onStart fires and we mark it cancellable
@@ -5282,7 +5283,7 @@ export class DebuggerPanel {
     // Closing the panel implicitly terminates the suspended process it owned,
     // releasing the stalled GsProcess on the server (same as dismissing the
     // error notifier). clearStack is best-effort: the session may already be gone.
-    debug.clearStack(this.session, this.gsProcess);
+    void debug.clearStack(this.session, this.gsProcess);
   }
 
   /**

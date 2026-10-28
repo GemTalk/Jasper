@@ -190,7 +190,15 @@ jobs:
     # unbounded (the wedged step sits with no progress and would never
     # finish), so a larger budget costs only those extra minutes on the rare
     # hang while sparing every slow-but-healthy run.
-    timeout-minutes: ${{ fromJSON('{"ubuntu-latest":6,"windows-latest":12,"macos-latest":12}')[matrix.platform] }}
+    #
+    # Ubuntu raised from 6 to 9 on 2026-10-27. By then main's passing Ubuntu legs
+    # had a median of 4.75 minutes (200-318s across 18 legs of the last five
+    # runs), already within a minute of 6, and the stop and Force Stop stone
+    # tests added about a minute more of real waiting (a stopped run is given
+    # 2.5s before Jasper stops waiting): legs took 307-389s. 9 is ~1.9x main's
+    # median, the same ratio as above. Windows (343-550s) and macOS (426-544s)
+    # still fit their 12.
+    timeout-minutes: ${{ fromJSON('{"ubuntu-latest":9,"windows-latest":12,"macos-latest":12}')[matrix.platform] }}
     name: ${{ matrix.platform }} ${{ matrix.gemstone-version }}${{ matrix.node-version && format(' (Node {0})', matrix.node-version) || '' }}
     needs: prepare
     runs-on: ${{ matrix.platform }}

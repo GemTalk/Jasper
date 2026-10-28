@@ -8,6 +8,7 @@ vi.mock('vscode', () => ({
 }));
 
 import { executeFetchStringWithLimit, BrowserQueryError } from '../browserQueries';
+import { SESSION_BUSY_MESSAGE } from '../gciLibraryError';
 import { ActiveSession } from '../sessionManager';
 import type { GciLibrary } from '../gciLibrary';
 import { fakeActiveSession, startNonBlockingCall } from './fakeActiveSession';
@@ -51,8 +52,29 @@ describe('executeFetchStringWithLimit', () => {
     const session = makeSession({ GciTsExecuteFetchBytes: fetchBytes });
     startNonBlockingCall(session);
 
-    expect(() => executeFetchStringWithLimit(session, 'l', 'C', 1024)).toThrow(/busy/i);
+    expect(() => executeFetchStringWithLimit(session, 'l', 'C', 1024)).toThrow(
+      SESSION_BUSY_MESSAGE,
+    );
     expect(fetchBytes).not.toHaveBeenCalled();
+  });
+
+  it('says in plain words when GemStone refuses the call because the session is busy', () => {
+    const session = makeSession({
+      GciTsExecuteFetchBytes: vi.fn(() => ({
+        data: '',
+        err: { number: 2203, message: 'session has a GciTsNb operation in progress' },
+      })),
+    });
+
+    let thrown: unknown;
+    try {
+      executeFetchStringWithLimit(session, 'l', 'C', 1024);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(BrowserQueryError);
+    expect((thrown as BrowserQueryError).message).toBe(SESSION_BUSY_MESSAGE);
+    expect((thrown as BrowserQueryError).gciErrorNumber).toBe(2203);
   });
 
   it('throws a BrowserQueryError with the underlying GCI error message', () => {

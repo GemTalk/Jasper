@@ -80,7 +80,16 @@ import {
   updateGitRepo,
   normalizeGitUrl,
 } from './rowanLoad';
-import { NbCancelledError } from './nbRunner';
+import {
+  cancelRunOn,
+  clearHolds,
+  NbCancelledError,
+  setRunInProgressHandler,
+  setStillRunningHandler,
+  setStoppedRunCollectedHandler,
+} from './nbRunner';
+import { forceStop, rearmAfterForceStop } from './forceStop';
+import { showRunInProgress, showStillRunning } from './stillRunningNotice';
 import { RowanRepoRegistry } from './rowanRepos';
 import {
   RowanTreeProvider,
@@ -101,11 +110,6 @@ import { RowanDecorationProvider } from './rowanDecorations';
 import { ActiveEditorDecorationProvider } from './activeEditorDecoration';
 import { findMethodInClass } from './commands/findMethodInClass';
 import { loadClassPickItems } from './commands/classPicker';
-import { GlobalsBrowser } from './globalsBrowser';
-import { CommentBrowser } from './commentBrowser';
-import { EnhancedInspector } from './enhancedInspector/enhancedInspector';
-import { BasicInspector } from './basicInspector/basicInspector';
-import { forgetSession as forgetSessionPins } from './exportSetPins';
 import { revealInspect } from './inspectRouter';
 import {
   maybeOfferServerSupport,
@@ -120,6 +124,7 @@ import { FS_CHANGED_COMMAND, SEARCH_RESYNC_COMMAND } from './undo/afterUndo';
 import { resyncEditorsAfterAbort } from './afterAbort';
 import { clearUndoStack, onUndoStackChanged } from './undo/undoStack';
 import { registerStashRelease } from './undo/releaseStash';
+import { registerSessionTeardown } from './sessionTeardown';
 import { supportsEnhancedInspector } from './enhancedInspector/enhancedInspectorInstall';
 import { DebuggerPanel } from './debugger/debuggerPanel';
 import { InlineValuesCodeLensProvider } from './inlineValuesCodeLens';
@@ -127,7 +132,6 @@ import {
   GemStoneFileSystemProvider,
   MethodCompiledEvent,
   ClassDefinitionCompiledEvent,
-  closeGemstoneTabsForSession,
   installStaleGemstoneTabReaper,
   parseMethodUri,
   classCompiledTarget,
@@ -318,7 +322,8 @@ async function logJasperError(message: string, scope: string, error: unknown) {
  * shown: a session outside a transaction can still hold uncommitted work (see
  * `canCommit`), so the warning still fires, and what is dropped is "Commit &
  * Logout", which there could only fail. `undefined` keeps the button, on
- * `canCommit`'s terms.
+ * `canCommit`'s terms. `runIgnoresStop` drops it too: a run that ignored every
+ * stop holds the session, so neither the check nor a commit can reach it.
  */
 export async function confirmLogoutWithUncommittedChanges(
   sessionId: number,
@@ -326,10 +331,11 @@ export async function confirmLogoutWithUncommittedChanges(
   needsCommit: boolean | undefined,
   commit: (id: number) => { success: boolean; err: { number: number; message: string } },
   inTransaction?: boolean,
+  runIgnoresStop = false,
 ): Promise<'proceed' | 'cancel'> {
   if (needsCommit === false) return 'proceed';
 
-  const commitIsPossible = canCommit(inTransaction);
+  const commitIsPossible = !runIgnoresStop && canCommit(inTransaction);
   const title =
     needsCommit === true
       ? `Session ${sessionId} has uncommitted changes.`
@@ -340,9 +346,11 @@ export async function confirmLogoutWithUncommittedChanges(
       : 'Its commit state could not be checked; logging out may discard uncommitted work.';
   // Outside a transaction the work cannot be saved at all, so say that rather
   // than "commit first" over a button the dialog is not offering.
-  const detail = commitIsPossible
-    ? `${stake} Commit first to keep your work.`
-    : `${stake} This session is not in a transaction, so the changes cannot be committed — begin a transaction before making them, or let them go.`;
+  const detail = runIgnoresStop
+    ? 'Its run ignored every stop and still holds the session, so its changes cannot be checked or committed. Logging out discards any uncommitted work.'
+    : commitIsPossible
+      ? `${stake} Commit first to keep your work.`
+      : `${stake} This session is not in a transaction, so the changes cannot be committed — begin a transaction before making them, or let them go.`;
   const choice = await vscode.window.showWarningMessage(
     title,
     { modal: true, detail },
@@ -374,6 +382,42 @@ export async function confirmLogoutWithUncommittedChanges(
   }
 
   return choice === 'Logout Anyway' ? 'proceed' : 'cancel';
+}
+
+export const STOP_AND_LOG_OUT = 'Stop and Log Out';
+
+/**
+ * Ask what logging `session` out needs asked, stopping its run only once the
+ * user has said to: Cancel at either question leaves the session as it was,
+ * except that a run already stopped stays stopped. The run is stopped before the
+ * uncommitted-changes question, which it would otherwise block.
+ */
+export async function decideLogout(
+  session: ActiveSession,
+  manager: Pick<SessionManager, 'hasRun' | 'stopRun'> & {
+    commit: Parameters<typeof confirmLogoutWithUncommittedChanges>[3];
+  },
+  needsCommit: (session: ActiveSession) => boolean | undefined,
+): Promise<{ logOut: boolean; runIgnoresStop: boolean }> {
+  const label = loginLabel(session.login);
+  if (manager.hasRun(session.id)) {
+    const choice = await vscode.window.showWarningMessage(
+      `A run is still going on session ${session.id} — ${label}. Stop it and log out?`,
+      { modal: true },
+      STOP_AND_LOG_OUT,
+    );
+    if (choice !== STOP_AND_LOG_OUT) return { logOut: false, runIgnoresStop: false };
+  }
+  const runIgnoresStop = await manager.stopRun(session.id);
+  const decision = await confirmLogoutWithUncommittedChanges(
+    session.id,
+    label,
+    runIgnoresStop ? undefined : needsCommit(session),
+    (id) => manager.commit(id),
+    session.inTransaction,
+    runIgnoresStop,
+  );
+  return { logOut: decision === 'proceed', runIgnoresStop };
 }
 
 /** The button on a refused-commit toast; also what the choice is compared against. */
@@ -680,8 +724,8 @@ async function loadRowanFromDirectory(
 
   // Runs over the non-blocking execute: big projects load for minutes, and the
   // nb runner keeps the extension responsive and shows a cancellable progress
-  // notification. Cancelling hard-breaks the gem, and the query aborts its own
-  // transaction on error, so nothing partial is committed.
+  // notification. The load commits only at its end, so a cancelled load commits
+  // nothing, though what it loaded so far stays uncommitted in the session.
   let result;
   try {
     result = await queries.loadRowanProjectNb(session, spec.path, dir, `Loading ${spec.name}…`);
@@ -895,6 +939,23 @@ export function activate(context: vscode.ExtensionContext) {
   // SessionManager is created early so the Logins panel can mark the connected
   // login row (and swap its inline Login action for Logout) in single-session mode.
   sessionManager = new SessionManager();
+  setStillRunningHandler((session) => {
+    void showStillRunning(session, {
+      isRegistered: (id) => sessionManager.getSession(id) !== undefined,
+      cleaningUp: clearHolds,
+      forceStop: (s) =>
+        forceStop(s, { loginTransient: (from) => sessionManager.loginTransient(from.login, from) }),
+      // Force Stop has just failed: the logout need not try it again.
+      logout: (id) => sessionManager.logout(id, true),
+    });
+  });
+  setRunInProgressHandler((session) => {
+    void showRunInProgress(session, {
+      isRegistered: (id) => sessionManager.getSession(id) !== undefined,
+      stop: cancelRunOn,
+    });
+  });
+  setStoppedRunCollectedHandler(rearmAfterForceStop);
 
   // De-duplicates connect clicks: the blocking GciTsLogin freezes the extension
   // host while it runs, so extra clicks during a slow login queue up and replay
@@ -1177,6 +1238,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   const stepPointHints = new StepPointHintsProvider(stepPointModel);
   stepPointHints.register(context);
+
+  context.subscriptions.push(
+    registerSessionTeardown(sessionManager, breakpointManager, stepPointHints),
+  );
 
   // A GemStone breakpoint lives in the gem, so it dies with the session. VS Code
   // persists its breakpoint list across restarts regardless, so anything it just
@@ -2703,42 +2768,25 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.window.showInformationMessage('No GemStone session to log out of.');
           return;
         }
-        const decision = await confirmLogoutWithUncommittedChanges(
-          session.id,
-          loginLabel(session.login),
-          queries.sessionNeedsCommit(session),
-          (id) => sessionManager.commit(id),
-          session.inTransaction,
+        const { logOut, runIgnoresStop } = await decideLogout(session, sessionManager, (s) =>
+          queries.sessionNeedsCommit(s),
         );
-        if (decision === 'cancel') return;
+        if (!logOut) return;
         // The session's views close only once it is gone: GemStone can refuse
         // the logout, and the session then stays open with its views intact.
         try {
           // A second click, or a stale tree item, finds the work already done.
-          if (!(await sessionManager.logout(session.id))) return;
+          if (!(await sessionManager.logout(session.id, runIgnoresStop))) return;
         } catch (e) {
           vscode.window.showErrorMessage(e instanceof Error ? e.message : String(e));
           return;
         }
-        // Before the panels close: the export set went with the session, so a
-        // panel releasing its pins would only fail against the logged-out handle.
-        forgetSessionPins(session.id);
+        // Its panels, breakpoints and gemstone:// tabs go on the session's
+        // removal: see registerSessionTeardown and the stale-tab reaper.
         // Keep the class mirror on disk: it's keyed by connection target and is
         // re-synced incrementally on the next login, which is far cheaper than
         // rebuilding it from scratch (especially for large, remote images).
-        SystemBrowser.disposeForSession(session.id);
-        GlobalsBrowser.disposeForSession(session.id);
-        CommentBrowser.disposeForSession(session.id);
-        // Close any lingering class-definition / method-source editor tabs for this
-        // session (e.g. opened via go-to-definition without a browser). Browser-owned
-        // tabs are already closed when the browser is disposed above.
-        void closeGemstoneTabsForSession(session.id);
-        EnhancedInspector.disposeForSession(session.id);
-        BasicInspector.disposeForSession(session.id);
-        DebuggerPanel.disposeForSession(session.id);
         treeProvider.refresh();
-        breakpointManager.clearAllForSession(session.id);
-        stepPointHints.refresh();
         vscode.window.showInformationMessage(`Session ${session.id}: Logged out.`);
       },
     ),
@@ -2755,7 +2803,7 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.window.showInformationMessage(`Session ${session.id} is active and responsive.`);
         } else {
           vscode.window.showErrorMessage(
-            `Session ${session.id}: Ping failed — ${err.message || `error ${err.number}`}`,
+            `Session ${session.id}: Ping failed — ${explainGciError(err) || `error ${err.number}`}`,
           );
         }
       } catch (e: unknown) {
@@ -2973,8 +3021,8 @@ export function activate(context: vscode.ExtensionContext) {
       },
     ),
 
-    // The ■ that replaces a row's ▶ while its test is running. Soft break first,
-    // hard break if pressed again — the same escalation the progress toast offers.
+    // The ■ that replaces a row's ▶ while its test is running. Stops the run the
+    // way the progress toast's Cancel does.
     vscode.commands.registerCommand('gemstone.explorer.stopTest', () => {
       if (!sunitTestController.cancelActiveRun()) {
         void vscode.window.showInformationMessage('No GemStone test run to stop.');
@@ -4393,13 +4441,8 @@ export function activate(context: vscode.ExtensionContext) {
     // that a silent pause reads as a click that did nothing.
     //
     // The probing and the wait around it are awaited, not blocking, so the
-    // editor stays usable for the part that can run to ten seconds. The one
-    // exception is the logout itself: `GciTsLogout` is a synchronous FFI call
-    // on the extension host, once per session on this database. Against a
-    // healthy stone that is milliseconds; against an unresponsive one it
-    // blocks, and there is no non-blocking logout in the GciTs API to use
-    // instead. Moving it off the main thread is a session-lifecycle change
-    // well beyond this path, so it is left as it is and named here.
+    // editor stays usable for the part that can run to ten seconds; the logouts
+    // don't wait for their gems either.
     return await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
@@ -4496,7 +4539,7 @@ export function activate(context: vscode.ExtensionContext) {
     );
     // Together, not one after another: a refused logout waits for its call to
     // stop, and the stone's stop should not wait for each of those in turn.
-    const outcomes = await Promise.allSettled(doomed.map((s) => sessionManager.logout(s.id)));
+    const outcomes = await sessionManager.logoutAll(doomed.map((s) => s.id));
     for (const outcome of outcomes) {
       if (outcome.status === 'rejected') {
         const e: unknown = outcome.reason;
@@ -5386,7 +5429,7 @@ export function activate(context: vscode.ExtensionContext) {
             await sessionManager.logout(sessionId);
           },
           stopStone: async () => {
-            // GciTsLogout returns before the stone finishes deregistering our gem,
+            // The logout returns before the stone finishes deregistering our gem,
             // so stopstone (which logs in itself to request shutdown) can still see
             // our just-closed session and refuse with "Other users logged in" (exit
             // 13). Retry briefly to ride out that deregistration lag; a genuine

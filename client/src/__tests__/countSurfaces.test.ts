@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 vi.mock('../browserQueries', () => ({
+  quietly: <T>(query: () => T): T => query(),
   implementorsOf: vi.fn(() => []),
   sendersOf: vi.fn(() => []),
   getAllClassNames: vi.fn(() => []),

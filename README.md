@@ -35,6 +35,8 @@ The **GemStone Version** dropdown lists every version Jasper supports. Pick the 
 
 You can also point Jasper at a library you already have, with the `gemstone.gciLibraries` setting.
 
+**VS Code Remote-SSH isn't supported.** Run VS Code on your own machine and reach the stone on the other machine with a login, as above. A Remote-SSH window installs and runs Jasper on the remote machine instead, which is slow to set up and isn't tested.
+
 ### Full local setup (macOS, Linux, or Windows with WSL)
 
 To install, manage, and run a GemStone server locally:
@@ -43,7 +45,7 @@ To install, manage, and run a GemStone server locally:
 2. Open the **GemStone** sidebar (gem icon in the activity bar).
 3. Check the **OS Configuration** section: on macOS/Linux run the shared-memory setup if it warns; on Windows+WSL Jasper also surfaces WSL networking and services-file configuration here.
 4. Click **Manage Databases & Versions** in the **Databases** section title bar to open the panel, and install a GemStone version from its Versions list.
-5. Click **New Database** in the same title bar and fill in the form.
+5. Click **+** (**New Database on This Machine...**) in the same title bar and fill in the form.
 6. Start the stone and NetLDI from the database tree.
 7. Click **Create Login** on the database to generate a login configuration.
 8. Click **Login** to connect and start developing.
@@ -82,7 +84,7 @@ On Windows, a **Download Files** row action fetches the native Windows client fo
 
 ### Database Management
 
-The **Databases** view shows all databases under your GemStone root directory (configurable via `gemstone.rootPath`, default `~/Documents/GemStone`). Click **New Database** in its title bar to open the **Databases & Versions** panel on a form asking for the GemStone version, the base extent, a stone name and a NetLDI name — all on screen at once, with the names already in use listed beside the fields that have to avoid them. Nothing is lost if you leave VS Code to look something up. A database is made by copying an installed version, so on a machine that has none the panel opens on the lists instead and says so, with **Install Version…** waiting in the Versions section below. You do not need one to adopt a database that already exists: **Register Existing…** in the panel header works on a machine with nothing installed.
+The **Databases** view shows all databases under your GemStone root directory (configurable via `gemstone.rootPath`, default `~/Documents/GemStone`). Click **+** (**New Database on This Machine...**) in its title bar to open the **Databases & Versions** panel on a form asking for the GemStone version, the base extent, a stone name and a NetLDI name — all on screen at once, with the names already in use listed beside the fields that have to avoid them. Nothing is lost if you leave VS Code to look something up. A database is made by copying an installed version, so on a machine that has none the panel opens on the lists instead and says so, with **Install Version…** waiting in the Versions section below. You do not need one to adopt a database that already exists: **Register Existing…** in the panel header works on a machine with nothing installed.
 
 The extension creates the full directory structure (`conf/`, `data/`, `log/`, `stat/`), writes configuration files (`system.conf`, `gem.conf`, stone config), copies the key file and base extent, and writes `database.yaml`.
 
@@ -222,7 +224,7 @@ With an active session, execute Smalltalk code from any editor:
 
 By default, **Display It** shows its result as a non-destructive inline overlay — an annotation that is not part of the document, so the file is never modified. Hover the result for **Copy** and **Expand** actions; **Enter** inserts the full result into the document, **Backspace** or **Escape** dismisses it. Set `gemstone.displayItMode` to `"insert"` for the classic behavior of inserting the result as editable text.
 
-Long-running expressions show a progress notification with soft-break and hard-break options. The **GemStone Transcript** output channel captures transcript output from the session.
+Long-running expressions show a progress notification with a Cancel button. One press asks the gem to stop at a safe point; if the run is still going about 1.5 seconds later, Jasper stops waiting and frees the editor, and a notice says the stopped run is still going. Its **Force Stop** ends the run and keeps the session and its uncommitted changes; only code that catches every exception ignores it, and then Jasper offers to log the session out. Throwing a stopped run away runs its `ensure:` blocks, after Cancel or when you close the debugger on it; VS Code stays usable while they run, and one that hangs is handled like any run that ignores the stop: Force Stop, and if that can't end it, Log Out. The **GemStone Transcript** output channel captures transcript output from the session.
 
 ### GemStone Explorer
 
@@ -395,8 +397,11 @@ the thing it was set in goes away:
   frame and read the answer, one to resume), and a fourth when it logs. Over a
   slower link that grows with the latency, so a condition that skips tens of
   thousands of hits will be felt. Past a second and a half a cancellable progress
-  notification appears, and cancelling stops at whatever hit it has reached; a
+  notification appears (inside Execute It, Execute It's own notification stands
+  for it), and cancelling stops at whatever hit it has reached; a
   condition that runs slowly, or never finishes, can be cancelled the same way.
+  Code that ignores the stop is treated as anywhere else in Jasper: after about
+  1.5 seconds Jasper stops waiting and offers **Force Stop**.
   Your code is never rewritten or recompiled to make any of this work, and nothing
   is written to the repository. A breakpoint reached while skipping still stops if
   _it_ has no condition, and an error raised by your code while skipping opens the
@@ -517,7 +522,7 @@ The extension integrates with VS Code's native Test Explorer:
 - Run individual tests or entire test classes
 - Debug a test, or a whole class, under the GemStone debugger — a debug run omits SUnit's exception handler, so a failing test suspends on a live stack instead of being recorded and discarded
 - Pass/fail/error results with failure messages
-- Stop a long-running test: the Testing view's stop button, the ■ that replaces a row's ▶ in the Explorer while it runs, or the Cancel on the progress notification. First press asks the gem to stop at a safe point; a second interrupts it
+- Stop a long-running test: the Testing view's stop button, the ■ that replaces a row's ▶ in the Explorer while it runs, or the Cancel on the progress notification. One press asks the gem to stop at a safe point; a test that keeps going gets the same **Force Stop** notice as Execute It
 - Test items link to method source, and a run/status icon appears in the editor gutter beside an open test class or test method
 - Run from the GemStone Explorer too: a ▶ on a test class row (Classes or Hierarchy pane) or a test method row (Methods pane), each showing the outcome of its last run
 - Clicking a row in the Testing view opens the code without moving the Explorer; **Reveal in GemStone Explorer** — the ⊟ on the row, or its context menu — navigates the panes when you want it
@@ -537,6 +542,8 @@ Jasper registers notebook kernels for `.ipynb` files, in two languages: GemStone
 - Globals persist across cells (Jupyter REPL semantics): `x = 1` in one cell, `x + 2` in the next. Each notebook gets its own module scope within the session, so two open notebooks don't share variables.
 - **GemStone: Reset Grail Notebook Scope** (command palette) clears the active notebook's globals — the equivalent of restarting a kernel.
 - Without Grail in the stone, running a cell reports "Grail (GemStone-Python) not detected".
+
+In either language, a cell's own stop button stops it, the same way Cancel stops Execute It. The cell then says "Stopped.", and any cells queued after it don't run. A cell that keeps going gets the same **Force Stop** notice as the rest of Jasper, and VS Code stays usable while any cell runs.
 
 ### Class Sync (File Export)
 

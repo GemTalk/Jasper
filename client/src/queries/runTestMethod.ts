@@ -23,6 +23,8 @@ export function runTestMethodCode(className: string, selector: string, dictName?
   // own AbstractException handler — same pattern as describe_test_failure.
   // The TestFailure-vs-other-Exception kind discriminates failed/error.
   //
+  // tearDown resumes any Break, so a stop never cuts the test's cleanup short.
+  //
   // Output is built through a String-class WriteStream (which widens
   // transparently for non-ASCII codepoints) and converted to Utf8 once at
   // the boundary. See python.ts for the encoding-model rationale.
@@ -35,7 +37,8 @@ captured := nil.
 captured isNil ifTrue: [
   [testCase perform: #'${sel}'] on: AbstractException do: [:e | captured := e].
   tdEx := nil.
-  [testCase tearDown] on: AbstractException do: [:e | tdEx := e].
+  [[testCase tearDown] on: Break do: [:e | e resume]]
+    on: AbstractException do: [:e | tdEx := e].
   (captured isNil and: [tdEx notNil]) ifTrue: [captured := tdEx]].
 endMs := Time millisecondClockValue.
 

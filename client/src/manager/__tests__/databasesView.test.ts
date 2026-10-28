@@ -427,9 +427,39 @@ describe('a login with no database of its own', () => {
     expect(other?.querySelector('.session-block')).toBeNull();
   });
 
-  it('stays absent when every login already has a database', () => {
+  it('is there, closed, when every login already has a database', () => {
     mount(state({ databases: [database()], logins: [remoteLogin({ dirName: 'db-1' })] }));
-    expect(root.querySelector('details.section[data-section="otherLogins"]')).toBeNull();
+    const other = root.querySelector<HTMLDetailsElement>(
+      'details.section[data-section="otherLogins"]',
+    );
+    expect(other).not.toBeNull();
+    expect(other?.open).toBe(false);
+    expect(other?.querySelector('.section-count')?.textContent).toBe('0');
+    expect(other?.querySelector('.section-body')?.textContent?.trim()).toBe('None yet.');
+  });
+
+  it('is there for someone with nothing set up yet, offering a new login', () => {
+    mount(state({ versions: [], databases: [], logins: [] }));
+    const add = root.querySelector(
+      'details.section[data-section="otherLogins"] [data-action="addLogin"]',
+    );
+    expect(add).not.toBeNull();
+    add?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ command: 'addLogin' }));
+  });
+
+  it('offers no button in its empty body, only the + in its header', () => {
+    mount(state({ databases: [database()], logins: [] }));
+    const body = root.querySelector('details.section[data-section="otherLogins"] .section-body');
+    expect(body?.querySelector('button')).toBeNull();
+  });
+
+  it('opens once it has a login', () => {
+    mount(state({ databases: [database()], logins: [remoteLogin()] }));
+    const other = root.querySelector<HTMLDetailsElement>(
+      'details.section[data-section="otherLogins"]',
+    );
+    expect(other?.open).toBe(true);
   });
 });
 

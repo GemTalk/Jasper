@@ -1458,6 +1458,43 @@ describe('GemStoneFileSystemProvider', () => {
       expect(diags[0].range.start.line).toBe(0);
     });
 
+    // A busy session refuses the save before anything is compiled. Treated as a
+    // compile error, the save "succeeded": VS Code cleared the unsaved-changes
+    // dot over an edit GemStone never received, and Ctrl+S then did nothing.
+    describe('a save refused because the session is busy with a run', () => {
+      const busy = () =>
+        new BrowserQueryError('This session is busy with a run that is still going.', 2203);
+
+      it.each([
+        ['a method', 'gemstone://1/Globals/Array/instance/accessing/at%3A', 'compileMethod'],
+        ['a class definition', 'gemstone://1/Globals/Array/definition', 'compileClassDefinition'],
+      ] as const)('fails the save of %s, so its changes stay unsaved', (_what, path, query) => {
+        vi.mocked(queries[query]).mockImplementationOnce(() => {
+          throw busy();
+        });
+        const uri = Uri.parse(path);
+
+        expect(() =>
+          provider.writeFile(uri, encode('whatever'), { create: false, overwrite: true }),
+        ).toThrow('This session is busy with a run');
+      });
+
+      it('marks nothing as wrong with the code', () => {
+        vi.mocked(queries.compileMethod).mockImplementationOnce(() => {
+          throw busy();
+        });
+        const uri = Uri.parse('gemstone://1/Globals/Array/instance/accessing/at%3A');
+
+        expect(() =>
+          provider.writeFile(uri, encode('at: index\n  ^self basicAt: index'), {
+            create: false,
+            overwrite: true,
+          }),
+        ).toThrow();
+        expect(getDiagCollection().set).not.toHaveBeenCalled();
+      });
+    });
+
     it('clears diagnostics on successful compile', () => {
       const uri = Uri.parse('gemstone://1/Globals/Array/instance/accessing/at%3A');
       provider.writeFile(uri, encode('at: index\n  ^self basicAt: index'), {
