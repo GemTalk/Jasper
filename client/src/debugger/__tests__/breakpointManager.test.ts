@@ -2308,6 +2308,21 @@ describe('BreakpointManager', () => {
       expect(debug.breakpoints).toEqual([other, fileBp]);
     });
 
+    it('leaves alone a session whose id begins with the departing session’s id', () => {
+      const mine = new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(0, 0)));
+      const tenth = new SourceBreakpoint(
+        new Location(
+          Uri.parse('gemstone://10/Globals/Array/instance/accessing/at%3A'),
+          new Position(0, 0),
+        ),
+      );
+      debug.breakpoints = [mine, tenth];
+
+      makeManager().clearAllForSession(1);
+
+      expect(debug.breakpoints).toEqual([tenth]);
+    });
+
     it("leaves another session's breakpoints alone", () => {
       mockGetMethodSource.mockReturnValue('foo\n^1');
       mockGetSourceOffsets.mockReturnValue([1, 5]);
