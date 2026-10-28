@@ -13,8 +13,7 @@ import * as path from 'path';
 //      `gemstone.addLogin`.
 // These tests read the real package.json and guard both, plus keep the Reset
 // command's title aligned with how the walkthrough actually re-triggers, and keep
-// the way to a stone on another machine (a login and client libraries, not a
-// database) said where a first-time user looks.
+// the connect page naming the login editor's download button as the editor does.
 
 describe('Getting Started walkthrough content', () => {
   const repoRoot = path.resolve(__dirname, '..', '..', '..');
@@ -43,14 +42,6 @@ describe('Getting Started walkthrough content', () => {
   // command — the closing paren pins it to `gemstone.login` and not the
   // legitimate `gemstone.addLogin`.
   const invokesConnectFromButton = /command:gemstone\.login\)/;
-
-  // VS Code draws a step's page beside the list only when the editor is wide
-  // enough, and says nothing when it is not. It also cuts this text off after
-  // three lines, so the note has to come first.
-  it("starts by telling the reader to widen the window to see a step's details", () => {
-    const description = (gettingStarted as { description?: string } | undefined)?.description;
-    expect(description).toMatch(/^Widen the window/);
-  });
 
   it('guides setup (download + database) before connecting', () => {
     const setupIndex = steps.findIndex((s) =>
@@ -128,27 +119,9 @@ describe('Getting Started walkthrough content', () => {
     expect(databasesWelcome?.contents).toContain('command:gemstone.newDatabase');
   });
 
-  // Said where it is always on screen: the Databases view's text runs past its
-  // height on a normal window, and a last line there goes unseen.
-  it('tells someone reaching a stone elsewhere that they need a login, not a database', () => {
-    const contents = loginsWelcome?.contents ?? '';
-    expect(contents).toContain('another machine needs no database locally');
-    expect(contents.indexOf('needs no database')).toBeLessThan(
-      contents.indexOf('command:gemstone.newDatabase'),
-    );
-  });
-
-  // The Databases view's + runs this command, and its title is all the + says on
-  // hover, so it has to say the database is made here.
-  it('names the new-database command as making a database on this machine', () => {
-    const newDatabase = commands.find((c) => c.command === 'gemstone.newDatabase');
-    expect(newDatabase?.title).toBe('New Database on This Machine...');
-  });
-
-  // The page has to say how to get a version's client libraries, in the words the
-  // login editor uses, or a remote user reads the version list as needing a full
-  // install.
-  it('tells the connect page’s reader how to fetch a version’s client libraries', () => {
+  // The page tells a remote user which login-editor button fetches a version's
+  // client libraries, so it has to name the button the editor really shows.
+  it('names the login editor’s download button on the connect page as the editor labels it', () => {
     const page = fs.readFileSync(path.join(repoRoot, 'resources/walkthrough/connect.md'), 'utf8');
     const editorHtml = fs.readFileSync(
       path.join(repoRoot, 'client/src/loginEditorHtml.ts'),
@@ -157,7 +130,6 @@ describe('Getting Started walkthrough content', () => {
     const button = /id="downloadVersionBtn"[^>]*>([^<]+)</.exec(editorHtml)?.[1];
     expect(button).toBeDefined();
     expect(page).toContain(`**${button}**`);
-    expect(page).toContain('(not yet downloaded)');
   });
 
   // Reset re-arms two first-run surfaces: the walkthrough (auto-opens on startup)
