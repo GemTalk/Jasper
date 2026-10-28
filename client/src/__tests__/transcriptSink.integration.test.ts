@@ -389,14 +389,20 @@ tmps := SessionTemps current.
       expect(firstLogout).toBe(false);
       expect(retry).toBe(true);
       await expect(run).rejects.toBeInstanceOf(NbCancelledError);
-      // The stone deregisters a gem shortly after its logout returns.
+      // The stone deregisters a gem shortly after its logout returns: well
+      // under 2s on Linux and macOS, but on the Windows runners, where the stone
+      // runs under WSL, over 2s now and then. The bound only has to tell "left"
+      // from "kept running", so it is generous, and a slow exit is reported.
+      const loggedOutAt = Date.now();
       await vi.waitFor(
         () =>
           expect(exec(`(System currentSessions includes: ${gemSession}) printString`)).toBe(
             'false',
           ),
-        { timeout: 2000, interval: 100 },
+        { timeout: 10_000, interval: 100 },
       );
+      const leftAfter = Date.now() - loggedOutAt;
+      if (leftAfter > 2000) console.warn(`The gem took ${leftAfter}ms to leave after its logout.`);
     } finally {
       // Whatever failed above, the gem must not outlive the test.
       await stopCallsOn(busy);
