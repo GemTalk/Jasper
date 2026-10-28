@@ -7,6 +7,7 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 ### Changed
 
 - **Reaching a stone on another machine no longer looks like it needs a database here.** A first-time user who wanted to connect to a remote stone found only ways to create a local database. The empty Logins & Sessions view now says "A stone on another machine needs no database locally." before anything else, and offers a database only to someone "Running GemStone on this machine". The Databases view's **+** reads **New Database on This Machine...** on hover. The Databases & Versions panel always shows its **Other Logins** section, closed and reading "None yet." until there is one, so its **+** for a login to a stone elsewhere is there from the start. The Get Started walkthrough now opens with "Widen the window to see each step's details.": VS Code hides a step's details on a narrow window without saying so. ([#467](https://github.com/GemTalk/Jasper/issues/467))
+- **A failed or errored test's whole message can be read.** Test Results showed the message on one line, clipped at the edge of the pane, so a long one could only be read by widening the panel or copying it out. The message now also appears in red on the first line of the test's method, and clicking it opens a peek with the whole message, wrapped. This holds for a test run on its own and for each test in a class run. ([#772](https://github.com/GemTalk/Jasper/issues/772))
 
 ### Documentation
 

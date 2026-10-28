@@ -592,6 +592,59 @@ describe('SunitTestController', () => {
     });
   });
 
+  describe('where a failure message points', () => {
+    // A message with no location shows as one clipped line in Test Results;
+    // one with a location is shown wrapped and can be peeked beside the code.
+    const lastRun = () => createdController().createTestRun.mock.results.at(-1)?.value;
+
+    function expectAtTestItem(call: unknown[]) {
+      const [item, message] = call as [
+        { uri: unknown },
+        { location?: { uri: unknown; range: { start: { line: number } } } },
+      ];
+      expect(message.location?.uri).toBe(item.uri);
+      expect(message.location?.range.start.line).toBe(0);
+    }
+
+    it('points a failed test in a class run at its method', async () => {
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      await ctrl.runClassByName('UserGlobals', 'MyTestCase');
+
+      const run = lastRun();
+      expect(run.failed).toHaveBeenCalledOnce();
+      expectAtTestItem(run.failed.mock.calls[0]);
+      ctrl.dispose();
+    });
+
+    it('points an errored single test at its method', async () => {
+      vi.mocked(sunit.runTestMethodNb).mockResolvedValueOnce({
+        className: 'MyTestCase',
+        selector: 'testAdd',
+        status: 'error',
+        message: 'ZeroDivide: divide by zero',
+        durationMs: 1,
+      });
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+
+      const run = lastRun();
+      expect(run.errored).toHaveBeenCalledOnce();
+      expectAtTestItem(run.errored.mock.calls[0]);
+      ctrl.dispose();
+    });
+
+    it('points a test whose run could not complete at its method', async () => {
+      vi.mocked(sunit.runTestMethodNb).mockRejectedValueOnce(new Error('lost connection'));
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+
+      const run = lastRun();
+      expect(run.errored).toHaveBeenCalledOnce();
+      expectAtTestItem(run.errored.mock.calls[0]);
+      ctrl.dispose();
+    });
+  });
+
   describe('result store', () => {
     // The tree rows, the code lenses and the Test Explorer all read the same
     // store, so what it holds after a run is what the user sees everywhere.

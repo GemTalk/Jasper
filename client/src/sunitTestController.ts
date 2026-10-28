@@ -150,6 +150,14 @@ function topOfDocument(): vscode.Range {
   return new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 0));
 }
 
+/** VS Code shows a message wrapped, and offers to peek it beside the code, only
+ * when the message has a location; without one it is a single clipped line. */
+function messageAt(item: vscode.TestItem, text: string): vscode.TestMessage {
+  const message = new vscode.TestMessage(text);
+  if (item.uri && item.range) message.location = new vscode.Location(item.uri, item.range.start);
+  return message;
+}
+
 /**
  * What to call one run in the Test Results panel. VS Code names an unnamed run
  * `Test run at <timestamp>`, which says nothing about WHICH tests ran — with
@@ -1215,10 +1223,10 @@ export class SunitTestController implements vscode.Disposable {
         run.passed(item, result.durationMs);
         break;
       case 'failed':
-        run.failed(item, new vscode.TestMessage(result.message), result.durationMs);
+        run.failed(item, messageAt(item, result.message), result.durationMs);
         break;
       case 'error':
-        run.errored(item, new vscode.TestMessage(result.message), result.durationMs);
+        run.errored(item, messageAt(item, result.message), result.durationMs);
         break;
     }
     this.reportOutcome(item, {
@@ -1236,7 +1244,7 @@ export class SunitTestController implements vscode.Disposable {
   }
 
   private reportError(run: vscode.TestRun, item: vscode.TestItem, message: string): void {
-    run.errored(item, new vscode.TestMessage(message));
+    run.errored(item, messageAt(item, message));
     this.reportOutcome(item, { outcome: 'error', message });
   }
 
