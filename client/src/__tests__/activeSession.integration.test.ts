@@ -286,4 +286,86 @@ describe('whether a session is busy (integration)', () => {
 
     expect(transient.isBusy()).toBe(false);
   });
+
+  // Without the refusal, each of these crashes the process instead of failing:
+  // the 3.7.x GciTsNbPoll and the 3.6.2 GciTsNbResult.
+  it('refuses to poll for a non-blocking result while a message send runs on another thread', () => {
+    const transient = transientSession();
+    void startOnWorker(transient);
+
+    const poll = () => transient.GciTsNbPoll(0);
+
+    expect(poll).toThrow('would crash the GCI library');
+  });
+
+  it('refuses to collect a non-blocking result while a message send runs on another thread', () => {
+    const transient = transientSession();
+    void startOnWorker(transient);
+
+    const collect = () => transient.GciTsNbResult();
+
+    expect(collect).toThrow('would crash the GCI library');
+  });
+
+  it('refuses to poll for a non-blocking result while a paused process resumes on another thread', () => {
+    const transient = transientSession();
+    const process = pausedProcess(transient, '(Delay forMilliseconds: 300) wait');
+    void resumeOnWorker(transient, process);
+
+    const poll = () => transient.GciTsNbPoll(0);
+
+    expect(poll).toThrow('would crash the GCI library');
+  });
+
+  it('refuses to collect a non-blocking result while a paused process resumes on another thread', () => {
+    const transient = transientSession();
+    const process = pausedProcess(transient, '(Delay forMilliseconds: 300) wait');
+    void resumeOnWorker(transient, process);
+
+    const collect = () => transient.GciTsNbResult();
+
+    expect(collect).toThrow('would crash the GCI library');
+  });
+
+  // The send on the other thread is collected against in the same tick it
+  // starts, so it still counts. Whether GemStone then refuses it or runs it
+  // after the collect depends on when its thread gets there, so the test
+  // doesn't assert either.
+  it('collects a non-blocking result that was outstanding when a send on another thread started', async () => {
+    const transient = transientSession();
+    const delay = delayOn(transient, 300);
+    startNonBlocking(transient, '3 + 4');
+    await resultReady(transient);
+    void waitBeforeLogout(transient.GciTsPerformAsync(delay, OOP_ILLEGAL, 'wait', [], 0, 0));
+
+    const { result, err } = transient.GciTsNbResult();
+
+    expect(err.number, err.message).toBe(0);
+    expect(transient.GciTsOopToI64(result).value).toBe(7n);
+  });
+
+  it('polls for a non-blocking result that was outstanding when a send on another thread started', async () => {
+    const transient = transientSession();
+    const delay = delayOn(transient, 300);
+    startNonBlocking(transient, '3 + 4');
+    await resultReady(transient);
+    void waitBeforeLogout(transient.GciTsPerformAsync(delay, OOP_ILLEGAL, 'wait', [], 0, 0));
+
+    const { result, err } = pollNbResultReady(transient);
+
+    expect(err.number, err.message).toBe(0);
+    expect(result).toBe(1);
+  });
+
+  it('polls for and collects a non-blocking result again once a call on another thread finishes', async () => {
+    const transient = transientSession();
+    await startOnWorker(transient);
+    startNonBlocking(transient, '3 + 4');
+    await resultReady(transient);
+
+    const { result, err } = transient.GciTsNbResult();
+
+    expect(err.number, err.message).toBe(0);
+    expect(transient.GciTsOopToI64(result).value).toBe(7n);
+  });
 });
