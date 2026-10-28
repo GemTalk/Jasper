@@ -1,5 +1,5 @@
 import { McpOwnership } from './mcpServerTreeProvider';
-import { canRevealOwnerWindow } from './mcpWindowStatus';
+import { ownerLookFor } from './mcpWindowStatus';
 import {
   RELEASE_POLL_MS,
   RELEASE_WAIT_ATTEMPTS,
@@ -51,7 +51,8 @@ export interface McpOwnershipDeps {
   notifier: McpOwnershipNotifier;
   /** Redraw every MCP surface: the Databases header, the session rows, the tab. */
   onChanged: () => void;
-  revealOwner: (workspacePath: string) => Promise<void>;
+  /** Let the user switch to the window that holds the server. */
+  revealOwner: () => Promise<void>;
   showPanel: () => Promise<void>;
   /** Injectable so a test does not wait out the real poll. */
   sleep?: (ms: number) => Promise<void>;
@@ -59,7 +60,7 @@ export interface McpOwnershipDeps {
 
 const ASK = 'Ask It to Release';
 const SHOW = 'Show MCP Server';
-const REVEAL = 'Open That Window';
+const REVEAL = 'Switch to That Window';
 
 export class McpOwnershipController {
   private claimInFlight = false;
@@ -128,11 +129,10 @@ export class McpOwnershipController {
     // A bind only fails because someone else holds the socket, so offer the
     // thing that can actually resolve it rather than merely reporting.
     const owner = this.deps.ownership();
-    const where =
-      owner.kind === 'other' ? ` ("${owner.info.workspaceName ?? owner.info.workspacePath}")` : '';
+    const holder =
+      owner.kind === 'other' ? capitalize(ownerLookFor(owner.info)) : 'Another VS Code window';
     const choice = await this.deps.notifier.warn(
-      `Another VS Code window${where} is still serving MCP. A bound socket is only released ` +
-        'by the window holding it.',
+      `${holder} is still serving MCP. A bound socket is only released by the window holding it.`,
       ASK,
       SHOW,
     );
@@ -193,17 +193,11 @@ export class McpOwnershipController {
 
     if (!released) {
       clearReleaseRequest(this.deps.releaseRequestPath);
-      const reveal = canRevealOwnerWindow(owner.info);
-      const where = owner.info.workspaceName ?? workspacePath;
       const message =
-        `The window "${where}" did not release the MCP server. It may be running a Jasper old ` +
-        'enough not to answer the request — use Stop MCP there, or close it.';
-      // Only offer to open it where that would actually reach it; elsewhere the
-      // action would open a duplicate window and look like it had worked.
-      const choice = reveal.canReveal
-        ? await this.deps.notifier.warn(message, REVEAL)
-        : await this.deps.notifier.warn(message);
-      if (choice === REVEAL) await this.deps.revealOwner(workspacePath);
+        `${capitalize(ownerLookFor(owner.info))} did not release the MCP server. It may be ` +
+        'running a Jasper old enough not to answer the request — use Stop MCP there, or close it.';
+      const choice = await this.deps.notifier.warn(message, REVEAL);
+      if (choice === REVEAL) await this.deps.revealOwner();
       this.deps.onChanged();
       return;
     }
@@ -236,4 +230,8 @@ export class McpOwnershipController {
     this.deps.notifier.log('MCP server released by this window.');
     this.deps.onChanged();
   }
+}
+
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }

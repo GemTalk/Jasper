@@ -2,10 +2,12 @@
 // build/diff, chunked transport, and file-out of changed classes).
 // Full design: docs/incremental-class-sync.md
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { ActiveSession } from './sessionManager';
 import { shouldSyncClasses } from './loginTypes';
+import { isPidAlive } from './mcpOwnerSidecar';
 import { boundLimitExecutor } from './browserQueries';
 import { fetchBlob, newStats, RequestTiming } from './sync/syncTransport';
 import {
@@ -28,6 +30,34 @@ import {
 const STATE_FILE = '.manifest.json';
 const STATE_VERSION = 1;
 
+// Names the live session writing a mirror folder, so another window's session
+// with the same login takes the next `_N` folder instead of overwriting it.
+const OWNER_FILE = '.jasper-owner.json';
+const MAX_MIRROR_SLOTS = 50;
+
+const NOTICE_SHOWN_KEY = 'gemstone.mirrorNoticeShown';
+const EXPORT_PATH_NOTICE_SHOWN_KEY = 'gemstone.exportPathRetiredNoticeShown';
+const CHANGE_FOLDER = 'Change…';
+// Notifications render Markdown links, including command links.
+const MIRROR_SETTING_LINK =
+  '[gemstone.mirrorFolder](command:workbench.action.openSettings?' +
+  encodeURIComponent(JSON.stringify(['gemstone.mirrorFolder'])) +
+  ')';
+const OPEN_FOLDER = 'Open Folder';
+
+interface OwnerRecord {
+  pid: number;
+  host: string;
+  sessionId: number;
+}
+
+export interface ExportManagerOptions {
+  /** Where the mirror goes when `gemstone.mirrorFolder` is empty: Jasper's private storage. */
+  defaultMirrorDir?: string;
+  /** Remembers which one-time notices were shown. */
+  memento?: Pick<vscode.Memento, 'get' | 'update'>;
+}
+
 // Files written/deleted concurrently during a sync. Overlapping per-file latency
 // keeps a slow or network filesystem from serializing thousands of tiny writes.
 const SYNC_WRITE_CONCURRENCY = 32;
@@ -44,9 +74,8 @@ function safeSegment(s: string): string {
 }
 
 /**
- * Maintains a local `.gemstone` mirror of a session's classes as read-only
- * Topaz file-out (`.gs`) files, so VS Code's Find in Files, Go to Definition,
- * and workspace symbol search work over the source.
+ * Maintains a local mirror of a session's classes as read-only Topaz file-out
+ * (`.gs`) files, which the System Browser opens for class-level navigation.
  *
  * The mirror is kept current with an incremental sync (see client/src/sync/):
  * one server-built manifest of per-class md5 hashes is diffed against a persisted
@@ -54,12 +83,12 @@ function safeSegment(s: string): string {
  * chunked transport). This collapses the old per-class round trips — the cost
  * that made large, remote images take minutes — into a handful of round trips.
  *
- * Default file structure (keyed by connection target, shared across that
- * target's sessions and persisted across logout):
- *   {workspaceRoot}/.gemstone/{host}/{stone}/{user}/{index}-{dictName}/{ClassName}.gs
+ * File structure, kept across logout so a reconnect syncs incrementally:
+ *   <mirror folder>/<host>/<stone>/<user>[_N]/<index>-<dictName>/<ClassName>.gs
  *
- * The `gemstone.exportPath` setting overrides this with variable substitution:
- *   {workspaceRoot}, {session}, {host}, {stone}, {user}, {index}, {dictName}
+ * The mirror folder is `gemstone.mirrorFolder`, or Jasper's private storage when
+ * that is empty; the open workspace folder plays no part. `_N` is taken only
+ * while another live session holds the plain folder.
  */
 export class ExportManager {
   // Suppress file-watcher events while we are writing the mirror.
@@ -70,6 +99,14 @@ export class ExportManager {
   // Debounced full re-syncs, keyed by session, for structural changes where a
   // targeted patch is fiddlier than re-running the (cheap) manifest diff.
   private refreshTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
+  // Decided once per session: recomputing from the login would hand two sessions
+  // with the same login the same folder.
+  private assignedRoots = new Map<number, string>();
+  private unwritableReported = new Set<number>();
+  private noticesShown = false;
+
+  constructor(private readonly options: ExportManagerOptions = {}) {}
 
   get isWriting(): boolean {
     return this.writing;
@@ -94,59 +131,149 @@ export class ExportManager {
     channel?.appendLine(`[${ts}] ${message}`);
   }
 
-  /**
-   * Resolved export path template for a session. Uses `gemstone.exportPath` with
-   * session-level variables resolved; {index} and {dictName} remain placeholders.
-   */
-  getResolvedTemplate(session: ActiveSession): string | undefined {
-    const config = vscode.workspace.getConfiguration('gemstone');
-    const custom = config.get<string>('exportPath', '').trim();
-    const folders = vscode.workspace.workspaceFolders;
-    const wsRoot = folders?.[0]?.uri.fsPath;
-    const { gem_host, stone, gs_user } = session.login;
-    const sessionId = String(session.id);
-
-    if (custom) {
-      let resolved = custom
-        .replace(/\{workspaceRoot}/g, wsRoot ?? '')
-        .replace(/\{session}/g, sessionId)
-        .replace(/\{host}/g, gem_host)
-        .replace(/\{stone}/g, stone)
-        .replace(/\{user}/g, gs_user);
-      resolved = path.normalize(resolved);
-      const testPath = resolved.replace(/\{index}/g, '0').replace(/\{dictName}/g, 'X');
-      if (!path.isAbsolute(testPath)) {
-        if (!wsRoot) return undefined;
-        resolved = path.resolve(wsRoot, resolved);
-      }
-      return resolved;
-    }
-
-    // Default: keyed by connection target so sessions to the same stone share one
-    // mirror that survives logout. {index} and {dictName} stay as placeholders.
-    if (!wsRoot) return undefined;
-    return path.join(
-      wsRoot,
-      '.gemstone',
-      safeSegment(gem_host),
-      safeSegment(stone),
-      safeSegment(gs_user),
-      '{index}-{dictName}',
-    );
+  /** The folder all mirrors go under, or undefined when no default location was given. */
+  mirrorFolder(): string | undefined {
+    const configured = vscode.workspace
+      .getConfiguration('gemstone')
+      .get<string>('mirrorFolder', '')
+      .trim();
+    if (!configured) return this.options.defaultMirrorDir;
+    const expanded = configured.replace(/^~(?=$|[\\/])/, os.homedir());
+    return path.resolve(os.homedir(), expanded);
   }
 
   /** Full path for a specific dictionary directory. */
   getDictPath(session: ActiveSession, dictIndex: number, dictName: string): string | undefined {
-    const template = this.getResolvedTemplate(session);
-    if (!template) return undefined;
-    return template.replace(/\{index}/g, String(dictIndex)).replace(/\{dictName}/g, dictName);
+    const root = this.getSessionRoot(session);
+    if (!root) return undefined;
+    return path.join(root, `${dictIndex}-${dictName}`);
   }
 
-  /** Per-target root directory (parent of all dictionary directories). */
+  /** The session's mirror folder (parent of all dictionary directories). */
   getSessionRoot(session: ActiveSession): string | undefined {
-    const template = this.getResolvedTemplate(session);
-    if (!template) return undefined;
-    return path.dirname(template);
+    const assigned = this.assignedRoots.get(session.id);
+    if (assigned) return assigned;
+    const root = this.claimRoot(session);
+    if (root && shouldSyncClasses(session.login)) this.assignedRoots.set(session.id, root);
+    return root;
+  }
+
+  /** Give up the session's mirror folder so a later session can take it. */
+  releaseSession(sessionId: number): void {
+    const root = this.assignedRoots.get(sessionId);
+    this.assignedRoots.delete(sessionId);
+    this.unwritableReported.delete(sessionId);
+    if (!root) return;
+    const owner = readOwner(root);
+    if (
+      owner &&
+      owner !== 'unreadable' &&
+      owner.pid === process.pid &&
+      owner.sessionId === sessionId
+    ) {
+      try {
+        fs.unlinkSync(path.join(root, OWNER_FILE));
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+
+  private claimRoot(session: ActiveSession): string | undefined {
+    const parent = this.mirrorFolder();
+    if (!parent) return undefined;
+    const { gem_host, stone, gs_user } = session.login;
+    const base = path.join(parent, safeSegment(gem_host), safeSegment(stone), safeSegment(gs_user));
+    // Nothing is written for a login that doesn't sync, so it holds no folder.
+    if (!shouldSyncClasses(session.login)) return base;
+    const heldHere = new Set(this.assignedRoots.values());
+    for (let n = 1; n <= MAX_MIRROR_SLOTS; n++) {
+      const candidate = n === 1 ? base : `${base}_${n}`;
+      if (heldHere.has(candidate)) continue;
+      const owner = readOwner(candidate);
+      if (owner !== undefined && heldByAnotherProcess(owner)) continue;
+      // A stale record is replaced; an absent one is created exclusively, so a
+      // window that wrote one since the read above keeps it.
+      if (writeOwner(candidate, session.id, { replace: owner !== undefined })) return candidate;
+    }
+    // Every slot failed, most likely because the folder can't be written at all;
+    // exportSession reports that against the plain folder.
+    return base;
+  }
+
+  /** Can the mirror be written? Says so once per session when it can't. */
+  private ensureWritable(session: ActiveSession, root: string): boolean {
+    try {
+      fs.mkdirSync(root, { recursive: true });
+      fs.accessSync(root, fs.constants.W_OK);
+      return true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.log(`Cannot write the class mirror at ${root}: ${msg}`);
+      if (!this.unwritableReported.has(session.id)) {
+        this.unwritableReported.add(session.id);
+        void vscode.window
+          .showErrorMessage(
+            `Jasper can't write its copy of this stone's classes to ${root} (${msg}). ` +
+              `Set ${MIRROR_SETTING_LINK} to a folder you can write to.`,
+            CHANGE_FOLDER,
+          )
+          .then((choice) => {
+            if (choice === CHANGE_FOLDER) openMirrorFolderSetting();
+          });
+      }
+      return false;
+    }
+  }
+
+  /** The one-time notices: where the mirror lives, and that exportPath is retired. */
+  private showNotices(): void {
+    if (this.noticesShown) return;
+    this.noticesShown = true;
+    const memento = this.options.memento;
+    const mirror = this.mirrorFolder();
+
+    if (memento && !memento.get<boolean>(NOTICE_SHOWN_KEY) && mirror) {
+      void memento.update(NOTICE_SHOWN_KEY, true);
+      const oldFolders = (vscode.workspace.workspaceFolders ?? [])
+        .map((f) => path.join(f.uri.fsPath, '.gemstone'))
+        .filter((p) => fs.existsSync(p));
+      const old = oldFolders.length
+        ? ` The copy Jasper used to keep in ${oldFolders.join(', ')} is no longer updated; ` +
+          'you can delete it.'
+        : '';
+      void vscode.window
+        .showInformationMessage(
+          `Jasper keeps a read-only copy of your classes as .gs files in ${mirror}, for ` +
+            `browsing class definitions. To keep it elsewhere, set ${MIRROR_SETTING_LINK}.` +
+            old,
+          OPEN_FOLDER,
+          CHANGE_FOLDER,
+        )
+        .then((choice) => {
+          if (choice === OPEN_FOLDER) {
+            void vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(mirror));
+          }
+          if (choice === CHANGE_FOLDER) openMirrorFolderSetting();
+        });
+    }
+
+    const exportPath = vscode.workspace
+      .getConfiguration('gemstone')
+      .get<string>('exportPath', '')
+      .trim();
+    if (memento && exportPath && mirror && !memento.get<boolean>(EXPORT_PATH_NOTICE_SHOWN_KEY)) {
+      void memento.update(EXPORT_PATH_NOTICE_SHOWN_KEY, true);
+      void vscode.window
+        .showInformationMessage(
+          `The gemstone.exportPath setting is no longer used, so the class mirror is in ` +
+            `${mirror} instead. To choose a folder, set ${MIRROR_SETTING_LINK}.`,
+          CHANGE_FOLDER,
+        )
+        .then((choice) => {
+          if (choice === CHANGE_FOLDER) openMirrorFolderSetting();
+        });
+    }
   }
 
   /**
@@ -154,8 +281,8 @@ export class ExportManager {
    * persisted state, and re-fetch only what changed. Cancellable; a cancelled
    * run leaves a consistent partial mirror that the next sync completes.
    *
-   * @param silent when true, skip the "no workspace" warning and completion toast
-   *   (used for the automatic syncs on login / commit / abort).
+   * @param silent when true, skip the completion toast (used for the automatic
+   *   syncs on login / commit / abort). An unwritable mirror is reported regardless.
    */
   async exportSession(session: ActiveSession, silent = false): Promise<void> {
     if (!shouldSyncClasses(session.login)) {
@@ -166,14 +293,7 @@ export class ExportManager {
     }
 
     const sessionRoot = this.getSessionRoot(session);
-    if (!sessionRoot) {
-      if (!silent) {
-        vscode.window.showWarningMessage(
-          'No workspace folder open. Open a folder (File > Open Folder) or set `gemstone.exportPath` to enable class sync.',
-        );
-      }
-      return;
-    }
+    if (!sessionRoot || !this.ensureWritable(session, sessionRoot)) return;
 
     await vscode.window.withProgress(
       {
@@ -372,6 +492,9 @@ export class ExportManager {
         }
       },
     );
+    // Not before: at login it would land among the connect, tip and progress
+    // messages and be pushed out of view.
+    this.showNotices();
   }
 
   /** Re-sync after a commit or abort (another session's changes may be visible). */
@@ -487,10 +610,10 @@ export class ExportManager {
       this.writing = false;
     }
 
-    // Remove now-empty ancestor directories up to (and excluding) the workspace.
-    const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    // Remove now-empty ancestor directories up to (and excluding) the mirror folder.
+    const mirror = this.mirrorFolder();
     let dir = path.dirname(sessionRoot);
-    while (wsRoot && dir.startsWith(wsRoot) && dir !== wsRoot) {
+    while (mirror && dir.startsWith(mirror) && dir !== mirror) {
       try {
         if (fs.readdirSync(dir).length > 0) break;
         fs.rmdirSync(dir);
@@ -628,7 +751,57 @@ export class ExportManager {
   dispose(): void {
     for (const timer of this.refreshTimers.values()) clearTimeout(timer);
     this.refreshTimers.clear();
+    for (const id of [...this.assignedRoots.keys()]) this.releaseSession(id);
     this.logChannel?.dispose();
+  }
+}
+
+function openMirrorFolderSetting(): void {
+  void vscode.commands.executeCommand('workbench.action.openSettings', 'gemstone.mirrorFolder');
+}
+
+function readOwner(dir: string): OwnerRecord | 'unreadable' | undefined {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(path.join(dir, OWNER_FILE), 'utf-8');
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'ENOENT' ? undefined : 'unreadable';
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<OwnerRecord>;
+    if (typeof parsed.pid === 'number' && typeof parsed.host === 'string') {
+      return { pid: parsed.pid, host: parsed.host, sessionId: Number(parsed.sessionId) };
+    }
+  } catch {
+    /* fall through */
+  }
+  return 'unreadable';
+}
+
+// A record we can't read, or one from another machine (whose process we can't
+// probe), counts as held: the cost is a spare `_N` folder, never a shared one.
+function heldByAnotherProcess(owner: OwnerRecord | 'unreadable'): boolean {
+  if (owner === 'unreadable' || owner.host !== os.hostname()) return true;
+  if (owner.pid === process.pid) return false;
+  return isPidAlive(owner.pid);
+}
+
+/** Record this process as holding `dir`. Exported for tests. */
+export function writeOwner(
+  dir: string,
+  sessionId: number,
+  { replace }: { replace: boolean },
+): boolean {
+  const record: OwnerRecord = { pid: process.pid, host: os.hostname(), sessionId };
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, OWNER_FILE), JSON.stringify(record), {
+      encoding: 'utf-8',
+      flag: replace ? 'w' : 'wx',
+    });
+    return true;
+  } catch {
+    return false;
   }
 }
 

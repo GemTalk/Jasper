@@ -176,8 +176,8 @@ vi.mock('vscode', () => {
     },
     window: {
       showWarningMessage: vi.fn(),
-      showInformationMessage: vi.fn(),
-      showErrorMessage: vi.fn(),
+      showInformationMessage: vi.fn(async () => undefined),
+      showErrorMessage: vi.fn(async () => undefined),
       createOutputChannel: vi.fn(() => ({
         appendLine: vi.fn(),
         append: vi.fn(),
@@ -188,6 +188,8 @@ vi.mock('vscode', () => {
           await task({ report: vi.fn() }, { isCancellationRequested: false }),
       ),
     },
+    commands: { executeCommand: vi.fn() },
+    Uri: { file: (fsPath: string) => ({ fsPath }) },
     ProgressLocation: { Notification: 15 },
     __setConfigValue: (key: string, value: unknown) => {
       configValues[key] = value;
@@ -198,7 +200,7 @@ vi.mock('vscode', () => {
   };
 });
 
-import { ExportManager } from '../exportManager';
+import { ExportManager, writeOwner } from '../exportManager';
 import { ActiveSession } from '../sessionManager';
 import { GemStoneLogin } from '../loginTypes';
 import * as vscode from 'vscode';
@@ -240,19 +242,48 @@ function defaultImage() {
   };
 }
 
+const setConfig = (key: string, value: unknown) =>
+  (vscode as unknown as { __setConfigValue: (k: string, v: unknown) => void }).__setConfigValue(
+    key,
+    value,
+  );
+
+const setWorkspaceFolders = (paths: string[] | null) => {
+  (vscode.workspace as unknown as { workspaceFolders: unknown }).workspaceFolders = paths
+    ? paths.map((p) => ({ uri: { fsPath: p } }))
+    : null;
+};
+
+// The setting name in a message is a link that opens it in Settings.
+const MIRROR_SETTING_LINK =
+  '[gemstone.mirrorFolder](command:workbench.action.openSettings?%5B%22gemstone.mirrorFolder%22%5D)';
+
+function fakeMemento() {
+  const values = new Map<string, unknown>();
+  return {
+    get: <T>(key: string): T | undefined => values.get(key) as T | undefined,
+    update: async (key: string, value: unknown) => {
+      values.set(key, value);
+    },
+  };
+}
+
 describe('ExportManager (incremental sync)', () => {
   let manager: ExportManager;
   let tmpDir: string;
+  let mirrorDir: string;
+  let workspaceDir: string;
 
   beforeEach(() => {
     vi.clearAllMocks();
     h.setImage(defaultImage());
     h.reset();
-    manager = new ExportManager();
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gemstone-export-test-'));
-    (
-      vscode.workspace as unknown as { workspaceFolders: { uri: { fsPath: string } }[] }
-    ).workspaceFolders = [{ uri: { fsPath: tmpDir } }];
+    mirrorDir = path.join(tmpDir, 'storage', 'mirror');
+    workspaceDir = path.join(tmpDir, 'workspace');
+    fs.mkdirSync(workspaceDir);
+    setWorkspaceFolders([workspaceDir]);
+    manager = new ExportManager({ defaultMirrorDir: mirrorDir, memento: fakeMemento() });
   });
 
   afterEach(() => {
@@ -264,18 +295,271 @@ describe('ExportManager (incremental sync)', () => {
   const root = (s: ActiveSession) => manager.getSessionRoot(s)!;
 
   describe('path layout', () => {
-    it('keys the mirror by host/stone/user', () => {
+    it('keys the mirror by host/stone/user under the private storage folder', () => {
       const session = createMockSession();
-      expect(root(session)).toBe(
-        path.join(tmpDir, '.gemstone', 'localhost', 'gs64stone', 'DataCurator'),
-      );
+      expect(root(session)).toBe(path.join(mirrorDir, 'localhost', 'gs64stone', 'DataCurator'));
     });
 
     it('sanitizes unusual segments', () => {
       const session = createMockSession({ stone: 'weird/stone..name' });
       expect(root(session)).toBe(
-        path.join(tmpDir, '.gemstone', 'localhost', 'weird_stone..name', 'DataCurator'),
+        path.join(mirrorDir, 'localhost', 'weird_stone..name', 'DataCurator'),
       );
+    });
+
+    it('ignores the open folder', async () => {
+      const session = createMockSession();
+      await manager.exportSession(session);
+      expect(fs.existsSync(path.join(workspaceDir, '.gemstone'))).toBe(false);
+      expect(fs.existsSync(path.join(root(session), '1-UserGlobals', 'MyClass.gs'))).toBe(true);
+    });
+
+    it('syncs with no folder open', async () => {
+      setWorkspaceFolders(null);
+      const session = createMockSession();
+      await manager.exportSession(session);
+      expect(fs.existsSync(path.join(root(session), '1-UserGlobals', 'MyClass.gs'))).toBe(true);
+      expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('mirrorFolder setting', () => {
+    it('puts the mirror under a plain path, with Jasper adding host/stone/user', () => {
+      const custom = path.join(tmpDir, 'my-mirror');
+      setConfig('mirrorFolder', custom);
+      expect(root(createMockSession())).toBe(
+        path.join(custom, 'localhost', 'gs64stone', 'DataCurator'),
+      );
+    });
+
+    it('expands a leading ~ to the home directory', () => {
+      setConfig('mirrorFolder', '~/mirror');
+      expect(root(createMockSession())).toBe(
+        path.join(os.homedir(), 'mirror', 'localhost', 'gs64stone', 'DataCurator'),
+      );
+    });
+
+    it('reads a relative path against the home directory, not the open folder', () => {
+      setConfig('mirrorFolder', 'mirror');
+      expect(root(createMockSession())).toBe(
+        path.join(os.homedir(), 'mirror', 'localhost', 'gs64stone', 'DataCurator'),
+      );
+    });
+
+    it('takes placeholders literally', () => {
+      const custom = path.join(tmpDir, '{session}');
+      setConfig('mirrorFolder', custom);
+      expect(root(createMockSession())).toBe(
+        path.join(custom, 'localhost', 'gs64stone', 'DataCurator'),
+      );
+    });
+
+    it('no longer reads the retired exportPath setting', () => {
+      setConfig('exportPath', '{workspaceRoot}/smalltalk/{dictName}');
+      expect(root(createMockSession())).toBe(
+        path.join(mirrorDir, 'localhost', 'gs64stone', 'DataCurator'),
+      );
+    });
+  });
+
+  describe('a mirror folder already in use', () => {
+    const second = () => fakeActiveSessionWithId(2);
+
+    function fakeActiveSessionWithId(id: number): ActiveSession {
+      const s = createMockSession();
+      return Object.assign(s, { id });
+    }
+
+    it('gives a second live session with the same login the next free _N folder', () => {
+      const first = createMockSession();
+      const base = root(first);
+      expect(root(second())).toBe(`${base}_2`);
+    });
+
+    it('keeps a session on the folder it was given', () => {
+      const first = createMockSession();
+      const s2 = second();
+      const assigned = root(s2);
+      root(first);
+      expect(root(s2)).toBe(assigned);
+    });
+
+    it('reuses the lowest free folder once its session is released', () => {
+      const first = createMockSession();
+      const base = root(first);
+      expect(root(second())).toBe(`${base}_2`);
+      manager.releaseSession(first.id);
+      expect(root(fakeActiveSessionWithId(3))).toBe(base);
+    });
+
+    it('skips a folder held by another live process', () => {
+      const base = path.join(mirrorDir, 'localhost', 'gs64stone', 'DataCurator');
+      fs.mkdirSync(base, { recursive: true });
+      // The test runner's parent is alive and is not this process.
+      fs.writeFileSync(
+        path.join(base, '.jasper-owner.json'),
+        JSON.stringify({ pid: process.ppid, host: os.hostname(), sessionId: 1 }),
+      );
+      expect(root(createMockSession())).toBe(`${base}_2`);
+    });
+
+    it('takes over a folder whose holder has exited', () => {
+      const base = path.join(mirrorDir, 'localhost', 'gs64stone', 'DataCurator');
+      fs.mkdirSync(base, { recursive: true });
+      fs.writeFileSync(
+        path.join(base, '.jasper-owner.json'),
+        JSON.stringify({ pid: 2 ** 22 + 12345, host: os.hostname(), sessionId: 1 }),
+      );
+      expect(root(createMockSession())).toBe(base);
+    });
+
+    it('treats an unreadable holder record as held', () => {
+      const base = path.join(mirrorDir, 'localhost', 'gs64stone', 'DataCurator');
+      fs.mkdirSync(base, { recursive: true });
+      fs.writeFileSync(path.join(base, '.jasper-owner.json'), '{not json');
+      expect(root(createMockSession())).toBe(`${base}_2`);
+    });
+
+    it('does not overwrite a holder record that appears after the check', () => {
+      // Two windows logging in at once: the other one writes its record between
+      // our check and our write. An exclusive create loses that race cleanly.
+      const dir = path.join(tmpDir, 'race');
+      fs.mkdirSync(dir);
+      const theirs = JSON.stringify({ pid: process.ppid, host: os.hostname(), sessionId: 9 });
+      fs.writeFileSync(path.join(dir, '.jasper-owner.json'), theirs);
+      expect(writeOwner(dir, 1, { replace: false })).toBe(false);
+      expect(fs.readFileSync(path.join(dir, '.jasper-owner.json'), 'utf-8')).toBe(theirs);
+    });
+
+    it('releases its holder record on release', () => {
+      const first = createMockSession();
+      const base = root(first);
+      expect(fs.existsSync(path.join(base, '.jasper-owner.json'))).toBe(true);
+      manager.releaseSession(first.id);
+      expect(fs.existsSync(path.join(base, '.jasper-owner.json'))).toBe(false);
+    });
+
+    it('shows no message when it moves a session to _N', async () => {
+      root(createMockSession());
+      await manager.exportSession(second(), true);
+      expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+      expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('a mirror folder that cannot be written', () => {
+    let blocker: string;
+
+    beforeEach(() => {
+      // A file where a directory has to go: mkdir fails for every user, root included.
+      blocker = path.join(tmpDir, 'blocked');
+      fs.writeFileSync(blocker, '');
+      setConfig('mirrorFolder', blocker);
+    });
+
+    it('says so plainly, even on an automatic sync', async () => {
+      await manager.exportSession(createMockSession(), true);
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining(blocker),
+        expect.anything(),
+      );
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining(MIRROR_SETTING_LINK),
+        expect.anything(),
+      );
+    });
+
+    it('says it once per session, not on every sync', async () => {
+      const session = createMockSession();
+      await manager.exportSession(session, true);
+      await manager.refreshSession(session);
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not throw', async () => {
+      await expect(manager.exportSession(createMockSession(), true)).resolves.toBeUndefined();
+    });
+  });
+
+  describe('first-login notice', () => {
+    const infoCalls = () =>
+      (vscode.window.showInformationMessage as unknown as { mock: { calls: unknown[][] } }).mock
+        .calls;
+    const noticeCalls = () => infoCalls().filter((c) => String(c[0]).includes('read-only copy'));
+
+    it('says where the mirror is and what it is for, once', async () => {
+      const session = createMockSession();
+      await manager.exportSession(session, true);
+      await manager.refreshSession(session);
+      expect(noticeCalls()).toHaveLength(1);
+      const [text, ...buttons] = noticeCalls()[0];
+      expect(text).toContain(mirrorDir);
+      expect(text).toContain(MIRROR_SETTING_LINK);
+      expect(buttons).toEqual(['Open Folder', 'Change…']);
+    });
+
+    it('waits until the sync has finished, so it is not buried among the login messages', async () => {
+      const order: string[] = [];
+      vi.mocked(vscode.window.withProgress).mockImplementationOnce(async (_opts, task) => {
+        order.push('sync started');
+        await task({ report: vi.fn() }, { isCancellationRequested: false } as never);
+        order.push('sync finished');
+      });
+      vi.mocked(vscode.window.showInformationMessage).mockImplementation(async (text: string) => {
+        if (text.includes('read-only copy')) order.push('notice');
+        return undefined;
+      });
+      await manager.exportSession(createMockSession(), true);
+      expect(order).toEqual(['sync started', 'sync finished', 'notice']);
+    });
+
+    it('is not repeated by a new manager sharing the same stored state', async () => {
+      const memento = fakeMemento();
+      const a = new ExportManager({ defaultMirrorDir: mirrorDir, memento });
+      await a.exportSession(createMockSession(), true);
+      a.dispose();
+      const b = new ExportManager({ defaultMirrorDir: mirrorDir, memento });
+      await b.exportSession(createMockSession(), true);
+      b.dispose();
+      expect(noticeCalls()).toHaveLength(1);
+    });
+
+    it('mentions an old .gemstone folder in the open folder, without deleting it', async () => {
+      fs.mkdirSync(path.join(workspaceDir, '.gemstone'));
+      await manager.exportSession(createMockSession(), true);
+      expect(noticeCalls()[0][0]).toContain(path.join(workspaceDir, '.gemstone'));
+      expect(fs.existsSync(path.join(workspaceDir, '.gemstone'))).toBe(true);
+    });
+
+    it('does not mention an old folder when there is none', async () => {
+      await manager.exportSession(createMockSession(), true);
+      expect(noticeCalls()[0][0]).not.toContain('.gemstone');
+    });
+
+    it('is not shown when class sync is off for the login', async () => {
+      await manager.exportSession(createMockSession({ sync_classes: false }), true);
+      expect(noticeCalls()).toHaveLength(0);
+    });
+  });
+
+  describe('retired exportPath setting', () => {
+    const retiredCalls = () =>
+      (
+        vscode.window.showInformationMessage as unknown as { mock: { calls: unknown[][] } }
+      ).mock.calls.filter((c) => String(c[0]).includes('gemstone.exportPath'));
+
+    it('says once that the old value is no longer used', async () => {
+      setConfig('exportPath', '{workspaceRoot}/smalltalk/{dictName}');
+      const session = createMockSession();
+      await manager.exportSession(session, true);
+      await manager.refreshSession(session);
+      expect(retiredCalls()).toHaveLength(1);
+      expect(retiredCalls()[0][0]).toContain(MIRROR_SETTING_LINK);
+    });
+
+    it('says nothing when exportPath was never set', async () => {
+      await manager.exportSession(createMockSession(), true);
+      expect(retiredCalls()).toHaveLength(0);
     });
   });
 
@@ -388,22 +672,6 @@ describe('ExportManager (incremental sync)', () => {
       const session = createMockSession({ sync_classes: true });
       await manager.exportSession(session);
       expect(fs.existsSync(path.join(root(session), '1-UserGlobals', 'MyClass.gs'))).toBe(true);
-    });
-  });
-
-  describe('no workspace', () => {
-    it('warns on an explicit (non-silent) sync', async () => {
-      (vscode.workspace as unknown as { workspaceFolders: null }).workspaceFolders = null;
-      await manager.exportSession(createMockSession());
-      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
-        expect.stringContaining('No workspace folder'),
-      );
-    });
-
-    it('stays silent on an automatic (silent) sync', async () => {
-      (vscode.workspace as unknown as { workspaceFolders: null }).workspaceFolders = null;
-      await manager.refreshSession(createMockSession());
-      expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
     });
   });
 
@@ -571,8 +839,9 @@ describe('ExportManager (incremental sync)', () => {
       expect(fs.existsSync(r)).toBe(true);
       manager.deleteSessionFiles(session);
       expect(fs.existsSync(r)).toBe(false);
-      // .gemstone/localhost/gs64stone now empty → cleaned up
-      expect(fs.existsSync(path.join(tmpDir, '.gemstone'))).toBe(false);
+      // localhost/gs64stone now empty → cleaned up, but not the mirror folder itself
+      expect(fs.existsSync(path.join(mirrorDir, 'localhost'))).toBe(false);
+      expect(fs.existsSync(mirrorDir)).toBe(true);
     });
 
     it('is a no-op when the mirror does not exist', () => {
@@ -580,39 +849,31 @@ describe('ExportManager (incremental sync)', () => {
     });
   });
 
-  describe('exportPath setting', () => {
-    it('uses a custom template with variable substitution', async () => {
-      (vscode as unknown as { __setConfigValue: (k: string, v: unknown) => void }).__setConfigValue(
-        'exportPath',
-        '{workspaceRoot}/smalltalk/{dictName}',
-      );
-      const session = createMockSession();
-      await manager.exportSession(session);
-      const r = root(session);
-      expect(r).toBe(path.join(tmpDir, 'smalltalk'));
-      expect(fs.existsSync(path.join(r, 'UserGlobals', 'MyClass.gs'))).toBe(true);
-    });
-
-    it('lists all variables and documents the default in package.json', () => {
+  describe('package.json', () => {
+    const settings = () => {
       const pkg = JSON.parse(
         fs.readFileSync(path.resolve(__dirname, '../../../package.json'), 'utf-8'),
       );
       const group = pkg.contributes.configuration.find(
-        (g: { properties?: Record<string, unknown> }) => g.properties?.['gemstone.exportPath'],
+        (g: { properties?: Record<string, unknown> }) => g.properties?.['gemstone.mirrorFolder'],
       );
-      const desc = group.properties['gemstone.exportPath'].description;
-      for (const v of [
-        '{workspaceRoot}',
-        '{session}',
-        '{host}',
-        '{stone}',
-        '{user}',
-        '{index}',
-        '{dictName}',
-      ]) {
-        expect(desc).toContain(v);
-      }
-      expect(desc).toContain('.gemstone');
+      return group.properties as Record<
+        string,
+        { description?: string; markdownDescription?: string; markdownDeprecationMessage?: string }
+      >;
+    };
+
+    it('describes mirrorFolder as a plain folder, with no placeholders', () => {
+      const s = settings()['gemstone.mirrorFolder'];
+      const text = s.markdownDescription ?? s.description ?? '';
+      expect(text).not.toMatch(/\{\w+\}/);
+      expect(text).not.toContain('Go to Definition');
+    });
+
+    it('marks exportPath as no longer used, pointing at mirrorFolder', () => {
+      expect(settings()['gemstone.exportPath'].markdownDeprecationMessage).toContain(
+        'gemstone.mirrorFolder',
+      );
     });
   });
 });

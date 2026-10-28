@@ -30,7 +30,7 @@ const theirs: McpOwnership = {
   },
 };
 
-/** An owner whose window cannot be reached by opening its recorded path. */
+/** An owner whose recorded path is only the first folder of its workspace. */
 const theirsMultiRoot: McpOwnership = {
   kind: 'other',
   info: {
@@ -335,28 +335,41 @@ describe('asking another window to release', () => {
     expect(h.warns[0].message).toContain('their-proj (Workspace)');
   });
 
-  it('does not offer to open an owner that opening cannot reach', async () => {
-    // A multi-root owner's recorded path is only its first folder, so the
-    // action would open a duplicate window and look like it had worked.
+  it('offers the switch for an owner whose folder cannot be reopened', async () => {
+    // The window list reaches any window, multi-root or folderless alike.
     const h = harness({ startSucceeds: false, ownership: () => theirsMultiRoot });
 
     await h.controller.requestRelease();
 
     expect(h.warns).toHaveLength(1);
-    expect(h.warns[0].actions).toEqual([]);
-    expect(h.deps.revealOwner).not.toHaveBeenCalled();
+    expect(h.warns[0].actions).toEqual(['Switch to That Window']);
   });
 
-  it('offers to open the window that ignored it', async () => {
+  it('offers to switch to the window that ignored it', async () => {
     const h = harness({
       startSucceeds: false,
       ownership: () => theirs,
-      warnAnswers: ['Open That Window'],
+      warnAnswers: ['Switch to That Window'],
     });
 
     await h.controller.requestRelease();
 
-    expect(h.deps.revealOwner).toHaveBeenCalledWith('/their/workspace');
+    expect(h.deps.revealOwner).toHaveBeenCalledWith();
+  });
+
+  it('names a holder with no folder open by the login it serves', async () => {
+    const h = harness({
+      startSucceeds: false,
+      ownership: () => ({
+        kind: 'other',
+        info: { ...theirs.info, workspacePath: '(no workspace)', selectedSession: 'bar (id 3)' },
+      }),
+    });
+
+    await h.controller.claim();
+
+    expect(h.warns[0].message).toContain('bar (id 3)');
+    expect(h.warns[0].message).not.toContain('(no workspace)');
   });
 
   it('just claims when nobody holds the server', async () => {

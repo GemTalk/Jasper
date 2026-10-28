@@ -20,8 +20,7 @@ export type McpState = 'disabled' | 'this' | 'other' | 'none';
 export interface McpOwnerReport {
   /**
    * What the owning window's title bar says. Absent from a sidecar written by
-   * an older Jasper, and from a window with no folder open — `workspacePath`
-   * is the fallback, not the identity.
+   * an older Jasper, and from a window with no folder open.
    */
   workspaceName?: string;
   workspacePath: string;
@@ -31,50 +30,30 @@ export interface McpOwnerReport {
   claimedAt: string;
   /** The owning window's selected session, as it labelled it. */
   selectedSession?: string;
-  /** Whether opening `workspacePath` would actually reach that window. */
-  canReveal: boolean;
-  /** Why it would not, when `canReveal` is false — shown rather than guessed at. */
-  revealBlockedReason?: string;
+  /** Which entry to pick in VS Code's window list; see {@link ownerLookFor}. */
+  lookFor: string;
 }
 
 /**
- * Whether opening the owner's workspace path would reach the owner's *window*.
- *
- * VS Code gives an extension no way to focus another window; the only lever is
- * `vscode.openFolder`, which identifies a window by the folder it has open. So
- * this is only ever offered where that identification holds, and withheld —
- * with a reason — where we can see that it does not. Opening a duplicate
- * window is a worse outcome than no button: it looks like the switch worked.
- *
- * The case we cannot see is one directory reachable by two paths — a symlink
- * or a bind mount, so that `/a/project` and `/mnt/a/project` are the same
- * place. Each window records the path it was opened with, and nothing here
- * can tell the two apart, so the jump opens a second window. Ask It to
- * Release needs no navigation and is unaffected.
+ * What to pick in VS Code's window list to reach the owning window. Extensions
+ * cannot focus another window or read its title, so the switch opens the list
+ * and this says which entry it is. The title shows the workspace name; with no
+ * name to go on, the GemStone login is what the user will recognise.
  */
-export function canRevealOwnerWindow(info: {
+export function ownerLookFor(info: {
+  workspaceName?: string;
   workspacePath: string;
   workspaceFile?: string;
-}): { canReveal: true } | { canReveal: false; reason: string } {
-  if (!info.workspacePath || info.workspacePath === NO_WORKSPACE_RECORDED) {
-    return {
-      canReveal: false,
-      reason:
-        'That window has no folder open, so there is nothing to open to reach it. Find it by ' +
-        'its title bar, or use Ask It to Release, which needs no navigation.',
-    };
+  selectedSession?: string;
+}): string {
+  if (info.workspaceName) return `the window titled "${info.workspaceName}"`;
+  const noFolder = !info.workspacePath || info.workspacePath === NO_WORKSPACE_RECORDED;
+  // A multi-root workspace's path is only its first folder, which the user won't recognise.
+  if ((noFolder || info.workspaceFile) && info.selectedSession) {
+    return `the window logged in to ${info.selectedSession}`;
   }
-  if (info.workspaceFile) {
-    return {
-      canReveal: false,
-      reason:
-        'That window has a multi-root workspace open, and the path above is only its first ' +
-        'folder — opening it would give you a new window with that one folder rather than ' +
-        'switching to the owner. Find it by its title bar, or use Ask It to Release, which ' +
-        'needs no navigation.',
-    };
-  }
-  return { canReveal: true };
+  if (noFolder) return 'the window with no folder open';
+  return `the window with ${info.workspacePath} open`;
 }
 
 export interface McpReport {
@@ -107,16 +86,14 @@ export interface McpReport {
 
 /**
  * Reduce ownership to what every MCP surface renders. `ownership` is undefined
- * when the MCP surface isn't running in this window at all — `jasper.mcp.enabled`
- * off, or no folder open.
+ * when the MCP surface isn't running in this window at all, because
+ * `jasper.mcp.enabled` is off.
  */
 export function mcpReport(ownership: McpOwnership | undefined): McpReport {
   if (!ownership) {
     return {
       state: 'disabled',
-      detail:
-        'MCP is not running in this window. Either jasper.mcp.enabled is off, or no folder ' +
-        'is open — Jasper only claims the server for a window with a workspace.',
+      detail: 'MCP is not running in this window, because jasper.mcp.enabled is off.',
     };
   }
 
@@ -141,7 +118,6 @@ export function mcpReport(ownership: McpOwnership | undefined): McpReport {
   if (ownership.kind === 'other') {
     const info: McpOwnerInfo = ownership.info;
     const { workspaceName, workspacePath, workspaceFile, pid, claimedAt, selectedSession } = info;
-    const reveal = canRevealOwnerWindow(info);
     return {
       state: 'other',
       headline: 'MCP: other window',
@@ -160,8 +136,7 @@ export function mcpReport(ownership: McpOwnership | undefined): McpReport {
         pid,
         claimedAt,
         ...(selectedSession ? { selectedSession } : {}),
-        canReveal: reveal.canReveal,
-        ...(reveal.canReveal ? {} : { revealBlockedReason: reveal.reason }),
+        lookFor: ownerLookFor(info),
       },
     };
   }

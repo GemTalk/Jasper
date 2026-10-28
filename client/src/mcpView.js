@@ -26,6 +26,9 @@
 
   // Text the pane kept on hover, now visible. Kept together so the wording is
   // in one place rather than scattered through the renderers.
+  // Must match NO_WORKSPACE_RECORDED in mcpOwnerSidecar.ts; a webview script can't import it.
+  var NO_WORKSPACE_RECORDED = '(no workspace)';
+
   var HINTS = {
     socket:
       'Local stdio socket the Claude Code proxy connects to. One per machine, so this is ' +
@@ -48,9 +51,7 @@
       'Claude makes fails — even though sessions are logged in here.',
     ownerWindow:
       'What that window’s title bar says — how to pick it out of a row of VS Code windows.',
-    ownerWorkspace:
-      'Click to open that window. A bound socket is only released by its owner, so ' +
-      'Stop MCP has to be run there — or use Ask It to Release, which has it let go from here.',
+    ownerWorkspace: 'The folder that window has open.',
     ownerWorkspaceFile:
       'That window has a multi-root workspace open; this is the .code-workspace file it was ' +
       'opened from.',
@@ -96,13 +97,8 @@
   }
 
   /**
-   * A link-styled value. Every one of these does what its appearance promises:
-   * the socket path and HTTPS URL copy themselves, because pasting them
-   * elsewhere is their whole purpose, and the owning window's workspace path
-   * opens that window, because that is what a path to another window reads as —
-   * and is only rendered as a link where opening it would in fact reach that
-   * window (see canRevealOwnerWindow); elsewhere it is plain text with the
-   * reason beneath it.
+   * A link-styled value. The socket path and HTTPS URL copy themselves, because
+   * pasting them elsewhere is their whole purpose.
    */
   function linkValue(value, title, onClick) {
     return button(value, 'link mono', onClick, title);
@@ -173,23 +169,22 @@
           HINTS.askRelease,
         ),
       );
-      // Withheld where opening the path would not reach that window; the
-      // Workspace row says why, and Ask It to Release works regardless.
-      if (owner.canReveal) {
-        actions.appendChild(
-          button(
-            'Open Owning Window',
-            'secondary',
-            function () {
-              vscode.postMessage({
-                command: 'revealOwner',
-                workspacePath: owner.workspacePath,
-              });
-            },
-            HINTS.ownerWorkspace,
-          ),
-        );
-      }
+      // Extensions cannot focus another window, so this opens VS Code's window
+      // list and the hint says which entry to pick.
+      actions.appendChild(
+        button(
+          'Switch to Owning Window…',
+          'secondary',
+          function () {
+            vscode.postMessage({ command: 'revealOwner' });
+          },
+          'Opens VS Code’s window list. Pick ' +
+            owner.lookFor +
+            '. A bound socket is only ' +
+            'released by its owner, so Stop MCP has to be run there — or use Ask It to Release, ' +
+            'which has it let go from here.',
+        ),
+      );
     }
 
     actions.appendChild(
@@ -236,20 +231,14 @@
     if (owner.workspaceName) {
       row(dl, 'Window', textValue(owner.workspaceName), HINTS.ownerWindow);
     }
-    if (owner.canReveal) {
-      row(
-        dl,
-        'Workspace',
-        linkValue(owner.workspacePath, 'Click to open this window', function () {
-          vscode.postMessage({ command: 'revealOwner', workspacePath: owner.workspacePath });
-        }),
-        HINTS.ownerWorkspace,
-      );
-    } else {
-      // Offering the jump where it would open a duplicate window is worse than
-      // not offering it: it looks like the switch worked.
-      row(dl, 'Workspace', textValue(owner.workspacePath), owner.revealBlockedReason);
-    }
+    row(
+      dl,
+      'Workspace',
+      textValue(
+        owner.workspacePath === NO_WORKSPACE_RECORDED ? 'No folder open' : owner.workspacePath,
+      ),
+      HINTS.ownerWorkspace,
+    );
     if (owner.workspaceFile) {
       row(dl, 'Workspace file', textValue(owner.workspaceFile), HINTS.ownerWorkspaceFile);
     }

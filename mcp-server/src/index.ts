@@ -127,7 +127,7 @@ export function runProxyMode(socketPath: string): void {
   socket.on('error', (err) => {
     process.stderr.write(
       `MCP proxy: cannot connect to Jasper socket at ${socketPath}: ${err.message}\n` +
-        'Is Jasper running with a workspace folder open?\n',
+        'Is Jasper running, with jasper.mcp.enabled on?\n',
     );
     process.exit(1);
   });

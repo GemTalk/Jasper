@@ -87,9 +87,9 @@ The sidecar also records the owner's `workspaceName` (`vscode.workspace.name` �
 what its title bar shows) and its `workspaceFile` when it has a multi-root
 workspace open. Both are optional: a sidecar written by an older Jasper carries
 neither, and a window with no folder open has no name. They exist because a
-folder path does not identify a window to a person, and because
-`workspaceFile`'s presence is the one detectable sign that the recorded path is
-not the window (see **Open Owning Window** below).
+folder path does not identify a window to a person — nor does a multi-root
+workspace's recorded path, which is only its first folder (see **Switch to
+Owning Window** below).
 
 - **A passive window can ask for it.** `mcp.release-request.json`, written
   beside the sidecar, names the pid being asked; the owner is already watching
@@ -135,18 +135,12 @@ It is also where the actions are, including the two that need each other:
 - **Ask It to Release** is the remote form of that: it has the *other* window
   let go, then claims here. This is the action offered when another window
   holds the server, because Claim alone cannot succeed against a bound socket.
-- **Open Owning Window** switches to the window currently serving MCP, by
-  opening its workspace folder — VS Code focuses an already-open folder rather
-  than opening it twice.
-
-  **It is offered only where that actually works.** An extension has no API to
-  focus another window; `vscode.openFolder` is the only lever, and it
-  identifies a window by the folder it has open. Where the sidecar shows that
-  identification does not hold — an owner with no folder open, or a multi-root
-  workspace whose recorded `workspacePath` is merely its first folder — the
-  button and the link are withheld and the tab says why. Opening a duplicate
-  window is a worse outcome than no button, because it looks like the switch
-  worked.
+- **Switch to Owning Window…** opens VS Code's own window list
+  (`workbench.action.switchWindow`), and the button's hint says which entry to
+  pick: the window's title when it recorded one, otherwise the GemStone login it
+  serves. An extension has no API to focus another window or read its title, so
+  this is the one route that reaches every owner — including one with no folder
+  open and a multi-root workspace, which reopening a recorded folder could not.
 
   One case cannot be detected: one directory reachable by two paths — a symlink
   or a bind mount, so that `/a/project` and `/mnt/a/project` are the same place.
