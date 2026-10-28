@@ -81,13 +81,12 @@ export class StoneSessionRowItem extends vscode.TreeItem {
               ? 'gear'
               : 'account',
     );
-    // Each is offered only where it can work, and neither on GemStone's own
-    // gems. Stop isn't offered on this window's own sessions, whose Log Out
-    // stops their run first; Kill is, once a stopped run holds one, for a gem
-    // nothing else can end.
-    const stoppable = !jasperSession && !systemGem;
-    const canStop = stoppable && !!mayStop;
-    const canKill = !!canSignalGem && !systemGem && (!jasperSession || stuck);
+    // Each is offered where it can work, and neither on GemStone's own gems.
+    // Both are offered on this window's own sessions too, whose state Jasper
+    // can't always judge: the user decides, and the Jasper session is logged
+    // out after.
+    const canStop = !systemGem && !!mayStop;
+    const canKill = !!canSignalGem && !systemGem;
     this.contextValue = `stoneSession${canStop ? '.canStop' : ''}${canKill ? '.canKill' : ''}`;
 
     const tooltip = new vscode.MarkdownString();
@@ -108,9 +107,13 @@ export class StoneSessionRowItem extends vscode.TreeItem {
           '\n\n',
       );
     } else if (jasperSession) {
-      tooltip.appendMarkdown(`Jasper session ${jasperSession.id} in this window.\n\n`);
+      tooltip.appendMarkdown(
+        `Jasper session ${jasperSession.id} in this window. Stop or Kill here ends it ` +
+          "without asking about uncommitted changes, and logs it out; the session row's " +
+          'Logout asks first.\n\n',
+      );
     }
-    if (stoppable && !mayStop) {
+    if (!systemGem && !mayStop) {
       tooltip.appendMarkdown(
         `Stopping it needs the SystemControl privilege, which ${parent.login.gs_user} ` +
           "doesn't have.\n\n",
@@ -160,6 +163,8 @@ export interface StopStoneSessionDeps {
   refresh(item: StoneSessionsItem): void;
   /** Kill, for the gem a stop couldn't end. */
   kill(row: StoneSessionRowItem): Promise<void>;
+  /** Drop this window's Jasper session whose gem was stopped. */
+  logout(jasperId: number): Promise<unknown>;
 }
 
 export const STOP_SESSION = 'Stop Session';
@@ -179,9 +184,11 @@ export async function stopStoneSessionCommand(
   deps: StopStoneSessionDeps,
 ): Promise<void> {
   const { id, user, gemPid, host } = row.stoneSession;
+  const { jasperSession } = row.context;
   const who = `session ${id} (${user || 'unknown user'} on ${host}, gem ${gemPid})`;
   const confirmed = await vscode.window.showWarningMessage(
-    `Stop ${who}? Anything it hasn't committed is lost.`,
+    `Stop ${who}? Anything it hasn't committed is lost.` +
+      (jasperSession ? ` Jasper session ${jasperSession.id} is logged out.` : ''),
     { modal: true },
     STOP_SESSION,
   );
@@ -202,10 +209,11 @@ export async function stopStoneSessionCommand(
         : `Session ${id} could not be stopped (${e instanceof Error ? e.message : String(e)}). ` +
             administrator,
     );
-    return;
-  } finally {
     deps.refresh(row.parent);
+    return;
   }
+  if (jasperSession && outcome !== 'stuck') await logOutAfter(jasperSession, deps);
+  deps.refresh(row.parent);
   switch (outcome) {
     case 'ended':
       void vscode.window.showInformationMessage(`Session ${id} is stopped.`);
@@ -269,13 +277,7 @@ export async function killStoneSessionCommand(
     deps.refresh(row.parent);
     return;
   }
-  if (jasperSession && outcome !== 'stuck') {
-    try {
-      await deps.logout(jasperSession.id);
-    } catch (e) {
-      void vscode.window.showErrorMessage(e instanceof Error ? e.message : String(e));
-    }
-  }
+  if (jasperSession && outcome !== 'stuck') await logOutAfter(jasperSession, deps);
   deps.refresh(row.parent);
   switch (outcome) {
     case 'ended':
@@ -289,5 +291,17 @@ export async function killStoneSessionCommand(
         `Session ${id} is still on the stone after its gem, process ${gemPid}, was sent SIGKILL. ` +
           'Check that process on this machine.',
       );
+  }
+}
+
+/** Log out this window's Jasper session whose gem has just been ended. */
+async function logOutAfter(
+  session: ActiveSession,
+  deps: { logout(jasperId: number): Promise<unknown> },
+): Promise<void> {
+  try {
+    await deps.logout(session.id);
+  } catch (e) {
+    void vscode.window.showErrorMessage(e instanceof Error ? e.message : String(e));
   }
 }

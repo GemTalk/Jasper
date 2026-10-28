@@ -1095,6 +1095,7 @@ export function activate(context: vscode.ExtensionContext) {
         transientLogin: transientLoginOn,
         refresh: (item) => treeProvider.refreshStoneSessions(item),
         kill: killRow,
+        logout: (id) => sessionManager.logout(id, true),
       }),
     ),
     vscode.commands.registerCommand('gemstone.killStoneSession', killRow),

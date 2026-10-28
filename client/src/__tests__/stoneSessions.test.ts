@@ -134,6 +134,7 @@ describe('Stop Session', () => {
       transientLogin: vi.fn(),
       refresh: vi.fn(),
       kill: vi.fn(async () => {}),
+      logout: vi.fn(async () => true),
     };
   }
 
@@ -165,6 +166,42 @@ describe('Stop Session', () => {
     expect(d.transientLogin).toHaveBeenCalledWith(through);
     expect(window.showInformationMessage).toHaveBeenCalledWith('Session 7 is stopped.');
     expect(d.refresh).toHaveBeenCalledWith(parent);
+  });
+
+  it("logs out this window's own session once its gem is stopped, and says so first", async () => {
+    const mine = new StoneSessionRowItem(parent, target, 100, {
+      stuck: false,
+      mayStop: true,
+      jasperSession: { id: 3 } as ActiveSession,
+    });
+    vi.mocked(window.showWarningMessage).mockResolvedValueOnce(STOP_SESSION);
+    const d = deps(async () => 'ended');
+
+    await stopStoneSessionCommand(mine, d);
+
+    expect(window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringMatching(/lost\. Jasper session 3 is logged out\.$/),
+      { modal: true },
+      STOP_SESSION,
+    );
+    expect(d.logout).toHaveBeenCalledWith(3);
+    expect(d.logout.mock.invocationCallOrder[0]).toBeLessThan(
+      d.refresh.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("leaves this window's session logged in when its gem would not stop", async () => {
+    const mine = new StoneSessionRowItem(parent, target, 100, {
+      stuck: false,
+      mayStop: true,
+      jasperSession: { id: 3 } as ActiveSession,
+    });
+    vi.mocked(window.showWarningMessage).mockResolvedValueOnce(STOP_SESSION);
+    const d = deps(async () => 'stuck');
+
+    await stopStoneSessionCommand(mine, d);
+
+    expect(d.logout).not.toHaveBeenCalled();
   });
 
   it('says so when the session had already ended', async () => {

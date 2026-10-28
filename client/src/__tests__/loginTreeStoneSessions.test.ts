@@ -133,10 +133,10 @@ describe('All sessions on a stone, in Logins & Sessions', () => {
     expect(ewinger.description).toBe('gem 39811 · thor · 2h');
   });
 
-  it("marks this window's own session, and offers Stop only on other people's", () => {
+  it("marks this window's own session, and offers Stop on it as on anyone's but GemStone's", () => {
     const [mine, other, system] = rows();
     expect(mine.description).toContain('Jasper session 1');
-    expect(mine.contextValue).toBe('stoneSession');
+    expect(mine.contextValue).toBe('stoneSession.canStop.canKill');
     expect(other.contextValue).toBe('stoneSession.canStop');
     expect(system.description).toContain('system: symbolgem');
     expect(system.contextValue).toBe('stoneSession');
@@ -151,14 +151,15 @@ describe('All sessions on a stone, in Logins & Sessions', () => {
     expect(system.contextValue).toBe('stoneSession');
   });
 
-  it("offers Kill on this window's own session only once a stopped run holds it", () => {
+  // Jasper can't always tell a healthy session from a stuck one, so the user decides.
+  it("offers Kill on this window's own session whether or not a stopped run holds it", () => {
     const idle = rows()[0];
     stuck.add(1);
 
     const held = rows()[0];
 
-    expect(idle.contextValue).toBe('stoneSession');
-    expect(held.contextValue).toBe('stoneSession.canKill');
+    expect(idle.contextValue).toBe('stoneSession.canStop.canKill');
+    expect(held.contextValue).toBe('stoneSession.canStop.canKill');
   });
 
   it('offers Stop only to a login with SystemControl, and says why not', () => {
