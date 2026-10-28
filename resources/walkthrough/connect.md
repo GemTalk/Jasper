@@ -11,7 +11,10 @@ order the login editor presents them:
 1. Open the **GemStone** view in the Activity Bar (the GemStone icon on the left).
 2. In **Logins & Sessions**, click **Add a Login** to open the login editor.
 3. Fill in the fields, top to bottom:
-   - **GemStone Version** — the version whose GCI client library to use.
+   - **GemStone Version** — the version whose GCI client library to use. For one
+     marked _(not yet downloaded)_, **Download files** under the dropdown fetches
+     just its client libraries, no server install. If a version has none, the
+     note under the dropdown says what to do instead.
    - **Gem Host** — the machine the stone runs on (`localhost` for a local stone).
    - **Stone** — the stone's name (e.g. `gs64stone`).
    - **NetLDI (name or port)** — a NetLDI service name (e.g. `gs64ldi`) or a port

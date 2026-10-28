@@ -12,7 +12,8 @@ import * as path from 'path';
 //      (no item) it throws and nothing happens. Creating a new login is
 //      `gemstone.addLogin`.
 // These tests read the real package.json and guard both, plus keep the Reset
-// command's title aligned with how the walkthrough actually re-triggers.
+// command's title aligned with how the walkthrough actually re-triggers, and keep
+// the connect page naming the login editor's download button as the editor does.
 
 describe('Getting Started walkthrough content', () => {
   const repoRoot = path.resolve(__dirname, '..', '..', '..');
@@ -116,6 +117,19 @@ describe('Getting Started walkthrough content', () => {
   it('offers Quick Setup and a new database from the Databases view welcome', () => {
     expect(databasesWelcome?.contents).toContain('command:gemstone.quickSetup');
     expect(databasesWelcome?.contents).toContain('command:gemstone.newDatabase');
+  });
+
+  // The page tells a remote user which login-editor button fetches a version's
+  // client libraries, so it has to name the button the editor really shows.
+  it('names the login editor’s download button on the connect page as the editor labels it', () => {
+    const page = fs.readFileSync(path.join(repoRoot, 'resources/walkthrough/connect.md'), 'utf8');
+    const editorHtml = fs.readFileSync(
+      path.join(repoRoot, 'client/src/loginEditorHtml.ts'),
+      'utf8',
+    );
+    const button = /id="downloadVersionBtn"[^>]*>([^<]+)</.exec(editorHtml)?.[1];
+    expect(button).toBeDefined();
+    expect(page).toContain(`**${button}**`);
   });
 
   // Reset re-arms two first-run surfaces: the walkthrough (auto-opens on startup)

@@ -57,6 +57,8 @@ export class ActiveSession {
   // GciTsCallInProgress can't answer for non-blocking calls (it answers 0 even
   // while one runs, a libgcits bug confirmed by GemTalk), so the session keeps
   // its own count of what GemStone would refuse a call for. See `isBusy`.
+  // The same count keeps the non-blocking poll and read off a session a worker
+  // owns, where they crash the process instead: see `handleUnlessAWorkerOwnsIt`.
   private hasUncollectedNonBlockingCall = false;
   private workerCallsInProgress = 0;
 
@@ -110,6 +112,12 @@ export class ActiveSession {
    * handle throws, a second logout included. A failed logout usually frees it
    * too; only a refusal because a call is still in progress leaves it usable.
    *
+   * A non-blocking call whose result is not collected yet does not stop the
+   * logout, but it can outlive it: a gem whose run has resumed a soft break
+   * keeps running after its session logs out. To end such a run, ask whether
+   * the session is busy before logging out, and stop the run first; once the
+   * session is gone, that question throws.
+   *
    * @returns whether the session is gone; false only for that refusal.
    */
   logout(): boolean {
@@ -157,8 +165,10 @@ export class ActiveSession {
 
   // Each method below is a pass-through to the GciLibrary method of the same
   // name with this session's handle bound in. The contract lives there: the
-  // GciTsXxx calls return a GciError, the rest throw GciLibraryError. One
-  // exception: after a logout, all of them throw (see `handle`).
+  // GciTsXxx calls return a GciError, the rest throw GciLibraryError. Two
+  // exceptions: after a logout, all of them throw (see `handle`), and the
+  // non-blocking poll and collect also throw while a call on a worker thread
+  // owns the session (see `handleUnlessAWorkerOwnsIt`).
   // Availability guards for optional bindings (e.g. GciTsNbPoll) stay with
   // the caller.
 
@@ -347,15 +357,33 @@ export class ActiveSession {
     );
   }
 
-  /** See {@link GciLibrary.GciTsNbPoll}. */
+  /**
+   * See {@link GciLibrary.GciTsNbPoll}.
+   *
+   * Refuses while a call on another thread owns the session: there, GemStone
+   * 3.7.x crashes the whole process (SIGSEGV) instead of answering an error,
+   * which takes down every extension sharing the host.
+   *
+   * @throws {GciLibraryError} If a call on another thread owns the session, or
+   *   the session is logged out. Either way the library is not called.
+   */
   GciTsNbPoll(timeoutMs: number) {
-    // eslint-disable-next-line no-restricted-syntax -- a pass-through; each caller keeps its own availability guard
-    return this.gci.GciTsNbPoll(this.handle(), timeoutMs);
+    // eslint-disable-next-line no-restricted-syntax -- guards only the session's ownership; each caller keeps its own availability guard
+    return this.gci.GciTsNbPoll(this.handleUnlessAWorkerOwnsIt(), timeoutMs);
   }
 
-  /** See {@link GciLibrary.GciTsNbResult}. */
+  /**
+   * See {@link GciLibrary.GciTsNbResult}.
+   *
+   * Refuses while a call on another thread owns the session: there, GemStone
+   * 3.6.2 crashes the whole process (SIGSEGV) instead of answering an error,
+   * which takes down every extension sharing the host.
+   *
+   * @throws {GciLibraryError} If a call on another thread owns the session, or
+   *   the session is logged out. Either way the library is not called.
+   */
   GciTsNbResult() {
-    const collected = this.gci.GciTsNbResult(this.handle());
+    const collected = this.gci.GciTsNbResult(this.handleUnlessAWorkerOwnsIt());
     // Any other answer, a Smalltalk error included, means the call is over.
     // Only defensive: reading before the result is ready blocks until it is,
     // rather than answering GCI_ERR_OP_IN_PROGRESS (seen on 3.6.2).
@@ -494,7 +522,7 @@ export class ActiveSession {
     return this.gci.isAvailable(name);
   }
 
-  // Bookkeeping for `isBusy`. Unlike the library-level calls above, these need
+  // Bookkeeping for `isBusy` and the worker guard. Unlike the library-level calls above, these need
   // the session.
 
   /** Runs `call` on this session's handle, counting it as a worker call until it settles. */
@@ -506,6 +534,32 @@ export class ActiveSession {
     } finally {
       this.workerCallsInProgress--;
     }
+  }
+
+  /**
+   * Guards the native session for calls that crash the process, rather than
+   * being refused, while a call on a worker thread owns the session.
+   *
+   * While a non-blocking call is uncollected, no worker call can own the
+   * session: GemStone refuses to start the non-blocking call while a worker
+   * call owns it, and a worker call that starts later is either refused or
+   * gets the session only after the collect. So the guard lets the outstanding call be polled and read
+   * whatever worker calls are in flight, and applies again once it is
+   * collected, when a later worker call may take the session.
+   *
+   * @returns The native session handle.
+   * @throws {GciLibraryError} If a worker call may own the session, or the
+   *   session is logged out.
+   */
+  private handleUnlessAWorkerOwnsIt(): unknown {
+    const handle = this.handle();
+    if (this.workerCallsInProgress > 0 && !this.hasUncollectedNonBlockingCall) {
+      throw GciLibraryError.withMessage(
+        'A call is running on another thread for this GemStone session, and polling for or ' +
+          'reading a non-blocking result now would crash the GCI library.',
+      );
+    }
+    return handle;
   }
 
   /** Runs `start` on this session's handle, counting the call as uncollected once it has started. */
