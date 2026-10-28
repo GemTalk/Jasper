@@ -1043,6 +1043,59 @@ describe('SessionManager', () => {
       expect(manager.getSessions()).toEqual([]);
     });
 
+    // The window has no current session while only leaving ones remain, so a
+    // login made then is the only session that stays.
+    describe('a login made while they are leaving', () => {
+      // a and b are leaving, b waiting on its run; `refusals` decides whether
+      // b's retry is refused too. Logs c in while b waits.
+      const loginWhileLeaving = async (refusals: number) => {
+        const [a, b] = loginN(2);
+        manager.selectSession(a.id);
+        refuseLogoutOf(1, refusals);
+        let c: ReturnType<typeof manager.login> | undefined;
+        let currentAfterLogin: number | undefined;
+        vi.mocked(stopCallsOn).mockImplementationOnce(async () => {
+          c = manager.login({ ...DEFAULT_LOGIN, label: 'Fresh' }, '/mock/lib');
+          currentAfterLogin = manager.getSelectedSession()?.id;
+        });
+        vi.mocked(vscode.window.showInformationMessage).mockClear();
+        const outcomes = await manager.logoutAll([a.id, b.id]);
+        return { a, b, c: c!, currentAfterLogin, outcomes };
+      };
+
+      it('is made current at once', async () => {
+        const { c, currentAfterLogin } = await loginWhileLeaving(1);
+
+        expect(currentAfterLogin).toBe(c.id);
+        expect(manager.getSelectedSession()?.id).toBe(c.id);
+      });
+
+      it('stays current when a leaving session’s logout is refused', async () => {
+        const { b, c, outcomes } = await loginWhileLeaving(Infinity);
+
+        expect(outcomes.map((o) => o.status)).toEqual(['fulfilled', 'rejected']);
+        expect(manager.getSession(b.id)).toBe(b);
+        expect(manager.getSelectedSession()?.id).toBe(c.id);
+        expect(notices()).toEqual([]);
+      });
+
+      it('hands the window to the session a refused logout kept, once it goes', async () => {
+        const { b, c } = await loginWhileLeaving(Infinity);
+
+        await manager.logout(c.id);
+
+        expect(manager.getSelectedSession()?.id).toBe(b.id);
+      });
+    });
+
+    it('leaves the current session current when another login arrives', () => {
+      const [a] = loginN(1);
+
+      manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
+
+      expect(manager.getSelectedSession()?.id).toBe(a.id);
+    });
+
     // Sessions never switched between leave no order to go by, only their ids.
     it('falls back past a leaving session to the lowest one that stays', async () => {
       const [a, b, c] = loginN(3);
@@ -1082,8 +1135,8 @@ describe('SessionManager', () => {
   // The property the palette's Commit and Abort are built on: they read the
   // current session directly, with no picker behind them, because a window with
   // any session logged in always HAS a current one. That is held up by two
-  // separate branches in two files (login auto-selects the first; logout
-  // promotes a surviving session), so pin the property itself — a later
+  // separate branches in two files (login makes itself current when none is;
+  // logout promotes a surviving session), so pin the property itself — a later
   // "deselect", or a crash-cleanup path that drops a session without re-electing
   // one, would put a QuickPick back in the middle of a Commit.
   describe('a window with sessions always has a current one', () => {

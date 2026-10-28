@@ -10,7 +10,7 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ### Fixed
 
-- **Stopping a stone closes its sessions' inspectors and debuggers and clears their breakpoints.** Stopping a stone logged its sessions out, and a logical restore logged out the session it ran in, but both left their inspectors and debuggers open against a session that was gone, and kept their breakpoints. They now close exactly as they do on Log out, whichever way the session is logged out. And when a stone with several of your sessions stops, the current session moves straight to a session that stays. Before, it could first move to another session that was being logged out too, with a notice for each move. ([#775](https://github.com/GemTalk/Jasper/issues/775))
+- **Stopping a stone closes its sessions' browsers, inspectors and debuggers and clears their breakpoints.** Stopping a stone logged its sessions out, and a logical restore logged out the session it ran in, but both left their browsers, inspectors and debuggers open against a session that was gone, where any click failed with "The GemStone session is logged out.", and kept their breakpoints. They now close exactly as they do on Log out, whichever way the session is logged out. And when a stone with several of your sessions stops, the current session moves straight to a session that stays. Before, it could first move to another session that was being logged out too, with a notice for each move. A session you log in to while that is going on becomes the current one, even if one of the stopping stone's sessions refuses to log out. ([#775](https://github.com/GemTalk/Jasper/issues/775))
 
 ## [1.16.0] - 2026-10-23
 

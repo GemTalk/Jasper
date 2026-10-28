@@ -97,9 +97,9 @@ export class SessionManager {
 
   // Fires with a session id whenever a session joins the manager. There was no
   // such signal: onDidChangeSelection is the only thing a new session fired, and
-  // finalizeSession auto-selects only the *first* one — so a second login was
-  // silent, and anything drawing session state (the panel's login rows) went on
-  // showing "Log in" for a login that was already connected.
+  // finalizeSession makes a login current only when nothing else is — so a
+  // second login was silent, and anything drawing session state (the panel's
+  // login rows) went on showing "Log in" for a login that was already connected.
   private _onDidAddSession = new vscode.EventEmitter<number>();
   readonly onDidAddSession = this._onDidAddSession.event;
 
@@ -389,8 +389,10 @@ export class SessionManager {
     // whole reason this cannot wait for the user to switch modes by hand.
     this.refreshTransactionState(session.id);
 
-    // Auto-select when this is the only session
-    if (this.sessions.size === 1) {
+    // Not only the first login: while a logoutAll is under way the window can
+    // have no current session with leaving ones still registered, and a login
+    // made then must not lose the window to one whose logout is refused.
+    if (this._selectedId === null) {
       this.selectSession(session.id);
     }
 
@@ -442,7 +444,7 @@ export class SessionManager {
    *
    * Falls back to the lowest remaining id when the order has no answer at all —
    * several sessions logged in and never switched between, since login makes a
-   * session current only when it is the first one.
+   * session current only when no other one is.
    */
   private sessionToPromote(): ActiveSession | undefined {
     this.selectionOrder = this.selectionOrder.filter((id) => this.sessions.has(id));

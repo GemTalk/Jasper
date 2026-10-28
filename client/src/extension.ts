@@ -101,8 +101,6 @@ import { RowanDecorationProvider } from './rowanDecorations';
 import { ActiveEditorDecorationProvider } from './activeEditorDecoration';
 import { findMethodInClass } from './commands/findMethodInClass';
 import { loadClassPickItems } from './commands/classPicker';
-import { GlobalsBrowser } from './globalsBrowser';
-import { CommentBrowser } from './commentBrowser';
 import { revealInspect } from './inspectRouter';
 import {
   maybeOfferServerSupport,
@@ -2721,14 +2719,11 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.window.showErrorMessage(e instanceof Error ? e.message : String(e));
           return;
         }
-        // Its inspectors, debuggers, breakpoints and gemstone:// tabs go on the
-        // session's removal: see registerSessionTeardown and the stale-tab reaper.
+        // Its panels, breakpoints and gemstone:// tabs go on the session's
+        // removal: see registerSessionTeardown and the stale-tab reaper.
         // Keep the class mirror on disk: it's keyed by connection target and is
         // re-synced incrementally on the next login, which is far cheaper than
         // rebuilding it from scratch (especially for large, remote images).
-        SystemBrowser.disposeForSession(session.id);
-        GlobalsBrowser.disposeForSession(session.id);
-        CommentBrowser.disposeForSession(session.id);
         treeProvider.refresh();
         vscode.window.showInformationMessage(`Session ${session.id}: Logged out.`);
       },
