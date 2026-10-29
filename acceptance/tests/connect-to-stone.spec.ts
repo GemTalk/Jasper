@@ -19,6 +19,9 @@ test.describe('connecting to a stone', () => {
 
   test.use({
     workspaceSettings: {
+      // Jasper finds a NetLDI by name in `gemstone.rootPath`, so it must be
+      // the directory the test stone registered in.
+      'gemstone.rootPath': stone?.globalDir,
       'gemstone.gciLibraries': stone ? { [stone.version]: stone.gciLibraryPath } : {},
       'gemstone.logins': stone
         ? [
