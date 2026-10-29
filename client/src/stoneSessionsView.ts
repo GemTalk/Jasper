@@ -268,7 +268,8 @@ export function describeRow(
   if (backlog) {
     tip.push(
       `Holds back ${backlog.commitRecordBacklog} commit records (the stone asks for aborts at ` +
-        `${backlog.abortThreshold}); none can be reclaimed until it commits or aborts.`,
+        `${backlog.abortThreshold}); none can be reclaimed until it commits or aborts. ` +
+        'The count is updated only on Refresh.',
     );
   }
 

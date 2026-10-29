@@ -210,6 +210,7 @@ describe("a stone's session list", () => {
 
     expect(holder.holdsBacklog).toBe(true);
     expect(holder.tip).toContain('Holds back 20 commit records');
+    expect(holder.tip).toContain('The count is updated only on Refresh.');
     expect(first.holdsBacklog).toBe(false);
   });
 
