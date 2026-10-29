@@ -51,7 +51,14 @@ export interface StoneSessionRow {
 
 /** One stone's session list, or the one line standing in for it. */
 export type StoneSessionsInfo =
-  | { key: string; kind: 'sessions'; rows: StoneSessionRow[] }
+  | {
+      key: string;
+      kind: 'sessions';
+      rows: StoneSessionRow[];
+      /** The stone's commit-record backlog, and the size at which it asks sessions to abort. */
+      commitRecords: number;
+      abortThreshold: number;
+    }
   | { key: string; kind: 'message'; message: string; detail: string };
 
 /** A row's session, with what acting on it needs. */
@@ -177,7 +184,13 @@ export class StoneSessions {
       return row;
     });
     this.targets.set(key, targets);
-    return { key, kind: 'sessions', rows };
+    return {
+      key,
+      kind: 'sessions',
+      rows,
+      commitRecords: read.commitRecordBacklog,
+      abortThreshold: read.abortThreshold,
+    };
   }
 
   /** Read the stone `key`'s list again next time it is shown. */

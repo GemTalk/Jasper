@@ -1251,6 +1251,15 @@ describe("a stone's sessions, under Session Processes", () => {
     expect(rowEl(1)!.textContent).toContain('system: symbolgem');
   });
 
+  it("gives the stone's commit-record backlog in the header, and says when it asks for aborts", () => {
+    const headerDesc = () =>
+      groupTitled('Session Processes').querySelector('.group-desc')?.textContent;
+    mount(running({ ...listed(row()), commitRecords: 3, abortThreshold: 20 }));
+    expect(headerDesc()).toBe('3 commit records');
+    mount(running({ ...listed(row()), commitRecords: 27, abortThreshold: 20 }));
+    expect(headerDesc()).toBe('27 commit records — the stone asks for aborts at 20');
+  });
+
   it('shows nothing of the kind while the stone is down', () => {
     mount(state({ databases: [database({ stoneRunning: false })] }));
     expect(root.querySelector('.stone-sessions')).toBeNull();

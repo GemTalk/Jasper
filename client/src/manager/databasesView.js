@@ -927,13 +927,26 @@
       title: 'Read the stone\u2019s sessions again',
     });
     const count = info.kind === 'sessions' ? ` \u00b7 ${info.rows.length}` : '';
+    const backlog =
+      info.kind === 'sessions' && info.commitRecords !== undefined
+        ? `${info.commitRecords} commit records` +
+          (info.commitRecords >= info.abortThreshold
+            ? ` \u2014 the stone asks for aborts at ${info.abortThreshold}`
+            : '')
+        : '';
     const body =
       info.kind === 'sessions'
         ? info.rows.map((row) => stoneSessionRow(info.key, row)).join('') ||
           '<div class="db-empty">No other sessions.</div>'
         : `<div class="db-line"${tipAttr(info.detail)}><span class="db-line-name">${mark('info', 'off', info.detail)}<span class="dim">${esc(info.message)}</span></span></div>`;
     return group(
-      { title: `${title}${count}`, actions: refresh, open: true, className: 'stone-sessions' },
+      {
+        title: `${title}${count}`,
+        desc: backlog,
+        actions: refresh,
+        open: true,
+        className: 'stone-sessions',
+      },
       body,
     );
   }

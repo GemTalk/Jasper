@@ -218,6 +218,14 @@ describe("a stone's session list", () => {
     expect(deps.read).toHaveBeenCalledTimes(1);
   });
 
+  it("gives the stone's backlog, read again on Refresh", () => {
+    expect(describeIt()).toMatchObject({ commitRecords: 1, abortThreshold: 20 });
+    list = { ...listed(), commitRecordBacklog: 27 };
+    expect(describeIt()).toMatchObject({ commitRecords: 1 });
+    sessions.forget('db:db-1');
+    expect(describeIt()).toMatchObject({ commitRecords: 27 });
+  });
+
   it('flags the session holding the oldest commit record once the stone asks for aborts', () => {
     listed().sessions[1].holdsOldestCommitRecord = true;
     expect(rowsOf(describeIt())[1].heldBackCommitRecords).toBeUndefined();
