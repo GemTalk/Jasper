@@ -18,8 +18,8 @@ export interface StoneSessionsDeps {
   killableGems(sessions: StoneSession[], stoneHost: string): Set<number>;
   /** Whether a run the user stopped still holds `session`. */
   stuck(session: ActiveSession): boolean;
-  /** GemStone's session number for a Jasper session, once known. */
-  serverSessionOf(jasperId: number): string | undefined;
+  /** The serial number of a Jasper session's login, once known. */
+  loginSerialOf(jasperId: number): string | undefined;
   transientLogin(through: ActiveSession): TransientLogin;
   stop(target: StoneSession, login: TransientLogin): Promise<StopSessionOutcome>;
   kill(target: StoneSession, login: TransientLogin): Promise<StopSessionOutcome>;
@@ -113,8 +113,8 @@ export class StoneSessions {
     allWindowSessions: ActiveSession[],
   ): StoneSessionsInfo {
     const { deps } = this;
-    // GemStone numbers each stone's sessions from 1, so only sessions on this
-    // stone may be matched by number.
+    // GemStone numbers each stone's logins from 1, so only sessions on this
+    // stone may be matched by login serial.
     const { stone, gem_host } = through.login;
     const windowSessions = allWindowSessions.filter(
       (s) => s.login.stone === stone && s.login.gem_host === gem_host,
@@ -157,10 +157,12 @@ export class StoneSessions {
       return { key, kind: 'message', message: 'Could not read the sessions', detail: read.message };
     }
 
-    const byServerSession = new Map<string, ActiveSession>();
+    // By login serial: a session number passes to the next login once its gem
+    // has gone, even while the Jasper session that had it is still open.
+    const byLoginSerial = new Map<string, ActiveSession>();
     for (const s of windowSessions) {
-      const number = deps.serverSessionOf(s.id);
-      if (number !== undefined) byServerSession.set(number, s);
+      const serial = deps.loginSerialOf(s.id);
+      if (serial !== undefined) byLoginSerial.set(serial, s);
     }
     // Some session always holds the oldest commit record; it is only news once
     // the stone itself asks sessions to abort over the backlog.
@@ -173,7 +175,7 @@ export class StoneSessions {
         : undefined;
     const targets = new Map<number, StoneSessionTarget>();
     const rows = read.sessions.map((stoneSession) => {
-      const jasperSession = byServerSession.get(String(stoneSession.id));
+      const jasperSession = byLoginSerial.get(String(stoneSession.serial));
       const row = describeRow(stoneSession, read.serverNow, {
         jasperSession,
         stuck: jasperSession !== undefined && deps.stuck(jasperSession),

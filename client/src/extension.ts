@@ -89,7 +89,7 @@ import {
   setStoppedRunCollectedHandler,
   stoppedRunHolds,
 } from './nbRunner';
-import { forceStop, rearmAfterForceStop, serverSessionOf } from './forceStop';
+import { forceStop, loginSerialOf, rearmAfterForceStop } from './forceStop';
 import {
   killableGems,
   killStoneSession,
@@ -956,7 +956,7 @@ export function activate(context: vscode.ExtensionContext) {
     killableGems: (sessions, stoneHost) =>
       killableGems(sessions, stoneHost, isThisMachine, (command) => wslExecSync(command)),
     stuck: stoppedRunHolds,
-    serverSessionOf,
+    loginSerialOf,
     transientLogin: (through) => transientLoginOn(through),
     stop: stopStoneSession,
     kill: (target, login) => killStoneSession(target, login, (command) => wslExec(command)),

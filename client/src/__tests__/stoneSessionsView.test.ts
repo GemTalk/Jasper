@@ -81,8 +81,8 @@ describe("a stone's session list", () => {
           new Set(all.filter((s) => s.host === 'localhost' && !s.systemGem).map((s) => s.gemPid)),
       ),
       stuck: (s) => stuck.has(s.id),
-      // Jasper session 1 is GemStone's session 4.
-      serverSessionOf: (id) => (id === 1 ? '4' : undefined),
+      // Jasper session 1 is GemStone's session 4, whose login is serial 3.
+      loginSerialOf: (id) => (id === 1 ? '3' : undefined),
       transientLogin: vi.fn(),
       stop: vi.fn(async () => 'ended' as const),
       kill: vi.fn(async () => 'ended' as const),
@@ -179,8 +179,8 @@ describe("a stone's session list", () => {
   });
 
   it('marks only sessions of this window on this stone, which numbers its own', () => {
-    // Jasper session 3 is GemStone's session 4 on another stone.
-    deps.serverSessionOf = (id) => (id === 1 || id === 3 ? '4' : undefined);
+    // Jasper session 3 is login serial 3 on another stone.
+    deps.loginSerialOf = (id) => (id === 1 || id === 3 ? '3' : undefined);
     const mine = makeSession(1);
     const listed = sessions.describe('db:db-1', mine, [mine, makeSession(3, 'elsewhere')]);
     expect(rowsOf(listed)[0].jasperSessionId).toBe(1);
@@ -188,6 +188,18 @@ describe("a stone's session list", () => {
     sessions.forgetAll();
     const other = sessions.describe('db:db-1', makeSession(2), [makeSession(1, 'elsewhere')]);
     expect(rowsOf(other)[0].jasperSessionId).toBeUndefined();
+  });
+
+  // The stone gives a session number to the next login once a gem has gone,
+  // even while the Jasper session that had it is still open here.
+  it("doesn't mark a newer login that was given this window's session number", () => {
+    list = {
+      ...listed(),
+      sessions: [stoneSession({ id: 4, serial: 30, user: 'ewinger', gemPid: 41500 })],
+    };
+    const [row] = rowsOf(describeIt());
+    expect(row.jasperSessionId).toBeUndefined();
+    expect(sessions.rowOf(1)).toBeUndefined();
   });
 
   it("shows each session's user, gem, host and age, and leaves them out of the tip", () => {

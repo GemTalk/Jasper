@@ -13,7 +13,9 @@ import {
   armForceStop,
   forceStop,
   forgetForceStop,
+  loginSerialOf,
   rearmAfterForceStop,
+  serverSessionOf,
   FORCE_STOP_WAIT_MS,
   SESSION_SIGNAL_ERROR,
 } from '../forceStop';
@@ -65,6 +67,19 @@ describe('Force Stop', () => {
     expect(executeAndFetchString).toHaveBeenCalledWith(
       expect.stringMatching(/System enableSignaledGemStoneSessionError\..*System session/),
     );
+  });
+
+  it("learns the session's number and its login's serial at login, and forgets both at logout", () => {
+    const { session } = fakeSession('42 7');
+
+    armForceStop(session);
+    expect([serverSessionOf(session.id), loginSerialOf(session.id)]).toEqual(['42', '7']);
+
+    forgetForceStop(session.id);
+    expect([serverSessionOf(session.id), loginSerialOf(session.id)]).toEqual([
+      undefined,
+      undefined,
+    ]);
   });
 
   it('signals the session from a short-lived login, and logs that login out', async () => {

@@ -81,6 +81,11 @@ export function serverSessionOf(sessionId: number): string | undefined {
   return serverSessions.get(sessionId);
 }
 
+/** The serial number of an armed session's login. */
+export function loginSerialOf(sessionId: number): string | undefined {
+  return loginSerials.get(sessionId);
+}
+
 /** Forget a session that has logged out. */
 export function forgetForceStop(sessionId: number): void {
   serverSessions.delete(sessionId);
