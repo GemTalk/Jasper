@@ -144,7 +144,7 @@ describe('Stop Session', () => {
     await stopStoneSessionCommand(row, d);
 
     expect(window.showWarningMessage).toHaveBeenCalledWith(
-      "Stop session 7 (ewinger on thor, gem 39811)? Anything it hasn't committed is lost.",
+      "Stop GemStone session 7 (ewinger on thor, gem 39811)? Anything it hasn't committed will be lost.",
       { modal: true },
       STOP_SESSION,
     );
@@ -159,7 +159,7 @@ describe('Stop Session', () => {
 
     expect(d.stop).toHaveBeenCalledWith(target, d.transientLogin.mock.results[0].value);
     expect(d.transientLogin).toHaveBeenCalledWith(through);
-    expect(window.showInformationMessage).toHaveBeenCalledWith('Session 7 is stopped.');
+    expect(window.showInformationMessage).toHaveBeenCalledWith('GemStone session 7 is stopped.');
     expect(d.refresh).toHaveBeenCalled();
   });
 
@@ -171,7 +171,7 @@ describe('Stop Session', () => {
     await stopStoneSessionCommand(mine, d);
 
     expect(window.showWarningMessage).toHaveBeenCalledWith(
-      expect.stringMatching(/lost\. Jasper session 3 is logged out\.$/),
+      expect.stringMatching(/lost\. Jasper session 3 will be logged out\.$/),
       { modal: true },
       STOP_SESSION,
     );
@@ -199,7 +199,9 @@ describe('Stop Session', () => {
       deps(async () => 'gone'),
     );
 
-    expect(window.showInformationMessage).toHaveBeenCalledWith('Session 7 had already ended.');
+    expect(window.showInformationMessage).toHaveBeenCalledWith(
+      'GemStone session 7 had already ended.',
+    );
   });
 
   it("names the gem's process when the gem doesn't answer", async () => {
@@ -232,7 +234,7 @@ describe('Stop Session', () => {
     // Kill asks for itself before it acts.
     expect(window.showWarningMessage).toHaveBeenNthCalledWith(
       3,
-      expect.stringMatching(/^Kill session 7/),
+      expect.stringMatching(/^Kill GemStone session 7/),
       { modal: true },
       KILL,
     );
@@ -266,7 +268,7 @@ describe('Stop Session', () => {
     );
 
     expect(window.showWarningMessage).toHaveBeenLastCalledWith(
-      'Session 7 could not be stopped (the stone went away). ' +
+      'GemStone session 7 could not be stopped (the stone went away). ' +
         'An administrator can end it with: System stopSession: 7',
     );
   });
@@ -312,8 +314,8 @@ describe('Kill', () => {
     await killStoneSessionCommand(row, d);
 
     expect(window.showWarningMessage).toHaveBeenCalledWith(
-      'Kill session 7 (ewinger on uffda)? Its gem, process 39811, is ended on this machine, ' +
-        "and anything it hasn't committed is lost.",
+      'Kill GemStone session 7 (ewinger on uffda)? Its gem, process 39811, will be ended on ' +
+        "this machine, and anything it hasn't committed will be lost.",
       { modal: true },
       KILL,
     );
@@ -328,7 +330,7 @@ describe('Kill', () => {
 
     expect(d.kill).toHaveBeenCalledWith(target, d.transientLogin.mock.results[0].value);
     expect(d.transientLogin).toHaveBeenCalledWith(through);
-    expect(window.showInformationMessage).toHaveBeenCalledWith('Session 7 is killed.');
+    expect(window.showInformationMessage).toHaveBeenCalledWith('GemStone session 7 is killed.');
     expect(d.refresh).toHaveBeenCalled();
     expect(d.logout).not.toHaveBeenCalled();
   });
@@ -341,7 +343,7 @@ describe('Kill', () => {
     await killStoneSessionCommand(mine, d);
 
     expect(window.showWarningMessage).toHaveBeenCalledWith(
-      expect.stringMatching(/Jasper session 3 is logged out\.$/),
+      expect.stringMatching(/Jasper session 3 will be logged out\.$/),
       { modal: true },
       KILL,
     );
@@ -357,7 +359,7 @@ describe('Kill', () => {
     await killStoneSessionCommand(row, d);
 
     expect(window.showWarningMessage).toHaveBeenLastCalledWith(
-      'Session 7 could not be killed: kill: (39811) - Operation not permitted. ' +
+      'GemStone session 7 could not be killed: kill: (39811) - Operation not permitted. ' +
         'Someone allowed to end process 39811 on uffda can run: kill -9 39811',
     );
     expect(d.refresh).toHaveBeenCalled();

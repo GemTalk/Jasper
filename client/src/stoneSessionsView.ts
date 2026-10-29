@@ -324,10 +324,10 @@ export async function stopStoneSessionCommand(
 ): Promise<void> {
   const { id, user, gemPid, host } = target.stoneSession;
   const { jasperSession } = target;
-  const who = `session ${id} (${user || 'unknown user'} on ${host}, gem ${gemPid})`;
+  const who = `GemStone session ${id} (${user || 'unknown user'} on ${host}, gem ${gemPid})`;
   const confirmed = await vscode.window.showWarningMessage(
-    `Stop ${who}? Anything it hasn't committed is lost.` +
-      (jasperSession ? ` Jasper session ${jasperSession.id} is logged out.` : ''),
+    `Stop ${who}? Anything it hasn't committed will be lost.` +
+      (jasperSession ? ` Jasper session ${jasperSession.id} will be logged out.` : ''),
     { modal: true },
     STOP_SESSION,
   );
@@ -336,7 +336,7 @@ export async function stopStoneSessionCommand(
   let outcome: StopSessionOutcome;
   try {
     outcome = await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: `Stopping session ${id}…` },
+      { location: vscode.ProgressLocation.Notification, title: `Stopping GemStone session ${id}…` },
       () => deps.stop(target.stoneSession, deps.transientLogin(target.through)),
     );
   } catch (e) {
@@ -345,7 +345,7 @@ export async function stopStoneSessionCommand(
       e instanceof GciLibraryError && e.number === NO_PRIVILEGE_ERROR
         ? `Stopping a session needs the SessionAccess and SystemControl privileges, which ` +
             `${target.loginUser} doesn't have. ${administrator}`
-        : `Session ${id} could not be stopped (${e instanceof Error ? e.message : String(e)}). ` +
+        : `GemStone session ${id} could not be stopped (${e instanceof Error ? e.message : String(e)}). ` +
             administrator,
     );
     deps.refresh();
@@ -355,14 +355,14 @@ export async function stopStoneSessionCommand(
   deps.refresh();
   switch (outcome) {
     case 'ended':
-      void vscode.window.showInformationMessage(`Session ${id} is stopped.`);
+      void vscode.window.showInformationMessage(`GemStone session ${id} is stopped.`);
       return;
     case 'gone':
-      void vscode.window.showInformationMessage(`Session ${id} had already ended.`);
+      void vscode.window.showInformationMessage(`GemStone session ${id} had already ended.`);
       return;
     case 'stuck': {
       const message =
-        `Session ${id} was told to stop but is still on the stone: its gem isn't answering. ` +
+        `GemStone session ${id} was told to stop but is still on the stone: its gem isn't answering. ` +
         `Only ending its process will clear it — process ${gemPid} on ${host}.`;
       if (!target.canKill) {
         void vscode.window.showWarningMessage(message);
@@ -388,9 +388,9 @@ export async function killStoneSessionCommand(
   const { id, user, gemPid, host } = target.stoneSession;
   const { jasperSession } = target;
   const confirmed = await vscode.window.showWarningMessage(
-    `Kill session ${id} (${user || 'unknown user'} on ${host})? Its gem, process ${gemPid}, ` +
-      "is ended on this machine, and anything it hasn't committed is lost." +
-      (jasperSession ? ` Jasper session ${jasperSession.id} is logged out.` : ''),
+    `Kill GemStone session ${id} (${user || 'unknown user'} on ${host})? Its gem, process ` +
+      `${gemPid}, will be ended on this machine, and anything it hasn't committed will be lost.` +
+      (jasperSession ? ` Jasper session ${jasperSession.id} will be logged out.` : ''),
     { modal: true },
     KILL,
   );
@@ -399,12 +399,12 @@ export async function killStoneSessionCommand(
   let outcome: StopSessionOutcome;
   try {
     outcome = await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: `Killing session ${id}…` },
+      { location: vscode.ProgressLocation.Notification, title: `Killing GemStone session ${id}…` },
       () => deps.kill(target.stoneSession, deps.transientLogin(target.through)),
     );
   } catch (e) {
     void vscode.window.showWarningMessage(
-      `Session ${id} could not be killed: ${(e instanceof Error ? e.message : String(e)).replace(/\.?$/, '.')} ` +
+      `GemStone session ${id} could not be killed: ${(e instanceof Error ? e.message : String(e)).replace(/\.?$/, '.')} ` +
         `Someone allowed to end process ${gemPid} on ${host} can run: kill -9 ${gemPid}`,
     );
     deps.refresh();
@@ -414,14 +414,14 @@ export async function killStoneSessionCommand(
   deps.refresh();
   switch (outcome) {
     case 'ended':
-      void vscode.window.showInformationMessage(`Session ${id} is killed.`);
+      void vscode.window.showInformationMessage(`GemStone session ${id} is killed.`);
       return;
     case 'gone':
-      void vscode.window.showInformationMessage(`Session ${id} had already ended.`);
+      void vscode.window.showInformationMessage(`GemStone session ${id} had already ended.`);
       return;
     case 'stuck':
       void vscode.window.showWarningMessage(
-        `Session ${id} is still on the stone after its gem, process ${gemPid}, was sent SIGKILL. ` +
+        `GemStone session ${id} is still on the stone after its gem, process ${gemPid}, was sent SIGKILL. ` +
           'Check that process on this machine.',
       );
   }
