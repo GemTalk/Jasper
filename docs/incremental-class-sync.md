@@ -1,12 +1,13 @@
-# Incremental class sync (the `.gemstone` mirror)
+# Incremental class sync (the class mirror)
 
 ## Why
 
-The `.gemstone` directory is a local, read-only-by-default mirror of a session's classes as
-Topaz file-out (`.gs`) files. It exists so VS Code's native tooling — **Find in
-Files**, **Go to Definition**, workspace symbol search — has real files to work
-over. (Editing still goes through the `gemstone://` virtual filesystem, which
-compiles on save.)
+The class mirror is a local, read-only-by-default copy of a session's classes as
+Topaz file-out (`.gs`) files, which the System Browser opens for class-level
+navigation. It lives in Jasper's private storage (or `gemstone.mirrorFolder`),
+not in the open workspace folder, so VS Code's Find in Files does not search it;
+GemStone Search asks the stone directly. (Editing still goes through the
+`gemstone://` virtual filesystem, which compiles on save.)
 
 The original implementation filed out **one class per GCI round trip**. That is
 fine on a fast local connection but catastrophic on a slow/remote one: the cost
@@ -74,10 +75,21 @@ classes that actually changed.
 
 ### Lifecycle and layout
 
-- Default path: `{workspaceRoot}/.gemstone/{host}/{stone}/{user}/{index}-{dictName}/{Class}.gs`,
-  keyed by connection target — shared across that target's sessions and **kept
-  across logout** (re-synced incrementally next login). Overridable via
-  `gemstone.exportPath`.
+- Path: `<mirror folder>/{host}/{stone}/{user}/{index}-{dictName}/{Class}.gs`,
+  keyed by connection target and **kept across logout** (re-synced incrementally
+  next login). The mirror folder is `gemstone.mirrorFolder`, or Jasper's private
+  storage when that is empty; the open workspace folder is not used. A second
+  live session with the same login — in this window or another — gets
+  `{user}_2` (then `_3`, …), so two sessions never write one mirror. A
+  `.jasper-owner.json` in each folder names the process holding it and when its
+  machine last started; a record from a process that has exited, or from before
+  a reboot (when its process number may since have gone to another program), is
+  taken over. A record from another machine (a shared home over NFS) is never
+  taken over, because its process can't be probed; a machine whose name changes,
+  as a Mac's can between networks, looks like another machine. Spare `_N`
+  folders are not cleaned up: each holds a full copy. Only syncs claim a folder;
+  looking one up never touches the disk. Changing `gemstone.mirrorFolder` moves
+  live sessions and syncs them into the new folder straight away.
 - Foreground, **cancellable** progress; the loop yields between batches so the
   Cancel button stays responsive (the GCI calls are synchronous and block the
   event loop). A cancelled sync leaves a consistent partial mirror that the next
@@ -101,8 +113,8 @@ classes that actually changed.
 
 ## Keeping the mirror in step with mutations
 
-Every code mutation now updates the mirror immediately, so Find in Files reflects
-a change without waiting for the next commit/abort. `ExportManager` exposes three
+Every code mutation now updates the mirror immediately, so it reflects a change
+without waiting for the next commit/abort. `ExportManager` exposes three
 targeted operations, all of which update the persisted `.manifest.json` state:
 
 - `syncClass(session, dictName, className)` — re-file-out one class (resolving its
@@ -126,9 +138,6 @@ session and still reconcile on the IDE session's next sync.
 
 ## Deferred / follow-ups
 
-- **Search-scope isolation.** With multiple persisted mirrors under `.gemstone`,
-  native Find in Files searches all of them. When multi-login becomes common,
-  set workspace `search.exclude` on login to hide all but the active mirror.
 - **Async GCI for the manifest fetch.** The manifest build (~2 s on 5500
   classes) is one synchronous call that briefly stalls the event loop. Moving
   the transport to the async GCI path ("Display It") removes the stall.

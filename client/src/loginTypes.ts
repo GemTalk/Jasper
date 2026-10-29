@@ -56,10 +56,10 @@ export interface GemStoneLogin {
    */
   password_in_keychain?: boolean;
   /**
-   * When true (the default when unset), the local `.gemstone` class mirror is
-   * synced for this login so VS Code's Find in Files / Go to Definition work over
-   * the source. Turn it off for slow/remote connections where the initial sync
-   * isn't worth it — server-side search still works. See client/src/sync/.
+   * When true (the default when unset), the class mirror (read-only `.gs` copies
+   * of the classes) is synced for this login. Turn it off for slow/remote
+   * connections where the initial sync isn't worth it — server-side search still
+   * works. See client/src/sync/.
    */
   sync_classes?: boolean;
 }

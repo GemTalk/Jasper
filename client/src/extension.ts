@@ -242,7 +242,6 @@ import { McpSocketServer, writeClaudeDesktopMcpConfig } from './mcpSocketServer'
 import { writeClaudeCodeUserMcpConfig } from './claudeCodeUserMcpConfig';
 import { buildRefreshPromptDeps, promptClaudeCodeRefresh } from './claudeCodeRefreshPrompt';
 import { McpOwnership, McpServerTreeDeps, resolveOwnership } from './mcpServerTreeProvider';
-import { NO_WORKSPACE_RECORDED } from './mcpOwnerSidecar';
 import { mcpReport } from './mcpWindowStatus';
 import { defaultReleaseRequestPath } from './mcpReleaseRequest';
 import { McpOwnershipController } from './mcpOwnership';
@@ -972,8 +971,8 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Answers "is this window serving MCP, and for which session" for the session
   // rows. Assigned by the MCP block later in activate(); until then — and for
-  // the whole run when `jasper.mcp.enabled` is off or no folder is open — it
-  // returns undefined and the rows show no MCP state at all.
+  // the whole run when `jasper.mcp.enabled` is off — it returns undefined and
+  // the rows show no MCP state at all.
   let mcpOwnership: () => McpOwnership | undefined = () => undefined;
   const treeProvider = new LoginTreeProvider(storage, sessionManager, () => mcpOwnership());
   // The acceptance harness seeds a plain-text login into most runs, and this
@@ -999,33 +998,18 @@ export function activate(context: vscode.ExtensionContext) {
   // explain why nothing is going to happen rather than failing silently.
   const mcpUnavailable = async () => {
     vscode.window.showWarningMessage(
-      'MCP is not running in this window. Set jasper.mcp.enabled to true and open a folder, ' +
-        'then reload the window.',
+      'MCP is not running in this window. Set jasper.mcp.enabled to true, then reload the window.',
     );
   };
   let mcpClaim: () => Promise<void> = mcpUnavailable;
   let mcpStop: () => Promise<void> = mcpUnavailable;
   let mcpRequestRelease: () => Promise<void> = mcpUnavailable;
 
-  /**
-   * Focus the VS Code window that owns the MCP server. Opening a folder that is
-   * already open focuses that window rather than opening a second one, which is
-   * the only handle an extension has on another window. It is a best effort: an
-   * owner with no folder recorded, or a multi-root workspace (whose sidecar
-   * records only the first folder), cannot be reached this way and says so
-   * instead of opening something the user did not ask for.
-   */
-  const revealMcpOwner = async (workspacePath: string) => {
-    if (!workspacePath || workspacePath === NO_WORKSPACE_RECORDED) {
-      vscode.window.showWarningMessage(
-        'The window serving MCP did not record a workspace folder, so Jasper cannot open it. ' +
-          'Look for another VS Code window with Jasper active and stop MCP there.',
-      );
-      return;
-    }
-    await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(workspacePath), {
-      forceNewWindow: false,
-    });
+  // Extensions cannot focus another window, so this opens VS Code's own window
+  // list; the MCP surfaces say which entry to pick (see ownerLookFor). Unlike
+  // reopening the owner's folder, it reaches multi-root and folderless windows.
+  const revealMcpOwner = async () => {
+    await vscode.commands.executeCommand('workbench.action.switchWindow');
   };
 
   context.subscriptions.push(
@@ -1081,7 +1065,18 @@ export function activate(context: vscode.ExtensionContext) {
   // ── Session Management ───────────────────────────────────
   // Active sessions are shown as children of their login in the Logins &
   // Sessions tree (treeProvider above); there is no separate Sessions view.
-  exportManager = new ExportManager();
+  exportManager = new ExportManager({
+    defaultMirrorDir: path.join(context.globalStorageUri.fsPath, 'mirror'),
+    memento: context.globalState,
+  });
+  context.subscriptions.push(
+    sessionManager.onDidRemoveSession((id) => exportManager.releaseSession(id)),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('gemstone.mirrorFolder')) {
+        void exportManager.mirrorFolderChanged(sessionManager.getSessions());
+      }
+    }),
+  );
   // Create the Class Sync channel now so it joins the others in the dropdown.
   const classSyncChannel = exportManager.ensureLogChannel();
   if (classSyncChannel) context.subscriptions.push(classSyncChannel);
@@ -2416,13 +2411,6 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand(
       'gemstone.login',
       withLoginGuard(loginGuard, async (item: GemStoneLoginItem) => {
-        if (!vscode.workspace.workspaceFolders?.length) {
-          vscode.window.showErrorMessage(
-            'Please open a folder in the workspace before logging in to GemStone.',
-          );
-          return;
-        }
-
         // Run after the event is sent, so a throw in the UI wiring can't count
         // an attempt whose session is already open as failed.
         let afterReported: (() => void) | undefined;
@@ -3618,20 +3606,16 @@ export function activate(context: vscode.ExtensionContext) {
   //
   // Claude Code:    user-scope `mcpServers.jasper` in `~/.claude.json`.
   // Claude Desktop: `mcpServers.jasper` in `claude_desktop_config.json`.
-  const workspaceRoots = vscode.workspace.workspaceFolders;
   const mcpEnabled = readMcpSetting<boolean>('enabled', true);
   // Gates the MCP commands that would fail — Claim, Stop, the copy pair, the
-  // cert install and the inspector. False when the setting is off and when no
-  // folder is open, which are exactly the cases where none of them is
-  // registered. Show MCP Server is deliberately not gated on it: with MCP off,
-  // that tab is the thing that says so.
-  void vscode.commands.executeCommand(
-    'setContext',
-    'jasper.mcpAvailable',
-    mcpEnabled && !!workspaceRoots && workspaceRoots.length > 0,
-  );
-  if (mcpEnabled && workspaceRoots && workspaceRoots.length > 0) {
-    const workspacePath = workspaceRoots[0].uri.fsPath;
+  // cert install and the inspector — which are registered only when the
+  // setting is on. Show MCP Server is deliberately not gated on it: with MCP
+  // off, that tab is the thing that says so.
+  void vscode.commands.executeCommand('setContext', 'jasper.mcpAvailable', mcpEnabled);
+  if (mcpEnabled) {
+    // Only labels this window for the others; without a folder the sidecar
+    // records NO_WORKSPACE_RECORDED.
+    const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     const mcpSocketServer = new McpSocketServer({
       getSession: () => sessionManager.getSelectedSession(),
       onTransactionStateMayHaveMoved: (id) => sessionManager.refreshTransactionState(id),
@@ -3734,11 +3718,11 @@ export function activate(context: vscode.ExtensionContext) {
     // MCP socket regardless of whether it has a session yet. Claude Code's
     // MCP client fails the proxy on a short timeout, so the socket needs to
     // be live by the time Claude Code spawns the proxy on the same window
-    // reload — deferring until first login lost that race. Tradeoff: if you
-    // open a non-GemStone workspace first, that window will own the socket
-    // and serve "no session selected" until you log in there or hand off
-    // ownership (disable Jasper in that workspace; click "Claim MCP Server"
-    // in the workspace you actually want).
+    // reload — deferring until first login lost that race. A window with no
+    // folder open does wait for a login (see claimAtStartup): it is most often a
+    // throwaway window. Tradeoff: if a non-GemStone project opens first, it owns
+    // the socket and serves "no session selected" until you log in there or hand
+    // it off (Ask It to Release from the window you want, or Stop MCP there).
     // Bringing up the HTTPS/SSE listener, which rides along with socket
     // ownership. Kept here rather than in the controller because it owns the
     // TLS cert this extension also offers to install.
@@ -3787,6 +3771,7 @@ export function activate(context: vscode.ExtensionContext) {
       startHttps: startMcpHttps,
       stopHttps: stopMcpHttps,
       ownership: () => resolveOwnership(mcpDeps),
+      hasFolder: () => !!vscode.workspace.workspaceFolders?.length,
       selectedSessionLabel: () => {
         const session = sessionManager.getSelectedSession();
         return session ? `session ${session.id} (${loginLabel(session.login)})` : undefined;
@@ -3824,13 +3809,13 @@ export function activate(context: vscode.ExtensionContext) {
     // session rows (none of which claim to serve MCP) and a re-claim attempt
     // for the case where a prior owner released ownership while we were idle.
     context.subscriptions.push(
-      sessionManager.onDidChangeSelection(() => {
+      sessionManager.onDidChangeSelection((id) => {
         mcpSocketServer.refreshSidecar();
         refreshMcpSurfaces();
-        void mcpController.tryClaim();
+        void mcpController.claimOnSessionChange(id !== null);
       }),
     );
-    void mcpController.tryClaim();
+    void mcpController.claimAtStartup();
 
     context.subscriptions.push(
       vscode.commands.registerCommand('jasper.claimMcpServer', () => mcpController.claim()),

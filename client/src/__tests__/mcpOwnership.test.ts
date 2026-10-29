@@ -30,7 +30,7 @@ const theirs: McpOwnership = {
   },
 };
 
-/** An owner whose window cannot be reached by opening its recorded path. */
+/** An owner whose recorded path is only the first folder of its workspace. */
 const theirsMultiRoot: McpOwnership = {
   kind: 'other',
   info: {
@@ -51,6 +51,7 @@ function harness(
     ownership?: () => McpOwnership;
     sessionLabel?: string;
     warnAnswers?: (string | undefined)[];
+    hasFolder?: boolean;
   } = {},
 ) {
   const socket = {
@@ -74,6 +75,7 @@ function harness(
     stopHttps: vi.fn(async () => {}),
     ownership: options.ownership ?? (() => (socket.isOwner ? ours : unowned)),
     selectedSessionLabel: () => options.sessionLabel,
+    hasFolder: () => options.hasFolder ?? true,
     pid: OUR_PID,
     releaseRequestPath: requestPath,
     notifier: {
@@ -228,6 +230,46 @@ describe('claiming', () => {
   });
 });
 
+// A window with no folder open is most often a throwaway one: the git commit
+// editor, `code ~/.bashrc`, a new empty window. It must not take the server from
+// the window the user works in until it is used for GemStone.
+describe('claiming without being asked', () => {
+  it('claims at startup in a window with a folder', async () => {
+    const h = harness();
+
+    await h.controller.claimAtStartup();
+
+    expect(h.socket.isOwner).toBe(true);
+  });
+
+  it('waits for a login in a window with no folder open', async () => {
+    const h = harness({ hasFolder: false });
+
+    await h.controller.claimAtStartup();
+    await h.controller.claimOnSessionChange(false);
+
+    expect(h.socket.start).not.toHaveBeenCalled();
+  });
+
+  it('claims once a session is selected in a window with no folder open', async () => {
+    const h = harness({ hasFolder: false });
+
+    await h.controller.claimAtStartup();
+    await h.controller.claimOnSessionChange(true);
+
+    expect(h.socket.isOwner).toBe(true);
+  });
+
+  it('still re-claims on any session change in a window with a folder', async () => {
+    // A prior owner may have let go while this window was idle.
+    const h = harness();
+
+    await h.controller.claimOnSessionChange(false);
+
+    expect(h.socket.isOwner).toBe(true);
+  });
+});
+
 describe('stopping', () => {
   it('drops both listeners and says another window can take it', async () => {
     const h = harness();
@@ -335,28 +377,56 @@ describe('asking another window to release', () => {
     expect(h.warns[0].message).toContain('their-proj (Workspace)');
   });
 
-  it('does not offer to open an owner that opening cannot reach', async () => {
-    // A multi-root owner's recorded path is only its first folder, so the
-    // action would open a duplicate window and look like it had worked.
+  it('offers the switch for an owner whose folder cannot be reopened', async () => {
+    // The window list reaches any window, multi-root or folderless alike.
     const h = harness({ startSucceeds: false, ownership: () => theirsMultiRoot });
 
     await h.controller.requestRelease();
 
     expect(h.warns).toHaveLength(1);
-    expect(h.warns[0].actions).toEqual([]);
-    expect(h.deps.revealOwner).not.toHaveBeenCalled();
+    expect(h.warns[0].actions).toEqual(['Switch to That Window']);
   });
 
-  it('offers to open the window that ignored it', async () => {
+  it('offers to switch to the window that ignored it', async () => {
     const h = harness({
       startSucceeds: false,
       ownership: () => theirs,
-      warnAnswers: ['Open That Window'],
+      warnAnswers: ['Switch to That Window'],
     });
 
     await h.controller.requestRelease();
 
-    expect(h.deps.revealOwner).toHaveBeenCalledWith('/their/workspace');
+    expect(h.deps.revealOwner).toHaveBeenCalledWith();
+  });
+
+  it('names a holder with no folder open by the login it serves', async () => {
+    const h = harness({
+      startSucceeds: false,
+      ownership: () => ({
+        kind: 'other',
+        info: { ...theirs.info, workspacePath: '(no workspace)', selectedSession: 'bar (id 3)' },
+      }),
+    });
+
+    await h.controller.claim();
+
+    expect(h.warns[0].message).toContain('bar (id 3)');
+    expect(h.warns[0].message).not.toContain('(no workspace)');
+  });
+
+  it('logs the release request without the no-folder placeholder', async () => {
+    const h = harness({
+      startSucceeds: false,
+      ownership: () => ({
+        kind: 'other',
+        info: { ...theirs.info, workspacePath: '(no workspace)', selectedSession: 'bar (id 3)' },
+      }),
+    });
+
+    await h.controller.requestRelease();
+
+    expect(h.logs.join('\n')).not.toContain('(no workspace)');
+    expect(h.logs.join('\n')).toContain('bar (id 3)');
   });
 
   it('just claims when nobody holds the server', async () => {

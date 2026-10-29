@@ -632,12 +632,12 @@ describe('LoginEditorPanel', () => {
   });
 
   describe('class sync option', () => {
-    it('renders a "Sync classes to local files" checkbox in the HTML', async () => {
+    it('renders a "Keep a local copy" checkbox in the HTML', async () => {
       await LoginEditorPanel.show(storage, secretsArg, treeProvider);
       const panel = window.createWebviewPanel.mock.results[0].value;
       const html = panel.webview.html;
       expect(html).toContain('id="sync_classes"');
-      expect(html).toContain('Sync classes to local files');
+      expect(html).toContain("Keep a local copy of this login's classes as files");
     });
   });
 
