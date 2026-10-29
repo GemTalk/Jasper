@@ -248,7 +248,9 @@ export async function killStoneSession(
       // `|| true` keeps kill's complaint as output: an EPERM must not read as a
       // gem that ignored the signal.
       const complaint = (await shell(`kill -${signal} ${gemPid} 2>&1 || true`)).trim();
-      if (complaint && stillOnStone()) throw new Error(complaint);
+      // A gem that is already gone only needs the stone to let its session go.
+      const gemGone = /no such process/i.test(complaint);
+      if (complaint && !gemGone && stillOnStone()) throw new Error(complaint);
       logInfo(
         `Sent SIG${signal} to gem process ${gemPid} of session ${id} (login serial ${serial}).`,
       );

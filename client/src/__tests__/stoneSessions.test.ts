@@ -455,6 +455,27 @@ describe('killStoneSession', () => {
     expect(commands.at(-1)).toBe('kill -KILL 39811 2>&1 || true');
   });
 
+  // SIGTERM ended the gem, but the stone hadn't let the session go when the wait ran out.
+  it('keeps waiting when the gem is already gone by the time SIGKILL is sent', async () => {
+    let killSent = false;
+    let pollsSinceKill = 0;
+    const { login, run } = setUp(
+      () => !killSent || ++pollsSinceKill <= 1,
+      (command) => {
+        if (command.startsWith('kill -KILL')) {
+          killSent = true;
+          return 'sh: kill: (39811) - No such process';
+        }
+        return command.startsWith('ps') ? GEM : '';
+      },
+    );
+
+    const outcome = killStoneSession(target, login, run);
+    await vi.advanceTimersByTimeAsync(2 * STOP_SESSION_WAIT_MS + 1000);
+
+    await expect(outcome).resolves.toBe('ended');
+  });
+
   it('answers stuck when the session outlives SIGKILL', async () => {
     const { login, run } = setUp(
       () => true,
