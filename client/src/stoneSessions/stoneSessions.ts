@@ -98,22 +98,29 @@ export function listStoneSessions(login: TransientLogin): StoneSessionList {
 export const KILL_CHECK_TIMEOUT_MS = 5000;
 
 /**
- * The gems among `sessions` that Kill can end: on this machine (inside WSL on
- * Windows), and ones this OS user may signal, as `kill -0` answers; another OS
- * user's gem refuses. Answers none when the check itself fails, so Kill is
- * never offered on a guess.
- *
- * The stone calls a gem on its own machine `localhost`, so such a gem is here
- * only when `stoneHost`, the host the stone was reached at, is.
+ * Whether a gem the stone places on `gemHost` runs on this machine. The stone
+ * calls a gem on its own machine `localhost`, so such a gem is here only when
+ * `stoneHost`, the host the stone was reached at, is.
  */
-export function killableGems(
-  sessions: StoneSession[],
+export function gemIsHere(
+  gemHost: string,
   stoneHost: string,
   isThisMachine: (host: string) => boolean,
+): boolean {
+  return isThisMachine(isLoopbackName(gemHost) ? stoneHost : gemHost);
+}
+
+/**
+ * The gems among `sessions` that this OS user may signal here (inside WSL on
+ * Windows), as `kill -0` answers; another OS user's gem refuses. Whether a gem
+ * is here at all is {@link gemIsHere}'s question. Answers none when the check
+ * itself fails, so Kill is never offered on a guess.
+ */
+export function signalableGems(
+  sessions: StoneSession[],
   shellSync: (command: string, timeoutMs: number) => string,
 ): Set<number> {
-  const isHere = (host: string) => isThisMachine(isLoopbackName(host) ? stoneHost : host);
-  const pids = sessions.filter((s) => !s.systemGem && isHere(s.host)).map((s) => s.gemPid);
+  const pids = sessions.filter((s) => !s.systemGem).map((s) => s.gemPid);
   if (pids.length === 0) return new Set();
   try {
     const answer = shellSync(

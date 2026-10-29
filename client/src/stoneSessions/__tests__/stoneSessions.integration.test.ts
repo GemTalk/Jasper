@@ -5,7 +5,8 @@ vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 import type { ActiveSession } from '../../activeSession';
 import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../../gciConstants';
 import {
-  killableGems,
+  gemIsHere,
+  signalableGems,
   killStoneSession,
   listStoneSessions,
   StoneSession,
@@ -15,7 +16,7 @@ import {
   TransientLogin,
 } from '../stoneSessions';
 import { isThisMachine } from '../../thisMachine';
-import { wslExec, wslExecSync } from '../../wslBridge';
+import { needsWsl, refreshWslNetworkInfo, wslExec, wslExecSync } from '../../wslBridge';
 import { testActiveSession } from '../../__tests__/testActiveSession';
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { endGemAfterTest, loginSerialOf, stillOnStone } from '../../__tests__/leftoverGem';
@@ -81,20 +82,22 @@ describe('Stone sessions (integration)', () => {
     expect(list.canStopSessions).toBe(hasIt === 'true');
   });
 
-  // On Windows the gems, and so the check, are inside WSL.
-  it('offers Kill on a gem this OS user runs, and not on a process it may not signal', () => {
+  // On Windows the gems, and so the check, are inside WSL, and the stone is
+  // reached at the WSL guest's address, which counts as this machine only once
+  // probed, as the process watcher does for the panel.
+  it('offers Kill on a gem this OS user runs, and not on a process it may not signal', async () => {
+    if (needsWsl()) await refreshWslNetworkInfo();
     const { serial } = otherSession();
     const row = rowFor(listStoneSessions(loginAs()), serial)!;
     // Process 1 is init, which only root may signal.
     const init = { ...row, gemPid: 1 };
 
-    const killable = killableGems([row, init], session.login.gem_host, isThisMachine, (command) =>
-      wslExecSync(command),
-    );
-
+    expect(gemIsHere(row.host, session.login.gem_host, isThisMachine)).toBe(true);
     // WSL on a CI runner can run as root, which may signal anything.
     const root = wslExecSync('id -u').trim() === '0';
-    expect(killable).toEqual(new Set(root ? [row.gemPid, 1] : [row.gemPid]));
+    expect(signalableGems([row, init], (command) => wslExecSync(command))).toEqual(
+      new Set(root ? [row.gemPid, 1] : [row.gemPid]),
+    );
   });
 
   // Building a backlog would take real commits, which tests must not make; the

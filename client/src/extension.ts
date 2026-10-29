@@ -91,7 +91,7 @@ import {
 } from './nbRunner';
 import { forceStop, loginSerialOf, rearmAfterForceStop } from './forceStop';
 import {
-  killableGems,
+  signalableGems,
   killStoneSession,
   listStoneSessions,
   stopStoneSession,
@@ -953,10 +953,9 @@ export function activate(context: vscode.ExtensionContext) {
   // Every stone's session list, shown in the Databases & Versions panel.
   const stoneSessions = new StoneSessions({
     read: (through) => listStoneSessions(transientLoginOn(through)),
-    killableGems: (sessions, stoneHost) =>
-      killableGems(sessions, stoneHost, isThisMachine, (command, timeout) =>
-        wslExecSync(command, undefined, { timeout }),
-      ),
+    signalableGems: (sessions) =>
+      signalableGems(sessions, (command, timeout) => wslExecSync(command, undefined, { timeout })),
+    isThisMachine,
     stuck: stoppedRunHolds,
     loginSerialOf,
     transientLogin: (through) => transientLoginOn(through),

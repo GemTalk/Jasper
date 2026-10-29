@@ -8,11 +8,12 @@ import { GciLibraryError } from '../../gciLibraryError';
 import { DEFAULT_LOGIN } from '../../loginTypes';
 import {
   isGemCommand,
+  gemIsHere,
   KILL_CHECK_TIMEOUT_MS,
-  killableGems,
   killStoneSession,
   parseStoneSessions,
   sessionAge,
+  signalableGems,
   StoneSession,
   stopStoneSession,
   STOP_SESSION_WAIT_MS,
@@ -589,7 +590,7 @@ describe('isGemCommand', () => {
   });
 });
 
-describe('killableGems', () => {
+describe('signalableGems', () => {
   const gem = (overrides: Partial<StoneSession>): StoneSession => ({
     id: 1,
     serial: 1,
@@ -601,56 +602,45 @@ describe('killableGems', () => {
     holdsOldestCommitRecord: false,
     ...overrides,
   });
-  const isLocal = (host: string) => host === 'uffda';
-  const STONE_HOST = 'uffda';
 
-  it('asks kill -0 about the gems on this machine only, and keeps those it may signal', () => {
+  it('asks kill -0 about each gem, and keeps those this OS user may signal', () => {
     const shell = vi.fn(() => '100\n');
 
-    const killable = killableGems(
-      [gem({ gemPid: 100 }), gem({ gemPid: 200 }), gem({ gemPid: 300, host: 'thor' })],
-      STONE_HOST,
-      isLocal,
-      shell,
-    );
+    const signalable = signalableGems([gem({ gemPid: 100 }), gem({ gemPid: 200 })], shell);
 
     // It runs inside every list read, so a hung shell (wsl.exe) must not hold the window.
     expect(shell).toHaveBeenCalledWith(
       'for p in 100 200; do kill -0 $p 2>/dev/null && echo $p; done; true',
       KILL_CHECK_TIMEOUT_MS,
     );
-    expect(killable).toEqual(new Set([100]));
-  });
-
-  it("takes a gem the stone calls localhost to be on the stone's machine", () => {
-    const shell = vi.fn(() => '100\n');
-    const onLocalhost = [
-      gem({ gemPid: 100, host: 'localhost' }),
-      gem({ gemPid: 200, host: '127.0.0.1' }),
-    ];
-
-    expect(killableGems(onLocalhost, 'thor', isLocal, shell)).toEqual(new Set());
-    expect(shell).not.toHaveBeenCalled();
-
-    expect(killableGems(onLocalhost, 'uffda', isLocal, shell)).toEqual(new Set([100]));
-    expect(shell).toHaveBeenCalledWith(
-      'for p in 100 200; do kill -0 $p 2>/dev/null && echo $p; done; true',
-      KILL_CHECK_TIMEOUT_MS,
-    );
+    expect(signalable).toEqual(new Set([100]));
   });
 
   it("never asks about GemStone's own gems", () => {
     const shell = vi.fn(() => '');
-    expect(killableGems([gem({ systemGem: 'symbolgem' })], STONE_HOST, isLocal, shell)).toEqual(
-      new Set(),
-    );
+    expect(signalableGems([gem({ systemGem: 'symbolgem' })], shell)).toEqual(new Set());
     expect(shell).not.toHaveBeenCalled();
   });
 
-  it('offers no Kill when the check itself fails', () => {
-    const killable = killableGems([gem({})], STONE_HOST, isLocal, () => {
+  it('answers none when the check itself fails', () => {
+    const signalable = signalableGems([gem({})], () => {
       throw new Error('wsl.exe not found');
     });
-    expect(killable).toEqual(new Set());
+    expect(signalable).toEqual(new Set());
+  });
+});
+
+describe('gemIsHere', () => {
+  const isUffda = (host: string) => host === 'uffda';
+
+  it('judges a gem the stone names by host by that name', () => {
+    expect(gemIsHere('uffda', 'thor', isUffda)).toBe(true);
+    expect(gemIsHere('thor', 'uffda', isUffda)).toBe(false);
+  });
+
+  it("takes a gem the stone calls localhost to be on the stone's machine", () => {
+    expect(gemIsHere('localhost', 'thor', isUffda)).toBe(false);
+    expect(gemIsHere('127.0.0.1', 'thor', isUffda)).toBe(false);
+    expect(gemIsHere('localhost', 'uffda', isUffda)).toBe(true);
   });
 });

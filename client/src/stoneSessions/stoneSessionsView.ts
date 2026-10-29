@@ -3,6 +3,7 @@ import type { ActiveSession } from '../activeSession';
 import { GciLibraryError } from '../gciLibraryError';
 import { NO_PRIVILEGE_ERROR } from '../queries/sessionOfLogin';
 import {
+  gemIsHere,
   sessionAge,
   StoneSession,
   StoneSessionList,
@@ -14,8 +15,13 @@ import {
 export interface StoneSessionsDeps {
   /** Read the stone's sessions through a login of its own on `through`'s library; may throw. */
   read(through: ActiveSession): StoneSessionList;
-  /** The gem processes among `sessions`, on a stone reached at `stoneHost`, that Kill can end; see `killableGems`. */
-  killableGems(sessions: StoneSession[], stoneHost: string): Set<number>;
+  /** The gem processes among `sessions` this OS user may signal; see `signalableGems`. */
+  signalableGems(sessions: StoneSession[]): Set<number>;
+  /**
+   * Whether `host` names this machine. Asked at each showing: on Windows the
+   * WSL guest's address is known only once probed.
+   */
+  isThisMachine(host: string): boolean;
   /** Whether a run the user stopped still holds `session`. */
   stuck(session: ActiveSession): boolean;
   /** The serial number of a Jasper session's login, once known. */
@@ -86,7 +92,7 @@ type StoneSessionsRead = StoneSessionList | { kind: 'error'; message: string };
 
 interface CacheEntry {
   read: StoneSessionsRead;
-  killable: Set<number>;
+  signalable: Set<number>;
   /** This window's session ids when it was read: a login or logout here changes the list. */
   windowSessions: string;
 }
@@ -137,12 +143,12 @@ export class StoneSessions {
       } catch (e) {
         read = { kind: 'error', message: e instanceof Error ? e.message : String(e) };
       }
-      const killable =
-        read.kind === 'sessions' ? deps.killableGems(read.sessions, gem_host) : new Set<number>();
-      entry = { read, killable, windowSessions: seen };
+      const signalable =
+        read.kind === 'sessions' ? deps.signalableGems(read.sessions) : new Set<number>();
+      entry = { read, signalable, windowSessions: seen };
       this.cache.set(key, entry);
     }
-    const { read, killable } = entry;
+    const { read, signalable } = entry;
     const loginUser = through.login.gs_user;
     if (read.kind === 'noAccess') {
       this.targets.delete(key);
@@ -183,7 +189,9 @@ export class StoneSessions {
         jasperSession,
         stuck: jasperSession !== undefined && deps.stuck(jasperSession),
         mayStop: read.canStopSessions,
-        canSignalGem: killable.has(stoneSession.gemPid),
+        canSignalGem:
+          signalable.has(stoneSession.gemPid) &&
+          gemIsHere(stoneSession.host, gem_host, deps.isThisMachine),
         backlog: stoneSession.holdsOldestCommitRecord ? backlog : undefined,
         loginUser,
       });

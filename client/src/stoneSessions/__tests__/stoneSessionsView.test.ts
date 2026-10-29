@@ -52,9 +52,7 @@ describe("a stone's session list", () => {
   let stuck: Set<number>;
   let deps: StoneSessionsDeps & {
     read: ReturnType<typeof vi.fn<(through: ActiveSession) => StoneSessionList>>;
-    killableGems: ReturnType<
-      typeof vi.fn<(sessions: StoneSession[], stoneHost: string) => Set<number>>
-    >;
+    signalableGems: ReturnType<typeof vi.fn<(sessions: StoneSession[]) => Set<number>>>;
     stop: ReturnType<typeof vi.fn<StoneSessionsDeps['stop']>>;
   };
   let sessions: StoneSessions;
@@ -77,10 +75,10 @@ describe("a stone's session list", () => {
     };
     deps = {
       read: vi.fn(() => list),
-      killableGems: vi.fn(
-        (all: StoneSession[]) =>
-          new Set(all.filter((s) => s.host === 'localhost' && !s.systemGem).map((s) => s.gemPid)),
+      signalableGems: vi.fn(
+        (all: StoneSession[]) => new Set(all.filter((s) => !s.systemGem).map((s) => s.gemPid)),
       ),
+      isThisMachine: (host) => host === 'localhost',
       stuck: (s) => stuck.has(s.id),
       // Jasper session 1 is GemStone's session 4, whose login is serial 3.
       loginSerialOf: (id) => (id === 1 ? '3' : undefined),
@@ -100,14 +98,22 @@ describe("a stone's session list", () => {
     expect(deps.read).toHaveBeenCalledWith(windowSessions[0]);
     describeIt();
     expect(deps.read).toHaveBeenCalledTimes(1);
-    expect(deps.killableGems).toHaveBeenCalledTimes(1);
+    expect(deps.signalableGems).toHaveBeenCalledTimes(1);
   });
 
   // The stone calls gems on its own machine localhost; only the login says where that is.
-  it('tells the Kill check which host the stone was reached at', () => {
-    windowSessions = [makeSession(1, 'gs64stone', 'thor')];
-    describeIt();
-    expect(deps.killableGems).toHaveBeenCalledWith(listed().sessions, 'thor');
+  it('offers no Kill on the localhost gems of a stone on another machine', () => {
+    windowSessions = [makeSession(1, DEFAULT_LOGIN.stone, 'thor')];
+    expect(rowsOf(describeIt()).some((r) => r.canKill)).toBe(false);
+  });
+
+  // On Windows the WSL guest's address counts as this machine only once probed.
+  it('judges where a gem is at each showing, without reading the list again', () => {
+    windowSessions = [makeSession(1, DEFAULT_LOGIN.stone, '172.20.0.5')];
+    expect(rowsOf(describeIt())[0].canKill).toBe(false);
+    deps.isThisMachine = (host) => host === '172.20.0.5';
+    expect(rowsOf(describeIt())[0].canKill).toBe(true);
+    expect(deps.read).toHaveBeenCalledTimes(1);
   });
 
   it('reads it again once forgotten, as Refresh and Stop do', () => {
@@ -249,8 +255,8 @@ describe("a stone's session list", () => {
     expect(other.tip).toContain('No Stop: DataCurator lacks the SystemControl privilege.');
   });
 
-  it('offers Kill only on a gem Kill can end', () => {
-    deps.killableGems.mockReturnValue(new Set());
+  it('offers Kill only on a gem this OS user may signal', () => {
+    deps.signalableGems.mockReturnValue(new Set());
     expect(rowsOf(describeIt()).some((r) => r.canKill)).toBe(false);
   });
 
