@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
-import type { ActiveSession } from './activeSession';
-import { GciLibraryError } from './gciLibraryError';
-import { NO_PRIVILEGE_ERROR } from './forceStop';
+import type { ActiveSession } from '../activeSession';
+import { GciLibraryError } from '../gciLibraryError';
+import { NO_PRIVILEGE_ERROR } from '../forceStop';
 import {
   sessionAge,
   StoneSession,

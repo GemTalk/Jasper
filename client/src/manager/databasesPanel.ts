@@ -40,7 +40,7 @@ import { canBegin, canCommit, transactionStateLabelIfKnown } from '../queries/tr
 import { readWebviewScript } from '../webviewAssets';
 import { appendSysadmin, showSysadmin } from '../sysadminChannel';
 import { explainGciError } from '../gciLibraryError';
-import type { StoneSessions, StoneSessionsInfo } from '../stoneSessionsView';
+import type { StoneSessions, StoneSessionsInfo } from '../stoneSessions/stoneSessionsView';
 
 const databasesViewJs = readWebviewScript('databasesView.js', 'manager');
 

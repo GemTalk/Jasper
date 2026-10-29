@@ -95,8 +95,8 @@ import {
   killStoneSession,
   listStoneSessions,
   stopStoneSession,
-} from './stoneSessions';
-import { StoneSessions } from './stoneSessionsView';
+} from './stoneSessions/stoneSessions';
+import { StoneSessions } from './stoneSessions/stoneSessionsView';
 import { isThisMachine } from './thisMachine';
 import { showRunInProgress, showStillRunning } from './stillRunningNotice';
 import { RowanRepoRegistry } from './rowanRepos';

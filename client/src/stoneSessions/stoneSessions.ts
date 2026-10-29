@@ -1,7 +1,7 @@
-import type { ActiveSession } from './activeSession';
-import { logInfo } from './gciLog';
-import { NO_PRIVILEGE_ERROR } from './forceStop';
-import { isLoopbackName } from './thisMachine';
+import type { ActiveSession } from '../activeSession';
+import { logInfo } from '../gciLog';
+import { NO_PRIVILEGE_ERROR } from '../forceStop';
+import { isLoopbackName } from '../thisMachine';
 
 /** One session logged in to a stone, as `System descriptionOfSession:` describes it. */
 export interface StoneSession {

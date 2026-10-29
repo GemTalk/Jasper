@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 
-vi.mock('vscode', () => import('../__mocks__/vscode.js'));
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
-import type { ActiveSession } from '../activeSession';
-import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
+import type { ActiveSession } from '../../activeSession';
+import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../../gciConstants';
 import {
   killableGems,
   killStoneSession,
@@ -14,11 +14,11 @@ import {
   STOP_SESSION_WAIT_MS,
   TransientLogin,
 } from '../stoneSessions';
-import { isThisMachine } from '../thisMachine';
-import { wslExec, wslExecSync } from '../wslBridge';
-import { testActiveSession } from './testActiveSession';
-import { useIntegrationTest } from './useIntegrationTest';
-import { endGemAfterTest, loginSerialOf, stillOnStone } from './leftoverGem';
+import { isThisMachine } from '../../thisMachine';
+import { wslExec, wslExecSync } from '../../wslBridge';
+import { testActiveSession } from '../../__tests__/testActiveSession';
+import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
+import { endGemAfterTest, loginSerialOf, stillOnStone } from '../../__tests__/leftoverGem';
 
 describe('Stone sessions (integration)', () => {
   let session: ActiveSession;

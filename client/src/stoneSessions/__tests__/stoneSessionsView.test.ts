@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-vi.mock('vscode', () => import('../__mocks__/vscode.js'));
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
-import { window } from '../__mocks__/vscode';
-import type { ActiveSession } from '../activeSession';
-import { DEFAULT_LOGIN } from '../loginTypes';
+import { window } from '../../__mocks__/vscode';
+import type { ActiveSession } from '../../activeSession';
+import { DEFAULT_LOGIN } from '../../loginTypes';
 import type { StoneSession, StoneSessionList } from '../stoneSessions';
 import {
   KILL,

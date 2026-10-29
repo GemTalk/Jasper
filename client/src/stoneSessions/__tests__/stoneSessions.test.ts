@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-vi.mock('vscode', () => import('../__mocks__/vscode.js'));
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
-import { window } from '../__mocks__/vscode';
-import type { ActiveSession } from '../activeSession';
-import { GciLibraryError } from '../gciLibraryError';
-import { DEFAULT_LOGIN } from '../loginTypes';
+import { window } from '../../__mocks__/vscode';
+import type { ActiveSession } from '../../activeSession';
+import { GciLibraryError } from '../../gciLibraryError';
+import { DEFAULT_LOGIN } from '../../loginTypes';
 import {
   isGemCommand,
   KILL_CHECK_TIMEOUT_MS,
