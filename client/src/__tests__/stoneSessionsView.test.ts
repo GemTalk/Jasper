@@ -238,6 +238,17 @@ describe("a stone's session list", () => {
     expect(holder.tip).toContain('The stone asks sessions to abort at 20 commit records');
     expect(holder.tip).toContain('The count is updated only on Refresh.');
     expect(first.heldBackCommitRecords).toBeUndefined();
+    expect(holder.backlogHolders).toBe(1);
+    expect(holder.tip).toContain('until this one commits or aborts');
+  });
+
+  it('says how many sessions share the oldest commit record', () => {
+    listed().sessions[0].holdsOldestCommitRecord = true;
+    listed().sessions[1].holdsOldestCommitRecord = true;
+    list = { ...listed(), commitRecordBacklog: 27 };
+    const [first, second] = rowsOf(describeIt());
+    expect(first).toMatchObject({ heldBackCommitRecords: 27, backlogHolders: 2 });
+    expect(second.tip).toContain('until both of these sessions commit or abort');
   });
 
   it('says why there is no list for a login without SessionAccess', () => {

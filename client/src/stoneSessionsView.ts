@@ -43,6 +43,8 @@ export interface StoneSessionRow {
   stuck: boolean;
   /** The commit records it holds back, once the stone asks sessions to abort over them. */
   heldBackCommitRecords?: number;
+  /** How many sessions hold those same records back, this one included. */
+  backlogHolders?: number;
   canStop: boolean;
   canKill: boolean;
   /** The row's hover text. */
@@ -162,7 +164,13 @@ export class StoneSessions {
     }
     // Some session always holds the oldest commit record; it is only news once
     // the stone itself asks sessions to abort over the backlog.
-    const backlog = read.commitRecordBacklog >= read.abortThreshold ? read : undefined;
+    const backlog =
+      read.commitRecordBacklog >= read.abortThreshold
+        ? {
+            ...read,
+            holders: read.sessions.filter((s) => s.holdsOldestCommitRecord).length,
+          }
+        : undefined;
     const targets = new Map<number, StoneSessionTarget>();
     const rows = read.sessions.map((stoneSession) => {
       const jasperSession = byServerSession.get(String(stoneSession.id));
@@ -254,7 +262,7 @@ interface RowContext {
   mayStop: boolean;
   /** Its gem runs on this machine (in WSL, on Windows) as a process this OS user may signal. */
   canSignalGem: boolean;
-  backlog?: { commitRecordBacklog: number; abortThreshold: number };
+  backlog?: { commitRecordBacklog: number; abortThreshold: number; holders: number };
   loginUser: string;
 }
 
@@ -287,9 +295,15 @@ export function describeRow(
   }
   if (!systemGem && !mayStop) tip.push(`No Stop: ${loginUser} lacks the SystemControl privilege.`);
   if (backlog) {
+    const who =
+      backlog.holders === 1
+        ? 'this one commits or aborts'
+        : backlog.holders === 2
+          ? 'both of these sessions commit or abort'
+          : `all ${backlog.holders} of these sessions commit or abort`;
     tip.push(
       `The stone asks sessions to abort at ${backlog.abortThreshold} commit records; none can be ` +
-        'reclaimed until this one commits or aborts. The count is updated only on Refresh.',
+        `reclaimed until ${who}. The count is updated only on Refresh.`,
     );
   }
 
@@ -304,6 +318,7 @@ export function describeRow(
     systemGem,
     stuck,
     heldBackCommitRecords: backlog?.commitRecordBacklog,
+    backlogHolders: backlog?.holders,
     canStop,
     canKill,
     tip: tip.join('\n'),

@@ -1316,6 +1316,11 @@ describe("a stone's sessions, under Session Processes", () => {
     expect(rowEl(3)!.textContent).toContain('⧗ holds back 27 commit records');
   });
 
+  it('says a holder of the oldest commit record is one of several', () => {
+    mount(running(listed(row({ heldBackCommitRecords: 27, backlogHolders: 3 }))));
+    expect(rowEl(9)!.textContent).toContain('⧗ one of 3 sessions holding back 27 commit records');
+  });
+
   it('says what stands in for the list when there is none', () => {
     mount(
       running({

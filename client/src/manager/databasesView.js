@@ -892,7 +892,11 @@
       (row.systemGem ? badge(`system: ${row.systemGem}`) : '') +
       (row.stuck ? `<span class="svc-state">\u26a0 still running a stopped run</span>` : '') +
       (row.heldBackCommitRecords !== undefined
-        ? `<span class="svc-state">\u29d7 holds back ${esc(commitRecords(row.heldBackCommitRecords))}</span>`
+        ? `<span class="svc-state">\u29d7 ${esc(
+            row.backlogHolders > 1
+              ? `one of ${row.backlogHolders} sessions holding back ${commitRecords(row.heldBackCommitRecords)}`
+              : `holds back ${commitRecords(row.heldBackCommitRecords)}`,
+          )}</span>`
         : '');
     const stop = row.canStop
       ? btn('stopStoneSession', 'Stop Session', 'stop', 'btn-secondary', {
