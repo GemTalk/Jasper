@@ -55,6 +55,7 @@ describe("a stone's session list", () => {
     killableGems: ReturnType<
       typeof vi.fn<(sessions: StoneSession[], stoneHost: string) => Set<number>>
     >;
+    stop: ReturnType<typeof vi.fn<StoneSessionsDeps['stop']>>;
   };
   let sessions: StoneSessions;
 
@@ -84,7 +85,7 @@ describe("a stone's session list", () => {
       // Jasper session 1 is GemStone's session 4, whose login is serial 3.
       loginSerialOf: (id) => (id === 1 ? '3' : undefined),
       transientLogin: vi.fn(),
-      stop: vi.fn(async () => 'ended' as const),
+      stop: vi.fn<StoneSessionsDeps['stop']>(async () => 'ended'),
       kill: vi.fn(async () => 'ended' as const),
       logout: vi.fn(async () => true),
     };
@@ -130,26 +131,35 @@ describe("a stone's session list", () => {
     beforeEach(() => vi.useFakeTimers());
     afterEach(() => vi.useRealTimers());
 
-    // The stone lets the gem go a moment after the logout returns, so the read
-    // the logout causes can still list it.
-    it('reads it again a moment later, and says so', () => {
+    // The stone lets the gem go a moment after the logout returns, so a read
+    // straight after it can still list it.
+    it('reads it again only a moment later, and says so', () => {
       windowSessions = [makeSession(1), makeSession(2)];
       describeIt();
       const changed = vi.fn();
       sessions.onDidChange(changed);
       windowSessions = [makeSession(1)];
       describeIt();
-      expect(deps.read).toHaveBeenCalledTimes(2);
+      describeIt();
+      expect(deps.read).toHaveBeenCalledTimes(1);
 
       vi.advanceTimersByTime(REREAD_AFTER_LOGOUT_MS);
 
       expect(changed).toHaveBeenCalledTimes(1);
       describeIt();
-      expect(deps.read).toHaveBeenCalledTimes(3);
+      expect(deps.read).toHaveBeenCalledTimes(2);
+    });
+
+    it('reads it at once when another session logs in at the same time', () => {
+      windowSessions = [makeSession(1), makeSession(2)];
+      describeIt();
+      windowSessions = [makeSession(1), makeSession(3)];
+      describeIt();
+      expect(deps.read).toHaveBeenCalledTimes(2);
     });
 
     // Stop and Kill each log in and out to do their work.
-    it('reads it again a moment after Stop and Kill, and says so', async () => {
+    it('drops the ended rows at once, and reads it again only a moment after Stop and Kill', async () => {
       describeIt();
       const changed = vi.fn();
       sessions.onDidChange(changed);
@@ -157,14 +167,23 @@ describe("a stone's session list", () => {
       await sessions.kill('db:db-1', 3);
       vi.mocked(window.showWarningMessage).mockResolvedValue(STOP_SESSION);
       await sessions.stop('db:db-1', 9);
-      describeIt();
-      expect(deps.read).toHaveBeenCalledTimes(2);
+      expect(rowsOf(describeIt()).map((r) => r.serial)).toEqual([1]);
+      expect(deps.read).toHaveBeenCalledTimes(1);
 
       vi.advanceTimersByTime(REREAD_AFTER_LOGOUT_MS);
 
       expect(changed).toHaveBeenCalledTimes(2);
       describeIt();
-      expect(deps.read).toHaveBeenCalledTimes(3);
+      expect(deps.read).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps the row of a session that is still on the stone after Stop', async () => {
+      describeIt();
+      deps.stop.mockResolvedValue('stuck');
+      vi.mocked(window.showWarningMessage).mockResolvedValue(STOP_SESSION);
+      await sessions.stop('db:db-1', 9);
+      expect(rowsOf(describeIt()).map((r) => r.serial)).toEqual([3, 9, 1]);
+      expect(deps.read).toHaveBeenCalledTimes(1);
     });
 
     it('waits for nothing after a login', () => {
@@ -314,9 +333,7 @@ describe("a stone's session list", () => {
 
     await sessions.kill('db:db-1', 3);
     expect(deps.kill).toHaveBeenCalledTimes(1);
-    // Killing this window's own session logs it out, and the list is read again.
+    // Killing this window's own session logs it out.
     expect(deps.logout).toHaveBeenCalledWith(1);
-    describeIt();
-    expect(deps.read).toHaveBeenCalledTimes(2);
   });
 });

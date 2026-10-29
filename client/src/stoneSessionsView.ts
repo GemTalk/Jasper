@@ -93,9 +93,10 @@ interface CacheEntry {
 
 /**
  * Each stone's session list, by a key naming the stone. Read on first showing,
- * on Refresh, and when a session of this window logs in or out, and kept
- * otherwise: a read is a login, which blocks the window while it runs, and the
- * panel redraws on every selection and transaction change.
+ * on Refresh, when a session of this window logs in, and a moment after one
+ * logs out or Stop or Kill ends a session; kept otherwise: a read is a login,
+ * which blocks the window while it runs, and the panel redraws on every
+ * selection and transaction change.
  */
 export class StoneSessions {
   private readonly cache = new Map<string, CacheEntry>();
@@ -121,13 +122,15 @@ export class StoneSessions {
     );
     const seen = windowSessions.map((s) => s.id).join(',');
     let entry = this.cache.get(key);
-    if (entry?.windowSessions !== seen) {
-      const loggedOut =
-        entry !== undefined &&
-        entry.windowSessions
-          .split(',')
-          .some((id) => id !== '' && !windowSessions.some((s) => String(s.id) === id));
-      if (loggedOut) this.rereadAfterLogout(key);
+    if (entry && entry.windowSessions !== seen) {
+      const before = entry.windowSessions.split(',').filter(Boolean);
+      const now = windowSessions.map((s) => String(s.id));
+      if (before.some((id) => !now.includes(id))) this.rereadAfterLogout(key);
+      // A read now could still list the gem that just logged out.
+      if (now.every((id) => before.includes(id))) entry.windowSessions = seen;
+      else entry = undefined;
+    }
+    if (!entry) {
       let read: StoneSessionsRead;
       try {
         read = deps.read(through);
@@ -238,22 +241,29 @@ export class StoneSessions {
   /** Stop Session on a row last shown; the list is read again after. */
   async stop(key: string, serial: number): Promise<void> {
     const target = this.target(key, serial);
-    if (target) await stopStoneSessionCommand(target, this.commandDeps(key));
+    if (target) await stopStoneSessionCommand(target, this.commandDeps(key, serial));
   }
 
   /** Kill on a row last shown; the list is read again after. */
   async kill(key: string, serial: number): Promise<void> {
     const target = this.target(key, serial);
-    if (target?.canKill) await killStoneSessionCommand(target, this.commandDeps(key));
+    if (target?.canKill) await killStoneSessionCommand(target, this.commandDeps(key, serial));
   }
 
-  private commandDeps(key: string): StoneSessionCommandDeps {
+  private commandDeps(key: string, serial: number): StoneSessionCommandDeps {
     const { stop, kill, transientLogin, logout } = this.deps;
-    const refresh = () => {
-      this.forget(key);
+    const refresh = (left: boolean) => {
+      if (left) this.dropRow(key, serial);
       this.rereadAfterLogout(key);
     };
     return { stop, kill, transientLogin, logout, refresh };
+  }
+
+  private dropRow(key: string, serial: number): void {
+    const entry = this.cache.get(key);
+    if (entry?.read.kind !== 'sessions') return;
+    const sessions = entry.read.sessions.filter((s) => s.serial !== serial);
+    entry.read = { ...entry.read, sessions };
   }
 }
 
@@ -344,8 +354,11 @@ export interface StoneSessionCommandDeps {
   transientLogin: (through: ActiveSession) => TransientLogin;
   /** Drop this window's Jasper session whose gem was ended. */
   logout(jasperId: number): Promise<unknown>;
-  /** Have the list read again. */
-  refresh(): void;
+  /**
+   * Have the list read again once the stone has let go of the gems of the
+   * short-lived login and any session that ended; `left` drops the row meanwhile.
+   */
+  refresh(left: boolean): void;
 }
 
 export const STOP_SESSION = 'Stop Session';
@@ -386,11 +399,11 @@ export async function stopStoneSessionCommand(
         : `GemStone session ${id} could not be stopped (${e instanceof Error ? e.message : String(e)}). ` +
             administrator,
     );
-    deps.refresh();
+    deps.refresh(false);
     return;
   }
   if (jasperSession && outcome !== 'stuck') await logOutAfter(jasperSession, deps);
-  deps.refresh();
+  deps.refresh(outcome !== 'stuck');
   switch (outcome) {
     case 'ended':
       void vscode.window.showInformationMessage(`GemStone session ${id} is stopped.`);
@@ -445,11 +458,11 @@ export async function killStoneSessionCommand(
       `GemStone session ${id} could not be killed: ${(e instanceof Error ? e.message : String(e)).replace(/\.?$/, '.')} ` +
         `Someone allowed to end process ${gemPid} on ${host} can run: kill -9 ${gemPid}`,
     );
-    deps.refresh();
+    deps.refresh(false);
     return;
   }
   if (jasperSession && outcome !== 'stuck') await logOutAfter(jasperSession, deps);
-  deps.refresh();
+  deps.refresh(outcome !== 'stuck');
   switch (outcome) {
     case 'ended':
       void vscode.window.showInformationMessage(`GemStone session ${id} is killed.`);

@@ -161,7 +161,7 @@ describe('Stop Session', () => {
     expect(d.stop).toHaveBeenCalledWith(target, d.transientLogin.mock.results[0].value);
     expect(d.transientLogin).toHaveBeenCalledWith(through);
     expect(window.showInformationMessage).toHaveBeenCalledWith('GemStone session 7 is stopped.');
-    expect(d.refresh).toHaveBeenCalled();
+    expect(d.refresh).toHaveBeenCalledWith(true);
   });
 
   it("logs out this window's own session once its gem is stopped, and says so first", async () => {
@@ -182,7 +182,7 @@ describe('Stop Session', () => {
     );
   });
 
-  it("leaves this window's session logged in when its gem would not stop", async () => {
+  it("leaves this window's session logged in, and its row listed, when its gem would not stop", async () => {
     const mine = { ...row, jasperSession: { id: 3 } as ActiveSession };
     vi.mocked(window.showWarningMessage).mockResolvedValueOnce(STOP_SESSION);
     const d = deps(async () => 'stuck');
@@ -190,6 +190,7 @@ describe('Stop Session', () => {
     await stopStoneSessionCommand(mine, d);
 
     expect(d.logout).not.toHaveBeenCalled();
+    expect(d.refresh).toHaveBeenCalledWith(false);
   });
 
   it('says so when the session had already ended', async () => {
@@ -255,7 +256,7 @@ describe('Stop Session', () => {
         "doesn't have. " +
         'An administrator can end it with: System stopSession: 7',
     );
-    expect(d.refresh).toHaveBeenCalled();
+    expect(d.refresh).toHaveBeenCalledWith(false);
   });
 
   it('passes on any other failure, with the same way out', async () => {
@@ -332,7 +333,7 @@ describe('Kill', () => {
     expect(d.kill).toHaveBeenCalledWith(target, d.transientLogin.mock.results[0].value);
     expect(d.transientLogin).toHaveBeenCalledWith(through);
     expect(window.showInformationMessage).toHaveBeenCalledWith('GemStone session 7 is killed.');
-    expect(d.refresh).toHaveBeenCalled();
+    expect(d.refresh).toHaveBeenCalledWith(true);
     expect(d.logout).not.toHaveBeenCalled();
   });
 
@@ -363,7 +364,7 @@ describe('Kill', () => {
       'GemStone session 7 could not be killed: kill: (39811) - Operation not permitted. ' +
         'Someone allowed to end process 39811 on uffda can run: kill -9 39811',
     );
-    expect(d.refresh).toHaveBeenCalled();
+    expect(d.refresh).toHaveBeenCalledWith(false);
   });
 
   it('says so when the gem outlives SIGKILL', async () => {
