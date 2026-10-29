@@ -1213,7 +1213,7 @@ describe("a stone's sessions, under Session Processes", () => {
     holdsBacklog: false,
     canStop: true,
     canKill: false,
-    tip: 'Session 5: gem process 39811 on thor',
+    tip: 'In a transaction.',
     ...overrides,
   });
   const running = (stoneSessions: unknown) =>

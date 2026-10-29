@@ -248,31 +248,21 @@ export function describeRow(
   const canStop = !systemGem && mayStop;
   const canKill = canSignalGem && !systemGem;
 
-  const tip = [
-    `Session ${id}: gem process ${gemPid} on ${host}, logged in ${age} ago, ` +
-      `${transactionWording(stoneSession.transaction)}.`,
-  ];
-  if (systemGem) tip.push(`One of GemStone's own gems (${systemGem}).`);
+  // Only what the row's own text and badges don't already say.
+  const tip = [`${transactionWording(stoneSession.transaction)}.`];
   if (stuck) {
     tip.push(
-      `A run you stopped is still running on the server, so Jasper session ` +
-        `${jasperSession?.id} can't run anything else. Force Stop it, or log it out.` +
-        (canKill ? ' If its gem is frozen for good, Kill ends it.' : ''),
+      `Force Stop or log out Jasper session ${jasperSession?.id} to end the run` +
+        (canKill ? '; Kill if its gem is frozen.' : '.'),
     );
-  } else if (jasperSession) {
-    tip.push(
-      `Jasper session ${jasperSession.id} in this window. Stop or Kill here ends it without ` +
-        "asking about uncommitted changes, and logs it out; the session's own Log out asks first.",
-    );
+  } else if (jasperSession && (canStop || canKill)) {
+    tip.push("Stop and Kill don't ask about uncommitted changes; Log out does.");
   }
-  if (!systemGem && !mayStop) {
-    tip.push(`Stopping it needs the SystemControl privilege, which ${loginUser} doesn't have.`);
-  }
+  if (!systemGem && !mayStop) tip.push(`No Stop: ${loginUser} lacks the SystemControl privilege.`);
   if (backlog) {
     tip.push(
-      `Its view is the oldest of the ${backlog.commitRecordBacklog} commit records the stone ` +
-        `is keeping, past the ${backlog.abortThreshold} at which the stone asks sessions to ` +
-        'abort. Until it commits or aborts, the stone can reclaim none of the space behind them.',
+      `Holds back ${backlog.commitRecordBacklog} commit records (the stone asks for aborts at ` +
+        `${backlog.abortThreshold}); none can be reclaimed until it commits or aborts.`,
     );
   }
 
@@ -296,11 +286,11 @@ export function describeRow(
 function transactionWording(transaction: StoneSession['transaction']): string {
   switch (transaction) {
     case 'in':
-      return 'in a transaction';
+      return 'In a transaction';
     case 'transactionless':
-      return 'transactionless';
+      return 'Transactionless';
     default:
-      return 'not in a transaction';
+      return 'Not in a transaction';
   }
 }
 

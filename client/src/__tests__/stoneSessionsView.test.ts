@@ -142,19 +142,20 @@ describe("a stone's session list", () => {
     });
   });
 
-  it("shows each session's user, gem, host and age", () => {
+  it("shows each session's user, gem, host and age, and leaves them out of the tip", () => {
     expect(rowsOf(describeIt())[1]).toMatchObject({
       user: 'ewinger',
       gemPid: 39811,
       host: 'thor',
       age: '2h',
     });
+    expect(rowsOf(describeIt())[1].tip).toBe('Not in a transaction.');
   });
 
   it("marks this window's own session, and offers Stop and Kill on it as on anyone's", () => {
     const [mine, other, system] = rowsOf(describeIt());
     expect(mine).toMatchObject({ jasperSessionId: 1, canStop: true, canKill: true });
-    expect(mine.tip).toContain("the session's own Log out asks first");
+    expect(mine.tip).toContain("Stop and Kill don't ask about uncommitted changes; Log out does.");
     expect(other).toMatchObject({ canStop: true, canKill: false });
     expect(system).toMatchObject({ systemGem: 'symbolgem', canStop: false, canKill: false });
   });
@@ -163,9 +164,7 @@ describe("a stone's session list", () => {
     list = { ...listed(), canStopSessions: false };
     const other = rowsOf(describeIt())[1];
     expect(other.canStop).toBe(false);
-    expect(other.tip).toContain(
-      "Stopping it needs the SystemControl privilege, which DataCurator doesn't have.",
-    );
+    expect(other.tip).toContain('No Stop: DataCurator lacks the SystemControl privilege.');
   });
 
   it('offers Kill only on a gem Kill can end', () => {
@@ -190,7 +189,7 @@ describe("a stone's session list", () => {
     const [first, holder] = rowsOf(describeIt());
 
     expect(holder.holdsBacklog).toBe(true);
-    expect(holder.tip).toContain('oldest of the 20 commit records');
+    expect(holder.tip).toContain('Holds back 20 commit records');
     expect(first.holdsBacklog).toBe(false);
   });
 
