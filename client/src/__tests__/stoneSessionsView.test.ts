@@ -220,16 +220,16 @@ describe("a stone's session list", () => {
 
   it('flags the session holding the oldest commit record once the stone asks for aborts', () => {
     listed().sessions[1].holdsOldestCommitRecord = true;
-    expect(rowsOf(describeIt())[1].holdsBacklog).toBe(false);
+    expect(rowsOf(describeIt())[1].heldBackCommitRecords).toBeUndefined();
 
     sessions.forget('db:db-1');
     list = { ...listed(), commitRecordBacklog: 20 };
     const [first, holder] = rowsOf(describeIt());
 
-    expect(holder.holdsBacklog).toBe(true);
-    expect(holder.tip).toContain('Holds back 20 commit records');
+    expect(holder.heldBackCommitRecords).toBe(20);
+    expect(holder.tip).toContain('The stone asks sessions to abort at 20 commit records');
     expect(holder.tip).toContain('The count is updated only on Refresh.');
-    expect(first.holdsBacklog).toBe(false);
+    expect(first.heldBackCommitRecords).toBeUndefined();
   });
 
   it('says why there is no list for a login without SessionAccess', () => {

@@ -41,8 +41,8 @@ export interface StoneSessionRow {
   systemGem?: string;
   /** A run the user stopped is still running on it. */
   stuck: boolean;
-  /** It holds back a commit-record backlog the stone already asks sessions to abort over. */
-  holdsBacklog: boolean;
+  /** The commit records it holds back, once the stone asks sessions to abort over them. */
+  heldBackCommitRecords?: number;
   canStop: boolean;
   canKill: boolean;
   /** The row's hover text. */
@@ -275,9 +275,8 @@ export function describeRow(
   if (!systemGem && !mayStop) tip.push(`No Stop: ${loginUser} lacks the SystemControl privilege.`);
   if (backlog) {
     tip.push(
-      `Holds back ${backlog.commitRecordBacklog} commit records (the stone asks for aborts at ` +
-        `${backlog.abortThreshold}); none can be reclaimed until it commits or aborts. ` +
-        'The count is updated only on Refresh.',
+      `The stone asks sessions to abort at ${backlog.abortThreshold} commit records; none can be ` +
+        'reclaimed until this one commits or aborts. The count is updated only on Refresh.',
     );
   }
 
@@ -291,7 +290,7 @@ export function describeRow(
     jasperSessionId: jasperSession?.id,
     systemGem,
     stuck,
-    holdsBacklog: !!backlog,
+    heldBackCommitRecords: backlog?.commitRecordBacklog,
     canStop,
     canKill,
     tip: tip.join('\n'),

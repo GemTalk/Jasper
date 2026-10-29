@@ -880,7 +880,7 @@
   function stoneSessionRow(key, row) {
     const state = row.stuck
       ? mark('warning', 'warn', 'Still running a run you stopped')
-      : row.holdsBacklog
+      : row.heldBackCommitRecords !== undefined
         ? mark('history', 'warn', 'Holds the oldest commit record')
         : row.jasperSessionId !== undefined
           ? mark('plug', 'ok', `Jasper session ${row.jasperSessionId} in this window`)
@@ -891,8 +891,8 @@
       (row.jasperSessionId !== undefined ? badge(`Jasper session ${row.jasperSessionId}`) : '') +
       (row.systemGem ? badge(`system: ${row.systemGem}`) : '') +
       (row.stuck ? `<span class="svc-state">\u26a0 still running a stopped run</span>` : '') +
-      (row.holdsBacklog
-        ? `<span class="svc-state">\u29d7 holds the oldest commit record</span>`
+      (row.heldBackCommitRecords !== undefined
+        ? `<span class="svc-state">\u29d7 holds back ${esc(String(row.heldBackCommitRecords))} commit records</span>`
         : '');
     const stop = row.canStop
       ? btn('stopStoneSession', 'Stop Session', 'stop', 'btn-secondary', {

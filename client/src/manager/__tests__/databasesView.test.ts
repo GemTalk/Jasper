@@ -1218,7 +1218,6 @@ describe("a stone's sessions, under Session Processes", () => {
     host: 'thor',
     age: '3h',
     stuck: false,
-    holdsBacklog: false,
     canStop: true,
     canKill: false,
     tip: 'In a transaction.',
@@ -1294,13 +1293,16 @@ describe("a stone's sessions, under Session Processes", () => {
   it("marks this window's own session, and the flags", () => {
     mount(
       running(
-        listed(row({ jasperSessionId: 2, stuck: true }), row({ serial: 3, holdsBacklog: true })),
+        listed(
+          row({ jasperSessionId: 2, stuck: true }),
+          row({ serial: 3, heldBackCommitRecords: 27 }),
+        ),
       ),
     );
     expect(rowEl(9)!.textContent).toContain('Jasper session 2');
     expect(rowEl(9)!.textContent).toContain('still running a stopped run');
     expect(rowEl(9)!.classList.contains('row-warn')).toBe(true);
-    expect(rowEl(3)!.textContent).toContain('holds the oldest commit record');
+    expect(rowEl(3)!.textContent).toContain('⧗ holds back 27 commit records');
   });
 
   it('says what stands in for the list when there is none', () => {
