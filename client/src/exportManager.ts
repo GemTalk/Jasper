@@ -47,6 +47,14 @@ interface OwnerRecord {
   pid: number;
   host: string;
   sessionId: number;
+  /**
+   * When the holder's machine last started (ms since the epoch). Not about the
+   * mirror at all: it tells a dead holder from a live one. Process numbers start
+   * over at every boot, so a record left by a crash before a reboot can name a
+   * number some unrelated process now has, and probing it says "alive" forever.
+   * A record from an earlier boot of this machine can't have a living holder.
+   */
+  boot?: number;
 }
 
 export interface ExportManagerOptions {
@@ -69,6 +77,15 @@ interface PersistedState {
 // characters (also blocks `..` traversal from an oddly named stone/user).
 function safeSegment(s: string): string {
   return s.replace(/[^A-Za-z0-9._-]/g, '_') || '_';
+}
+
+/**
+ * Is `fsPath` inside the mirror folder `root`? A plain prefix test is wrong here:
+ * `…/DataCurator` is a prefix of the sibling `…/DataCurator_2`.
+ */
+export function isInsideRoot(root: string, fsPath: string): boolean {
+  const relative = path.relative(root, fsPath);
+  return !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
 /**
@@ -150,8 +167,24 @@ export class ExportManager {
     return path.join(root, `${dictIndex}-${dictName}`);
   }
 
-  /** The session's mirror folder (parent of all dictionary directories). */
+  /**
+   * The session's mirror folder (parent of all dictionary directories), or undefined
+   * while a syncing session holds none. Never touches the disk: editors call this on
+   * every cursor move, so claiming happens only in {@link claimSessionRoot}.
+   */
   getSessionRoot(session: ActiveSession): string | undefined {
+    if (this.releasedSessions.has(session.id)) return undefined;
+    const assigned = this.assignedRoots.get(session.id);
+    if (assigned) return assigned;
+    // A login that doesn't sync writes nothing, so it reads the plain folder without holding it.
+    return shouldSyncClasses(session.login) ? undefined : this.baseRoot(session);
+  }
+
+  /**
+   * For code about to write the mirror: the session's folder, claiming one first if
+   * it holds none. A failed claim returns the plain folder unheld, for the error.
+   */
+  claimSessionRoot(session: ActiveSession): string | undefined {
     if (this.releasedSessions.has(session.id)) return undefined;
     const assigned = this.assignedRoots.get(session.id);
     if (assigned) return assigned;
@@ -159,6 +192,13 @@ export class ExportManager {
     // A folder this session couldn't claim is not kept, so the next sync tries again.
     if (root && claimed) this.assignedRoots.set(session.id, root);
     return root;
+  }
+
+  private baseRoot(session: ActiveSession): string | undefined {
+    const parent = this.mirrorFolder();
+    if (!parent) return undefined;
+    const { gem_host, stone, gs_user } = session.login;
+    return path.join(parent, safeSegment(gem_host), safeSegment(stone), safeSegment(gs_user));
   }
 
   /** The session has logged out: give up its folder so a later session can take it. */
@@ -171,8 +211,12 @@ export class ExportManager {
     this.dropClaim(sessionId);
   }
 
-  /** `gemstone.mirrorFolder` changed: live sessions claim under the new folder on their next sync. */
-  mirrorFolderChanged(): void {
+  /**
+   * `gemstone.mirrorFolder` changed: move the live sessions to the new folder and
+   * sync them there now, since until a sync the new folder is empty and the
+   * System Browser can't open a class from it.
+   */
+  async mirrorFolderChanged(liveSessions: ActiveSession[]): Promise<void> {
     const folder = this.mirrorFolder();
     // An edit that resolves to the same folder must not reshuffle sessions into
     // each other's `_N` folders, which would copy every class again.
@@ -180,6 +224,9 @@ export class ExportManager {
     this.claimedUnder = folder;
     for (const id of [...this.assignedRoots.keys()]) this.dropClaim(id);
     this.unwritableReported.clear();
+    for (const session of liveSessions) {
+      if (shouldSyncClasses(session.login)) await this.exportSession(session, true);
+    }
   }
 
   private dropClaim(sessionId: number): void {
@@ -197,11 +244,9 @@ export class ExportManager {
   }
 
   private claimRoot(session: ActiveSession): { root: string; claimed: boolean } | undefined {
-    const parent = this.mirrorFolder();
-    if (!parent) return undefined;
-    this.claimedUnder = parent;
-    const { gem_host, stone, gs_user } = session.login;
-    const base = path.join(parent, safeSegment(gem_host), safeSegment(stone), safeSegment(gs_user));
+    const base = this.baseRoot(session);
+    if (!base) return undefined;
+    this.claimedUnder = this.mirrorFolder();
     // Nothing is written for a login that doesn't sync, so it holds no folder.
     if (!shouldSyncClasses(session.login)) return { root: base, claimed: false };
     const heldHere = new Set(this.assignedRoots.values());
@@ -282,7 +327,7 @@ export class ExportManager {
       return;
     }
 
-    const sessionRoot = this.getSessionRoot(session);
+    const sessionRoot = this.claimSessionRoot(session);
     if (!sessionRoot || !this.ensureWritable(session, sessionRoot)) return;
 
     await vscode.window.withProgress(
@@ -501,7 +546,7 @@ export class ExportManager {
    */
   async syncClass(session: ActiveSession, dictName: string, className: string): Promise<void> {
     if (!shouldSyncClasses(session.login)) return;
-    const sessionRoot = this.getSessionRoot(session);
+    const sessionRoot = this.claimSessionRoot(session);
     if (!sessionRoot) return;
     try {
       const exec = boundLimitExecutor(session);
@@ -769,7 +814,12 @@ function readOwner(dir: string): OwnerFile | undefined {
     if (typeof parsed.pid === 'number' && typeof parsed.host === 'string') {
       return {
         raw,
-        record: { pid: parsed.pid, host: parsed.host, sessionId: Number(parsed.sessionId) },
+        record: {
+          pid: parsed.pid,
+          host: parsed.host,
+          sessionId: Number(parsed.sessionId),
+          boot: typeof parsed.boot === 'number' ? parsed.boot : undefined,
+        },
       };
     }
   } catch {
@@ -778,11 +828,30 @@ function readOwner(dir: string): OwnerFile | undefined {
   return { raw };
 }
 
+// The boot time is derived from the wall clock, so a clock correction moves it a
+// little; a gap smaller than this is the same boot. A reboot moves it by at least
+// the previous boot's uptime.
+const SAME_BOOT_TOLERANCE_MS = 5 * 60 * 1000;
+
+function machineBootTime(): number {
+  return Date.now() - os.uptime() * 1000;
+}
+
 // A record we can't read, or one from another machine (whose process we can't
 // probe), counts as held: the cost is a spare `_N` folder, never a shared one.
+// The host name, not vscode.env.machineId, says which machine: the ID lives in
+// VS Code's user-data folder, which a home directory shared over NFS shares too,
+// so two machines would each take the other's records for their own.
 function heldByAnotherProcess({ record }: OwnerFile): boolean {
   if (!record || record.host !== os.hostname()) return true;
   if (record.pid === process.pid) return false;
+  // Left before this machine last started, so its pid proves nothing: see OwnerRecord.boot.
+  if (
+    record.boot !== undefined &&
+    Math.abs(record.boot - machineBootTime()) > SAME_BOOT_TOLERANCE_MS
+  ) {
+    return false;
+  }
   return isPidAlive(record.pid);
 }
 
@@ -839,7 +908,12 @@ export function writeOwner(
   sessionId: number,
   link: (from: string, to: string) => void = fs.linkSync,
 ): boolean {
-  const record: OwnerRecord = { pid: process.pid, host: os.hostname(), sessionId };
+  const record: OwnerRecord = {
+    pid: process.pid,
+    host: os.hostname(),
+    sessionId,
+    boot: machineBootTime(),
+  };
   const json = JSON.stringify(record);
   const target = path.join(dir, OWNER_FILE);
   const temp = `${target}.${process.pid}.tmp`;

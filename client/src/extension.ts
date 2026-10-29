@@ -1006,7 +1006,9 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     sessionManager.onDidRemoveSession((id) => exportManager.releaseSession(id)),
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('gemstone.mirrorFolder')) exportManager.mirrorFolderChanged();
+      if (e.affectsConfiguration('gemstone.mirrorFolder')) {
+        void exportManager.mirrorFolderChanged(sessionManager.getSessions());
+      }
     }),
   );
   // Create the Class Sync channel now so it joins the others in the dropdown.

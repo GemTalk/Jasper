@@ -200,7 +200,7 @@ vi.mock('vscode', () => {
   };
 });
 
-import { ExportManager, claimSlot, writeOwner } from '../exportManager';
+import { ExportManager, claimSlot, isInsideRoot, writeOwner } from '../exportManager';
 import { ActiveSession } from '../sessionManager';
 import { GemStoneLogin } from '../loginTypes';
 import * as vscode from 'vscode';
@@ -268,6 +268,8 @@ function fakeMemento() {
   };
 }
 
+const bootTime = () => Date.now() - os.uptime() * 1000;
+
 describe('ExportManager (incremental sync)', () => {
   let manager: ExportManager;
   let tmpDir: string;
@@ -292,7 +294,7 @@ describe('ExportManager (incremental sync)', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  const root = (s: ActiveSession) => manager.getSessionRoot(s)!;
+  const root = (s: ActiveSession) => manager.claimSessionRoot(s)!;
 
   describe('path layout', () => {
     it('keys the mirror by host/stone/user under the private storage folder', () => {
@@ -320,6 +322,45 @@ describe('ExportManager (incremental sync)', () => {
       await manager.exportSession(session);
       expect(fs.existsSync(path.join(root(session), '1-UserGlobals', 'MyClass.gs'))).toBe(true);
       expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("looking up a session's folder", () => {
+    // Editors look the folder up on every cursor move.
+    it('claims nothing and touches no files', () => {
+      const session = createMockSession();
+      expect(manager.getSessionRoot(session)).toBeUndefined();
+      expect(fs.existsSync(mirrorDir)).toBe(false);
+    });
+
+    it('finds the folder once a sync has claimed it', async () => {
+      const session = createMockSession();
+      await manager.exportSession(session, true);
+      expect(manager.getSessionRoot(session)).toBe(
+        path.join(mirrorDir, 'localhost', 'gs64stone', 'DataCurator'),
+      );
+    });
+
+    it('stays empty while the mirror folder cannot be written', async () => {
+      const blocker = path.join(tmpDir, 'blocked');
+      fs.writeFileSync(blocker, '');
+      setConfig('mirrorFolder', blocker);
+      const session = createMockSession();
+      await manager.exportSession(session, true);
+      expect(manager.getSessionRoot(session)).toBeUndefined();
+    });
+
+    it('gives a login that does not sync its plain folder without holding it', () => {
+      const session = createMockSession({ sync_classes: false });
+      const base = path.join(mirrorDir, 'localhost', 'gs64stone', 'DataCurator');
+      expect(manager.getSessionRoot(session)).toBe(base);
+      expect(fs.existsSync(base)).toBe(false);
+    });
+
+    it('does not count a sibling _2 folder as inside the plain one', () => {
+      const base = path.join(mirrorDir, 'DataCurator');
+      expect(isInsideRoot(base, path.join(base, '1-UserGlobals', 'A.gs'))).toBe(true);
+      expect(isInsideRoot(base, path.join(`${base}_2`, '1-UserGlobals', 'A.gs'))).toBe(false);
     });
   });
 
@@ -398,7 +439,31 @@ describe('ExportManager (incremental sync)', () => {
       // The test runner's parent is alive and is not this process.
       fs.writeFileSync(
         path.join(base, '.jasper-owner.json'),
-        JSON.stringify({ pid: process.ppid, host: os.hostname(), sessionId: 1 }),
+        JSON.stringify({ pid: process.ppid, host: os.hostname(), sessionId: 1, boot: bootTime() }),
+      );
+      expect(root(createMockSession())).toBe(`${base}_2`);
+    });
+
+    it('takes over a record left before this machine last started', () => {
+      // Process numbers start over at boot, so the record's pid may now be an
+      // unrelated live process; the test runner's parent stands in for one.
+      const base = path.join(mirrorDir, 'localhost', 'gs64stone', 'DataCurator');
+      fs.mkdirSync(base, { recursive: true });
+      const dayBefore = bootTime() - 24 * 60 * 60 * 1000;
+      fs.writeFileSync(
+        path.join(base, '.jasper-owner.json'),
+        JSON.stringify({ pid: process.ppid, host: os.hostname(), sessionId: 1, boot: dayBefore }),
+      );
+      expect(root(createMockSession())).toBe(base);
+    });
+
+    it('never takes over a record from another machine, even one whose pid is dead here', () => {
+      // A home shared over NFS: that machine's process can't be probed from this one.
+      const base = path.join(mirrorDir, 'localhost', 'gs64stone', 'DataCurator');
+      fs.mkdirSync(base, { recursive: true });
+      fs.writeFileSync(
+        path.join(base, '.jasper-owner.json'),
+        JSON.stringify({ pid: 2 ** 22 + 12345, host: 'another-machine', sessionId: 1 }),
       );
       expect(root(createMockSession())).toBe(`${base}_2`);
     });
@@ -442,8 +507,7 @@ describe('ExportManager (incremental sync)', () => {
       await manager.exportSession(session, true);
       const fixed = path.join(tmpDir, 'fixed');
       setConfig('mirrorFolder', fixed);
-      manager.mirrorFolderChanged();
-      await manager.refreshSession(session);
+      await manager.mirrorFolderChanged([session]);
       const r = path.join(fixed, 'localhost', 'gs64stone', 'DataCurator');
       expect(root(session)).toBe(r);
       expect(fs.existsSync(path.join(r, '1-UserGlobals', 'MyClass.gs'))).toBe(true);
@@ -507,13 +571,13 @@ describe('ExportManager (incremental sync)', () => {
       expect(writeOwner(dir, 2, refuse)).toBe(false);
     });
 
-    it('keeps live sessions on their folders when the setting changes to the same place', () => {
+    it('keeps live sessions on their folders when the setting changes to the same place', async () => {
       const first = createMockSession();
       const s2 = second();
       const a = root(first);
       const b = root(s2);
       setConfig('mirrorFolder', mirrorDir);
-      manager.mirrorFolderChanged();
+      await manager.mirrorFolderChanged([first, s2]);
       expect(root(s2)).toBe(b);
       expect(root(first)).toBe(a);
     });
