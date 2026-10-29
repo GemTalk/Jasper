@@ -1195,7 +1195,8 @@ export class NotebookCellOutputItem {
   }
 
   static error(err: Error): NotebookCellOutputItem {
-    const payload = JSON.stringify({ name: err.name, message: err.message });
+    // As VS Code does: the stack goes into the output too.
+    const payload = JSON.stringify({ name: err.name, message: err.message, stack: err.stack });
     return new NotebookCellOutputItem(
       new TextEncoder().encode(payload),
       'application/vnd.code.notebook.error',
@@ -1233,13 +1234,18 @@ export class NotebookData {
 }
 
 function createMockCellExecution(cell: unknown) {
+  // The cell's stop button; a test presses it with `stop.cancel()`.
+  const stop = new CancellationTokenSource();
   return {
     cell,
+    stop,
+    token: stop.token,
     executionOrder: undefined as number | undefined,
     start: vi.fn(),
     end: vi.fn(),
     replaceOutput: vi.fn(async () => {}),
     appendOutput: vi.fn(async () => {}),
+    clearOutput: vi.fn(async () => {}),
   };
 }
 

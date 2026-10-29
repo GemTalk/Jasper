@@ -4,6 +4,7 @@ import {
   ERR_NOT_IN_TRANSACTION,
 } from './queries/transactionMode';
 import { GciError } from './gciLibrary';
+import { GCI_ERR_OP_IN_PROGRESS } from './gciConstants';
 
 /**
  * The fields an error's wording and classification are read from. Narrower than
@@ -16,8 +17,18 @@ export type ReportedGciError = Pick<GciError, 'number' | 'message'> &
   Partial<Pick<GciError, 'reason'>>;
 
 /**
- * Rewrite the stone's wording for the two errors that are not failures, and for
- * the one whose cause the mode feature made common.
+ * Why a call could not run on a busy session, in words a user can act on: what
+ * Jasper says for GemStone error 2203 ("session has a GciTsNb operation in
+ * progress", "call in progress by another C thread"), and wherever it finds the
+ * session busy before calling.
+ */
+export const SESSION_BUSY_MESSAGE =
+  'This session is busy with a run that is still going, or with one you stopped that ' +
+  'is still finishing, so this did not run. Try again once it ends, or stop it.';
+
+/**
+ * Rewrite the stone's wording for the two errors that are not failures, for
+ * the one whose cause the mode feature made common, and for a busy session.
  *
  * 3007 / 3008 are reported on the first GCI call after the gem serviced a
  * SigAbort (or a LostOt) on the session's behalf — something Jasper deliberately
@@ -55,6 +66,7 @@ export function explainGciError(gciError: ReportedGciError): string {
       `Transactionless session has to switch modes first, which the status bar does in one click.`
     );
   }
+  if (gciError.number === GCI_ERR_OP_IN_PROGRESS) return SESSION_BUSY_MESSAGE;
   return gciError.message;
 }
 

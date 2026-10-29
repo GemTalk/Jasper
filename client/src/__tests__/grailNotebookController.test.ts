@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 vi.mock('../pythonQueries', () => ({
-  evalPythonInScope: vi.fn(() => '3'),
+  evalPythonInScopeNb: vi.fn(async () => '3'),
   resetPythonScope: vi.fn(() => 'scope reset'),
 }));
 
@@ -109,11 +109,16 @@ describe('GrailNotebookController', () => {
     ctrl.dispose();
   });
 
-  it('executes a cell through evalPythonInScope keyed by the notebook URI', async () => {
+  it('executes a cell through evalPythonInScopeNb keyed by the notebook URI', async () => {
     const ctrl = new GrailNotebookController(makeSessionManager(true));
     await runCells([makeCell('1 + 2', 'file:///nb/a.ipynb')]);
 
-    expect(python.evalPythonInScope).toHaveBeenCalledWith(SESSION, '1 + 2', 'file:///nb/a.ipynb');
+    expect(python.evalPythonInScopeNb).toHaveBeenCalledWith(
+      SESSION,
+      '1 + 2',
+      'file:///nb/a.ipynb',
+      expect.any(Function),
+    );
     const execution = executionAt(0);
     expect(execution.start).toHaveBeenCalled();
     expect(execution.end).toHaveBeenCalledWith(true, expect.any(Number));
@@ -134,7 +139,7 @@ describe('GrailNotebookController', () => {
   });
 
   it('ends with an error output when Grail reports an inline error', async () => {
-    vi.mocked(python.evalPythonInScope).mockReturnValueOnce(
+    vi.mocked(python.evalPythonInScopeNb).mockResolvedValueOnce(
       'Error: NameError — name x is not defined',
     );
     const ctrl = new GrailNotebookController(makeSessionManager(true));
@@ -149,7 +154,7 @@ describe('GrailNotebookController', () => {
   });
 
   it('ends with an error output when Grail is not installed (hint result)', async () => {
-    vi.mocked(python.evalPythonInScope).mockReturnValueOnce(
+    vi.mocked(python.evalPythonInScopeNb).mockResolvedValueOnce(
       'Grail (GemStone-Python) not detected: class ModuleAst not found in symbolList.',
     );
     const ctrl = new GrailNotebookController(makeSessionManager(true));
@@ -162,7 +167,7 @@ describe('GrailNotebookController', () => {
     const ctrl = new GrailNotebookController(makeSessionManager(false));
     await runCells([makeCell('1 + 2')]);
 
-    expect(python.evalPythonInScope).not.toHaveBeenCalled();
+    expect(python.evalPythonInScopeNb).not.toHaveBeenCalled();
     const execution = executionAt(0);
     expect(execution.end).toHaveBeenCalledWith(false, expect.any(Number));
     const item = execution.replaceOutput.mock.calls[0][0][0].items[0];
@@ -171,7 +176,7 @@ describe('GrailNotebookController', () => {
   });
 
   it('reports a thrown query error (e.g. session busy) as a cell error', async () => {
-    vi.mocked(python.evalPythonInScope).mockImplementationOnce(() => {
+    vi.mocked(python.evalPythonInScopeNb).mockImplementationOnce(() => {
       throw new Error('Session is busy with another operation.');
     });
     const ctrl = new GrailNotebookController(makeSessionManager(true));
@@ -187,7 +192,7 @@ describe('GrailNotebookController', () => {
   it('skips evaluation for blank cells but still completes them', async () => {
     const ctrl = new GrailNotebookController(makeSessionManager(true));
     await runCells([makeCell('   \n')]);
-    expect(python.evalPythonInScope).not.toHaveBeenCalled();
+    expect(python.evalPythonInScopeNb).not.toHaveBeenCalled();
     expect(executionAt(0).end).toHaveBeenCalledWith(true, expect.any(Number));
     ctrl.dispose();
   });

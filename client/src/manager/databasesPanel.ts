@@ -39,6 +39,7 @@ import { ActiveSession, SessionManager } from '../sessionManager';
 import { canBegin, canCommit, transactionStateLabelIfKnown } from '../queries/transactionMode';
 import { readWebviewScript } from '../webviewAssets';
 import { appendSysadmin, showSysadmin } from '../sysadminChannel';
+import { explainGciError } from '../gciLibraryError';
 
 const databasesViewJs = readWebviewScript('databasesView.js', 'manager');
 
@@ -1294,7 +1295,7 @@ export class DatabasesPanel {
       tone: success ? 'ok' : 'warn',
       message: success
         ? `Session ${session.id} is active and responsive.`
-        : `Session ${session.id} did not respond — ${err.message || `error ${err.number}`}.`,
+        : `Session ${session.id} did not respond — ${explainGciError(err) || `error ${err.number}`}.`,
     });
   }
 

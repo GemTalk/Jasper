@@ -139,11 +139,16 @@ vi.mock('../../basicInspector/basicInspector', () => ({
   BasicInspector: { create: vi.fn(() => ({ close: vi.fn() })) },
 }));
 
-// Breakpoint rules after a Resume: no rule applies unless a test says one does.
+// A cancelled run has ended unless a test says it is still going.
+vi.mock('../../nbRunner', async (orig) => ({
+  ...(await orig<typeof import('../../nbRunner')>()),
+  stoppedRunHolds: vi.fn(() => false),
+}));
+
+// Resume and Run to Cursor run on a worker thread; the run completes unless a test says otherwise.
 vi.mock('../conditionalBreakpoints', async (orig) => ({
   ...(await orig<typeof import('../conditionalBreakpoints')>()),
-  resumeNeedsRules: vi.fn(() => false),
-  honourRulesAfterResume: vi.fn(),
+  resumeOnWorker: vi.fn(async () => ({ completed: true })),
 }));
 
 // The frozen System Browser is stubbed, not exercised: Browse from a frame goes
@@ -202,8 +207,9 @@ import { GemStoneLogin } from '../../loginTypes';
 import { SMALLTALK_LANGUAGE } from '../../languageIds';
 import { OOP_NIL } from '../../gciConstants';
 import { fakeActiveSession } from '../../__tests__/fakeActiveSession';
-import { honourRulesAfterResume, resumeNeedsRules } from '../conditionalBreakpoints';
+import { resumeOnWorker } from '../conditionalBreakpoints';
 import { buildMethodUri, parseUri } from '../../gemstoneFileSystemProvider';
+import { NbCancelledError, stoppedRunHolds } from '../../nbRunner';
 
 const GS_PROCESS = 0x123n;
 const ERROR_MSG = 'a UndefinedObject does not understand #foo';
@@ -3325,7 +3331,7 @@ describe('DebuggerPanel', () => {
         vi.mocked(debug.getInstVarOop).mockReturnValue(700n);
         vi.mocked(debug.isSpecialOop).mockReturnValue(false);
         vi.mocked(debug.evaluateInFrameToOop).mockReturnValue(999n);
-        vi.mocked(debug.continueExecution).mockReturnValue({ completed: true });
+        vi.mocked(resumeOnWorker).mockResolvedValue({ completed: true });
         vi.mocked(debug.fetchFrameVariables).mockImplementation(
           (_s: unknown, _p: unknown, level: number) => [
             {
@@ -3413,7 +3419,7 @@ describe('DebuggerPanel', () => {
       });
 
       it('releases pinned originals on Resume (leaving the halt)', () => {
-        vi.mocked(debug.continueExecution).mockReturnValue({
+        vi.mocked(resumeOnWorker).mockResolvedValue({
           completed: false,
           errorMessage: 'next halt',
         });
@@ -3603,7 +3609,7 @@ describe('DebuggerPanel', () => {
       expect(cancelSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('a cancelled eval shows "Evaluation Cancelled", the break kind, and the raw error', async () => {
+    it('a cancelled eval shows "Evaluation Cancelled" and the gem\'s own answer', async () => {
       let rejectEval: (e: Error) => void = () => {};
       vi.mocked(debug.evaluateInFrameNb).mockImplementationOnce((...args: unknown[]) => {
         const opts = args[4] as { onStart?: (c: () => void) => void };
@@ -3622,12 +3628,12 @@ describe('DebuggerPanel', () => {
 
       const res = lastPosted(panel, 'evalResult');
       expect(res.value).toContain('Evaluation Cancelled');
-      expect(res.value).toContain('soft break');
       expect(res.value).toContain('the operation was interrupted'); // raw error kept
+      expect(res.value).not.toMatch(/hard break|soft break/);
       expect(res.isError).toBe(true);
     });
 
-    it('labels a two-click eval cancel "(hard break)"', async () => {
+    it('says the gem is still finishing an eval the runner stopped waiting for', async () => {
       let rejectEval: (e: Error) => void = () => {};
       vi.mocked(debug.evaluateInFrameNb).mockImplementationOnce((...args: unknown[]) => {
         const opts = args[4] as { onStart?: (c: () => void) => void };
@@ -3640,12 +3646,13 @@ describe('DebuggerPanel', () => {
       sendMessage(panel, { command: 'evalInFrame', level: 3, expr: '[true] whileTrue' });
       await tick();
 
-      sendMessage(panel, { command: 'cancelOp' }); // soft
-      sendMessage(panel, { command: 'cancelOp' }); // hard
-      rejectEval(new Error('forced'));
+      sendMessage(panel, { command: 'cancelOp' }); // one click; the runner then stops waiting
+      rejectEval(new NbCancelledError());
       await tick();
 
-      expect(lastPosted(panel, 'evalResult').value).toContain('hard break');
+      expect(lastPosted(panel, 'evalResult').value).toBe(
+        'Evaluation Cancelled — the gem is still finishing it',
+      );
     });
 
     it('ignores a second eval while one is already running (busy)', async () => {
@@ -3685,7 +3692,7 @@ describe('DebuggerPanel', () => {
     });
 
     it('does not mislabel a later eval setup error as cancelled after a prior cancel', async () => {
-      // First eval: cancelled, so cancelClicks is bumped to 1.
+      // First eval: cancelled, so the cancel flag is set.
       let rejectFirst: (e: Error) => void = () => {};
       vi.mocked(debug.evaluateInFrameNb).mockImplementationOnce((...args: unknown[]) => {
         const opts = args[4] as { onStart?: (c: () => void) => void };
@@ -3697,13 +3704,13 @@ describe('DebuggerPanel', () => {
       const panel = openPanel();
       sendMessage(panel, { command: 'evalInFrame', level: 3, expr: 'first' });
       await tick();
-      sendMessage(panel, { command: 'cancelOp' }); // cancelClicks → 1
+      sendMessage(panel, { command: 'cancelOp' });
       rejectFirst(new Error('interrupted'));
       await tick();
 
       // Second eval whose blocking SETUP fails before polling starts → onStart never
-      // fires, so cancelClicks isn't reset there. The reset-at-entry guard must keep
-      // the stale 1 from mislabeling this real error as a cancellation.
+      // fires, so the flag isn't reset there. The reset-at-entry guard must keep the
+      // stale flag from mislabeling this real error as a cancellation.
       vi.mocked(debug.evaluateInFrameNb).mockRejectedValueOnce(
         new Error('cannot create expression string'),
       );
@@ -3715,88 +3722,93 @@ describe('DebuggerPanel', () => {
       expect(res.value).not.toContain('Cancelled');
     });
 
-    it('Resume disposes the panel when execution completes', () => {
-      vi.mocked(debug.continueExecution).mockReturnValueOnce({ completed: true });
+    it('Resume disposes the panel when execution completes', async () => {
+      vi.mocked(resumeOnWorker).mockResolvedValueOnce({ completed: true });
       const panel = openPanel();
       sendMessage(panel, { command: 'resume' });
+      await tick();
 
-      expect(debug.continueExecution).toHaveBeenCalledWith(session, GS_PROCESS);
+      expect(resumeOnWorker).toHaveBeenCalledWith(session, GS_PROCESS, expect.anything());
       expect(panel.dispose).toHaveBeenCalled();
     });
 
-    it('Resume refreshes with the new error when it hits another stop', () => {
-      vi.mocked(debug.continueExecution).mockReturnValueOnce({
+    it('Resume refreshes with the new error when it hits another stop', async () => {
+      vi.mocked(resumeOnWorker).mockResolvedValueOnce({
         completed: false,
         errorMessage: 'next error',
       });
       const panel = openPanel();
       const before = posted(panel, 'init').length;
       sendMessage(panel, { command: 'resume' });
+      await tick();
 
       expect(panel.dispose).not.toHaveBeenCalled();
       expect(posted(panel, 'init').length).toBe(before + 1); // refreshed
       expect(lastPosted(panel, 'init').errorMessage).toBe('next error');
     });
 
-    describe('a Resume that stops at a breakpoint carrying a rule', () => {
-      const AT_LOGPOINT = {
-        completed: false,
-        errorMessage: 'Method breakpoint encountered',
-        errorContext: GS_PROCESS,
-        errorNumber: 6005,
-      };
-
-      it('carries on past it the way the run did, and closes when the run completes', async () => {
-        // A logpoint reached after Resume logs and carries on; it never stops
-        // the debugger.
-        vi.mocked(debug.continueExecution).mockReturnValueOnce(AT_LOGPOINT);
-        vi.mocked(resumeNeedsRules).mockReturnValueOnce(true);
-        vi.mocked(honourRulesAfterResume).mockResolvedValueOnce({ completed: true });
+    describe('a Resume cancelled while its run keeps going', () => {
+      it('says the run is still going, keeping the stack and asking GemStone nothing', async () => {
+        vi.mocked(resumeOnWorker).mockRejectedValueOnce(new NbCancelledError());
+        vi.mocked(stoppedRunHolds).mockReturnValueOnce(true);
         const panel = openPanel();
+        const inits = posted(panel, 'init').length;
 
         sendMessage(panel, { command: 'resume' });
         await tick();
 
-        expect(honourRulesAfterResume).toHaveBeenCalledWith(
-          session,
-          AT_LOGPOINT,
-          expect.objectContaining({ suppressNotification: true, onStart: expect.any(Function) }),
-        );
+        expect(lastPosted(panel, 'banner').text).toMatch(/still going.*Force Stop/);
+        // A new init would re-select the top frame and ask the busy session for
+        // its variables.
+        expect(posted(panel, 'init').length).toBe(inits);
+      });
+
+      /** The panel's handler for the run ending, as handed to the resume. */
+      async function whenTheRunEnds() {
+        vi.mocked(resumeOnWorker).mockRejectedValueOnce(new NbCancelledError());
+        vi.mocked(stoppedRunHolds).mockReturnValueOnce(true);
+        const panel = openPanel();
+        sendMessage(panel, { command: 'resume' });
+        await tick();
+        const [, , options] = vi.mocked(resumeOnWorker).mock.calls.at(-1)!;
+        return { panel, ended: options!.onGivenUpSettled! };
+      }
+
+      it('shows where Force Stop stopped it, once it has', async () => {
+        const { panel, ended } = await whenTheRunEnds();
+        const before = posted(panel, 'init').length;
+
+        ended({
+          completed: false,
+          errorMessage: 'a InterSessionSignal occurred (error 6010)',
+          errorContext: GS_PROCESS,
+          errorNumber: 6010,
+        });
+
+        expect(posted(panel, 'init').length).toBe(before + 1); // refreshed
+        expect(lastPosted(panel, 'init').errorMessage).toBe('Stopped by Force Stop.');
+      });
+
+      it('closes when the run finished after all', async () => {
+        const { panel, ended } = await whenTheRunEnds();
+
+        ended({ completed: true, resultOop: 0x55n });
+
         expect(panel.dispose).toHaveBeenCalled();
       });
+    });
 
-      it('refreshes on wherever the rules let the run stop', async () => {
-        vi.mocked(debug.continueExecution).mockReturnValueOnce(AT_LOGPOINT);
-        vi.mocked(resumeNeedsRules).mockReturnValueOnce(true);
-        vi.mocked(honourRulesAfterResume).mockResolvedValueOnce({
-          completed: false,
-          errorMessage: 'Method breakpoint encountered (condition held)',
-          errorContext: GS_PROCESS,
-          errorNumber: 6005,
-        });
-        const panel = openPanel();
+    it('resumes on a worker thread, with the overlay offering Cancel', async () => {
+      const panel = openPanel();
 
-        sendMessage(panel, { command: 'resume' });
-        await tick();
+      sendMessage(panel, { command: 'resume' });
+      await tick();
 
-        expect(panel.dispose).not.toHaveBeenCalled();
-        expect(lastPosted(panel, 'init').errorMessage).toBe(
-          'Method breakpoint encountered (condition held)',
-        );
-      });
-
-      it('goes straight to the stop when no rule applies', () => {
-        vi.mocked(debug.continueExecution).mockReturnValueOnce({
-          completed: false,
-          errorMessage: 'next error',
-        });
-        const panel = openPanel();
-
-        sendMessage(panel, { command: 'resume' });
-
-        expect(honourRulesAfterResume).not.toHaveBeenCalled();
-        expect(lastPosted(panel, 'init').errorMessage).toBe('next error');
-      });
+      expect(resumeOnWorker).toHaveBeenCalledWith(
+        session,
+        GS_PROCESS,
+        expect.objectContaining({ suppressNotification: true, onStart: expect.any(Function) }),
+      );
     });
 
     // Run to Cursor (#2): a Resume bracketed by a temporary step-point breakpoint at
@@ -3850,9 +3862,10 @@ describe('DebuggerPanel', () => {
       }
 
       it('sets a temp break at the cursor step point, resumes, then clears it', async () => {
-        vi.mocked(debug.continueExecution).mockReturnValueOnce({ completed: true });
+        vi.mocked(resumeOnWorker).mockResolvedValueOnce({ completed: true });
         const panel = await openWithCursor(1); // line 2 → step point 2 (offset 9)
         sendMessage(panel, { command: 'runToCursor', level: 3 });
+        await tick();
 
         expect(queries.setBreakAtStepPoint).toHaveBeenCalledWith(
           session,
@@ -3861,7 +3874,7 @@ describe('DebuggerPanel', () => {
           'accumulateFrom:to:',
           2,
         );
-        expect(debug.continueExecution).toHaveBeenCalledWith(session, GS_PROCESS);
+        expect(resumeOnWorker).toHaveBeenCalledWith(session, GS_PROCESS, expect.anything());
         // Cleared afterward (so it never lingers on the method) — same step point.
         expect(queries.clearBreakAtStepPoint).toHaveBeenCalledWith(
           session,
@@ -3874,13 +3887,14 @@ describe('DebuggerPanel', () => {
       });
 
       it('refreshes (stack/variables update) when the run re-halts at the cursor', async () => {
-        vi.mocked(debug.continueExecution).mockReturnValueOnce({
+        vi.mocked(resumeOnWorker).mockResolvedValueOnce({
           completed: false,
           errorMessage: '',
         });
         const panel = await openWithCursor(0); // line 1 → step point 1 (offset 3)
         const before = posted(panel, 'init').length;
         sendMessage(panel, { command: 'runToCursor', level: 3 });
+        await tick();
 
         expect(queries.setBreakAtStepPoint).toHaveBeenCalledWith(
           session,
@@ -3894,19 +3908,11 @@ describe('DebuggerPanel', () => {
         expect(posted(panel, 'init').length).toBe(before + 1); // refreshed → variables re-fetch
       });
 
-      it('keeps the temp break until the breakpoint rules have finished resuming', async () => {
+      it('keeps the temp break until the resume has settled', async () => {
         // Skipping past a false condition keeps running towards the cursor; a
         // temp break cleared before that would let the run sail past it.
-        vi.mocked(debug.continueExecution).mockReturnValueOnce({
-          completed: false,
-          errorContext: GS_PROCESS,
-          errorNumber: 6005,
-        });
-        vi.mocked(resumeNeedsRules).mockReturnValueOnce(true);
         let finish: (r: debug.StepResult) => void = () => {};
-        vi.mocked(honourRulesAfterResume).mockReturnValueOnce(
-          new Promise((resolve) => (finish = resolve)),
-        );
+        vi.mocked(resumeOnWorker).mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
         const panel = await openWithCursor(1);
 
         sendMessage(panel, { command: 'runToCursor', level: 3 });
@@ -3919,8 +3925,28 @@ describe('DebuggerPanel', () => {
         expect(panel.dispose).toHaveBeenCalled();
       });
 
+      it('clears the temp break only once a run still going after Cancel has ended', async () => {
+        vi.mocked(resumeOnWorker).mockRejectedValueOnce(new NbCancelledError());
+        vi.mocked(stoppedRunHolds).mockReturnValueOnce(true);
+        const panel = await openWithCursor(1);
+
+        sendMessage(panel, { command: 'runToCursor', level: 3 });
+        await flush();
+        // The session is still the run's: GemStone would refuse the clear.
+        expect(queries.clearBreakAtStepPoint).not.toHaveBeenCalled();
+
+        const [, , options] = vi.mocked(resumeOnWorker).mock.calls.at(-1)!;
+        options!.onGivenUpSettled!({
+          completed: false,
+          errorContext: GS_PROCESS,
+          errorNumber: 6010,
+        });
+        expect(queries.clearBreakAtStepPoint).toHaveBeenCalled();
+        expect(panel.dispose).not.toHaveBeenCalled();
+      });
+
       it("does NOT clear a break the user already set at the cursor's step point", async () => {
-        vi.mocked(debug.continueExecution).mockReturnValueOnce({ completed: true });
+        vi.mocked(resumeOnWorker).mockResolvedValueOnce({ completed: true });
         const panel = await openWithCursor(1); // line 2 → actualLine 2 (0-based line 1)
         const openUri = vi
           .mocked(vscode.workspace.openTextDocument)
@@ -3939,20 +3965,20 @@ describe('DebuggerPanel', () => {
 
       it('falls back to a flash + plain Resume when the source pane is not showing the frame', () => {
         // No selectFrame sent → no source editor revealed → no usable cursor target.
-        vi.mocked(debug.continueExecution).mockReturnValueOnce({ completed: true });
+        vi.mocked(resumeOnWorker).mockResolvedValueOnce({ completed: true });
         const panel = openPanel();
         sendMessage(panel, { command: 'runToCursor', level: 3 });
 
         expect(queries.setBreakAtStepPoint).not.toHaveBeenCalled();
         expect(debug.setBreakAtStepPointByOop).not.toHaveBeenCalled();
         expect(lastPosted(panel, 'flash').text).toMatch(/cursor/i);
-        expect(debug.continueExecution).toHaveBeenCalledWith(session, GS_PROCESS); // resumed anyway
+        expect(resumeOnWorker).toHaveBeenCalledWith(session, GS_PROCESS, expect.anything()); // resumed anyway
       });
 
       // Executed Code (doit) frame: its anonymous GsNMethod has no class>>selector,
       // so the temp break is set/cleared BY OOP (debug.setBreakAtStepPointByOop).
       it('runs to cursor in a doit frame by setting + clearing the break by method OOP', async () => {
-        vi.mocked(debug.continueExecution).mockReturnValueOnce({ completed: true });
+        vi.mocked(resumeOnWorker).mockResolvedValueOnce({ completed: true });
         // A single-frame doit stack: getMethodInfo throws (no home class) → the frame
         // is "Executed Code"; source is shown read-only (gemstone-debug:), 1:1.
         vi.mocked(debug.getStackDepth).mockReturnValue(1);
@@ -3989,18 +4015,20 @@ describe('DebuggerPanel', () => {
 
         sendMessage(panel, { command: 'runToCursor', level: 1 });
 
+        await tick();
+
         // Break set + cleared BY OOP (50n) at step point 2; the class>>selector path is NOT used.
         expect(debug.setBreakAtStepPointByOop).toHaveBeenCalledWith(session, 50n, 2);
         expect(debug.clearBreakAtStepPointByOop).toHaveBeenCalledWith(session, 50n, 2);
         expect(queries.setBreakAtStepPoint).not.toHaveBeenCalled();
-        expect(debug.continueExecution).toHaveBeenCalledWith(session, GS_PROCESS);
+        expect(resumeOnWorker).toHaveBeenCalledWith(session, GS_PROCESS, expect.anything());
       });
 
       // Column-aware: the cursor's COLUMN picks the step point, not just its line.
       // `hdr\nself do: [:e | body ]`: line 2 holds step points for self (sp1@5),
       // do: (sp2@10) and the block body (sp3@20, all 1-based source offsets).
       it("breaks INSIDE a one-line block at the cursor column, not at the block's leftmost step point", async () => {
-        vi.mocked(debug.continueExecution).mockReturnValueOnce({ completed: true });
+        vi.mocked(resumeOnWorker).mockResolvedValueOnce({ completed: true });
         // Cursor at line 2 col 15 → offset 19 → nearest on-line step point is the
         // block body (sp3@20), NOT the leftmost self/do: (the old line-based bug).
         const panel = await openWithCursor(1, 15, 'hdr\nself do: [:e | body ]', [5, 10, 20]);
@@ -4018,7 +4046,7 @@ describe('DebuggerPanel', () => {
       // The `minute := (...) asInteger` report: cursor on `asInteger` (late on the
       // line) must NOT snap to the `:=` store step point (leftmost on the line).
       it('breaks at the step point nearest the cursor column, not the leftmost on the line', async () => {
-        vi.mocked(debug.continueExecution).mockReturnValueOnce({ completed: true });
+        vi.mocked(resumeOnWorker).mockResolvedValueOnce({ completed: true });
         // `x := a asInteger` — sp1@1 (`x`, the store, col 0), sp2@6 (`a`, col 5),
         // sp3@8 (`asInteger`, col 7). Cursor on `asInteger` (col 7) → nearest sp3.
         const panel = await openWithCursor(0, 7, 'x := a asInteger', [1, 6, 8]);
@@ -4037,7 +4065,7 @@ describe('DebuggerPanel', () => {
       // displayed source IS the home method, so the break must target the HOME
       // (its `_sourceOffsets` + class>>selector), NOT the block's own method.
       it('runs to cursor on a block frame against its HOME method, not the block', async () => {
-        vi.mocked(debug.continueExecution).mockReturnValueOnce({ completed: true });
+        vi.mocked(resumeOnWorker).mockResolvedValueOnce({ completed: true });
         vi.mocked(debug.getStackDepth).mockReturnValue(1);
         vi.mocked(debug.getFrameInfo).mockReturnValue({
           methodOop: 1n,
@@ -4220,20 +4248,20 @@ describe('DebuggerPanel', () => {
 
       // A retry must NOT hit the server again — that's what grows GemStone's
       // accumulating exception-chain message that Eric saw.
-      vi.mocked(debug.continueExecution).mockClear();
+      vi.mocked(resumeOnWorker).mockClear();
       vi.mocked(debug.stepOverNb).mockClear();
       sendMessage(panel, { command: 'resume' });
       sendMessage(panel, { command: 'stepOver', level: 1 });
       await tick();
 
-      expect(debug.continueExecution).not.toHaveBeenCalled();
+      expect(resumeOnWorker).not.toHaveBeenCalled();
       expect(debug.stepOverNb).not.toHaveBeenCalled();
       expect(panel.dispose).not.toHaveBeenCalled();
       expect(lastPosted(panel, 'init').errorMessage).toMatch(/uncontinuable/i);
     });
 
-    it('Resume that hits 6011 shows the Terminate-only banner without refreshing', () => {
-      vi.mocked(debug.continueExecution).mockReturnValueOnce({
+    it('Resume that hits 6011 shows the Terminate-only banner without refreshing', async () => {
+      vi.mocked(resumeOnWorker).mockResolvedValueOnce({
         completed: false,
         errorNumber: 6011,
         errorMessage: 'a UncontinuableError occurred (error 6011)',
@@ -4241,6 +4269,7 @@ describe('DebuggerPanel', () => {
       const panel = openPanel();
       const before = posted(panel, 'init').length;
       sendMessage(panel, { command: 'resume' });
+      await tick();
 
       expect(panel.dispose).not.toHaveBeenCalled();
       expect(posted(panel, 'init').length).toBe(before + 1); // postInit, not a stack refresh
@@ -4258,7 +4287,7 @@ describe('DebuggerPanel', () => {
       await tick();
       sendMessage(panel, { command: 'restartFrame', level: 2 }); // deeper trim clears the flag
       await tick();
-      vi.mocked(debug.continueExecution).mockClear();
+      vi.mocked(resumeOnWorker).mockClear();
       sendMessage(panel, { command: 'resume' });
 
       expect(debug.trimStackToLevelNb).toHaveBeenCalledWith(
@@ -4267,7 +4296,7 @@ describe('DebuggerPanel', () => {
         2,
         expect.anything(),
       );
-      expect(debug.continueExecution).toHaveBeenCalled(); // no longer guarded
+      expect(resumeOnWorker).toHaveBeenCalled(); // no longer guarded
     });
 
     it('Step disposes the panel when the step completes the process', async () => {
@@ -4323,7 +4352,7 @@ describe('DebuggerPanel', () => {
       );
     });
 
-    it('a step marks the op cancellable, and Cancel breaks it', async () => {
+    it('a step marks the op cancellable, and one Cancel breaks it; a second click does nothing', async () => {
       const cancelSpy = vi.fn();
       vi.mocked(debug.stepOverNb).mockImplementationOnce((...args: unknown[]) => {
         const opts = args[3] as { onStart?: (c: () => void) => void };
@@ -4341,8 +4370,7 @@ describe('DebuggerPanel', () => {
       expect(lastPosted(panel, 'flash').text).toMatch(/break sent/i); // click acknowledged
 
       sendMessage(panel, { command: 'cancelOp' });
-      expect(cancelSpy).toHaveBeenCalledTimes(2);
-      expect(lastPosted(panel, 'flash').text).toMatch(/forc/i); // second click → force
+      expect(cancelSpy).toHaveBeenCalledTimes(1);
     });
 
     it('Restart Frame on the top frame shows an in-panel notice and does not trim (GemStone cannot reset the TOS IP)', async () => {
@@ -4384,13 +4412,14 @@ describe('DebuggerPanel', () => {
       expect(panel.dispose).toHaveBeenCalled();
     });
 
-    it('hands the completed result to onComplete on Resume, then disposes', () => {
-      vi.mocked(debug.continueExecution).mockReturnValueOnce({ completed: true, resultOop: 0x55n });
+    it('hands the completed result to onComplete on Resume, then disposes', async () => {
+      vi.mocked(resumeOnWorker).mockResolvedValueOnce({ completed: true, resultOop: 0x55n });
       const onComplete = vi.fn();
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG, onComplete);
       const panel = lastPanel();
       sendReady(panel);
       sendMessage(panel, { command: 'resume' });
+      await tick();
 
       expect(onComplete).toHaveBeenCalledWith(0x55n);
       expect(panel.dispose).toHaveBeenCalled();
@@ -4410,7 +4439,7 @@ describe('DebuggerPanel', () => {
     });
 
     it('does NOT call onComplete when Resume hits another error (refreshes instead)', () => {
-      vi.mocked(debug.continueExecution).mockReturnValueOnce({
+      vi.mocked(resumeOnWorker).mockResolvedValueOnce({
         completed: false,
         errorMessage: 'boom2',
       });
@@ -4574,10 +4603,10 @@ describe('DebuggerPanel', () => {
       const { panel, uri } = await openWithEditableFrame(1); // top frame → stale activation
       saveListener()({ uri } as vscode.TextDocument);
       await tick();
-      vi.mocked(debug.continueExecution).mockClear();
+      vi.mocked(resumeOnWorker).mockClear();
       sendMessage(panel, { command: 'resume' });
 
-      expect(debug.continueExecution).not.toHaveBeenCalled();
+      expect(resumeOnWorker).not.toHaveBeenCalled();
       expect(panel.dispose).not.toHaveBeenCalled();
       expect(lastPosted(panel, 'init').errorMessage).toMatch(/recompiled/i);
     });
@@ -4599,7 +4628,7 @@ describe('DebuggerPanel', () => {
       await tick();
       sendMessage(panel, { command: 'restartFrame', level: 2 }); // deeper trim clears it
       await tick(); // let the async trim settle
-      vi.mocked(debug.continueExecution).mockClear();
+      vi.mocked(resumeOnWorker).mockClear();
       sendMessage(panel, { command: 'resume' });
 
       expect(debug.trimStackToLevelNb).toHaveBeenCalledWith(
@@ -4608,7 +4637,7 @@ describe('DebuggerPanel', () => {
         2,
         expect.anything(),
       );
-      expect(debug.continueExecution).toHaveBeenCalled(); // no longer blocked
+      expect(resumeOnWorker).toHaveBeenCalled(); // no longer blocked
     });
   });
 
@@ -5067,7 +5096,7 @@ describe('DebuggerPanel', () => {
       // so the user's next Resume re-runs the send. We must NOT auto-resume — the
       // blocking continueExecution of a parked DNU hung the gem and crashed the host.
       expect(debug.trimStackToLevelNb).toHaveBeenCalledWith(session, GS_PROCESS, 3);
-      expect(debug.continueExecution).not.toHaveBeenCalled();
+      expect(resumeOnWorker).not.toHaveBeenCalled();
       expect(panel.dispose).not.toHaveBeenCalled();
       expect(lastPosted(panel, 'init').errorMessage).toMatch(/resume/i);
     });
@@ -5217,7 +5246,7 @@ describe('DebuggerPanel', () => {
       saveListener()({ uri } as vscode.TextDocument);
       await tick();
       expect(debug.trimStackToLevelNb).not.toHaveBeenCalled();
-      expect(debug.continueExecution).not.toHaveBeenCalled();
+      expect(resumeOnWorker).not.toHaveBeenCalled();
       // Doesn't trim, but DOES tell the user to Resume (manual Resume works — the
       // kernel's defaultAction re-performs the send). Must NOT auto-resume.
       expect(lastPosted(panel, 'init').errorMessage).toMatch(/resume/i);
@@ -5324,7 +5353,7 @@ describe('DebuggerPanel', () => {
       await tick();
       // Option B: no auto-restart and never auto-resume — just refresh + explain.
       expect(debug.trimStackToLevelNb).not.toHaveBeenCalled();
-      expect(debug.continueExecution).not.toHaveBeenCalled();
+      expect(resumeOnWorker).not.toHaveBeenCalled();
       expect(lastPosted(panel, 'init').errorMessage).toMatch(/used on the next/i);
     });
 

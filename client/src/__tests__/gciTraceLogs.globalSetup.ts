@@ -4,11 +4,11 @@ import { join } from 'node:path';
 // The GCI writes gci<pid>trace.log into the client process's cwd, except on
 // macOS, where it writes under $GEMSTONE_GLOBAL_DIR/log/ (3.7.2+) or a
 // hardcoded /opt/gemstone/log/ (older) — openClientTraceFile() in
-// linkgc_common.hc. GciTsGemTrace (gciAsync) and a failed GciTsLogout
-// (gciSessionUtils) each leave one. Swept in teardown, in the main process once
-// every worker has exited, not per file: a log is only complete once its
-// session closes, a reused fork worker can hold a sibling file's log under its
-// own pid, and Windows won't unlink a file a live GCI still has open.
+// linkgc_common.hc. GciTsGemTrace (gciAsync) leaves one. Swept in teardown, in
+// the main process once every worker has exited, not per file: a log is only
+// complete once its session closes, a reused fork worker can hold a sibling
+// file's log under its own pid, and Windows won't unlink a file a live GCI
+// still has open.
 
 // The slice of vitest's TestProject used here. A type import from 'vitest/node'
 // (ESM-only) doesn't compile under the client's CommonJS tsconfig.

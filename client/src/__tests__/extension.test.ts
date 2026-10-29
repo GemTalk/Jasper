@@ -512,6 +512,61 @@ describe('announceSessionAction', () => {
   });
 });
 
+describe('deciding a logout', () => {
+  beforeEach(() => vi.mocked(vscode.window.showWarningMessage).mockReset());
+
+  const session = fakeActiveSession({ id: 4, login: DEFAULT_LOGIN });
+  function manager(hasRun: boolean, runIgnoresStop = false) {
+    return {
+      hasRun: vi.fn(() => hasRun),
+      stopRun: vi.fn(async () => runIgnoresStop),
+      commit: vi.fn(() => ({ success: true, err: { number: 0, message: '' } })),
+    };
+  }
+  const answer = (...choices: (string | undefined)[]) =>
+    choices.forEach((c) =>
+      vi
+        .mocked(vscode.window.showWarningMessage)
+        .mockResolvedValueOnce(c as unknown as vscode.MessageItem),
+    );
+
+  // A long Rowan load or test run must not be lost to a logout the user backed out of.
+  it('asks before stopping a run, and leaves it going when the user cancels', async () => {
+    const m = manager(true);
+    answer(undefined);
+
+    const decided = await extension.decideLogout(session, m, () => true);
+
+    expect(decided.logOut).toBe(false);
+    expect(m.stopRun).not.toHaveBeenCalled();
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringMatching(/^A run is still going on session 4 — .*\. Stop it and log out\?$/),
+      { modal: true },
+      extension.STOP_AND_LOG_OUT,
+    );
+  });
+
+  it('stops the run once the user agrees, then asks about uncommitted changes', async () => {
+    const m = manager(true);
+    answer(extension.STOP_AND_LOG_OUT, 'Logout Anyway');
+
+    const decided = await extension.decideLogout(session, m, () => true);
+
+    expect(decided).toEqual({ logOut: true, runIgnoresStop: false });
+    expect(m.stopRun).toHaveBeenCalledWith(4);
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('asks nothing more of an idle session than about its changes', async () => {
+    const m = manager(false);
+
+    const decided = await extension.decideLogout(session, m, () => false);
+
+    expect(decided.logOut).toBe(true);
+    expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+  });
+});
+
 describe('confirmLogoutWithUncommittedChanges', () => {
   beforeEach(() => {
     vi.mocked(vscode.window.showWarningMessage).mockReset();
@@ -605,6 +660,30 @@ describe('confirmLogoutWithUncommittedChanges', () => {
     expect(message).toContain('another session committed a change this transaction also made');
     expect(message).toContain('Not logging out.');
     expect(message).not.toContain('TransactionError');
+  });
+
+  it('offers no commit, and says why, when a run that ignores every stop holds the session', async () => {
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
+      'Logout Anyway' as unknown as vscode.MessageItem,
+    );
+    const commit = vi.fn();
+
+    const decision = await extension.confirmLogoutWithUncommittedChanges(
+      3,
+      'DataCurator on gs64stone (localhost)',
+      undefined,
+      commit,
+      true,
+      true,
+    );
+
+    expect(decision).toBe('proceed');
+    const [title, options, ...buttons] = vi.mocked(vscode.window.showWarningMessage).mock
+      .calls[0] as unknown as [string, { detail: string }, ...string[]];
+    expect(title).toBe('Session 3 may have uncommitted changes.');
+    expect(options.detail).toMatch(/ignored every stop .* cannot be checked or committed/);
+    expect(buttons).toEqual(['Logout Anyway']);
+    expect(commit).not.toHaveBeenCalled();
   });
 
   it('proceeds without committing when the user chooses to log out anyway', async () => {

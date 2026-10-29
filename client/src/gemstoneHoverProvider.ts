@@ -66,7 +66,7 @@ export class GemStoneHoverProvider implements vscode.HoverProvider {
       const results = dedupeMethodResults(
         sweepEnvironments((env) => {
           try {
-            return queries.implementorsOf(session, sel, env);
+            return queries.quietly(() => queries.implementorsOf(session, sel, env));
           } catch {
             return [];
           }
@@ -83,7 +83,7 @@ export class GemStoneHoverProvider implements vscode.HoverProvider {
         let anyEnvironmentFailed = false;
         sendersCount = sweepEnvironments((env) => {
           try {
-            return queries.sendersOf(session, sel, env);
+            return queries.quietly(() => queries.sendersOf(session, sel, env));
           } catch {
             anyEnvironmentFailed = true;
             return [];
@@ -125,7 +125,9 @@ export class GemStoneHoverProvider implements vscode.HoverProvider {
       return null;
     }
 
-    const classEntries = queries.getAllClassNames(session).filter((e) => e.className === word);
+    const classEntries = queries
+      .quietly(() => queries.getAllClassNames(session))
+      .filter((e) => e.className === word);
     if (classEntries.length === 0) return null;
 
     const entry = classEntries[0];
@@ -136,7 +138,7 @@ export class GemStoneHoverProvider implements vscode.HoverProvider {
       // its hierarchy, which is the useful thing to see. Only the editable
       // gemstone:// comment document opens on the stored text — see
       // getStoredClassComment.
-      const comment = queries.getClassComment(session, word);
+      const comment = queries.quietly(() => queries.getClassComment(session, word));
       if (comment) {
         const preview = comment.length > 500 ? comment.substring(0, 500) + '...' : comment;
         md.appendMarkdown(preview);

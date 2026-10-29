@@ -22,6 +22,7 @@ import * as debug from '../debugger/debugQueries';
 import * as pins from '../exportSetPins';
 import { executeFetchString } from '../browserQueries';
 import { logError } from '../gciLog';
+import { SESSION_BUSY_MESSAGE } from '../gciLibraryError';
 import { QueryExecutor } from '../queries/types';
 import { readWebviewScript } from '../webviewAssets';
 import {
@@ -544,7 +545,7 @@ export class BasicInspector {
    * a much less helpful message than this one.
    */
   private busyError(): string | null {
-    return this.session.isBusy() ? 'Session is busy with another operation — try again.' : null;
+    return this.session.isBusy() ? SESSION_BUSY_MESSAGE : null;
   }
 
   private setSlot(msg: {

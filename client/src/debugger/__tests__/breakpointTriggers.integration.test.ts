@@ -121,7 +121,7 @@ describe('a breakpoint waiting on a disabled one (integration)', () => {
     } finally {
       if (process !== undefined) {
         try {
-          debugQueries.clearStack(session(), process);
+          await debugQueries.clearStack(session(), process);
         } catch {
           /* already finished */
         }

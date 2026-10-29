@@ -99,7 +99,7 @@ describe('SUnit non-blocking runs (integration)', () => {
         cancel = c;
       },
     );
-    // Claimed here rather than at the assertion: a hard break rejects inside a
+    // Claimed here rather than at the assertion: a stopped run rejects inside a
     // timer tick, and an unclaimed rejection that early is reported as unhandled.
     run.catch(() => {});
     await vi.waitFor(() => expect(cancel).toBeDefined());
@@ -109,7 +109,7 @@ describe('SUnit non-blocking runs (integration)', () => {
 
   /**
    * How a stopped run settled, as one of two legal endings: `'stopped'` when the
-   * hard break abandoned the call and the run rejected, or whatever verdict the
+   * runner stopped waiting and the run rejected, or whatever verdict the
    * gem answered when it trapped the break instead. Which of the two happens
    * depends on the gem's break-delivery mode and is not the test's business.
    *
@@ -211,24 +211,11 @@ describe('SUnit non-blocking runs (integration)', () => {
     });
   }, 120_000);
 
-  it('takes a second press without faulting the client', async () => {
-    // Pressing stop twice in a row is the gesture that once faulted the client
-    // process outright, because the hard break went out on the heels of the soft
-    // one. The runner defers it instead, and only a live GCI can show that the
-    // deferral holds — a stubbed one cannot fault.
-    //
-    // The scheduling decision itself (does the second press get deferred, does
-    // it fire no earlier than the gap) is asserted deterministically, with a
-    // fake clock, in nbRunner.test.ts — this test only needs to show that a real
-    // GCI survives the real gesture end to end. It deliberately does not measure
-    // the gap between the two GciTsBreak calls with the wall clock: that
-    // measurement is inherently racy on a loaded CI runner and is exactly what
-    // the unit test replaces.
+  it('takes a second press by stopping waiting, with no hard break', async () => {
+    // Two presses in a row once sent a hard break on the heels of the soft one,
+    // which crashed the client. A second press now stops waiting and sends the
+    // soft break once more; a live GCI shows nothing but soft breaks go out.
     installSlowTest();
-
-    // The ORDER of the breaks, though, needs no clock, so it is still observed
-    // here — and the real break still goes through, since a stubbed GCI cannot
-    // fault. It also puts the branch that ran into the CI log.
     const sent: boolean[] = [];
     const realBreak = gci.GciTsBreak.bind(gci);
     const breaks = vi.spyOn(gci, 'GciTsBreak').mockImplementation((h, hard) => {
@@ -244,17 +231,12 @@ describe('SUnit non-blocking runs (integration)', () => {
     let originalFailure: unknown;
     try {
       const { run, cancel } = await startSlowRun();
-      cancel(); // soft
-      cancel(); // hard, deferred internally past the safety gap — never slept for here
+      cancel(); // soft break
+      cancel(); // stop waiting
 
       expect(STOPPED_ENDINGS).toContain(await settledStatus(run));
-
-      // Both legal endings named in one assertion rather than asserted inside a
-      // conditional: either the gem serviced the soft break before the deferred
-      // hard one came due, or it did not and the hard break went out. Anything
-      // else — a hard break with no soft one before it, a repeat — is a real
-      // regression on a live library.
-      expect(['soft', 'soft,hard']).toContain(sent.map((h) => (h ? 'hard' : 'soft')).join(','));
+      expect(sent.length).toBeGreaterThan(0);
+      expect(sent.every((hard) => hard === false)).toBe(true);
     } catch (err) {
       gestureFailed = true;
       originalFailure = err;
@@ -265,7 +247,7 @@ describe('SUnit non-blocking runs (integration)', () => {
       breaks.mockRestore();
     }
 
-    // Unconditional, and outside the try/finally above: an abandoned hard-break GciTsNb
+    // Unconditional, and outside the try/finally above: an abandoned GciTsNb
     // op left on the session would otherwise fail every later test in this file
     // via assertCommitGuardIsStillArmed, burying the one real failure.
     try {

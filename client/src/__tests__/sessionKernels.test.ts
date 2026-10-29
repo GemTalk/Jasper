@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../gciLog', () => ({ logError: vi.fn(), logInfo: vi.fn() }));
 vi.mock('../pythonQueries', () => ({
-  evalPythonInScope: vi.fn(() => '3'),
+  evalPythonInScopeNb: vi.fn(async () => '3'),
   resetPythonScope: vi.fn(() => 'scope reset'),
 }));
 
@@ -183,7 +183,12 @@ describe('a session-bound kernel', () => {
 
     await runOneCell(byId('bound'));
 
-    expect(evaluate).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }), '3 + 4', 'nb');
+    expect(evaluate).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 2 }),
+      '3 + 4',
+      'nb',
+      expect.any(Function),
+    );
     expect(manager.resolveSession).not.toHaveBeenCalled();
   });
 
@@ -264,10 +269,11 @@ describe('the real per-session factories', () => {
     expect(kernel.supportedLanguages).toEqual(['python']);
     await kernel.executeHandler([cell('x = 1')]);
 
-    expect(python.evalPythonInScope).toHaveBeenCalledWith(
+    expect(python.evalPythonInScopeNb).toHaveBeenCalledWith(
       sessions.get(2),
       'x = 1',
       'file:///demo.ipynb',
+      expect.any(Function),
     );
   });
 

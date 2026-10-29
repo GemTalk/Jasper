@@ -2,7 +2,16 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
+const quiet = vi.hoisted(() => ({ on: false }));
 vi.mock('../browserQueries', () => ({
+  quietly: <T>(query: () => T): T => {
+    quiet.on = true;
+    try {
+      return query();
+    } finally {
+      quiet.on = false;
+    }
+  },
   implementorsOf: vi.fn(() => []),
   sendersOf: vi.fn(() => []),
   getAllClassNames: vi.fn(() => []),
@@ -385,6 +394,37 @@ describe('GemStoneHoverProvider', () => {
       // Falls through to class name check, which returns null for lowercase
       expect(result).toBeNull();
     });
+  });
+
+  // A busy session would otherwise raise the Stop notice as the mouse moves.
+  it('asks the stone quietly, for a selector and for a class', async () => {
+    const quietly: boolean[] = [];
+    const record =
+      <T>(answer: T) =>
+      () => {
+        quietly.push(quiet.on);
+        return answer;
+      };
+    mockImplementorsOf.mockImplementation(record([]));
+    mockSendersOf.mockImplementation(record([]));
+    mockGetAllClassNames.mockImplementation(
+      record([{ dictIndex: 1, dictName: 'Globals', className: 'Array' }]),
+    );
+    mockGetClassComment.mockImplementation(record('a comment'));
+    const onSelector: SelectorResolver = { getSelector: vi.fn(async () => 'quietlyAsked') };
+    const onClass: SelectorResolver = { getSelector: vi.fn(async () => null) };
+
+    await new GemStoneHoverProvider(makeSessionManager(true), onSelector).provideHover(
+      makeDocument('self quietlyAsked'),
+      pos(0, 5),
+    );
+    await new GemStoneHoverProvider(makeSessionManager(true), onClass).provideHover(
+      makeDocument('Array new'),
+      pos(0, 0),
+    );
+
+    expect(quietly.length).toBeGreaterThanOrEqual(4);
+    expect(quietly.every(Boolean)).toBe(true);
   });
 
   describe('class name hover', () => {
