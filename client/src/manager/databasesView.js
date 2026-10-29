@@ -715,9 +715,11 @@
     const mark = session.current
       ? `<span class="session-mark session-current-mark">${ICONS.play}</span>`
       : `<span class="session-mark"></span>`;
-    const tip = session.current
-      ? 'The session Display It, Inspect It and the Explorer are working in'
-      : `An open session on ${db.stoneName}`;
+    const tip =
+      `Jasper session ${session.id}: ` +
+      (session.current
+        ? 'the session Display It, Inspect It and the Explorer are working in'
+        : `an open session on ${db.stoneName}`);
     // The transaction mode rides in the same dim run as the session number: it is
     // state the reader wants at a glance, and it costs no button and no row.
     const state = session.transactionState
@@ -881,14 +883,12 @@
       : row.holdsBacklog
         ? mark('history', 'warn', 'Holds the oldest commit record')
         : row.jasperSessionId !== undefined
-          ? mark('plug', 'ok', `Session ${row.jasperSessionId} in this window`)
+          ? mark('plug', 'ok', `Jasper session ${row.jasperSessionId} in this window`)
           : row.systemGem
             ? mark('gear', 'off', 'One of GemStone\u2019s own gems')
             : mark('account', 'off', 'A session');
     const flags =
-      (row.jasperSessionId !== undefined
-        ? badge(`this window \u00b7 session ${row.jasperSessionId}`)
-        : '') +
+      (row.jasperSessionId !== undefined ? badge(`Jasper session ${row.jasperSessionId}`) : '') +
       (row.systemGem ? badge(`system: ${row.systemGem}`) : '') +
       (row.stuck ? `<span class="svc-state">\u26a0 still running a stopped run</span>` : '') +
       (row.holdsBacklog

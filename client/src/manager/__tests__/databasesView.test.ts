@@ -940,6 +940,14 @@ describe('a login row', () => {
     );
     expect(root.querySelectorAll('.db-session')).toHaveLength(2);
   });
+
+  // The name its row carries in the stone's Session Processes.
+  it("names each session 'Jasper session N' in its tooltip", () => {
+    mount(withLogin({ sessions: [{ id: 7, current: true }] }));
+    expect(root.querySelector('.db-session')!.getAttribute('data-tip')).toMatch(
+      /^Jasper session 7: /,
+    );
+  });
 });
 
 describe('folder and terminal actions', () => {
@@ -1283,7 +1291,7 @@ describe("a stone's sessions, under Session Processes", () => {
         listed(row({ jasperSessionId: 2, stuck: true }), row({ serial: 3, holdsBacklog: true })),
       ),
     );
-    expect(rowEl(9)!.textContent).toContain('this window · session 2');
+    expect(rowEl(9)!.textContent).toContain('Jasper session 2');
     expect(rowEl(9)!.textContent).toContain('still running a stopped run');
     expect(rowEl(9)!.classList.contains('row-warn')).toBe(true);
     expect(rowEl(3)!.textContent).toContain('holds the oldest commit record');

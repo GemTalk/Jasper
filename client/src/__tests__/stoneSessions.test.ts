@@ -171,7 +171,7 @@ describe('Stop Session', () => {
     await stopStoneSessionCommand(mine, d);
 
     expect(window.showWarningMessage).toHaveBeenCalledWith(
-      expect.stringMatching(/lost\. Session 3 in this window is logged out\.$/),
+      expect.stringMatching(/lost\. Jasper session 3 is logged out\.$/),
       { modal: true },
       STOP_SESSION,
     );
@@ -341,7 +341,7 @@ describe('Kill', () => {
     await killStoneSessionCommand(mine, d);
 
     expect(window.showWarningMessage).toHaveBeenCalledWith(
-      expect.stringMatching(/Session 3 in this window is logged out\.$/),
+      expect.stringMatching(/Jasper session 3 is logged out\.$/),
       { modal: true },
       KILL,
     );
