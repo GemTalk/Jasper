@@ -31,6 +31,7 @@ import {
 } from '../nbRunner';
 import { OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
 import { fakeActiveSession } from './fakeActiveSession';
+import { sameObject } from './support/sameObject';
 
 const noErr = { number: 0 } as const;
 
@@ -187,7 +188,7 @@ describe('runNbCall — cancellation', () => {
       expect(cancelHandler).toBeTypeOf('function');
 
       cancelHandler!(); // first cancel → soft break + acknowledgement
-      expect(gci.GciTsBreak).toHaveBeenCalledWith(handle, false);
+      expect(gci.GciTsBreak).toHaveBeenCalledWith(sameObject(handle), false);
       expect(reportSpy).toHaveBeenCalledWith(
         expect.objectContaining({ message: expect.stringMatching(/break/i) }),
       );
@@ -226,7 +227,7 @@ describe('runNbCall — cancellation', () => {
       expect(cancel).toBeTypeOf('function');
 
       cancel!(); // first → soft break
-      expect(gci.GciTsBreak).toHaveBeenCalledWith(handle, false);
+      expect(gci.GciTsBreak).toHaveBeenCalledWith(sameObject(handle), false);
 
       cancel!(); // second → stop waiting now
       await expect(p).rejects.toBeInstanceOf(NbCancelledError);
@@ -273,7 +274,7 @@ describe('runNbCall — one press is enough', () => {
       p.then(settled, settled);
 
       cancel();
-      expect(gci.GciTsBreak).toHaveBeenCalledWith(handle, false);
+      expect(gci.GciTsBreak).toHaveBeenCalledWith(sameObject(handle), false);
 
       await vi.advanceTimersByTimeAsync(STOP_WAITING_AFTER_MS - 50);
       expect(settled).not.toHaveBeenCalled();
@@ -440,7 +441,7 @@ describe('runNbCall — one press is enough', () => {
       await vi.advanceTimersByTimeAsync(EARLIEST_STOP_WAITING_MS + STOP_WAITING_AFTER_MS);
       await expect(p).resolves.toBe('answered the break');
       expect(gci.GciTsBreak).toHaveBeenCalledTimes(1);
-      expect(gci.GciTsBreak).toHaveBeenCalledWith(handle, false);
+      expect(gci.GciTsBreak).toHaveBeenCalledWith(sameObject(handle), false);
     } finally {
       vi.useRealTimers();
     }
@@ -752,7 +753,7 @@ describe('after the runner stops waiting', () => {
       poll.mockReturnValue({ result: 1, err: noErr });
       await vi.advanceTimersByTimeAsync(500);
 
-      expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(handle, 0x4242n);
+      expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(sameObject(handle), 0x4242n);
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();
@@ -1093,7 +1094,7 @@ describe('a stopped call the gem takes longer than the drain budget to finish', 
       poll.mockReturnValue({ result: 1, err: noErr });
       await vi.advanceTimersByTimeAsync(1000);
 
-      expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(handle, 0x4242n);
+      expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(sameObject(handle), 0x4242n);
       expect(collected).toHaveBeenCalledTimes(1);
     } finally {
       vi.clearAllTimers();
@@ -1879,7 +1880,7 @@ describe('stopping while the result is being read', () => {
       expect(MAIN_THREAD_ONLY_CALLS.map((name) => gciCallCount(gci, name))).toEqual(
         callsWhenReadBegan,
       );
-      expect(gci.GciTsBreak).toHaveBeenCalledWith(handle, false);
+      expect(gci.GciTsBreak).toHaveBeenCalledWith(sameObject(handle), false);
       finishOnReady();
     } finally {
       // Run out, not cleared: the session's hold must lift, or every later
@@ -2284,7 +2285,7 @@ describe('stopping the calls on a session', () => {
       await vi.advanceTimersByTimeAsync(SETTLE_MS);
       await stop;
 
-      expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(handle, 0x4242n);
+      expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(sameObject(handle), 0x4242n);
     } finally {
       await vi.runAllTimersAsync();
       vi.useRealTimers();

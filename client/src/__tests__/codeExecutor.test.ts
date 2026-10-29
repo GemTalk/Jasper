@@ -75,6 +75,7 @@ import {
   type BreakpointRuleSource,
 } from '../debugger/conditionalBreakpoints';
 import { fakeActiveSession } from './fakeActiveSession';
+import { sameObject } from './support/sameObject';
 import {
   fakeSkipLoopGci,
   hitsBreakpoint,
@@ -808,7 +809,7 @@ describe('CodeExecutor', () => {
       await executor.debugIt();
 
       // Nothing owns the process when the panel throws, so it must be released.
-      expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(handle, 0x123n);
+      expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(sameObject(handle), 0x123n);
     });
   });
 
@@ -1642,7 +1643,7 @@ describe('CodeExecutor', () => {
       expect(vscode.debug.startDebugging).not.toHaveBeenCalled();
       expect(revealedView()).toBe(false);
       // The stalled GsProcess must be released so it does not linger.
-      expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(handle, 0x123n);
+      expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(sameObject(handle), 0x123n);
     });
 
     it('ends Transcript forwarding before clearing the dismissed run, and shows what its clean-up wrote', async () => {
@@ -1769,7 +1770,7 @@ describe('CodeExecutor', () => {
       // Did not call the missing 3.7+ function...
       expect(gci.GciTsNbPoll).not.toHaveBeenCalled();
       // ...and instead polled the session socket fd.
-      expect(gci.GciTsSocket).toHaveBeenCalledWith(handle);
+      expect(gci.GciTsSocket).toHaveBeenCalledWith(sameObject(handle));
       expect(pollReadable).toHaveBeenCalledWith(7, 0);
       // Execution still completed (result fetched).
       expect(gci.GciTsNbResult).toHaveBeenCalled();
