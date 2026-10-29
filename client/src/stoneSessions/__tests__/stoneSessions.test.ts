@@ -14,6 +14,7 @@ import {
   parseStoneSessions,
   sessionAge,
   StoneSession,
+  stopStoneSession,
   STOP_SESSION_WAIT_MS,
   TransientLogin,
 } from '../stoneSessions';
@@ -378,6 +379,59 @@ describe('Kill', () => {
     expect(window.showWarningMessage).toHaveBeenLastCalledWith(
       expect.stringMatching(/still on the stone after its gem, process 39811, was sent SIGKILL/),
     );
+  });
+});
+
+describe('stopStoneSession', () => {
+  const target = { id: 7, serial: 12 };
+
+  /** A stone that answers Stop with `sent`, then `onStone()` for each "still there?". */
+  function setUp(sent: boolean, onStone: () => boolean) {
+    const asked: string[] = [];
+    const logout = vi.fn();
+    const login: TransientLogin = () => ({
+      session: {
+        executeAndFetchString: (code: string) => {
+          asked.push(code);
+          return String(code.includes('stopSession:') ? sent : onStone());
+        },
+      } as unknown as ActiveSession,
+      logout,
+    });
+    return { login, asked, logout };
+  }
+
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('stops the session only while its login still has it, and waits for it to leave', async () => {
+    let polls = 0;
+    const { login, asked, logout } = setUp(true, () => ++polls < 2);
+
+    const outcome = stopStoneSession(target, login);
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await expect(outcome).resolves.toBe('ended');
+    expect(asked[0]).toMatch(
+      /descriptionOfSessionSerialNum: 12\) at: 10\. now = 7 ifTrue: \[System stopSession: now\]/,
+    );
+    expect(logout).toHaveBeenCalled();
+  });
+
+  it('leaves a session number that has passed to another login alone', async () => {
+    const { login, asked } = setUp(false, () => true);
+    await expect(stopStoneSession(target, login)).resolves.toBe('gone');
+    expect(asked).toHaveLength(1);
+  });
+
+  it('answers stuck when the session is still there after the wait', async () => {
+    const { login, logout } = setUp(true, () => true);
+
+    const outcome = stopStoneSession(target, login);
+    await vi.advanceTimersByTimeAsync(STOP_SESSION_WAIT_MS + 1000);
+
+    await expect(outcome).resolves.toBe('stuck');
+    expect(logout).toHaveBeenCalled();
   });
 });
 

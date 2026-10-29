@@ -9,12 +9,12 @@ import { logInfo, logWarning } from './gciLog';
 import { createSessionGciLibrary } from './enhancedInspector/enhancedInspectorPerfTracker';
 import { installTranscriptSink } from './transcriptSink';
 import { forgetSession, isRunning, stopCallsOn, stoppedRunHolds } from './nbRunner';
+import { NO_PRIVILEGE_ERROR } from './queries/sessionOfLogin';
 import {
   armForceStop,
   endServerSession,
   forceStop,
   forgetForceStop,
-  NO_PRIVILEGE_ERROR,
   sendStopSignal,
   serverSessionOf,
   type ForceStopDeps,

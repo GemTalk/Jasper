@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../gciLog', async (orig) => ({ ...(await orig()), logInfo: vi.fn() }));
@@ -14,6 +14,7 @@ import {
   forceStop,
   forgetForceStop,
   loginSerialOf,
+  pollUntil,
   rearmAfterForceStop,
   serverSessionOf,
   FORCE_STOP_WAIT_MS,
@@ -240,5 +241,25 @@ describe('Force Stop', () => {
     forgetForceStop(session.id);
 
     expect(executeAndFetchString).not.toHaveBeenCalled();
+  });
+});
+
+describe('pollUntil', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('answers true as soon as the condition holds, asking at each interval', async () => {
+    let calls = 0;
+    const done = vi.fn(() => ++calls === 3);
+    const result = pollUntil(done, 1000, 100);
+    await vi.advanceTimersByTimeAsync(200);
+    await expect(result).resolves.toBe(true);
+    expect(done).toHaveBeenCalledTimes(3);
+  });
+
+  it('answers false once the time is up', async () => {
+    const result = pollUntil(() => false, 1000, 100);
+    await vi.advanceTimersByTimeAsync(1100);
+    await expect(result).resolves.toBe(false);
   });
 });

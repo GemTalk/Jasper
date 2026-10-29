@@ -1,7 +1,9 @@
 import type { ActiveSession } from '../activeSession';
 import { logInfo } from '../gciLog';
-import { NO_PRIVILEGE_ERROR } from '../forceStop';
+import { pollUntil } from '../forceStop';
+import { loginHasSession, stopSessionOfLogin } from '../queries/sessionOfLogin';
 import { isLoopbackName } from '../thisMachine';
+import { NO_SESSION_ACCESS, stoneSessionList } from './queries/stoneSessionList';
 
 /** One session logged in to a stone, as `System descriptionOfSession:` describes it. */
 export interface StoneSession {
@@ -38,32 +40,6 @@ export type StoneSessionList =
   /** The login lacks SessionAccess, without which another session can't be looked at. */
   | { kind: 'noAccess' };
 
-const NO_ACCESS = 'noSessionAccess';
-
-/**
- * Every session on the stone except the one asking, which is the short-lived
- * login the list is read through. One line per session, tab-separated; the
- * first line is the stone's clock, the commit-record backlog, the stone's abort
- * threshold, whether the login has SystemControl, and the sessions holding the
- * oldest commit record. A session that
- * logs out while the list is read answers a session number of 0 and is left out.
- */
-const LIST_CODE =
-  '| out me noAccess | out := WriteStream on: String new. me := System session. ' +
-  'noAccess := false. out print: System timeGmt; tab; print: System commitRecordBacklog; tab; ' +
-  'print: (System stoneConfigurationAt: #StnSignalAbortCrBacklog); tab; ' +
-  'print: (System myUserProfile privileges includes: #SystemControl); tab. ' +
-  'System sessionsReferencingOldestCr do: [:id | out print: id] separatedBy: [out space]. ' +
-  'System currentSessions do: [:id | | d | id = me ifFalse: [' +
-  'd := [System descriptionOfSession: id] on: Error do: [:e | ' +
-  `e number = ${NO_PRIVILEGE_ERROR} ifFalse: [e pass]. noAccess := true. nil]. ` +
-  '(d notNil and: [(d at: 10) = id]) ifTrue: [' +
-  'out lf; print: id; tab; print: (d at: 9); tab; ' +
-  "nextPutAll: ((d at: 1) ifNil: [''] ifNotNil: [:u | u userId]); tab; " +
-  'print: (d at: 2); tab; nextPutAll: (d at: 3); tab; print: (d at: 15); tab; ' +
-  "print: (d at: 7); tab; nextPutAll: ((d at: 17) ifNil: [''])]]]. " +
-  `noAccess ifTrue: [^ '${NO_ACCESS}']. out contents`;
-
 const TRANSACTION: Record<string, StoneSession['transaction']> = {
   '-1': 'transactionless',
   '0': 'out',
@@ -71,7 +47,7 @@ const TRANSACTION: Record<string, StoneSession['transaction']> = {
 };
 
 export function parseStoneSessions(text: string): StoneSessionList {
-  if (text === NO_ACCESS) return { kind: 'noAccess' };
+  if (text === NO_SESSION_ACCESS) return { kind: 'noAccess' };
   const [header, ...lines] = text.split(/\r?\n|\r/);
   const [now, backlog, threshold, canStop, holders = ''] = header.split('\t');
   const holderIds = new Set(holders.split(' ').filter(Boolean).map(Number));
@@ -110,7 +86,9 @@ export type TransientLogin = () => { session: ActiveSession; logout: () => void 
 export function listStoneSessions(login: TransientLogin): StoneSessionList {
   const reader = login();
   try {
-    return parseStoneSessions(reader.session.executeAndFetchString(LIST_CODE));
+    return parseStoneSessions(
+      stoneSessionList((code) => reader.session.executeAndFetchString(code)),
+    );
   } finally {
     reader.logout();
   }
@@ -155,16 +133,6 @@ export function killableGems(
 export const STOP_SESSION_WAIT_MS = 3000;
 const STOP_SESSION_POLL_MS = 200;
 
-/** Whether `stillOnStone` turns false within {@link STOP_SESSION_WAIT_MS}. */
-async function leavesInTime(stillOnStone: () => boolean): Promise<boolean> {
-  const deadline = Date.now() + STOP_SESSION_WAIT_MS;
-  while (stillOnStone()) {
-    if (Date.now() >= deadline) return false;
-    await new Promise((resolve) => setTimeout(resolve, STOP_SESSION_POLL_MS));
-  }
-  return true;
-}
-
 /**
  * - `ended`  the session has left the stone.
  * - `gone`   it had already left; its number may belong to a newer login, which is untouched.
@@ -176,7 +144,7 @@ export type StopSessionOutcome = 'ended' | 'gone' | 'stuck';
  * End `target` with `System stopSession:` from a short-lived login. Its
  * uncommitted work is lost. Checked against the login's serial number first, so
  * a session number that has since passed to another login is left alone.
- * Needs SessionAccess and SystemControl ({@link NO_PRIVILEGE_ERROR} otherwise).
+ * Needs SessionAccess and SystemControl.
  */
 export async function stopStoneSession(
   target: Pick<StoneSession, 'id' | 'serial'>,
@@ -184,17 +152,15 @@ export async function stopStoneSession(
 ): Promise<StopSessionOutcome> {
   const sender = login();
   try {
-    const stillOnStone = () =>
-      sender.session.executeAndFetchString(
-        `(((System descriptionOfSessionSerialNum: ${target.serial}) at: 10) = ${target.id}) printString`,
-      ) === 'true';
-    const sent = sender.session.executeAndFetchString(
-      `((System descriptionOfSessionSerialNum: ${target.serial}) at: 10) = ${target.id} ` +
-        `ifTrue: [System stopSession: ${target.id}. 'sent'] ifFalse: ['gone']`,
-    );
-    if (sent === 'gone') return 'gone';
+    const execute = (code: string) => sender.session.executeAndFetchString(code);
+    if (!stopSessionOfLogin(execute, target.id, target.serial)) return 'gone';
     logInfo(`Sent System stopSession: ${target.id} (login serial ${target.serial}).`);
-    return (await leavesInTime(stillOnStone)) ? 'ended' : 'stuck';
+    const left = await pollUntil(
+      () => !loginHasSession(execute, target.id, target.serial),
+      STOP_SESSION_WAIT_MS,
+      STOP_SESSION_POLL_MS,
+    );
+    return left ? 'ended' : 'stuck';
   } finally {
     sender.logout();
   }
@@ -231,10 +197,7 @@ export async function killStoneSession(
   const sender = login();
   try {
     const stillOnStone = () =>
-      sender.session.executeAndFetchString(
-        `| d | d := System descriptionOfSessionSerialNum: ${serial}. ` +
-          `((d at: 10) = ${id} and: [(d at: 2) = ${gemPid}]) printString`,
-      ) === 'true';
+      loginHasSession((code) => sender.session.executeAndFetchString(code), id, serial, gemPid);
     if (!stillOnStone()) return 'gone';
     const command = (await shell(`ps -p ${gemPid} -o command= 2>/dev/null || true`)).trim();
     if (!isGemCommand(command)) {
@@ -254,7 +217,12 @@ export async function killStoneSession(
       logInfo(
         `Sent SIG${signal} to gem process ${gemPid} of session ${id} (login serial ${serial}).`,
       );
-      if (await leavesInTime(stillOnStone)) return 'ended';
+      const left = await pollUntil(
+        () => !stillOnStone(),
+        STOP_SESSION_WAIT_MS,
+        STOP_SESSION_POLL_MS,
+      );
+      if (left) return 'ended';
     }
     return 'stuck';
   } finally {
