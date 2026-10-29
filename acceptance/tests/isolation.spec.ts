@@ -1,17 +1,22 @@
 import { test, expect } from '../helpers/vscode';
+import { readContainerStone } from '../helpers/containerStone';
 
 /**
- * A run must not touch the developer's own machine. The Versions panel is the
- * tell: if the isolated GemStone root leaked to the real one, a locally
- * installed release would show "extracted and ready to use". With isolation
- * intact, every release reads as merely available for download.
+ * A run must not touch the developer's own machine. The Databases & Versions
+ * panel is the tell: if the isolated GemStone root leaked to the real one, its
+ * Versions count would include the releases installed locally.
  */
 test("does not surface the machine's installed GemStone versions", async ({ window }) => {
+  test.skip(
+    !!readContainerStone(),
+    "the container run points gemstone.rootPath at its stone's install",
+  );
   await window.getByRole('tab', { name: /GemStone/ }).click();
-
   const sidebar = window.locator('.sidebar');
-  const anyVersion = sidebar.getByRole('treeitem', { name: /^\d+\.\d+/ }).first();
-  await expect(anyVersion).toBeVisible();
+  // A section's title-bar buttons only show while the pointer is over it.
+  await sidebar.getByRole('heading', { name: 'Databases' }).hover();
+  await sidebar.getByRole('button', { name: 'Manage Databases & Versions' }).click();
 
-  await expect(sidebar.getByText(/extracted and ready to use/)).toHaveCount(0);
+  const panel = window.frameLocator('iframe.webview').frameLocator('#active-frame');
+  await expect(panel.getByText('0 installed', { exact: true })).toBeVisible();
 });
