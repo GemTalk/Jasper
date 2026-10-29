@@ -274,6 +274,7 @@ import {
   referencesToClassInDict as sharedReferencesToClassInDict,
   referencesToObject as sharedReferencesToObject,
   searchMethodSource as sharedSearchMethodSource,
+  searchMethodSourceAsync as sharedSearchMethodSourceAsync,
   sendersOf as sharedSendersOf,
   MethodSearchResult,
   SourceScanMode,
@@ -425,6 +426,8 @@ function queryFailed(session: ActiveSession, message: string, gciErrorNumber = 0
  * this for a new query that must not block; the older non-blocking executor
  * below caps results at 256 KB and leaves them in the gem (#832).
  *
+ * @param title - What that notification says. Defaults to a generic "Running
+ * query…".
  * @throws {@link BrowserQueryError} (as a rejection) if the session is busy
  * with another call, another query included, if the code fails to compile or
  * execute, or if the result cannot be resolved to a String.
@@ -436,6 +439,7 @@ function queryFailed(session: ActiveSession, message: string, gciErrorNumber = 0
 export async function executeFetchStringAsync(
   session: ActiveSession,
   code: string,
+  title = 'GemStone: Running query…',
 ): Promise<string> {
   let stopRequested = (): boolean => false;
   try {
@@ -481,7 +485,7 @@ export async function executeFetchStringAsync(
         }
       },
       {
-        title: 'GemStone: Running query…',
+        title,
         disposableProcess: true,
         onStart: (_cancel, requested) => (stopRequested = requested),
       },
@@ -500,11 +504,15 @@ export async function executeFetchStringAsync(
  * without blocking the extension host.
  *
  * @param activeSession - The active GCI session to execute against.
+ * @param title - What the notification of a query that runs long says.
  * @returns An {@link NbQueryExecutor} that runs `code` in `session` and
  * resolves to its String result.
  */
-export function nbQueryExecutorUsing(activeSession: ActiveSession): NbQueryExecutor {
-  return (code) => executeFetchStringAsync(activeSession, code);
+export function nbQueryExecutorUsing(
+  activeSession: ActiveSession,
+  title?: string,
+): NbQueryExecutor {
+  return (code) => executeFetchStringAsync(activeSession, code, title);
 }
 
 // Non-blocking variant of executeFetchString for LONG-RUNNING queries (e.g. a
@@ -2378,6 +2386,21 @@ export function searchMethodSource(
   mode: SourceScanMode = 'substring',
 ) {
   return sharedSearchMethodSource(defaultQueryExecutorUsing(session), term, ignoreCase, mode);
+}
+
+export function searchMethodSourceAsync(
+  session: ActiveSession,
+  term: string,
+  ignoreCase: boolean,
+  mode: SourceScanMode = 'substring',
+  title?: string,
+) {
+  return sharedSearchMethodSourceAsync(
+    nbQueryExecutorUsing(session, title),
+    term,
+    ignoreCase,
+    mode,
+  );
 }
 
 // No default environment: a caller that forgot one would silently search environment 0 only.

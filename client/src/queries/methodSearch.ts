@@ -1,4 +1,4 @@
-import { QueryExecutor } from './types';
+import { NbQueryExecutor, QueryExecutor } from './types';
 import { classOrganizerExpr } from './classOrganizer';
 import { classLookupExpr, escapeString } from './util';
 
@@ -256,6 +256,25 @@ export function searchMethodSource(
   ignoreCase: boolean,
   requestedMode: SourceScanMode = 'substring',
 ): MethodSearchResult[] {
+  return parseMethodSearchResults(execute(methodSourceSearchCode(term, ignoreCase, requestedMode)));
+}
+
+export async function searchMethodSourceAsync(
+  execute: NbQueryExecutor,
+  term: string,
+  ignoreCase: boolean,
+  requestedMode: SourceScanMode = 'substring',
+): Promise<MethodSearchResult[]> {
+  return parseMethodSearchResults(
+    await execute(methodSourceSearchCode(term, ignoreCase, requestedMode)),
+  );
+}
+
+function methodSourceSearchCode(
+  term: string,
+  ignoreCase: boolean,
+  requestedMode: SourceScanMode,
+): string {
   const mode = effectiveScanMode(term, requestedMode);
   const needsNeedle = mode !== 'substring';
   const engineScan = `results := ${classOrganizerExpr(0)}
@@ -268,11 +287,9 @@ methods := results at: 1.`;
         ? `${engineScan}\n${wordBoundaryFilter(term, ignoreCase)}`
         : engineScan;
 
-  const code = `| results methods stream limit classDict sl${needsNeedle ? ' needle' : ''} |
+  return `| results methods stream limit classDict sl${needsNeedle ? ' needle' : ''} |
 ${scan}
 ${methodSerialization(0)}`;
-
-  return parseMethodSearchResults(execute(code));
 }
 
 // A list of selectors is answered in one round trip, each method once however many of them it

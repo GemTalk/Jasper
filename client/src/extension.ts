@@ -89,6 +89,7 @@ import {
   setStoppedRunCollectedHandler,
   stoppedRunHolds,
 } from './nbRunner';
+import { GCI_ERR_OP_IN_PROGRESS } from './gciConstants';
 import { forceStop, loginSerialOf, rearmAfterForceStop } from './forceStop';
 import {
   signalableGems,
@@ -3221,15 +3222,28 @@ export function activate(context: vscode.ExtensionContext) {
 
         let results: queries.MethodSearchResult[];
         try {
-          results = await vscode.window.withProgress(
-            {
-              location: vscode.ProgressLocation.Notification,
-              title: `Searching methods for "${args.term}"...`,
-              cancellable: false,
-            },
-            () => Promise.resolve(queries.searchMethodSource(session, args.term, true)),
+          const search = queries.searchMethodSourceAsync(
+            session,
+            args.term,
+            true,
+            'substring',
+            `GemStone: Searching methods for "${args.term}"…`,
           );
+          // From the start: the notification only shows once a search runs past ~2s.
+          vscode.window.setStatusBarMessage(
+            `$(loading~spin) Searching methods for "${args.term}"…`,
+            search,
+          );
+          results = await search;
         } catch (e: unknown) {
+          if (e instanceof NbCancelledError) return;
+          // The busy notice has already said what holds the session.
+          if (
+            e instanceof queries.BrowserQueryError &&
+            e.gciErrorNumber === GCI_ERR_OP_IN_PROGRESS
+          ) {
+            return;
+          }
           const msg = e instanceof Error ? e.message : String(e);
           vscode.window.showErrorMessage(`Search failed: ${msg}`);
           return;

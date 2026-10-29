@@ -102,6 +102,17 @@ describe('browser queries (integration)', () => {
     });
   });
 
+  describe('searchMethodSource', () => {
+    it('finds the same methods when searched without blocking', async () => {
+      const blocking = queries.searchMethodSource(session(), 'subclassResponsibility', true);
+
+      const found = queries.searchMethodSourceAsync(session(), 'subclassResponsibility', true);
+
+      expect(blocking).not.toEqual([]);
+      await expect(found).resolves.toEqual(blocking);
+    });
+  });
+
   describe('getClassNames', () => {
     it('lists the classes a dictionary holds', () => {
       const names = queries.getClassNames(session(), dictionaryIndexOf('Globals'));
