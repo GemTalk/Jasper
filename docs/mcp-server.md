@@ -64,13 +64,13 @@ The socket and HTTPS port are global resources, so only one Jasper window can se
   the well-known `mcpServers.jasper` entry into `~/.claude.json` and into
   Claude Desktop's global config. Both entries point at the **fixed** socket
   path, so they're correct no matter which window ends up owning it. Every
-  window then attempts to bind the socket and HTTPS port straight away, before
-  it has a session: Claude Code fails the proxy on a short timeout, so the
-  socket has to be live by the time it spawns the proxy on the same window
-  reload. With the setting off, the window does none of this: no config is
+  window with a folder open then attempts to bind the socket and HTTPS port
+  straight away, before it has a session: Claude Code fails the proxy on a
+  short timeout, so the socket has to be live by the time it spawns the proxy
+  on the same window reload. A window with no folder open waits until a
+  session is selected there (see **Multiple VS Code windows**). With the setting off, the window does none of this: no config is
   written, no socket or port is claimed, and the MCP commands are gated out of
-  the UI (`jasper.mcpAvailable`, which also covers the no-folder-open case)
-  rather than left to fail when used.
+  the UI (`jasper.mcpAvailable`) rather than left to fail when used.
 - **The successful claimant** becomes the **MCP owner** for the rest of that
   VS Code run, and writes a sidecar file at `~/.jasper/mcp.owner.json` so other
   Jasper windows can tell that someone else holds the role — and which window
@@ -87,9 +87,9 @@ The sidecar also records the owner's `workspaceName` (`vscode.workspace.name` �
 what its title bar shows) and its `workspaceFile` when it has a multi-root
 workspace open. Both are optional: a sidecar written by an older Jasper carries
 neither, and a window with no folder open has no name. They exist because a
-folder path does not identify a window to a person, and because
-`workspaceFile`'s presence is the one detectable sign that the recorded path is
-not the window (see **Open Owning Window** below).
+folder path does not identify a window to a person — nor does a multi-root
+workspace's recorded path, which is only its first folder (see **Switch to
+Owning Window** below).
 
 - **A passive window can ask for it.** `mcp.release-request.json`, written
   beside the sidecar, names the pid being asked; the owner is already watching
@@ -135,24 +135,15 @@ It is also where the actions are, including the two that need each other:
 - **Ask It to Release** is the remote form of that: it has the *other* window
   let go, then claims here. This is the action offered when another window
   holds the server, because Claim alone cannot succeed against a bound socket.
-- **Open Owning Window** switches to the window currently serving MCP, by
-  opening its workspace folder — VS Code focuses an already-open folder rather
-  than opening it twice.
-
-  **It is offered only where that actually works.** An extension has no API to
-  focus another window; `vscode.openFolder` is the only lever, and it
-  identifies a window by the folder it has open. Where the sidecar shows that
-  identification does not hold — an owner with no folder open, or a multi-root
-  workspace whose recorded `workspacePath` is merely its first folder — the
-  button and the link are withheld and the tab says why. Opening a duplicate
-  window is a worse outcome than no button, because it looks like the switch
-  worked.
-
-  One case cannot be detected: one directory reachable by two paths — a symlink
-  or a bind mount, so that `/a/project` and `/mnt/a/project` are the same place.
-  Each window records the path it was opened with, and nothing can tell the two
-  apart, so the jump opens a second window. **Ask It to Release needs no
-  navigation and is unaffected** — it is the reliable route in every case.
+- **Switch to Owning Window…** opens VS Code's own window list
+  (`workbench.action.switchWindow`), and the tab's **Look for** row says which
+  entry to pick. The list shows window titles, so that is the workspace or
+  folder name the owner recorded; for an owner with no folder open, whose title
+  shows only its open file, it says so and adds the GemStone login it serves as
+  context. An extension has no API to focus another window or read its title,
+  so this is the one route that reaches every owner — including one with no
+  folder open and a multi-root workspace, which reopening a recorded folder
+  could not.
 - **Refresh** re-reads ownership from the socket and sidecar.
 
 **Open MCP Inspector is deliberately not on the tab.** It shells out to `npx`,
@@ -276,15 +267,22 @@ Trusting the cert is per-machine, not per-workspace. You only do it once.
 Several Jasper windows can run side-by-side, but only one serves MCP at a
 time. In a passive window no session row is marked `· MCP`, the Databases
 header reads `MCP: other window`, and the MCP Server tab names the window that
-holds it and offers to open it. Taking the server over is **Ask It to Release**
-in the MCP Server tab, which has the owner let go and then claims here; failing
-that (an owner too old to answer), **Stop MCP** there and **Claim MCP Server**
-here. To run two MCP-serving windows simultaneously:
+holds it and offers to switch to it through VS Code's window list. Taking the
+server over is **Ask It to Release** in the MCP Server tab, which has the owner
+let go and then claims here; failing that (an owner too old to answer), **Stop
+MCP** there and **Claim MCP Server** here. To run two MCP-serving windows
+simultaneously:
 
 - The stdio surface is one-per-machine (fixed socket path).
 - Override `jasper.mcp.httpPort` in the second workspace's
   `.vscode/settings.json` to give it its own HTTPS port. The two windows can
-  then both serve HTTPS, but only one serves stdio.
+  then both serve HTTPS, but only one serves stdio. A window with no folder
+  open has no workspace settings, so it always tries the default port.
+
+A window with no folder open does not claim the server at startup: it is most
+often a throwaway one — `code ~/.bashrc`, or VS Code as the git commit editor —
+and would take the server from the window you work in. It claims the server
+when a session is selected there, if no other window holds it.
 
 This is intentional. A single AI client should not be routed to two different
 GemStone sessions depending on timing — the ownership model makes the routing

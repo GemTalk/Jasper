@@ -357,10 +357,16 @@
             "default": "single",
             "description": "Number of concurrent GemStone sessions allowed. 'single' (default) keeps one session at a time for a clearer mental model — the connected login shows an inline Logout action and the Sessions panel is hidden. 'multiple' (beta) re-enables concurrent sessions and the Sessions panel."
           },
+          "gemstone.mirrorFolder": {
+            "type": "string",
+            "default": "",
+            "scope": "machine",
+            "markdownDescription": "Folder for Jasper's read-only copy of each stone's classes as `.gs` files. Jasper adds a folder per host, stone and user below it, and keeps it across logout so a reconnect only fetches what changed. Leave empty to use Jasper's private storage. A path starting with `~`, or a relative one, is read from your home directory; the open workspace folder is not used."
+          },
           "gemstone.exportPath": {
             "type": "string",
             "default": "",
-            "description": "Root path for the local class mirror (read-only .gs files used by Find in Files / Go to Definition). Variables: {workspaceRoot}, {session}, {host}, {stone}, {user}, {index}, {dictName}. Defaults to {workspaceRoot}/.gemstone/{host}/{stone}/{user}/{index}-{dictName} — keyed by connection target so it is shared across that target's sessions and kept (and re-synced incrementally) across logout."
+            "markdownDeprecationMessage": "No longer used. Set `#gemstone.mirrorFolder#` to choose where the class mirror goes."
           },
           "gemstone.classSync.readOnlyMirror": {
             "type": "boolean",
@@ -431,7 +437,7 @@
                 },
                 "sync_classes": {
                   "type": "boolean",
-                  "description": "Sync this connection's classes to the local .gemstone mirror (read-only .gs files for Find in Files / Go to Definition). Defaults to true; turn off for slow/remote connections."
+                  "description": "Keep a read-only copy of this connection's classes as .gs files in the class mirror (see gemstone.mirrorFolder). Defaults to true; turn off for slow/remote connections."
                 }
               }
             }

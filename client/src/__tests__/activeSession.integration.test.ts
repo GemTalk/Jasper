@@ -65,15 +65,17 @@ describe('a logged-out session (integration)', () => {
     const id = stopped.executeAndFetchString('System session printString');
     const serial = loginSerialOf(stopped);
     session.executeAndFetchString(`System stopSession: ${id}. 'ok'`);
-    // The stone deregisters the stopped gem asynchronously, and a loaded machine
-    // can take past waitFor's default second. 4s stays inside the test's own 5s.
-    await vi.waitFor(() => expect(stillOnStone(session, serial)).toBe(false), { timeout: 4_000 });
+    // The stone deregisters the stopped gem asynchronously: about half a second on
+    // CI, but a loaded runner has taken past 4s. 15s stays inside the test's own 20s.
+    await vi.waitFor(() => expect(stillOnStone(session, serial)).toBe(false), {
+      timeout: 15_000,
+    });
     // Succeeds, since it doesn't wait for the gem; the session must still refuse
     // every call afterwards.
     stopped.logout();
 
     expect(() => stopped.GciTsFetchSize(1n)).toThrow(loggedOutError);
-  });
+  }, 20_000);
 
   it('refuses a second logout', () => {
     const loggedOut = loggedOutSession();
@@ -132,8 +134,11 @@ describe('logging out never waits for the gem (integration)', () => {
     session = testActiveSession(testContext.gciLibrary, testContext.session);
   });
 
-  /** Polls until `serial` is off the stone, or fails after `ms`; never a hung test. */
-  async function expectOffTheStone(serial: string, ms = 10_000): Promise<void> {
+  /**
+   * Polls until `serial` is off the stone, or fails after `ms`; never a hung test.
+   * The gem usually leaves within 3s on CI, but a loaded runner has taken past 10s.
+   */
+  async function expectOffTheStone(serial: string, ms = 30_000): Promise<void> {
     const deadline = Date.now() + ms;
     while (stillOnStone(session, serial) && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 250));
@@ -174,7 +179,7 @@ describe('logging out never waits for the gem (integration)', () => {
 
     await expect(runningCall).rejects.toThrow('The GemStone session is logged out.');
     await expectOffTheStone(serial);
-  }, 20_000);
+  }, 40_000);
 
   it('logs out an idle session, and the gem leaves', async () => {
     const { transient, serial } = transientWithSerial();
@@ -182,7 +187,7 @@ describe('logging out never waits for the gem (integration)', () => {
     expect(transient.logout()).toBe(true);
 
     await expectOffTheStone(serial);
-  }, 20_000);
+  }, 40_000);
 });
 
 describe('whether a session is busy (integration)', () => {

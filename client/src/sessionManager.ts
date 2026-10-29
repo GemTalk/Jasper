@@ -51,26 +51,14 @@ export function logOutOrFindGone(session: ActiveSession): boolean {
  * Returns an error message to show the user, or null when the login is allowed.
  *
  * Pure (no VS Code / GCI dependencies) so the policy can be unit-tested directly.
- * Single mode (the default) caps the extension at one session; multiple mode
- * still blocks a second session when a custom export path lacks {session}, since
- * concurrent sessions would otherwise overwrite each other's exported files.
+ * Single mode (the default) caps the extension at one session.
  */
-export function evaluateLoginPolicy(
-  mode: string,
-  existingCount: number,
-  exportPath: string,
-): string | null {
+export function evaluateLoginPolicy(mode: string, existingCount: number): string | null {
   if (existingCount === 0) return null;
   if (mode !== 'multiple') {
     return (
       'Only one GemStone session is allowed at a time. Log out of the current session before ' +
       'logging in again. (Set "gemstone.sessionMode": "multiple" to enable concurrent sessions.)'
-    );
-  }
-  if (exportPath && !exportPath.includes('{session}')) {
-    return (
-      'Only one session is allowed when the export path does not include {session}. ' +
-      'Log out of the current session before logging in again, or add {session} to your export path.'
     );
   }
   return null;
@@ -248,17 +236,10 @@ export class SessionManager {
     login: GemStoneLogin,
     libraryPath: string,
   ): { gci: GciLibrary; stoneNrs: string; gemNrs: string } {
-    // Single mode (the default) allows one session at a time; multiple mode still
-    // guards against export-path conflicts. See evaluateLoginPolicy. Pending
-    // logins count toward the total so the cap holds during loginAsync's window.
-    const config = vscode.workspace.getConfiguration('gemstone');
-    const mode = config.get<string>('sessionMode', 'single');
-    const customPath = config.get<string>('exportPath', '').trim();
-    const policyError = evaluateLoginPolicy(
-      mode,
-      this.sessions.size + this.pendingLogins,
-      customPath,
-    );
+    // Pending logins count toward the total so the single-session cap holds
+    // during loginAsync's window.
+    const mode = vscode.workspace.getConfiguration('gemstone').get<string>('sessionMode', 'single');
+    const policyError = evaluateLoginPolicy(mode, this.sessions.size + this.pendingLogins);
     if (policyError) {
       throw new Error(policyError);
     }

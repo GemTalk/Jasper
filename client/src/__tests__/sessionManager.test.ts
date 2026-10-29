@@ -169,27 +169,20 @@ import { startNonBlockingCall } from './fakeActiveSession';
 
 describe('evaluateLoginPolicy', () => {
   it('allows the first login regardless of mode', () => {
-    expect(evaluateLoginPolicy('single', 0, '')).toBeNull();
-    expect(evaluateLoginPolicy('multiple', 0, '{session}')).toBeNull();
+    expect(evaluateLoginPolicy('single', 0)).toBeNull();
+    expect(evaluateLoginPolicy('multiple', 0)).toBeNull();
   });
 
   it('blocks a second login in single mode', () => {
-    expect(evaluateLoginPolicy('single', 1, '{session}')).toMatch(/Only one GemStone session/);
+    expect(evaluateLoginPolicy('single', 1)).toMatch(/Only one GemStone session/);
   });
 
   it('treats an unrecognized/unset mode as single', () => {
-    expect(evaluateLoginPolicy('', 1, '{session}')).toMatch(/Only one GemStone session/);
+    expect(evaluateLoginPolicy('', 1)).toMatch(/Only one GemStone session/);
   });
 
-  it('allows concurrent sessions in multiple mode with a {session} export path', () => {
-    expect(evaluateLoginPolicy('multiple', 1, '{workspaceRoot}/gemstone/{session}')).toBeNull();
-    expect(evaluateLoginPolicy('multiple', 1, '')).toBeNull();
-  });
-
-  it('blocks a second session in multiple mode when export path lacks {session}', () => {
-    expect(evaluateLoginPolicy('multiple', 1, '{workspaceRoot}/gemstone/{dictName}')).toMatch(
-      /does not include \{session\}/,
-    );
+  it('allows concurrent sessions in multiple mode', () => {
+    expect(evaluateLoginPolicy('multiple', 1)).toBeNull();
   });
 });
 
@@ -463,28 +456,20 @@ describe('SessionManager', () => {
     );
   });
 
-  it('allows multiple sessions in multiple mode with default export path (includes {session})', () => {
+  it('allows multiple sessions in multiple mode', () => {
     configValues['sessionMode'] = 'multiple';
     manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
     const session2 = manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
     expect(session2.id).toBe(2);
   });
 
-  it('allows multiple sessions in multiple mode when custom export path includes {session}', () => {
-    configValues['sessionMode'] = 'multiple';
-    configValues['exportPath'] = '{workspaceRoot}/gemstone/{session}/{dictName}';
-    manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
-    const session2 = manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
-    expect(session2.id).toBe(2);
-  });
-
-  it('rejects a second login in multiple mode when custom export path lacks {session}', () => {
+  // Each session gets its own mirror folder now, so the retired setting no longer gates logins.
+  it('ignores a retired exportPath without {session} in multiple mode', () => {
     configValues['sessionMode'] = 'multiple';
     configValues['exportPath'] = '{workspaceRoot}/gemstone/{dictName}';
     manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
-    expect(() => manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib')).toThrow(
-      'does not include {session}',
-    );
+    const session2 = manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
+    expect(session2.id).toBe(2);
   });
 
   it('allows login again after logging out', async () => {

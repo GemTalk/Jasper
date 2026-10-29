@@ -150,6 +150,11 @@ describe('FileInManager', () => {
       expect(result).toBeUndefined();
     });
 
+    it("does not take a second session's _2 folder for the first one's", () => {
+      const fsPath = '/workspace/gemstone/localhost/gs64stone/DataCurator_2/1-UserGlobals/A.gs';
+      expect(manager.resolveSessionFromPath(fsPath)).toBeUndefined();
+    });
+
     it('matches the correct session among multiple', () => {
       const session2 = createMockSession({ gem_host: 'remote', stone: 'prod', gs_user: 'Admin' });
       session2.id = 2;
@@ -190,6 +195,17 @@ describe('FileInManager', () => {
     it('returns false for dirty files outside session root', () => {
       const doc = createMockDocument(
         '/workspace/gemstone/otherhost/otherstone/otheruser/1-Dict/Other.gs',
+        { isDirty: true },
+      );
+      (vscode.workspace as unknown as { textDocuments: unknown[] }).textDocuments = [doc];
+
+      expect(manager.hasUnsavedChanges(mockSession)).toBe(false);
+    });
+
+    it("ignores a dirty file in a second session's _2 folder", () => {
+      // `…/DataCurator` is a string prefix of `…/DataCurator_2`.
+      const doc = createMockDocument(
+        '/workspace/gemstone/localhost/gs64stone/DataCurator_2/1-UserGlobals/MyClass.gs',
         { isDirty: true },
       );
       (vscode.workspace as unknown as { textDocuments: unknown[] }).textDocuments = [doc];

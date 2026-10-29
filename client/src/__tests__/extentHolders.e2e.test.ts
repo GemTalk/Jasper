@@ -43,7 +43,41 @@ function toolAvailable(tool: string): boolean {
  *  Resolved at load, not in a `beforeAll`, so it can gate `skipIf`: a guard
  *  inside the body would let a machine with neither tool report five passing
  *  tests that asserted nothing. */
-const NO_PROBE = NOT_POSIX || ['fuser', 'lsof'].filter(toolAvailable).length === 0;
+const NO_PROBE_TOOL = NOT_POSIX || ['fuser', 'lsof'].filter(toolAvailable).length === 0;
+
+/** Like the product's probes, every one here is time-limited: `fuser` and `lsof`
+ *  stat every mount, and an unresponsive network mount blocks them for ever. */
+const PROBE_TIMEOUT_MS = 5_000;
+
+function timedOut(e: unknown): boolean {
+  return (e as NodeJS.ErrnoException).code === 'ETIMEDOUT';
+}
+
+/** A machine with a dead mount can't run these at all, which says nothing about
+ *  the code; skip, and say why, rather than fail or hang the whole suite. */
+function probeHangs(): boolean {
+  const scratch = path.join(os.tmpdir(), `jasper-extent-probe-${process.pid}`);
+  fs.writeFileSync(scratch, '');
+  try {
+    execFileSync('sh', ['-c', `fuser "${scratch}" 2>/dev/null || true`], {
+      timeout: PROBE_TIMEOUT_MS,
+    });
+    return false;
+  } catch (e) {
+    return timedOut(e);
+  } finally {
+    fs.rmSync(scratch, { force: true });
+  }
+}
+
+const PROBE_HANGS = !NO_PROBE_TOOL && probeHangs();
+if (PROBE_HANGS) {
+  console.warn(
+    `extentHolders e2e skipped: fuser did not answer within ${PROBE_TIMEOUT_MS}ms, ` +
+      'most likely an unresponsive network mount on this machine.',
+  );
+}
+const NO_PROBE = NO_PROBE_TOOL || PROBE_HANGS;
 
 /** The production probe, run for real: `fuser` first, `lsof` as the fallback. */
 function findHolders(extent: string) {
@@ -51,9 +85,15 @@ function findHolders(extent: string) {
     let pids: number[];
     try {
       pids = parseHolderPids(
-        execFileSync('sh', ['-c', `${probe} 2>/dev/null || true`], { encoding: 'utf-8' }),
+        execFileSync('sh', ['-c', `${probe} 2>/dev/null || true`], {
+          encoding: 'utf-8',
+          timeout: PROBE_TIMEOUT_MS,
+        }),
       );
-    } catch {
+    } catch (e) {
+      if (timedOut(e)) {
+        throw new Error(`${probe} did not answer within ${PROBE_TIMEOUT_MS}ms`, { cause: e });
+      }
       continue;
     }
     if (pids.length === 0) continue;
@@ -61,7 +101,7 @@ function findHolders(extent: string) {
       execFileSync(
         'sh',
         ['-c', `ps -o pid=,user=,lstart=,args= -p ${pids.join(',')} 2>/dev/null || true`],
-        { encoding: 'utf-8' },
+        { encoding: 'utf-8', timeout: PROBE_TIMEOUT_MS },
       ),
     );
   }

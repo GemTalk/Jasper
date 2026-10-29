@@ -9,8 +9,7 @@ import { extensionPathFrom } from './extensionPath';
 
 /**
  * What `workspacePath` says when the owning window had no folder open. The MCP
- * Server tab cannot offer to open such a window, so it checks for this rather
- * than trying to open a path that names nothing.
+ * surfaces check for it to say "no folder open" rather than print it.
  */
 export const NO_WORKSPACE_RECORDED = '(no workspace)';
 
@@ -41,11 +40,9 @@ export interface McpOwnerInfo {
    * `vscode.workspace.workspaceFile` in the owning window — set only for a
    * multi-root workspace opened from a `.code-workspace` file.
    *
-   * Recorded because it is the one case we can *detect* where
-   * `workspacePath` is not the window's identity: it holds the first folder,
-   * and opening that gets a new single-folder window rather than the
-   * multi-root one. Its presence is what withholds the offer to open the
-   * owner (see `canRevealOwnerWindow`).
+   * Shown on the MCP Server tab, because for a multi-root workspace
+   * `workspacePath` holds only the first folder, which names neither the
+   * window nor the workspace.
    */
   workspaceFile?: string;
 }
