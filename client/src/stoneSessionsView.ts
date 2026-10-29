@@ -268,7 +268,9 @@ export function describeRow(
         (canKill ? '; Kill if its gem is frozen.' : '.'),
     );
   } else if (jasperSession && (canStop || canKill)) {
-    tip.push("Stop and Kill don't ask about uncommitted changes; Log out does.");
+    const offered =
+      canStop && canKill ? "Stop and Kill don't" : canStop ? "Stop doesn't" : "Kill doesn't";
+    tip.push(`${offered} ask about uncommitted changes; Log out does.`);
   }
   if (!systemGem && !mayStop) tip.push(`No Stop: ${loginUser} lacks the SystemControl privilege.`);
   if (backlog) {

@@ -199,6 +199,9 @@ describe("a stone's session list", () => {
     list = { ...listed(), canStopSessions: false };
     const other = rowsOf(describeIt())[1];
     expect(other.canStop).toBe(false);
+    expect(rowsOf(describeIt())[0].tip).toContain(
+      "Kill doesn't ask about uncommitted changes; Log out does.",
+    );
     expect(other.tip).toContain('No Stop: DataCurator lacks the SystemControl privilege.');
   });
 
