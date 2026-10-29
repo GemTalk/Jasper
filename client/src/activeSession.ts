@@ -489,6 +489,11 @@ export class ActiveSession {
     return this.gci.executeAndFetchString(this.handle(), code);
   }
 
+  /** See {@link GciLibrary.fetchStringAndRelease}. */
+  fetchStringAndRelease(resultOop: bigint) {
+    return this.gci.fetchStringAndRelease(this.handle(), resultOop);
+  }
+
   /** See {@link GciLibrary.oopToInteger}. */
   oopToInteger(oop: bigint) {
     return this.gci.oopToInteger(this.handle(), oop);

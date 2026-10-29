@@ -3495,8 +3495,31 @@ export class GciLibrary {
    *   fail.
    */
   public executeAndFetchString(session: unknown, code: string): string {
-    return this.executeAndRelease(session, code, (resultOop) =>
-      this.performAndRelease(session, resultOop, 'encodeAsUTF8', (utf8StringOop) =>
+    return this.fetchStringAndRelease(session, this.execute(session, code));
+  }
+
+  /**
+   * Returns `resultOop` as a JS string, decoded as UTF-8, and releases it.
+   *
+   * Sends `encodeAsUTF8` to `resultOop` in Smalltalk first, so any
+   * string-like object, a UTF-16 encoding included, comes back as UTF-8
+   * bytes, then pages those bytes out with `GciTsFetchBytes`. The result
+   * has no size cap.
+   *
+   * Both `resultOop` and its `encodeAsUTF8` result are released once the
+   * bytes are read, even if the caller already held either one exported,
+   * since the PureExportSet doesn't count exports.
+   *
+   * @param session - The GemStone session to operate in.
+   * @param resultOop - The oop to fetch as a string. Released afterwards,
+   *   whether the fetch succeeds or not.
+   * @returns `resultOop`'s contents, decoded as a UTF-8 JS string.
+   * @throws {GciLibraryError} If `resultOop` cannot be sent `encodeAsUTF8`,
+   *   or if the underlying GCI calls fail.
+   */
+  public fetchStringAndRelease(session: unknown, resultOop: bigint): string {
+    return this.releaseAfterUse(session, resultOop, (oop) =>
+      this.performAndRelease(session, oop, 'encodeAsUTF8', (utf8StringOop) =>
         this.fetchUtf8String(session, utf8StringOop, GciLibrary.FETCH_STRING_PAGE_SIZE_BYTES),
       ),
     );

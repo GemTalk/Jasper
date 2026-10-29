@@ -55,6 +55,8 @@ export const GCI_ERR_OP_IN_PROGRESS = 2203;
 export const GS_ERR_SESSION_SHUTDOWN = 4059;
 // A Halt was signalled, e.g. by `self pause`.
 export const GS_ERR_HALT = 2709;
+// A soft break was received, e.g. from the user's Cancel.
+export const SOFT_BREAK_ERROR = 6003;
 
 // Class OOPs (from gcioop.ht)
 export const OOP_CLASS_STRING = 74753n;

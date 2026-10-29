@@ -2,8 +2,8 @@ import { describe, it, expect, onTestFinished, vi } from 'vitest';
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 import { GciLibrary } from '../gciLibrary';
-import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
-import { runNbCall } from '../nbRunner';
+import { GCI_ERR_OP_IN_PROGRESS, OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
+import { cancelRunOn, NbCancelledError, pollNbResultReady, runNbCall } from '../nbRunner';
 import * as queries from '../browserQueries';
 import type { ActiveSession } from '../sessionManager';
 import { useIntegrationTest } from './useIntegrationTest';
@@ -46,6 +46,52 @@ describe('browser queries (integration)', () => {
 
     return index;
   };
+
+  function transientSession(): ActiveSession {
+    const { session: transient, err } = session().transientLogin(session().login);
+    if (!transient) throw new Error(`Transient login failed: ${err.message}`);
+    return transient;
+  }
+
+  function runFor(on: ActiveSession, seconds: number): Promise<unknown> {
+    const run = runNbCall(
+      on,
+      () =>
+        on.GciTsNbExecute(
+          `(Delay forSeconds: ${seconds}) wait`,
+          OOP_CLASS_UTF8,
+          OOP_ILLEGAL,
+          OOP_NIL,
+          0,
+          0,
+        ),
+      () => on.GciTsNbResult(),
+      { suppressNotification: true },
+    );
+    // A logout is refused while the call is still on the session.
+    onTestFinished(async () => {
+      await run.catch(() => {});
+      on.logout();
+    });
+    return run;
+  }
+
+  /**
+   * Start `code` on the session directly, outside the runner, so only the
+   * session itself knows a call is on it.
+   */
+  function startUntracked(on: ActiveSession, code: string): void {
+    const { success, err } = on.GciTsNbExecute(code, OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL, 0, 0);
+    if (!success) throw new Error(`Non-blocking start failed: ${err.message}`);
+    // A logout is refused while the call is still on the session.
+    onTestFinished(async () => {
+      while (pollNbResultReady(on).result === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      on.GciTsNbResult();
+      on.logout();
+    });
+  }
 
   describe('getDictionaryNames', () => {
     it('lists the symbol dictionaries the user can see', () => {
@@ -465,35 +511,6 @@ describe('browser queries (integration)', () => {
   });
 
   describe('a query while another call runs on the session', () => {
-    function transientSession(): ActiveSession {
-      const { session: transient, err } = session().transientLogin(session().login);
-      if (!transient) throw new Error(`Transient login failed: ${err.message}`);
-      return transient;
-    }
-
-    function runFor(on: ActiveSession, seconds: number): Promise<unknown> {
-      const run = runNbCall(
-        on,
-        () =>
-          on.GciTsNbExecute(
-            `(Delay forSeconds: ${seconds}) wait`,
-            OOP_CLASS_UTF8,
-            OOP_ILLEGAL,
-            OOP_NIL,
-            0,
-            0,
-          ),
-        () => on.GciTsNbResult(),
-        { suppressNotification: true },
-      );
-      // A logout is refused while the call is still on the session.
-      onTestFinished(async () => {
-        await run.catch(() => {});
-        on.logout();
-      });
-      return run;
-    }
-
     it('is refused as busy rather than reaching GemStone', () => {
       const transient = transientSession();
       void runFor(transient, 1);
@@ -510,6 +527,67 @@ describe('browser queries (integration)', () => {
       const names = queries.getDictionaryNames(transient);
 
       expect(names).toContain('Globals');
+    });
+  });
+
+  describe('a query that does not block the extension host', () => {
+    function loggedInSession(): ActiveSession {
+      const transient = transientSession();
+      onTestFinished(() => {
+        transient.logout();
+      });
+      return transient;
+    }
+
+    it('answers its result as a string', async () => {
+      const transient = loggedInSession();
+
+      const answer = queries.executeFetchStringAsync(
+        transient,
+        `'caf' , (String with: (Character codePoint: 233))`,
+      );
+
+      await expect(answer).resolves.toBe('caf\u00e9');
+    });
+
+    it('rejects as cancelled when the user cancels it', async () => {
+      const transient = loggedInSession();
+      const query = queries.executeFetchStringAsync(
+        transient,
+        `(Delay forSeconds: 5) wait. 'late'`,
+      );
+
+      await vi.waitFor(() => expect(cancelRunOn(transient)).toBe(true));
+
+      await expect(query).rejects.toBeInstanceOf(NbCancelledError);
+    });
+
+    it('is refused as busy while another query runs', async () => {
+      const transient = loggedInSession();
+      const first = queries.executeFetchStringAsync(
+        transient,
+        `(Delay forMilliseconds: 200) wait. 'first'`,
+      );
+
+      const second = queries.executeFetchStringAsync(transient, `'second'`);
+
+      await expect(second).rejects.toMatchObject({
+        constructor: queries.BrowserQueryError,
+        gciErrorNumber: GCI_ERR_OP_IN_PROGRESS,
+      });
+      await expect(first).resolves.toBe('first');
+    });
+
+    it('is refused as busy while a call the runner does not know about runs', async () => {
+      const transient = transientSession();
+      startUntracked(transient, `(Delay forMilliseconds: 200) wait`);
+
+      const query = queries.executeFetchStringAsync(transient, `'refused'`);
+
+      await expect(query).rejects.toMatchObject({
+        constructor: queries.BrowserQueryError,
+        gciErrorNumber: GCI_ERR_OP_IN_PROGRESS,
+      });
     });
   });
 });
