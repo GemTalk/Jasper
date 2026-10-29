@@ -1270,6 +1270,12 @@ describe("a stone's sessions, under Session Processes", () => {
     expect(rowEl(9)!.querySelector('[data-action="stopStoneSession"]')).not.toBeNull();
     expect(rowEl(9)!.querySelector('[data-action="killStoneSession"]')).toBeNull();
     expect(rowEl(3)!.querySelector('[data-action="killStoneSession"]')).not.toBeNull();
+    expect(
+      rowEl(9)!.querySelector('[data-action="stopStoneSession"]')!.getAttribute('data-tip'),
+    ).toBe('Stop GemStone session 5 — anything it hasn’t committed will be lost');
+    expect(
+      rowEl(3)!.querySelector('[data-action="killStoneSession"]')!.getAttribute('data-tip'),
+    ).toMatch(/^Kill GemStone session /);
     expect(rowEl(1)!.querySelector('button')).toBeNull();
   });
 

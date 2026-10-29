@@ -900,7 +900,7 @@
           serial: row.serial,
           iconOnly: true,
           extraClass: 'power-stop',
-          title: `Stop session ${row.id} \u2014 anything it hasn\u2019t committed is lost`,
+          title: `Stop GemStone session ${row.id} \u2014 anything it hasn\u2019t committed will be lost`,
         })
       : '';
     const kill = row.canKill
@@ -908,7 +908,7 @@
           name: key,
           serial: row.serial,
           iconOnly: true,
-          title: `Kill session ${row.id} by ending its gem, process ${row.gemPid}, on this machine`,
+          title: `Kill GemStone session ${row.id} by ending its gem, process ${row.gemPid}, on this machine`,
         })
       : '';
     const meta = `GemStone session ${row.id} \u00b7 gem ${row.gemPid} \u00b7 ${row.host} \u00b7 ${row.age}`;
