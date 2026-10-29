@@ -14,8 +14,8 @@ import {
 export interface StoneSessionsDeps {
   /** Read the stone's sessions through a login of its own on `through`'s library; may throw. */
   read(through: ActiveSession): StoneSessionList;
-  /** The gem processes among `sessions` that Kill can end; see `killableGems`. */
-  killableGems(sessions: StoneSession[]): Set<number>;
+  /** The gem processes among `sessions`, on a stone reached at `stoneHost`, that Kill can end; see `killableGems`. */
+  killableGems(sessions: StoneSession[], stoneHost: string): Set<number>;
   /** Whether a run the user stopped still holds `session`. */
   stuck(session: ActiveSession): boolean;
   /** GemStone's session number for a Jasper session, once known. */
@@ -135,7 +135,7 @@ export class StoneSessions {
         read = { kind: 'error', message: e instanceof Error ? e.message : String(e) };
       }
       const killable =
-        read.kind === 'sessions' ? deps.killableGems(read.sessions) : new Set<number>();
+        read.kind === 'sessions' ? deps.killableGems(read.sessions, gem_host) : new Set<number>();
       entry = { read, killable, windowSessions: seen };
       this.cache.set(key, entry);
     }

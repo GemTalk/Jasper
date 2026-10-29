@@ -24,6 +24,12 @@ export function isThisMachine(host: string): boolean {
   );
 }
 
+/** Whether `host` is a loopback name or address, which means a different machine to each one that reports it. */
+export function isLoopbackName(host: string): boolean {
+  const h = normalizeHost(host);
+  return h === 'localhost' || isLoopbackAddress(h);
+}
+
 function normalizeHost(host: string): string {
   return host
     .trim()

@@ -88,7 +88,9 @@ describe('Stone sessions (integration)', () => {
     // Process 1 is init, which only root may signal.
     const init = { ...row, gemPid: 1 };
 
-    const killable = killableGems([row, init], isThisMachine, (command) => wslExecSync(command));
+    const killable = killableGems([row, init], session.login.gem_host, isThisMachine, (command) =>
+      wslExecSync(command),
+    );
 
     // WSL on a CI runner can run as root, which may signal anything.
     const root = wslExecSync('id -u').trim() === '0';

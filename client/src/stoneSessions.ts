@@ -1,6 +1,7 @@
 import type { ActiveSession } from './activeSession';
 import { logInfo } from './gciLog';
 import { NO_PRIVILEGE_ERROR } from './forceStop';
+import { isLoopbackName } from './thisMachine';
 
 /** One session logged in to a stone, as `System descriptionOfSession:` describes it. */
 export interface StoneSession {
@@ -120,13 +121,18 @@ export function listStoneSessions(login: TransientLogin): StoneSessionList {
  * Windows), and ones this OS user may signal, as `kill -0` answers; another OS
  * user's gem refuses. Answers none when the check itself fails, so Kill is
  * never offered on a guess.
+ *
+ * The stone calls a gem on its own machine `localhost`, so such a gem is here
+ * only when `stoneHost`, the host the stone was reached at, is.
  */
 export function killableGems(
   sessions: StoneSession[],
-  isLocalHost: (host: string) => boolean,
+  stoneHost: string,
+  isThisMachine: (host: string) => boolean,
   shellSync: (command: string) => string,
 ): Set<number> {
-  const pids = sessions.filter((s) => !s.systemGem && isLocalHost(s.host)).map((s) => s.gemPid);
+  const isHere = (host: string) => isThisMachine(isLoopbackName(host) ? stoneHost : host);
+  const pids = sessions.filter((s) => !s.systemGem && isHere(s.host)).map((s) => s.gemPid);
   if (pids.length === 0) return new Set();
   try {
     const answer = shellSync(

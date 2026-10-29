@@ -525,12 +525,14 @@ describe('killableGems', () => {
     ...overrides,
   });
   const isLocal = (host: string) => host === 'uffda';
+  const STONE_HOST = 'uffda';
 
   it('asks kill -0 about the gems on this machine only, and keeps those it may signal', () => {
     const shell = vi.fn(() => '100\n');
 
     const killable = killableGems(
       [gem({ gemPid: 100 }), gem({ gemPid: 200 }), gem({ gemPid: 300, host: 'thor' })],
+      STONE_HOST,
       isLocal,
       shell,
     );
@@ -541,14 +543,32 @@ describe('killableGems', () => {
     expect(killable).toEqual(new Set([100]));
   });
 
+  it("takes a gem the stone calls localhost to be on the stone's machine", () => {
+    const shell = vi.fn(() => '100\n');
+    const onLocalhost = [
+      gem({ gemPid: 100, host: 'localhost' }),
+      gem({ gemPid: 200, host: '127.0.0.1' }),
+    ];
+
+    expect(killableGems(onLocalhost, 'thor', isLocal, shell)).toEqual(new Set());
+    expect(shell).not.toHaveBeenCalled();
+
+    expect(killableGems(onLocalhost, 'uffda', isLocal, shell)).toEqual(new Set([100]));
+    expect(shell).toHaveBeenCalledWith(
+      'for p in 100 200; do kill -0 $p 2>/dev/null && echo $p; done; true',
+    );
+  });
+
   it("never asks about GemStone's own gems", () => {
     const shell = vi.fn(() => '');
-    expect(killableGems([gem({ systemGem: 'symbolgem' })], isLocal, shell)).toEqual(new Set());
+    expect(killableGems([gem({ systemGem: 'symbolgem' })], STONE_HOST, isLocal, shell)).toEqual(
+      new Set(),
+    );
     expect(shell).not.toHaveBeenCalled();
   });
 
   it('offers no Kill when the check itself fails', () => {
-    const killable = killableGems([gem({})], isLocal, () => {
+    const killable = killableGems([gem({})], STONE_HOST, isLocal, () => {
       throw new Error('wsl.exe not found');
     });
     expect(killable).toEqual(new Set());

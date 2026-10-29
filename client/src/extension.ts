@@ -953,8 +953,8 @@ export function activate(context: vscode.ExtensionContext) {
   // Every stone's session list, shown in the Databases & Versions panel.
   const stoneSessions = new StoneSessions({
     read: (through) => listStoneSessions(transientLoginOn(through)),
-    killableGems: (sessions) =>
-      killableGems(sessions, isThisMachine, (command) => wslExecSync(command)),
+    killableGems: (sessions, stoneHost) =>
+      killableGems(sessions, stoneHost, isThisMachine, (command) => wslExecSync(command)),
     stuck: stoppedRunHolds,
     serverSessionOf,
     transientLogin: (through) => transientLoginOn(through),

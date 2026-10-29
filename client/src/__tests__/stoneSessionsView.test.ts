@@ -15,10 +15,14 @@ import {
   StoneSessionsInfo,
 } from '../stoneSessionsView';
 
-function makeSession(id: number, stone = DEFAULT_LOGIN.stone): ActiveSession {
+function makeSession(
+  id: number,
+  stone = DEFAULT_LOGIN.stone,
+  gem_host = DEFAULT_LOGIN.gem_host,
+): ActiveSession {
   return {
     id,
-    login: { ...DEFAULT_LOGIN, gs_user: 'DataCurator', stone },
+    login: { ...DEFAULT_LOGIN, gs_user: 'DataCurator', stone, gem_host },
   } as unknown as ActiveSession;
 }
 
@@ -48,7 +52,9 @@ describe("a stone's session list", () => {
   let stuck: Set<number>;
   let deps: StoneSessionsDeps & {
     read: ReturnType<typeof vi.fn<(through: ActiveSession) => StoneSessionList>>;
-    killableGems: ReturnType<typeof vi.fn<(sessions: StoneSession[]) => Set<number>>>;
+    killableGems: ReturnType<
+      typeof vi.fn<(sessions: StoneSession[], stoneHost: string) => Set<number>>
+    >;
   };
   let sessions: StoneSessions;
 
@@ -94,6 +100,13 @@ describe("a stone's session list", () => {
     describeIt();
     expect(deps.read).toHaveBeenCalledTimes(1);
     expect(deps.killableGems).toHaveBeenCalledTimes(1);
+  });
+
+  // The stone calls gems on its own machine localhost; only the login says where that is.
+  it('tells the Kill check which host the stone was reached at', () => {
+    windowSessions = [makeSession(1, 'gs64stone', 'thor')];
+    describeIt();
+    expect(deps.killableGems).toHaveBeenCalledWith(listed().sessions, 'thor');
   });
 
   it('reads it again once forgotten, as Refresh and Stop do', () => {
