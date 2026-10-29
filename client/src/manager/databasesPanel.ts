@@ -64,7 +64,7 @@ export interface DatabasesPanelDeps {
   getLogins: () => GemStoneLogin[];
   /** Live sessions — lets Connect show what is already connected, and which is current. */
   sessionManager: SessionManager;
-  /** Every session on each stone, for its Processes list. */
+  /** Every session on each stone, for its Session Processes list. */
   stoneSessions?: StoneSessions;
   /**
    * The admin views' change events. Every `gemstone.*` command that mutates the
@@ -2248,7 +2248,7 @@ th.v-num { text-align: right; }
 .extent-select:disabled { opacity: .5; cursor: default; }
 .db-cols { display: flex; flex-direction: column; gap: 6px; }
 
-/* Groups inside a database body (Logins / Processes / Files). */
+/* Groups inside a database body (Logins / Processes / Session Processes / Files). */
 .db-group { margin: 0 0 6px; }
 .db-group-head { list-style: none; cursor: pointer; user-select: none;
   display: flex; align-items: center; gap: 7px; padding: 4px 2px; border-radius: 4px; }
@@ -2274,7 +2274,6 @@ th.v-num { text-align: right; }
 .db-line.row-warn { background: color-mix(in srgb, var(--gm-warn) 8%, transparent); }
 /* The row Show in Sessions opened the panel at. */
 .db-line.row-reveal { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
-.stone-sessions-caption { display: flex; align-items: center; justify-content: space-between; }
 .db-line-name { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .db-login-user, .proc-name { font-weight: 600; }
 .db-line-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; flex: none; }

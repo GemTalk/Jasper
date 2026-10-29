@@ -1201,7 +1201,7 @@ describe('the stone and NetLDI rows', () => {
   });
 });
 
-describe("a stone's sessions, in its Processes", () => {
+describe("a stone's sessions, under Session Processes", () => {
   const row = (overrides: Record<string, unknown> = {}) => ({
     id: 5,
     serial: 9,
@@ -1219,14 +1219,14 @@ describe("a stone's sessions, in its Processes", () => {
   const running = (stoneSessions: unknown) =>
     state({ databases: [database({ stoneRunning: true, stoneSessions })] });
   const listed = (...rows: unknown[]) => ({ key: 'db:db-1', kind: 'sessions', rows });
-  const processes = () =>
-    Array.from(root.querySelectorAll<HTMLElement>('details.db-item .db-group')).find(
-      (g) => g.querySelector('.db-group-title')?.textContent === 'Processes',
+  const groupTitled = (title: string) =>
+    Array.from(root.querySelectorAll<HTMLElement>('details.db-item .db-group')).find((g) =>
+      g.querySelector('.db-group-title')?.textContent?.startsWith(title),
     )!;
   const rowEl = (serial: number) =>
     root.querySelector<HTMLElement>(`[data-stone-session="db:db-1|${serial}"]`);
 
-  it('lists each session under the stone and NetLDI, with its gem, host and age', () => {
+  it('lists each session in a group of its own beside Processes, with its gem, host and age', () => {
     mount(
       running(
         listed(
@@ -1236,8 +1236,10 @@ describe("a stone's sessions, in its Processes", () => {
       ),
     );
 
-    const list = processes().querySelector('.stone-sessions') as HTMLElement;
-    expect(list.textContent).toContain('Sessions · 2');
+    const list = groupTitled('Session Processes');
+    expect(list.querySelector('.db-group-title')!.textContent).toBe('Session Processes · 2');
+    expect(list.parentElement).toBe(groupTitled('Processes').parentElement);
+    expect(groupTitled('Processes').querySelector('[data-stone-session]')).toBeNull();
     expect(rowEl(9)!.textContent).toContain('session 5 · gem 39811 · thor · 3h');
     expect(rowEl(1)!.textContent).toContain('system: symbolgem');
   });
@@ -1296,7 +1298,9 @@ describe("a stone's sessions, in its Processes", () => {
         detail: 'GemStone lists a stone’s sessions only to a session logged in to it.',
       }),
     );
-    expect(processes().textContent).toContain('Log in to see the sessions on this stone');
+    expect(groupTitled('Session Processes').textContent).toContain(
+      'Log in to see the sessions on this stone',
+    );
   });
 
   // Two logins to one stone elsewhere share one list.
@@ -1322,7 +1326,7 @@ describe("a stone's sessions, in its Processes", () => {
     );
     const other = root.querySelector('[data-section="otherLogins"]') as HTMLElement;
     expect(other.querySelectorAll('.stone-sessions')).toHaveLength(1);
-    expect(other.textContent).toContain('Sessions on far (thor) · 1');
+    expect(other.textContent).toContain('Session Processes on far (thor) · 1');
   });
 
   it('opens the panel at the row Show in Sessions asks for, and keeps it marked', () => {

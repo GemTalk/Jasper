@@ -312,7 +312,7 @@
       (opts.group ? ` data-group="${esc(opts.group)}"` : '') +
       (opts.db ? ` data-db="${esc(opts.db)}"` : '');
     const desc = opts.desc ? `<span class="group-desc">${esc(opts.desc)}</span>` : '';
-    return `<details class="db-group"${data}${opts.open ? ' open' : ''}>
+    return `<details class="db-group${opts.className ? ` ${opts.className}` : ''}"${data}${opts.open ? ' open' : ''}>
       <summary class="db-group-head">
         <i class="codicon codicon-chevron-right section-twist" aria-hidden="true"></i>
         <span class="db-group-title">${esc(opts.title)}</span>
@@ -867,12 +867,12 @@
   function renderProcesses(db) {
     return group(
       { title: 'Processes', open: true },
-      `${processRow(db, 'stone')}${processRow(db, 'netldi')}${stoneSessionsBlock(db.stoneSessions, 'Sessions')}`,
+      `${processRow(db, 'stone')}${processRow(db, 'netldi')}`,
     );
   }
 
   // Every session on the stone: other people's, tools', GemStone's own gems and
-  // this window's, each a process of the stone above. The host reads the list,
+  // this window's, each a gem process of the stone. The host reads the list,
   // and decides which rows may be stopped or killed; the buttons only name the
   // row, by its login's serial number, which GemStone never reuses.
   function stoneSessionRow(key, row) {
@@ -916,8 +916,8 @@
       </div>`;
   }
 
-  /** A stone's session list under `caption`, or the line standing in for it; nothing while it is down. */
-  function stoneSessionsBlock(info, caption) {
+  /** A stone's session list as a group titled `title`, or the line standing in for it; nothing while it is down. */
+  function stoneSessionsGroup(info, title) {
     if (!info) return '';
     const refresh = btn('refreshStoneSessions', 'Refresh', 'refresh', null, {
       name: info.key,
@@ -930,10 +930,10 @@
         ? info.rows.map((row) => stoneSessionRow(info.key, row)).join('') ||
           '<div class="db-empty">No other sessions.</div>'
         : `<div class="db-line"${tipAttr(info.detail)}><span class="db-line-name">${mark('info', 'off', info.detail)}<span class="dim">${esc(info.message)}</span></span></div>`;
-    return `<div class="session-block stone-sessions" data-stone-sessions="${esc(info.key)}">
-        <div class="session-caption stone-sessions-caption"><span>${esc(caption)}${count}</span>${refresh}</div>
-        ${body}
-      </div>`;
+    return group(
+      { title: `${title}${count}`, actions: refresh, open: true, className: 'stone-sessions' },
+      body,
+    );
   }
 
   /** Mark the row Show in Sessions asked for, opening what hides it, and scroll to it once. */
@@ -1128,6 +1128,7 @@
         <div class="db-cols">
           ${renderLogins(db)}
           ${renderProcesses(db)}
+          ${stoneSessionsGroup(db.stoneSessions, 'Session Processes')}
         </div>
         ${renderFiles(db, expandedFiles.has(db.dirName))}
         <div class="db-footer">
@@ -1193,7 +1194,7 @@
       .join('');
     // One list per stone, however many of these logins reach it.
     const lists = (stoneLists || [])
-      .map((l) => stoneSessionsBlock(l, `Sessions on ${l.stone} (${l.host})`))
+      .map((l) => stoneSessionsGroup(l, `Session Processes on ${l.stone} (${l.host})`))
       .join('');
     const body = (rows || '<div class="db-empty">None yet.</div>') + lists;
     // Its own +, because the per-database one prefills from the database it sits
