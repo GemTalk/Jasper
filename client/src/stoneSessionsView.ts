@@ -66,9 +66,9 @@ export interface StoneSessionTarget {
 }
 
 /**
- * How long after a session of this window logs out its list is read again. The
- * stone lets a gem go a moment after the logout returns, so the read the logout
- * itself causes can still list it.
+ * How long after a logout its list is read again: a session of this window's,
+ * or the short-lived login Stop and Kill use. The stone lets a gem go a moment
+ * after the logout returns, so the read straight after can still list it.
  */
 export const REREAD_AFTER_LOGOUT_MS = 2000;
 
@@ -112,12 +112,7 @@ export class StoneSessions {
         entry.windowSessions
           .split(',')
           .some((id) => id !== '' && !windowSessions.some((s) => String(s.id) === id));
-      if (loggedOut) {
-        setTimeout(() => {
-          this.forget(key);
-          this.changed.fire();
-        }, REREAD_AFTER_LOGOUT_MS);
-      }
+      if (loggedOut) this.rereadAfterLogout(key);
       let read: StoneSessionsRead;
       try {
         read = deps.read(through);
@@ -184,6 +179,13 @@ export class StoneSessions {
     this.cache.delete(key);
   }
 
+  private rereadAfterLogout(key: string): void {
+    setTimeout(() => {
+      this.forget(key);
+      this.changed.fire();
+    }, REREAD_AFTER_LOGOUT_MS);
+  }
+
   /** Forget every list, so each is read again next time it is shown. */
   forgetAll(): void {
     this.cache.clear();
@@ -218,7 +220,11 @@ export class StoneSessions {
 
   private commandDeps(key: string): StoneSessionCommandDeps {
     const { stop, kill, transientLogin, logout } = this.deps;
-    return { stop, kill, transientLogin, logout, refresh: () => this.forget(key) };
+    const refresh = () => {
+      this.forget(key);
+      this.rereadAfterLogout(key);
+    };
+    return { stop, kill, transientLogin, logout, refresh };
   }
 }
 

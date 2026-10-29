@@ -9,6 +9,7 @@ import type { StoneSession, StoneSessionList } from '../stoneSessions';
 import {
   KILL,
   REREAD_AFTER_LOGOUT_MS,
+  STOP_SESSION,
   StoneSessions,
   StoneSessionsDeps,
   StoneSessionsInfo,
@@ -127,6 +128,25 @@ describe("a stone's session list", () => {
       vi.advanceTimersByTime(REREAD_AFTER_LOGOUT_MS);
 
       expect(changed).toHaveBeenCalledTimes(1);
+      describeIt();
+      expect(deps.read).toHaveBeenCalledTimes(3);
+    });
+
+    // Stop and Kill each log in and out to do their work.
+    it('reads it again a moment after Stop and Kill, and says so', async () => {
+      describeIt();
+      const changed = vi.fn();
+      sessions.onDidChange(changed);
+      vi.mocked(window.showWarningMessage).mockResolvedValue(KILL);
+      await sessions.kill('db:db-1', 3);
+      vi.mocked(window.showWarningMessage).mockResolvedValue(STOP_SESSION);
+      await sessions.stop('db:db-1', 9);
+      describeIt();
+      expect(deps.read).toHaveBeenCalledTimes(2);
+
+      vi.advanceTimersByTime(REREAD_AFTER_LOGOUT_MS);
+
+      expect(changed).toHaveBeenCalledTimes(2);
       describeIt();
       expect(deps.read).toHaveBeenCalledTimes(3);
     });
