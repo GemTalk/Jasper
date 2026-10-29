@@ -892,7 +892,7 @@
       (row.systemGem ? badge(`system: ${row.systemGem}`) : '') +
       (row.stuck ? `<span class="svc-state">\u26a0 still running a stopped run</span>` : '') +
       (row.heldBackCommitRecords !== undefined
-        ? `<span class="svc-state">\u29d7 holds back ${esc(String(row.heldBackCommitRecords))} commit records</span>`
+        ? `<span class="svc-state">\u29d7 holds back ${esc(commitRecords(row.heldBackCommitRecords))}</span>`
         : '');
     const stop = row.canStop
       ? btn('stopStoneSession', 'Stop Session', 'stop', 'btn-secondary', {
@@ -918,6 +918,10 @@
       </div>`;
   }
 
+  function commitRecords(n) {
+    return `${n} commit record${n === 1 ? '' : 's'}`;
+  }
+
   /** A stone's session list as a group titled `title`, or the line standing in for it; nothing while it is down. */
   function stoneSessionsGroup(info, title) {
     if (!info) return '';
@@ -929,7 +933,7 @@
     const count = info.kind === 'sessions' ? ` \u00b7 ${info.rows.length}` : '';
     const backlog =
       info.kind === 'sessions' && info.commitRecords !== undefined
-        ? `${info.commitRecords} commit records` +
+        ? commitRecords(info.commitRecords) +
           (info.commitRecords >= info.abortThreshold
             ? ` \u2014 the stone asks for aborts at ${info.abortThreshold}`
             : '')
