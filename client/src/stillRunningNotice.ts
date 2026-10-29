@@ -52,13 +52,15 @@ export async function showRunInProgress(
 ): Promise<void> {
   if (!deps.isRegistered(session.id) || !mayShow('running', session.id)) return;
   const pick = await vscode.window.showWarningMessage(
-    `Session ${session.id} — ${loginLabel(session.login)}: a run is still going on this ` +
+    `Jasper session ${session.id} — ${loginLabel(session.login)}: a run is still going on this ` +
       'session. Nothing else can run on it until that run ends.',
     STOP,
   );
   if (pick !== STOP || !deps.isRegistered(session.id)) return;
   if (!deps.stop(session)) {
-    void vscode.window.showInformationMessage(`Session ${session.id}: that run has already ended.`);
+    void vscode.window.showInformationMessage(
+      `Jasper session ${session.id}: that run has already ended.`,
+    );
   }
 }
 
@@ -80,7 +82,7 @@ export async function showStillRunning(
     ? 'a previous run is still cleaning up on the server'
     : 'the stopped run is still running on the server';
   const pick = await vscode.window.showWarningMessage(
-    `Session ${session.id} — ${loginLabel(session.login)}: ${what}. Nothing else can run on ` +
+    `Jasper session ${session.id} — ${loginLabel(session.login)}: ${what}. Nothing else can run on ` +
       'this session until it ends.',
     FORCE_STOP,
     SHOW_IN_SESSIONS,
@@ -97,13 +99,13 @@ export async function showStillRunning(
     const stopped = await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: `Force-stopping session ${session.id}…`,
+        title: `Force-stopping Jasper session ${session.id}…`,
       },
       () => deps.forceStop(session),
     );
     if (stopped) {
       void vscode.window.showInformationMessage(
-        `Session ${session.id}: the run is stopped. Uncommitted changes are kept.`,
+        `Jasper session ${session.id}: the run is stopped. Uncommitted changes are kept.`,
       );
       return;
     }
@@ -113,7 +115,7 @@ export async function showStillRunning(
   }
   if (!deps.isRegistered(session.id)) return;
   const confirmed = await vscode.window.showWarningMessage(
-    `${why} Log out session ${session.id} to end it? Any uncommitted changes in this session ` +
+    `${why} Log out Jasper session ${session.id} to end it? Any uncommitted changes in this session ` +
       'are lost.',
     { modal: true },
     LOG_OUT,

@@ -51,7 +51,7 @@ describe('the "stopped run is still running" notice', () => {
     await showStillRunning(session, deps());
 
     expect(window.showWarningMessage).toHaveBeenCalledWith(
-      expect.stringMatching(/^Session 3 — .*still running on the server/),
+      expect.stringMatching(/^Jasper session 3 — .*still running on the server/),
       FORCE_STOP,
       SHOW_IN_SESSIONS,
     );
@@ -62,7 +62,7 @@ describe('the "stopped run is still running" notice', () => {
     await showStillRunning(session, deps(true, true, true));
 
     expect(window.showWarningMessage).toHaveBeenCalledWith(
-      `Session 3 — ${loginLabel(session.login)}: a previous run is still cleaning up on the ` +
+      `Jasper session 3 — ${loginLabel(session.login)}: a previous run is still cleaning up on the ` +
         'server. Nothing else can run on this session until it ends.',
       FORCE_STOP,
       SHOW_IN_SESSIONS,
@@ -88,7 +88,9 @@ describe('the "stopped run is still running" notice', () => {
 
     expect(d.forceStop).toHaveBeenCalledWith(session);
     expect(window.showInformationMessage).toHaveBeenCalledWith(
-      expect.stringMatching(/^Session 3: the run is stopped\. Uncommitted changes are kept\.$/),
+      expect.stringMatching(
+        /^Jasper session 3: the run is stopped\. Uncommitted changes are kept\.$/,
+      ),
     );
     expect(window.showWarningMessage).toHaveBeenCalledTimes(1);
     expect(d.logout).not.toHaveBeenCalled();
@@ -102,7 +104,7 @@ describe('the "stopped run is still running" notice', () => {
 
     expect(window.showWarningMessage).toHaveBeenLastCalledWith(
       expect.stringMatching(
-        /^The run is ignoring Force Stop too\. Log out session 3 .*uncommitted changes .* are lost\.$/,
+        /^The run is ignoring Force Stop too\. Log out Jasper session 3 .*uncommitted changes .* are lost\.$/,
       ),
       { modal: true },
       LOG_OUT,
@@ -118,7 +120,7 @@ describe('the "stopped run is still running" notice', () => {
     await showStillRunning(session, d);
 
     expect(window.showWarningMessage).toHaveBeenLastCalledWith(
-      expect.stringMatching(/^Force Stop failed: login failed\. Log out session 3/),
+      expect.stringMatching(/^Force Stop failed: login failed\. Log out Jasper session 3/),
       { modal: true },
       LOG_OUT,
     );
@@ -200,7 +202,7 @@ describe('the "a run is still going" notice', () => {
     await showRunInProgress(session, runDeps());
 
     expect(window.showWarningMessage).toHaveBeenCalledWith(
-      expect.stringMatching(/^Session 3 — .*a run is still going on this session/),
+      expect.stringMatching(/^Jasper session 3 — .*a run is still going on this session/),
       STOP,
     );
   });
@@ -221,7 +223,7 @@ describe('the "a run is still going" notice', () => {
     await showRunInProgress(session, runDeps(false));
 
     expect(window.showInformationMessage).toHaveBeenCalledWith(
-      'Session 3: that run has already ended.',
+      'Jasper session 3: that run has already ended.',
     );
   });
 
