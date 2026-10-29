@@ -252,7 +252,7 @@ export function describeRow(
   const tip = [`${transactionWording(stoneSession.transaction)}.`];
   if (stuck) {
     tip.push(
-      `Force Stop or log out Jasper session ${jasperSession?.id} to end the run` +
+      `Force Stop or log out session ${jasperSession?.id} in this window to end the run` +
         (canKill ? '; Kill if its gem is frozen.' : '.'),
     );
   } else if (jasperSession && (canStop || canKill)) {
@@ -321,7 +321,7 @@ export async function stopStoneSessionCommand(
   const who = `session ${id} (${user || 'unknown user'} on ${host}, gem ${gemPid})`;
   const confirmed = await vscode.window.showWarningMessage(
     `Stop ${who}? Anything it hasn't committed is lost.` +
-      (jasperSession ? ` Jasper session ${jasperSession.id} is logged out.` : ''),
+      (jasperSession ? ` Session ${jasperSession.id} in this window is logged out.` : ''),
     { modal: true },
     STOP_SESSION,
   );
@@ -384,7 +384,7 @@ export async function killStoneSessionCommand(
   const confirmed = await vscode.window.showWarningMessage(
     `Kill session ${id} (${user || 'unknown user'} on ${host})? Its gem, process ${gemPid}, ` +
       "is ended on this machine, and anything it hasn't committed is lost." +
-      (jasperSession ? ` Jasper session ${jasperSession.id} is logged out.` : ''),
+      (jasperSession ? ` Session ${jasperSession.id} in this window is logged out.` : ''),
     { modal: true },
     KILL,
   );

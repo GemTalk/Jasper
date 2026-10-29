@@ -881,12 +881,14 @@
       : row.holdsBacklog
         ? mark('history', 'warn', 'Holds the oldest commit record')
         : row.jasperSessionId !== undefined
-          ? mark('plug', 'ok', `Jasper session ${row.jasperSessionId} in this window`)
+          ? mark('plug', 'ok', `Session ${row.jasperSessionId} in this window`)
           : row.systemGem
             ? mark('gear', 'off', 'One of GemStone\u2019s own gems')
             : mark('account', 'off', 'A session');
     const flags =
-      (row.jasperSessionId !== undefined ? badge(`Jasper session ${row.jasperSessionId}`) : '') +
+      (row.jasperSessionId !== undefined
+        ? badge(`this window \u00b7 session ${row.jasperSessionId}`)
+        : '') +
       (row.systemGem ? badge(`system: ${row.systemGem}`) : '') +
       (row.stuck ? `<span class="svc-state">\u26a0 still running a stopped run</span>` : '') +
       (row.holdsBacklog
@@ -909,7 +911,7 @@
           title: `Kill session ${row.id} by ending its gem, process ${row.gemPid}, on this machine`,
         })
       : '';
-    const meta = `session ${row.id} \u00b7 gem ${row.gemPid} \u00b7 ${row.host} \u00b7 ${row.age}`;
+    const meta = `GemStone session ${row.id} \u00b7 gem ${row.gemPid} \u00b7 ${row.host} \u00b7 ${row.age}`;
     return `<div class="db-line stone-session${row.stuck ? ' row-warn' : ''}" data-stone-session="${esc(`${key}|${row.serial}`)}"${tipAttr(row.tip)}>
         <span class="db-line-name">${state}<span class="session-name">${esc(row.user || '(logging in or out)')}</span><span class="dim session-id mono">${esc(meta)}</span>${flags}</span>
         <span class="db-line-actions">${stop}${kill}</span>

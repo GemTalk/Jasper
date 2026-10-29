@@ -1240,7 +1240,7 @@ describe("a stone's sessions, under Session Processes", () => {
     expect(list.querySelector('.db-group-title')!.textContent).toBe('Session Processes · 2');
     expect(list.parentElement).toBe(groupTitled('Processes').parentElement);
     expect(groupTitled('Processes').querySelector('[data-stone-session]')).toBeNull();
-    expect(rowEl(9)!.textContent).toContain('session 5 · gem 39811 · thor · 3h');
+    expect(rowEl(9)!.textContent).toContain('GemStone session 5 · gem 39811 · thor · 3h');
     expect(rowEl(1)!.textContent).toContain('system: symbolgem');
   });
 
@@ -1283,7 +1283,7 @@ describe("a stone's sessions, under Session Processes", () => {
         listed(row({ jasperSessionId: 2, stuck: true }), row({ serial: 3, holdsBacklog: true })),
       ),
     );
-    expect(rowEl(9)!.textContent).toContain('Jasper session 2');
+    expect(rowEl(9)!.textContent).toContain('this window · session 2');
     expect(rowEl(9)!.textContent).toContain('still running a stopped run');
     expect(rowEl(9)!.classList.contains('row-warn')).toBe(true);
     expect(rowEl(3)!.textContent).toContain('holds the oldest commit record');
