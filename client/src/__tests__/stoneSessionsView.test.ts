@@ -15,8 +15,11 @@ import {
   StoneSessionsInfo,
 } from '../stoneSessionsView';
 
-function makeSession(id: number): ActiveSession {
-  return { id, login: { ...DEFAULT_LOGIN, gs_user: 'DataCurator' } } as unknown as ActiveSession;
+function makeSession(id: number, stone = DEFAULT_LOGIN.stone): ActiveSession {
+  return {
+    id,
+    login: { ...DEFAULT_LOGIN, gs_user: 'DataCurator', stone },
+  } as unknown as ActiveSession;
 }
 
 function stoneSession(overrides: Partial<StoneSession>): StoneSession {
@@ -160,6 +163,18 @@ describe("a stone's session list", () => {
       vi.advanceTimersByTime(REREAD_AFTER_LOGOUT_MS);
       expect(changed).not.toHaveBeenCalled();
     });
+  });
+
+  it('marks only sessions of this window on this stone, which numbers its own', () => {
+    // Jasper session 3 is GemStone's session 4 on another stone.
+    deps.serverSessionOf = (id) => (id === 1 || id === 3 ? '4' : undefined);
+    const mine = makeSession(1);
+    const listed = sessions.describe('db:db-1', mine, [mine, makeSession(3, 'elsewhere')]);
+    expect(rowsOf(listed)[0].jasperSessionId).toBe(1);
+
+    sessions.forgetAll();
+    const other = sessions.describe('db:db-1', makeSession(2), [makeSession(1, 'elsewhere')]);
+    expect(rowsOf(other)[0].jasperSessionId).toBeUndefined();
   });
 
   it("shows each session's user, gem, host and age, and leaves them out of the tip", () => {

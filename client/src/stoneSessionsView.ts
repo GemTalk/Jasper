@@ -101,9 +101,15 @@ export class StoneSessions {
   describe(
     key: string,
     through: ActiveSession,
-    windowSessions: ActiveSession[],
+    allWindowSessions: ActiveSession[],
   ): StoneSessionsInfo {
     const { deps } = this;
+    // GemStone numbers each stone's sessions from 1, so only sessions on this
+    // stone may be matched by number.
+    const { stone, gem_host } = through.login;
+    const windowSessions = allWindowSessions.filter(
+      (s) => s.login.stone === stone && s.login.gem_host === gem_host,
+    );
     const seen = windowSessions.map((s) => s.id).join(',');
     let entry = this.cache.get(key);
     if (entry?.windowSessions !== seen) {
