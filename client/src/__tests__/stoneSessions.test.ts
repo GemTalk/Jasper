@@ -8,6 +8,7 @@ import { GciLibraryError } from '../gciLibraryError';
 import { DEFAULT_LOGIN } from '../loginTypes';
 import {
   isGemCommand,
+  KILL_CHECK_TIMEOUT_MS,
   killableGems,
   killStoneSession,
   parseStoneSessions,
@@ -537,8 +538,10 @@ describe('killableGems', () => {
       shell,
     );
 
+    // It runs inside every list read, so a hung shell (wsl.exe) must not hold the window.
     expect(shell).toHaveBeenCalledWith(
       'for p in 100 200; do kill -0 $p 2>/dev/null && echo $p; done; true',
+      KILL_CHECK_TIMEOUT_MS,
     );
     expect(killable).toEqual(new Set([100]));
   });
@@ -556,6 +559,7 @@ describe('killableGems', () => {
     expect(killableGems(onLocalhost, 'uffda', isLocal, shell)).toEqual(new Set([100]));
     expect(shell).toHaveBeenCalledWith(
       'for p in 100 200; do kill -0 $p 2>/dev/null && echo $p; done; true',
+      KILL_CHECK_TIMEOUT_MS,
     );
   });
 

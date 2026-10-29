@@ -954,7 +954,9 @@ export function activate(context: vscode.ExtensionContext) {
   const stoneSessions = new StoneSessions({
     read: (through) => listStoneSessions(transientLoginOn(through)),
     killableGems: (sessions, stoneHost) =>
-      killableGems(sessions, stoneHost, isThisMachine, (command) => wslExecSync(command)),
+      killableGems(sessions, stoneHost, isThisMachine, (command, timeout) =>
+        wslExecSync(command, undefined, { timeout }),
+      ),
     stuck: stoppedRunHolds,
     loginSerialOf,
     transientLogin: (through) => transientLoginOn(through),

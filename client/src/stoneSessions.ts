@@ -116,6 +116,9 @@ export function listStoneSessions(login: TransientLogin): StoneSessionList {
   }
 }
 
+/** How long the Kill check may run: it runs inside every list read, which blocks the window. */
+export const KILL_CHECK_TIMEOUT_MS = 5000;
+
 /**
  * The gems among `sessions` that Kill can end: on this machine (inside WSL on
  * Windows), and ones this OS user may signal, as `kill -0` answers; another OS
@@ -129,7 +132,7 @@ export function killableGems(
   sessions: StoneSession[],
   stoneHost: string,
   isThisMachine: (host: string) => boolean,
-  shellSync: (command: string) => string,
+  shellSync: (command: string, timeoutMs: number) => string,
 ): Set<number> {
   const isHere = (host: string) => isThisMachine(isLoopbackName(host) ? stoneHost : host);
   const pids = sessions.filter((s) => !s.systemGem && isHere(s.host)).map((s) => s.gemPid);
@@ -137,6 +140,7 @@ export function killableGems(
   try {
     const answer = shellSync(
       `for p in ${pids.join(' ')}; do kill -0 $p 2>/dev/null && echo $p; done; true`,
+      KILL_CHECK_TIMEOUT_MS,
     );
     return new Set(answer.split(/\s+/).filter(Boolean).map(Number));
   } catch (e) {
