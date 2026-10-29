@@ -1669,7 +1669,7 @@ export class DatabasesPanel {
       void this.panel.webview.postMessage({ command: 'revealStoneSession', ...row });
     } else {
       void vscode.window.showInformationMessage(
-        `Session ${jasperId} isn't in its stone's session list, which needs a session of this ` +
+        `Jasper session ${jasperId} isn't in its stone's session list, which needs a session of this ` +
           'window logged in to that stone and the SessionAccess privilege.',
       );
     }

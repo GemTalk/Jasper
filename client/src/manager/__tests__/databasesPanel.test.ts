@@ -1504,7 +1504,7 @@ describe("each stone's sessions", () => {
     DatabasesPanel.showStoneSession(deps, 2);
     await sendMessage({ command: 'ready' });
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-      expect.stringMatching(/^Session 2 isn't in its stone's session list/),
+      expect.stringMatching(/^Jasper session 2 isn't in its stone's session list/),
     );
   });
 });
