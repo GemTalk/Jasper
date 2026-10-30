@@ -4,6 +4,7 @@ import { explainGciError, GciLibraryError, SESSION_BUSY_MESSAGE } from './gciLib
 import { logError } from './gciLog';
 import {
   abandonedRunHolds,
+  clearInBackground,
   isRunning,
   NbCancelledError,
   NbSessionBusyError,
@@ -467,10 +468,18 @@ export async function executeFetchStringAsync(
         }
         return started;
       },
-      () => {
+      async () => {
         const { result, err } = session.GciTsNbResult();
         // The gem answers a Cancel's soft break with a Break error, not a result.
-        if (err.number === SOFT_BREAK_ERROR && stopRequested()) throw new NbCancelledError();
+        if (err.number === SOFT_BREAK_ERROR && stopRequested()) {
+          // The break leaves the process suspended and, with the Break, in the
+          // export set until logout. Clearing terminates it but doesn't
+          // unexport it, so both are released once it is cleared. Not awaited:
+          // the clear holds the session until it is done, and awaiting it would
+          // keep the runner's stop-waiting timer armed through it.
+          void clearInBackground(session, err.context, undefined, [err.context, err.exceptionObj]);
+          throw new NbCancelledError();
+        }
         if (err.number !== 0) {
           throw queryFailed(session, explainGciError(err) || `GCI error ${err.number}`, err.number);
         }

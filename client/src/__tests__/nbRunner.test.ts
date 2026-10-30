@@ -64,6 +64,7 @@ function makeSession(pollResults: { result: number; err?: unknown }[]) {
     GciTsNbExecute: vi.fn(() => ({ success: true, err: noErr })),
     GciTsNbResult: vi.fn(() => ({ result: 0, err: noErr })),
     GciTsClearStackAsync: vi.fn(() => ({ success: true, err: noErr })),
+    GciTsReleaseObjs: vi.fn(() => ({ success: true, err: noErr })),
     logout: vi.fn(() => ({ sessionFreed: true })),
   };
   const handle = { h: 1 };
@@ -760,6 +761,45 @@ describe('after the runner stops waiting', () => {
     }
   });
 
+  it('unexports a disposable process and its exception once the process is cleared', async () => {
+    vi.useFakeTimers();
+    try {
+      const { session, gci, handle } = makeSession([{ result: 0 }]);
+      const poll = gci.GciTsNbPoll as ReturnType<typeof vi.fn>;
+      poll.mockReturnValue({ result: 0, err: noErr });
+      (gci.GciTsNbResult as ReturnType<typeof vi.fn>).mockReturnValue({
+        result: 1n,
+        err: { number: 6003, context: 0x4242n, exceptionObj: 0x4343n },
+      });
+      let cancel: (() => void) | undefined;
+      const p = runNbCall(
+        session,
+        () => ({ success: true, err: noErr as never }),
+        () => 'unreachable',
+        {
+          suppressNotification: true,
+          disposableProcess: true,
+          onStart: (c) => {
+            cancel = c;
+          },
+        },
+      );
+      p.catch(() => {});
+      cancel!();
+      cancel!();
+      await vi.advanceTimersByTimeAsync(SETTLE_MS);
+      await expect(p).rejects.toBeInstanceOf(NbCancelledError);
+
+      poll.mockReturnValue({ result: 1, err: noErr });
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(gci.GciTsReleaseObjs).toHaveBeenCalledWith(handle, [0x4242n, 0x4343n]);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it('leaves the stopped process alone when the caller did not declare it disposable', async () => {
     // What a debugger step is: the message is performed ON the process the panel
     // is showing, so the process a break stops is the user's stack, not the
@@ -800,6 +840,7 @@ describe('after the runner stops waiting', () => {
       // next step is refused as "an operation is in progress".
       expect(gci.GciTsNbResult).toHaveBeenCalled();
       expect(gci.GciTsClearStackAsync).not.toHaveBeenCalled();
+      expect(gci.GciTsReleaseObjs).not.toHaveBeenCalled();
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();
@@ -2341,6 +2382,30 @@ describe('stopping the calls on a session', () => {
 });
 
 describe('clearing a stopped run in the background', () => {
+  it('unexports what it is handed only once the clear is back', async () => {
+    const { session, gci, handle } = makeSession([]);
+    let finish: (v: unknown) => void = () => {};
+    gci.GciTsClearStackAsync.mockReturnValueOnce(
+      new Promise((resolve) => (finish = resolve)) as never,
+    );
+
+    const clearing = clearInBackground(session, 0x4242n, undefined, [0x4242n, 0x4343n]);
+
+    expect(gci.GciTsReleaseObjs).not.toHaveBeenCalled();
+    finish({ success: true, err: noErr });
+    await clearing;
+    expect(gci.GciTsReleaseObjs).toHaveBeenCalledWith(handle, [0x4242n, 0x4343n]);
+  });
+
+  it('leaves the process exported unless told to unexport it', async () => {
+    const { session, gci } = makeSession([]);
+
+    await clearInBackground(session, 0x4242n);
+
+    expect(gci.GciTsClearStackAsync).toHaveBeenCalled();
+    expect(gci.GciTsReleaseObjs).not.toHaveBeenCalled();
+  });
+
   it('holds the session until the clear is done, then runs `then`', async () => {
     const { session, gci } = makeSession([]);
     let finish: (v: unknown) => void = () => {};
