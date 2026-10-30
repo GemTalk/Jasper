@@ -12,6 +12,7 @@ import * as debug from '../debugQueries';
 import { runNbCall, NbSessionBusyError, type NbRunOptions } from '../../nbRunner';
 import { homeDictionaryNameExpr } from '../../queries/util';
 import { fakeActiveSession } from '../../__tests__/fakeActiveSession';
+import { sameObject } from '../../__tests__/support/sameObject';
 import { SESSION_BUSY_MESSAGE } from '../../gciLibraryError';
 
 const noErr = {
@@ -652,7 +653,7 @@ describe('debugQueries', () => {
       const session = sessionWith({ GciTsFetchOops: fetchOops });
 
       expect(debug.getNamedInstVarOops(session, 100n, 2)).toEqual([11n, 22n]);
-      expect(fetchOops).toHaveBeenCalledWith(handle, 100n, 1n, 2);
+      expect(fetchOops).toHaveBeenCalledWith(sameObject(handle), 100n, 1n, 2);
     });
 
     it('getNamedInstVarOops returns [] for non-positive count without calling GCI', () => {
@@ -671,8 +672,8 @@ describe('debugQueries', () => {
       // First varying element (startIndex 1) of an object with 3 named instVars
       // is at absolute index 4.
       expect(debug.getIndexedOops(session, 100n, 1, 2)).toEqual([7n, 8n]);
-      expect(fetchObjInfo).toHaveBeenCalledWith(handle, 100n, false, 0);
-      expect(fetchOops).toHaveBeenCalledWith(handle, 100n, 4n, 2);
+      expect(fetchObjInfo).toHaveBeenCalledWith(sameObject(handle), 100n, false, 0);
+      expect(fetchOops).toHaveBeenCalledWith(sameObject(handle), 100n, 4n, 2);
     });
 
     it('getIndexedOops returns [] (and skips the fetch) when GciTsFetchObjInfo errors', () => {
@@ -778,14 +779,15 @@ describe('debugQueries', () => {
             : { bytesReturned: 0, data: '', err: { ...noErr } },
         ),
       };
+      const handle = {};
       const session = fakeActiveSession({
         id: 1,
-        handle: {},
+        handle,
         login: { label: 'T' },
         stoneVersion: '3.7.2',
         gci,
       });
-      return { session, gci };
+      return { session, gci, handle };
     }
 
     it('returns the result printString ("7") for "3 + 4" instead of raising', () => {
@@ -794,10 +796,10 @@ describe('debugQueries', () => {
     });
 
     it("evaluates the expression string with self bound to the frame's self", () => {
-      const { session, gci } = evalSession();
+      const { session, gci, handle } = evalSession();
       debug.evaluateInFrame(session, GS_PROCESS, '3 + 4', 3);
 
-      expect(gci.GciTsNewString).toHaveBeenCalledWith({}, '3 + 4');
+      expect(gci.GciTsNewString).toHaveBeenCalledWith(sameObject(handle), '3 + 4');
       const performCalls = (gci.GciTsPerform as ReturnType<typeof vi.fn>).mock.calls;
       const evalCall = performCalls.find(
         (c: unknown[]) => c[3] === 'evaluateInContext:symbolList:',
@@ -929,14 +931,15 @@ describe('debugQueries', () => {
               : { bytesReturned: 0, data: '', err: { ...noErr } },
         ),
       };
+      const handle = {};
       const session = fakeActiveSession({
         id: 1,
-        handle: {},
+        handle,
         login: { label: 'T' },
         stoneVersion: '3.7.2',
         gci,
       });
-      return { session, gci };
+      return { session, gci, handle };
     }
 
     it('evaluates via evaluateInContext:symbolList: (not the self-only path)', () => {
@@ -960,10 +963,10 @@ describe('debugQueries', () => {
     });
 
     it('interns each temp name and stores its value in the dictionary', () => {
-      const { session, gci } = tempSession();
+      const { session, gci, handle } = tempSession();
       debug.evaluateInFrame(session, GS_PROCESS, 'amount * 2', 3);
 
-      expect(gci.GciTsNewSymbol).toHaveBeenCalledWith({}, 'amount');
+      expect(gci.GciTsNewSymbol).toHaveBeenCalledWith(sameObject(handle), 'amount');
       const atPut = (gci.GciTsPerform as ReturnType<typeof vi.fn>).mock.calls.find(
         (c: unknown[]) => c[3] === 'at:put:',
       );
@@ -1491,7 +1494,7 @@ describe('debugQueries', () => {
 
       await cancelTwice(gci, (opts) => debug.evaluateInFrameNb(session, 0xaan, '3 + 4', 1, opts));
 
-      expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(handle, STOPPED_PROCESS);
+      expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(sameObject(handle), STOPPED_PROCESS);
     });
   });
 });
