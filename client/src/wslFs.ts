@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { needsWsl, requireWslInstalled, windowsPathToWsl, wslExecSync } from './wslBridge';
+import { shellQuote } from './shellQuote';
 
 /**
  * Filesystem helpers that transparently route through WSL when the target
@@ -20,10 +21,6 @@ function isWslUncPath(p: string): boolean {
 
 function shouldRoute(p: string): boolean {
   return needsWsl() && isWslUncPath(p);
-}
-
-function shellQuote(p: string): string {
-  return `'${p.replace(/'/g, `'\\''`)}'`;
 }
 
 export function wslExistsSync(p: string): boolean {

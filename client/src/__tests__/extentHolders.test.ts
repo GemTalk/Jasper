@@ -2,19 +2,22 @@ import { describe, it, expect } from 'vitest';
 
 import {
   parseHolderPids,
+  parseProcHolders,
+  procHoldersScript,
   parseHolderDetails,
   describeHolder,
   sessionHolders,
   explainExtentLocked,
   isExtentLocked,
+  extentsAmongOpenFiles,
+  procOpenFilesScript,
 } from '../extentHolders';
 
 // Captured verbatim from a running 3.7.6 database on Linux, so the parsers are
 // pinned to what these tools actually emit rather than to a tidied-up guess.
-// Note `fuser` leads with a space and ends without a newline, and `ps -o pid=`
-// does not pad — earlier drafts of these regexes assumed otherwise.
+// Note `ps -o pid=` does not pad — earlier drafts of these regexes assumed
+// otherwise.
 const REAL_LSOF_T = '4095725\n4095756\n4095757\n';
-const REAL_FUSER = ' 4095725 4095756 4095757';
 const REAL_PS = [
   '4095725 ewinger  Tue Sep  1 14:35:27 2026 /jasperStones/GemStone64Bit3.7.6-x86_64.Linux/sys/stoned gs64stone_rowan -e /jasperStones/db-3/conf/gs64stone_rowan.conf -z /jasperStones/db-3/conf/system.conf -l /jasperStones/db-3/log/gs64stone_rowan.log',
   '4095756 ewinger  Tue Sep  1 14:35:27 2026 /jasperStones/GemStone64Bit3.7.6-x86_64.Linux/sys/gem reclaimgcgem gs64stone_rowan 1 -T 5000',
@@ -22,9 +25,8 @@ const REAL_PS = [
 ].join('\n');
 
 describe('against real tool output', () => {
-  it('reads the PIDs lsof and fuser actually print', () => {
+  it('reads the PIDs lsof actually prints', () => {
     expect(parseHolderPids(REAL_LSOF_T)).toEqual([4095725, 4095756, 4095757]);
-    expect(parseHolderPids(REAL_FUSER)).toEqual([4095725, 4095756, 4095757]);
   });
 
   it('splits the ps rows a running database actually produces', () => {
@@ -58,10 +60,6 @@ describe('parseHolderPids', () => {
     expect(parseHolderPids('589418\n600854\n')).toEqual([589418, 600854]);
   });
 
-  it('reads the space-separated PIDs fuser prints', () => {
-    expect(parseHolderPids(' 589418  600854\n')).toEqual([589418, 600854]);
-  });
-
   it('lists a process holding the file twice only once', () => {
     // lsof prints one line per open descriptor; the reader wants one per process.
     expect(parseHolderPids('589418\n589418\n600854\n')).toEqual([589418, 600854]);
@@ -70,6 +68,171 @@ describe('parseHolderPids', () => {
   it('finds nothing in empty output', () => {
     expect(parseHolderPids('')).toEqual([]);
     expect(parseHolderPids('\n\n')).toEqual([]);
+  });
+});
+
+describe('parseProcHolders', () => {
+  // Captured from procHoldersScript on a Linux host where one disk is mounted
+  // twice (`/uffda1` and a bind mount of it at `/export/uffda1`, mount ids 131
+  // and 1224). Jasper asked about the extent by its `/export/uffda1` path; the
+  // holder had opened it as `/uffda1/...`. Trimmed to the lines that matter.
+  const BIND_MOUNTED = [
+    'E 64772 41028871',
+    'M 131 253:4',
+    'M 1224 253:4',
+    'M 30 253:1',
+    'F 1313359 m131 41028871',
+  ].join('\n');
+
+  it('finds a holder that opened the extent through another mount of the same disk', () => {
+    // A comparison of path text misses this one, and missing a holder lets a
+    // stop go ahead on top of live gems. Device and inode do not depend on
+    // which path the file was opened by.
+    expect(parseProcHolders(BIND_MOUNTED)).toEqual([1313359]);
+  });
+
+  it('ignores another file of the same name', () => {
+    // Every database's first extent is called extent0.dbf.
+    const other = `${BIND_MOUNTED}\nF 50453 m30 447881\nF 721240 m131 99`;
+
+    expect(parseProcHolders(other)).toEqual([1313359]);
+  });
+
+  it('matches on device and inode reported by stat, on a kernel without fdinfo inodes', () => {
+    // Before Linux 5.14, fdinfo has no `ino:` line, and the script falls back
+    // to `stat` for the few descriptors whose name matched.
+    expect(parseProcHolders('E 64772 41028871\nF 4242 64772 41028871\nF 4343 64772 7')).toEqual([
+      4242,
+    ]);
+  });
+
+  it('lists a process holding several extents, or one extent twice, only once', () => {
+    const output = [
+      'E 64772 1',
+      'E 64772 2',
+      'M 131 253:4',
+      'F 900 m131 1',
+      'F 900 m131 2',
+      'F 900 m131 2',
+      'F 901 m131 2',
+    ].join('\n');
+
+    expect(parseProcHolders(output)).toEqual([900, 901]);
+  });
+
+  it('skips a descriptor whose process exited mid-scan', () => {
+    // Its fdinfo is gone by the time it is read, and so is the file stat would
+    // follow, so the line carries no identity.
+    expect(parseProcHolders(`${BIND_MOUNTED}\nF 778 `)).toEqual([1313359]);
+  });
+
+  it('identifies the extent through mountinfo too, as it does a holder', () => {
+    // On btrfs, stat reports a subvolume's own device, which mountinfo never
+    // shows; an extent identified by stat and holders by mountinfo would never
+    // match. The script opens the extent and reads its own fdinfo, so both
+    // sides name their device the same way.
+    expect(
+      parseProcHolders('E m1224 41028871\nM 131 253:4\nM 1224 253:4\nF 77 m131 41028871'),
+    ).toEqual([77]);
+  });
+
+  it('says it could not check when no extent could be identified', () => {
+    // No `E` line means the script could open no extent, say one the user may
+    // not read. That is not "nobody holds it": fuser, which only stats the
+    // path, would still have found a holder.
+    expect(parseProcHolders('M 131 253:4\nF 1313359 m131 41028871')).toBeUndefined();
+    expect(parseProcHolders('')).toBeUndefined();
+  });
+
+  it('says it could not check when any one extent could not be opened', () => {
+    // A database has several extents; identifying extent0 says nothing about
+    // who holds an unreadable extent1.
+    expect(parseProcHolders('E m131 41028871\nU\nM 131 253:4')).toBeUndefined();
+  });
+
+  it('says it could not check when an extent carries no device and inode', () => {
+    // The stat fallback fails on a pre-5.14 kernel; the other extent's answer
+    // says nothing about who holds this one.
+    expect(parseProcHolders('E m131 41028871\nE \nM 131 253:4\nF 9 m131 41028871')).toBeUndefined();
+  });
+
+  it('says it could not check when an extent is on a mount it cannot place', () => {
+    expect(
+      parseProcHolders('E m131 41028871\nE m999 5\nM 131 253:4\nF 9 m131 41028871'),
+    ).toBeUndefined();
+  });
+
+  it('finds nothing, rather than not knowing, when an identified extent has no holder', () => {
+    expect(parseProcHolders('E m131 41028871\nM 131 253:4')).toEqual([]);
+  });
+
+  it('decodes a device number with a minor above 255', () => {
+    // Network and overlay filesystems get anonymous devices such as 0:300,
+    // whose st_dev splits the minor across two bit ranges.
+    const dev = (0 << 8) | (300 & 0xff) | ((300 & ~0xff) << 12);
+    expect(parseProcHolders(`E ${dev} 5\nM 77 0:300\nF 12 m77 5`)).toEqual([12]);
+  });
+});
+
+describe('extentsAmongOpenFiles', () => {
+  // Captured from /proc/<pid>/fd of a running 3.6.2 stone on Linux, trimmed.
+  const STONE_FILES = [
+    '/dev/null',
+    '/gs/GemStone64Bit3.6.2-x86_64.Linux/data/jasper-test-3.6.2-gs64-stone.log',
+    '/gs/GemStone64Bit3.6.2-x86_64.Linux/data/extent0.dbf',
+    'socket:[98631241]',
+    '/gs/GemStone64Bit3.6.2-x86_64.Linux/data/jasper-test-3.6.2-gs64-stone_721240pagemanager.log',
+    'anon_inode:[eventpoll]',
+    '/gs/GemStone64Bit3.6.2-x86_64.Linux/data/tranlog1.dbf',
+    '/dev/zero',
+    '/gs/GemStone64Bit3.6.2-x86_64.Linux/sys/services.dat',
+  ];
+
+  it('picks out the extents from everything else a stone holds open', () => {
+    expect(extentsAmongOpenFiles(STONE_FILES)).toEqual([
+      '/gs/GemStone64Bit3.6.2-x86_64.Linux/data/extent0.dbf',
+    ]);
+  });
+
+  it('finds extents wherever the installation keeps them, whatever they are called', () => {
+    const files = ['/srv/gs/data/extent0.dbf', '/mnt/fast/second.DBF'];
+
+    expect(extentsAmongOpenFiles(files)).toEqual(files);
+  });
+
+  it('skips an extent that was deleted while open', () => {
+    // /proc shows such a file as "<path> (deleted)"; no other process can open
+    // it by that name.
+    expect(extentsAmongOpenFiles(['/db/data/extent0.dbf (deleted)'])).toEqual([]);
+  });
+
+  it('lists an extent held through two descriptors once', () => {
+    expect(extentsAmongOpenFiles(['/db/extent0.dbf', '/db/extent0.dbf'])).toEqual([
+      '/db/extent0.dbf',
+    ]);
+  });
+});
+
+describe('procOpenFilesScript', () => {
+  it('reads only the link text, which never touches the file’s mount', () => {
+    const script = procOpenFilesScript(4242);
+
+    expect(script).toContain('/proc/4242/fd/');
+    expect(script).toContain('readlink');
+    expect(script).not.toMatch(/\b(fuser|lsof|stat|cat)\b/);
+  });
+});
+
+describe('procHoldersScript', () => {
+  it('quotes each extent path for the shell', () => {
+    const script = procHoldersScript(["/db's/data/extent0.dbf", '/db 2/data/extent1.dbf']);
+
+    expect(script).toContain(`'/db'\\''s/data/extent0.dbf'`);
+    expect(script).toContain(`'/db 2/data/extent1.dbf'`);
+  });
+
+  it('runs neither fuser nor lsof, which hang on an unresponsive mount', () => {
+    expect(procHoldersScript(['/db/data/extent0.dbf'])).not.toMatch(/\b(fuser|lsof)\b/);
   });
 });
 
@@ -193,10 +356,37 @@ describe('explainExtentLocked', () => {
   });
 
   it('tells the user how to look when it could not name the holder', () => {
-    const text = explainExtentLocked('gs64stone', FAILURE, [])!;
+    const text = explainExtentLocked('gs64stone', FAILURE, [], 'linux')!;
+
+    expect(text).toContain('/proc/[0-9]*/fd');
+    expect(text).toContain(FAILURE);
+  });
+
+  it('suggests a search that needs no database path', () => {
+    // A path typed through a symlink would match nothing, since find compares
+    // the resolved link text.
+    const text = explainExtentLocked('gs64stone', FAILURE, [], 'linux')!;
+
+    expect(text).toContain(`-lname '*/extent0.dbf'`);
+    expect(text).not.toContain('<database>');
+  });
+
+  it('tells a Windows user to run the search inside WSL', () => {
+    expect(explainExtentLocked('gs64stone', FAILURE, [], 'win32')).toContain('WSL');
+    expect(explainExtentLocked('gs64stone', FAILURE, [], 'linux')).not.toContain('WSL');
+  });
+
+  it('never suggests lsof on Linux, where a dead mount hangs it as it hung Jasper', () => {
+    // The scan coming back empty can be the very sign of a dead mount.
+    expect(explainExtentLocked('gs64stone', FAILURE, [], 'linux')).not.toContain('lsof');
+  });
+
+  it('suggests lsof on macOS, which has no /proc', () => {
+    const text = explainExtentLocked('gs64stone', FAILURE, [], 'darwin')!;
 
     expect(text).toContain('lsof');
-    expect(text).toContain(FAILURE);
+    expect(text).not.toContain('/proc');
+    expect(text).not.toContain('/data/');
   });
 
   it('keeps GemStone’s own output, so nothing is hidden', () => {

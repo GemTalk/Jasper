@@ -9,11 +9,17 @@ import { appendSysadmin, showSysadmin } from '../sysadminChannel';
 import { needsWsl, windowsPathToWsl, wslSpawn, wslExecSync, wslExec } from '../wslBridge';
 import {
   ExtentHolder,
-  parseHolderPids,
+  parseProcHolders,
+  procHoldersScript,
+  lsofHolderPids,
+  lsofOpenFiles,
+  procOpenFilesScript,
+  extentsAmongOpenFiles,
   parseHolderDetails,
   explainExtentLocked,
 } from '../extentHolders';
 import { wslReaddirSync } from '../wslFs';
+import { shellQuote } from '../shellQuote';
 import { versionsMatch } from './versionMatch';
 import { isRegisteredDatabase, registeredPaths, versionMismatchNote } from './registeredDatabase';
 import {
@@ -169,18 +175,12 @@ export function parseGslist(output: string): GemStoneProcess[] {
   return processes;
 }
 
-/** Wrap a value in single quotes, escaping any single quotes it contains,
- *  so it survives verbatim through a POSIX shell. */
-export function shellSingleQuote(v: string): string {
-  return `'${v.split("'").join(`'\\''`)}'`;
-}
-
 /** Shell `export` statements for an environment, single-quote escaped.
  *  Used both to seed a WSL terminal and to re-assert Jasper's values in a
  *  native one after the user's startup files have had their turn. */
 export function exportCommand(env: Record<string, string>): string {
   return Object.entries(env)
-    .map(([k, v]) => `export ${k}=${shellSingleQuote(v)}`)
+    .map(([k, v]) => `export ${k}=${shellQuote(v)}`)
     .join('; ');
 }
 
@@ -970,7 +970,7 @@ export class ProcessManager {
       const explained = explainExtentLocked(
         db.config.stoneName,
         output,
-        await this.findExtentHolders(db),
+        (await this.findExtentHolders(db)) ?? [],
       );
       throw explained ? new Error(explained) : e;
     }
@@ -999,57 +999,47 @@ export class ProcessManager {
    * process it did not start, holding a file it cannot see inside, is the
    * user's to judge.
    *
-   * `fuser` first, `lsof -t` second: both print bare PIDs on stdout and both
-   * report the same holders, but `fuser` interrogates one file while `lsof`
-   * walks every process on the host — measured at 0.2s against 1.5s on a
-   * developer machine. Neither being available is not an error; it means
-   * Jasper cannot name the holder and says so.
+   * Which files are the extents comes from the running stone where there is one
+   * (`extentPaths`).
    *
-   * Asynchronous throughout: even the fast path is slow enough that running it
-   * on the extension host's event loop would stall every other extension, and
-   * the stop path can repeat it while waiting for gems to exit.
+   * Linux, and Windows through WSL, read `/proc` (`procHoldersScript`), which
+   * does not wait on an unresponsive mount the way `fuser` and `lsof` do. macOS
+   * has no `/proc` and runs `lsof` directly, so its timeout ends it
+   * (`lsofHolderPids`). A probe that fails or times out answers undefined, not
+   * an empty list: "nobody holds it" would let a stop go ahead unasked.
    *
-   * Every probe carries a timeout, and being asynchronous is exactly why it
-   * has to. `lsof` can wedge on an unresponsive mount; run synchronously that
-   * froze the window, which was at least unmistakable. Awaited, a probe that
-   * never returns leaves the progress notification up for ever with the editor
-   * working normally around it — the stop simply never happens and nothing
-   * says so. A timed-out probe falls through to the next one, or to the bare
-   * PIDs, the same as a missing tool.
+   * Asynchronous throughout: run on the extension host's event loop, even a
+   * quick probe stalls every other extension, and the stop path can repeat it
+   * while waiting for gems to exit.
    *
-   * `lsof -b` is not used, though it is fifteen times faster again: it skips
-   * the kernel calls that could block, and on a plain ext4 extent it returns
+   * Every shell-out carries a timeout, and being asynchronous is exactly why it
+   * has to. Awaited, a probe that never returns leaves the progress
+   * notification up for ever with the editor working normally around it — the
+   * stop simply never happens and nothing says so.
+   *
+   * `lsof -b` is not used, though it is fifteen times faster: it skips the
+   * kernel calls that could block, and on a plain ext4 extent it returns
    * *nothing at all*. A probe that reports an empty list for a database with
    * four live processes on it would have Jasper stop a stone on top of its own
    * gems — the exact failure this exists to prevent.
    */
-  async findExtentHolders(db: GemStoneDatabase): Promise<ExtentHolder[]> {
-    const dataDir = path.join(db.path, 'data');
-    let extents: string[];
-    try {
-      extents = wslReaddirSync(dataDir)
-        .filter((f) => /^extent.*\.dbf$/i.test(f))
-        .map((f) => path.join(dataDir, f));
-    } catch {
-      return [];
-    }
+  async findExtentHolders(db: GemStoneDatabase): Promise<ExtentHolder[] | undefined> {
+    const extents = await this.extentPaths(db);
+    if (extents === undefined) return undefined;
     if (extents.length === 0) return [];
 
-    const quoted = extents.map((e) => `"${e}"`).join(' ');
-    let pids: number[] = [];
-    for (const probe of [`fuser ${quoted}`, `lsof -n -P -w -t -- ${quoted}`]) {
-      try {
-        // Both exit non-zero when nothing holds the file, which exec rejects
-        // on — `|| true` keeps "no holders" from reading as "probe failed", so
-        // the fallback only runs when the tool itself is missing.
-        pids = parseHolderPids(
-          await wslExec(`${probe} 2>/dev/null || true`, undefined, { timeout: PS_TIMEOUT_MS }),
-        );
-      } catch {
-        continue;
-      }
-      if (pids.length > 0) break;
+    let pids: number[] | undefined;
+    try {
+      pids =
+        process.platform === 'darwin'
+          ? await lsofHolderPids(extents, PS_TIMEOUT_MS)
+          : parseProcHolders(
+              await wslExec(procHoldersScript(extents), undefined, { timeout: PS_TIMEOUT_MS }),
+            );
+    } catch {
+      return undefined;
     }
+    if (pids === undefined) return undefined;
     if (pids.length === 0) return [];
 
     let detailed: ExtentHolder[] = [];
@@ -1071,6 +1061,57 @@ export class ProcessManager {
     // that was" is actionable, "Jasper could not determine which process holds
     // it" is not.
     return detailed.length > 0 ? detailed : pids.map((pid) => ({ pid, command: '' }));
+  }
+
+  /**
+   * Where a database's extents are, as the probe sees them: inside WSL on
+   * Windows. Undefined when Jasper cannot tell.
+   *
+   * A running stone is asked, through the files it holds open
+   * (`extentsAmongOpenFiles`). A registered database's extents are wherever its
+   * installation's configuration puts them, and even a created one's need not
+   * all be in `data/`. A stone that is down, or whose files cannot be read (one
+   * run by another user), leaves only the `data/` directory Jasper laid out for
+   * a database it created; a registered database has no such directory.
+   */
+  private async extentPaths(db: GemStoneDatabase): Promise<string[] | undefined> {
+    const pid = this.stonePid(db);
+    if (pid !== undefined) {
+      try {
+        const open =
+          process.platform === 'darwin'
+            ? await lsofOpenFiles(pid, PS_TIMEOUT_MS)
+            : (
+                await wslExec(procOpenFilesScript(pid), undefined, { timeout: PS_TIMEOUT_MS })
+              ).split('\n');
+        const extents = extentsAmongOpenFiles(open);
+        if (extents.length > 0) return extents;
+      } catch {
+        // Fall back to data/ below.
+      }
+    }
+    if (isRegisteredDatabase(db)) return undefined;
+    const dataDir = path.join(db.path, 'data');
+    try {
+      const extents = wslReaddirSync(dataDir)
+        .filter((f) => /^extent.*\.dbf$/i.test(f))
+        .map((f) => path.join(dataDir, f));
+      return needsWsl() ? extents.map(windowsPathToWsl) : extents;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** The PID of this database's running stone, from Jasper's gslist or, for
+   *  one started elsewhere, the host's process table. */
+  private stonePid(db: GemStoneDatabase): number | undefined {
+    const listed = this.cachedProcesses.find(
+      (p) =>
+        p.type === 'stone' &&
+        p.name === db.config.stoneName &&
+        versionsMatch(p.version, db.config.version),
+    );
+    return listed?.pid ?? this.getExternalServers(db).stone?.process.pid;
   }
 
   /** Force-stop a running stone by signalling its process, for when a clean
@@ -1310,10 +1351,7 @@ export class ProcessManager {
       // of the user's PATH intact.
       const { PATH, ...gsEnv } = env;
       const gsBin = PATH.split(':')[0];
-      terminal.sendText(
-        `${exportCommand(gsEnv)}; export PATH=${shellSingleQuote(gsBin)}:"$PATH"`,
-        true,
-      );
+      terminal.sendText(`${exportCommand(gsEnv)}; export PATH=${shellQuote(gsBin)}:"$PATH"`, true);
       if (prepared) terminal.sendText(prepared, false);
     }
   }

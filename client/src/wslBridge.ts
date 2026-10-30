@@ -588,8 +588,8 @@ export function wslExecSync(
  *
  * The sync variant stops the host's event loop for the whole run, which stalls
  * every other extension as well as Jasper's own rendering. That is tolerable
- * for a `gslist` measured in milliseconds; it is not for a probe that can take
- * a second and a half and may be repeated while waiting for gems to exit. Use
+ * for a `gslist` measured in milliseconds; it is not for a command that can
+ * take seconds, such as `lsof`, and may be repeated while waiting. Use
  * this wherever the command's duration is not known to be trivial.
  *
  * Rejects the way `execSync` throws — on a non-zero exit or a missing command —
