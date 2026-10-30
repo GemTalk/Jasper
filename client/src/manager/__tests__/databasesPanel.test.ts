@@ -24,6 +24,7 @@ vi.mock('../../wslBridge', async (importOriginal) => ({
   needsWsl: vi.fn(() => false),
   // Never the real probe, which runs wsl.exe on a Windows test host.
   getWslInfoAsync: vi.fn(async () => ({ available: true })),
+  getWslNetworkInfoCached: vi.fn(() => undefined),
 }));
 
 import * as fs from 'fs';
@@ -34,7 +35,8 @@ import { DatabaseManager } from '../databaseManager';
 import { DatabasesPanel } from '../databasesPanel';
 import type { GemStoneVersion } from '../../sysadminTypes';
 import { SysadminStorage } from '../../sysadminStorage';
-import { getWslInfoAsync, needsWsl } from '../../wslBridge';
+import { getWslInfoAsync, getWslNetworkInfoCached, needsWsl } from '../../wslBridge';
+import type { WslNetworkInfo } from '../../wslBridge';
 import { showSysadmin } from '../../sysadminChannel';
 import { __setConfig, __resetConfig, __configUpdates } from '../../__mocks__/vscode';
 
@@ -1391,6 +1393,7 @@ describe("each stone's sessions", () => {
       describe: vi.fn((key: string) => ({ key, kind: 'sessions', rows: [] })),
       forget: vi.fn(),
       forgetAll: vi.fn(),
+      retain: vi.fn(),
       stop: vi.fn(async () => {}),
       kill: vi.fn(async () => {}),
       rowOf: vi.fn((id: number) => (id === 1 ? { key: 'db:db-1', serial: 7 } : undefined)),
@@ -1468,6 +1471,76 @@ describe("each stone's sessions", () => {
       { key: 'stone:thor/far', kind: 'sessions', rows: [], stone: 'far', host: 'thor' },
     ]);
     expect(stoneSessions.describe).toHaveBeenCalledTimes(1);
+  });
+
+  // Its sessions would show, and be stopped, under the database here, and under Other Logins too.
+  it("lists a stone elsewhere that shares a database's name only under Other Logins", async () => {
+    const twin = { ...DC, label: 'twin', gem_host: 'thor' };
+    const { deps, stoneSessions } = withStoneSessions([DC, twin], [session(2, twin)]);
+    DatabasesPanel.show(deps);
+    await sendMessage({ command: 'ready' });
+
+    expect(state().databases[0].stoneSessions).toMatchObject({ kind: 'message' });
+    expect(state().otherStoneSessions.map((l) => l.key)).toEqual(['stone:thor/gs64stone']);
+    expect(stoneSessions.describe).toHaveBeenCalledTimes(1);
+  });
+
+  it("lists a database's sessions through a login that names this machine, not localhost", async () => {
+    const byName = { ...DC, label: 'by-name', gem_host: os.hostname() };
+    const { deps, stoneSessions } = withStoneSessions([byName], [session(1, byName)]);
+    DatabasesPanel.show(deps);
+    await sendMessage({ command: 'ready' });
+
+    expect(stoneSessions.describe).toHaveBeenCalledWith('db:db-1', session(1, byName), [
+      session(1, byName),
+    ]);
+    expect(state().otherStoneSessions).toEqual([]);
+  });
+
+  // Under WSL's default networking, a stone in WSL is logged in to at the WSL guest's address.
+  it("lists a database's sessions through a login at the WSL guest's address", async () => {
+    vi.mocked(getWslNetworkInfoCached).mockReturnValue({ ip: '172.20.1.5' } as WslNetworkInfo);
+    try {
+      const wsl = { ...DC, label: 'wsl', gem_host: '172.20.1.5' };
+      const { deps, stoneSessions } = withStoneSessions([wsl], [session(1, wsl)]);
+      DatabasesPanel.show(deps);
+      await sendMessage({ command: 'ready' });
+
+      expect(stoneSessions.describe).toHaveBeenCalledWith('db:db-1', session(1, wsl), [
+        session(1, wsl),
+      ]);
+    } finally {
+      vi.mocked(getWslNetworkInfoCached).mockReturnValue(undefined);
+    }
+  });
+
+  it('lists a stone here with no database once, by whichever name it is reached', async () => {
+    const near = { ...FAR, gem_host: 'localhost' };
+    const byName = { ...FAR, label: 'by-name', gem_host: os.hostname() };
+    const { deps, stoneSessions } = withStoneSessions(
+      [near, byName],
+      [session(2, near), session(3, byName)],
+    );
+    DatabasesPanel.show(deps);
+    await sendMessage({ command: 'ready' });
+
+    expect(state().otherStoneSessions.map((l) => l.key)).toEqual(['stone:localhost/far']);
+    expect(stoneSessions.describe).toHaveBeenCalledTimes(1);
+  });
+
+  // Show in Sessions must not find a row that isn't drawn.
+  it('keeps only the lists it draws', async () => {
+    const { deps, stoneSessions } = withStoneSessions([DC, FAR], [session(1, DC), session(2, FAR)]);
+    DatabasesPanel.show(deps);
+    await sendMessage({ command: 'ready' });
+    expect(stoneSessions.retain).toHaveBeenLastCalledWith(new Set(['db:db-1', 'stone:thor/far']));
+  });
+
+  it('keeps no list for a stone that is down', async () => {
+    const { deps, stoneSessions } = withStoneSessions([DC], [session(1, DC)], false);
+    DatabasesPanel.show(deps);
+    await sendMessage({ command: 'ready' });
+    expect(stoneSessions.retain).toHaveBeenLastCalledWith(new Set());
   });
 
   it('passes Refresh, Stop and Kill on to the row they name', async () => {

@@ -92,7 +92,8 @@ type StoneSessionsRead = StoneSessionList | { kind: 'error'; message: string };
 
 interface CacheEntry {
   read: StoneSessionsRead;
-  signalable: Set<number>;
+  /** Asked only once a row's gem is judged here: the check blocks, on Windows for a `wsl.exe`. */
+  signalable?: Set<number>;
   /** This window's session ids when it was read: a login or logout here changes the list. */
   windowSessions: string;
 }
@@ -107,6 +108,7 @@ interface CacheEntry {
 export class StoneSessions {
   private readonly cache = new Map<string, CacheEntry>();
   private readonly targets = new Map<string, Map<number, StoneSessionTarget>>();
+  private readonly rereads = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly changed = new vscode.EventEmitter<void>();
   /** A list was forgotten on its own, and should be shown again. */
   readonly onDidChange = this.changed.event;
@@ -121,10 +123,13 @@ export class StoneSessions {
   ): StoneSessionsInfo {
     const { deps } = this;
     // GemStone numbers each stone's logins from 1, so only sessions on this
-    // stone may be matched by login serial.
+    // stone may be matched by login serial. A stone here may be reached by
+    // any of this machine's names.
     const { stone, gem_host } = through.login;
+    const sameHost = (host: string) =>
+      host === gem_host || (deps.isThisMachine(host) && deps.isThisMachine(gem_host));
     const windowSessions = allWindowSessions.filter(
-      (s) => s.login.stone === stone && s.login.gem_host === gem_host,
+      (s) => s.login.stone === stone && sameHost(s.login.gem_host),
     );
     const seen = windowSessions.map((s) => s.id).join(',');
     let entry = this.cache.get(key);
@@ -143,12 +148,10 @@ export class StoneSessions {
       } catch (e) {
         read = { kind: 'error', message: e instanceof Error ? e.message : String(e) };
       }
-      const signalable =
-        read.kind === 'sessions' ? deps.signalableGems(read.sessions) : new Set<number>();
-      entry = { read, signalable, windowSessions: seen };
+      entry = { read, windowSessions: seen };
       this.cache.set(key, entry);
     }
-    const { read, signalable } = entry;
+    const { read } = entry;
     const loginUser = through.login.gs_user;
     if (read.kind === 'noAccess') {
       this.targets.delete(key);
@@ -182,6 +185,9 @@ export class StoneSessions {
             holders: read.sessions.filter((s) => s.holdsOldestCommitRecord).length,
           }
         : undefined;
+    const kept = entry;
+    const signalable = (pid: number) =>
+      (kept.signalable ??= deps.signalableGems(read.sessions)).has(pid);
     const targets = new Map<number, StoneSessionTarget>();
     const rows = read.sessions.map((stoneSession) => {
       const jasperSession = byLoginSerial.get(String(stoneSession.serial));
@@ -190,8 +196,8 @@ export class StoneSessions {
         stuck: jasperSession !== undefined && deps.stuck(jasperSession),
         mayStop: read.canStopSessions,
         canSignalGem:
-          signalable.has(stoneSession.gemPid) &&
-          gemIsHere(stoneSession.host, gem_host, deps.isThisMachine),
+          gemIsHere(stoneSession.host, read.stoneHostname, deps.isThisMachine) &&
+          signalable(stoneSession.gemPid),
         backlog: stoneSession.holdsOldestCommitRecord ? backlog : undefined,
         loginUser,
       });
@@ -219,16 +225,34 @@ export class StoneSessions {
     this.cache.delete(key);
   }
 
+  /** One pending re-read per stone: Stop or Kill on this window's own session asks twice. */
   private rereadAfterLogout(key: string): void {
-    setTimeout(() => {
-      this.forget(key);
-      this.changed.fire();
-    }, REREAD_AFTER_LOGOUT_MS);
+    clearTimeout(this.rereads.get(key));
+    this.rereads.set(
+      key,
+      setTimeout(() => {
+        this.rereads.delete(key);
+        this.forget(key);
+        this.changed.fire();
+      }, REREAD_AFTER_LOGOUT_MS),
+    );
   }
 
   /** Forget every list, so each is read again next time it is shown. */
   forgetAll(): void {
     this.cache.clear();
+  }
+
+  /**
+   * Forget the lists of stones not among `shown`, as the panel last drew them:
+   * a stone that stopped, or that no session of this window is logged in to.
+   */
+  retain(shown: ReadonlySet<string>): void {
+    for (const key of [...this.cache.keys(), ...this.targets.keys()]) {
+      if (shown.has(key)) continue;
+      this.cache.delete(key);
+      this.targets.delete(key);
+    }
   }
 
   /** The session behind a row last shown, or undefined for one no longer listed. */

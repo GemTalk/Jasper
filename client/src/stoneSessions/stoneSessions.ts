@@ -35,6 +35,8 @@ export type StoneSessionList =
       abortThreshold: number;
       /** The login has SystemControl, which `System stopSession:` needs besides SessionAccess. */
       canStopSessions: boolean;
+      /** The stone's own hostname (GemStone's `nodeName`): the machine its `localhost` gems are on. */
+      stoneHostname: string;
       sessions: StoneSession[];
     }
   /** The login lacks SessionAccess, without which another session can't be looked at. */
@@ -49,7 +51,7 @@ const TRANSACTION: Record<string, StoneSession['transaction']> = {
 export function parseStoneSessions(text: string): StoneSessionList {
   if (text === NO_SESSION_ACCESS) return { kind: 'noAccess' };
   const [header, ...lines] = text.split(/\r?\n|\r/);
-  const [now, backlog, threshold, canStop, holders = ''] = header.split('\t');
+  const [now, backlog, threshold, canStop, stoneHostname = '', holders = ''] = header.split('\t');
   const holderIds = new Set(holders.split(' ').filter(Boolean).map(Number));
   const sessions = lines.map((line): StoneSession => {
     const [id, serial, user, gemPid, host, loggedInAt, transaction, systemGem] = line.split('\t');
@@ -71,6 +73,7 @@ export function parseStoneSessions(text: string): StoneSessionList {
     commitRecordBacklog: Number(backlog),
     abortThreshold: Number(threshold),
     canStopSessions: canStop === 'true',
+    stoneHostname,
     sessions,
   };
 }
@@ -100,21 +103,24 @@ export const KILL_CHECK_TIMEOUT_MS = 5000;
 /**
  * Whether a gem the stone places on `gemHost` runs on this machine. The stone
  * calls a gem on its own machine `localhost`, so such a gem is here only when
- * `stoneHost`, the host the stone was reached at, is.
+ * `stoneHostname`, the stone's own hostname, is. The login's host
+ * can't tell: through an ssh tunnel or a container's published port it is
+ * `localhost` too, for a stone on another machine.
  */
 export function gemIsHere(
   gemHost: string,
-  stoneHost: string,
+  stoneHostname: string,
   isThisMachine: (host: string) => boolean,
 ): boolean {
-  return isThisMachine(isLoopbackName(gemHost) ? stoneHost : gemHost);
+  return isThisMachine(isLoopbackName(gemHost) ? stoneHostname : gemHost);
 }
 
 /**
  * The gems among `sessions` that this OS user may signal here (inside WSL on
- * Windows), as `kill -0` answers; another OS user's gem refuses. Whether a gem
- * is here at all is {@link gemIsHere}'s question. Answers none when the check
- * itself fails, so Kill is never offered on a guess.
+ * Windows), as `kill -0` answers, and that `ps` says are gems; another OS
+ * user's gem refuses, and a `topaz -l` session's process is topaz itself.
+ * Whether a gem is here at all is {@link gemIsHere}'s question. Answers none
+ * when the check itself fails, so Kill is never offered on a guess.
  */
 export function signalableGems(
   sessions: StoneSession[],
@@ -124,10 +130,15 @@ export function signalableGems(
   if (pids.length === 0) return new Set();
   try {
     const answer = shellSync(
-      `for p in ${pids.join(' ')}; do kill -0 $p 2>/dev/null && echo $p; done; true`,
+      `for p in ${pids.join(' ')}; do kill -0 $p 2>/dev/null && ` +
+        'echo "$p $(ps -p $p -o command= 2>/dev/null)"; done; true',
       KILL_CHECK_TIMEOUT_MS,
     );
-    return new Set(answer.split(/\s+/).filter(Boolean).map(Number));
+    const gems = answer
+      .split(/\r?\n/)
+      .map((line) => line.trim().match(/^(\d+) (.*)$/))
+      .filter((m): m is RegExpMatchArray => m !== null && isGemCommand(m[2]));
+    return new Set(gems.map((m) => Number(m[1])));
   } catch (e) {
     logInfo(
       `Could not tell which gems Kill can end: ${e instanceof Error ? e.message : String(e)}`,
@@ -189,8 +200,8 @@ export type GemHostShell = (command: string) => Promise<string>;
  * Windows): SIGTERM, which a busy gem obeys at once, then SIGKILL for a gem
  * frozen for good, which the stone cleans up after. Its uncommitted work is
  * lost. The stone is asked first that the login still has that session and
- * gem, and `ps` that the process is a gem, so a reused session number or
- * process id is left alone.
+ * gem, and `ps`, before each signal, that the process is a gem, so a reused
+ * session number or process id is left alone.
  *
  * @throws {Error} when the process isn't a gem here, or `kill` refuses
  *   (another OS user's gem); the message says which.
@@ -206,7 +217,9 @@ export async function killStoneSession(
     const stillOnStone = () =>
       loginHasSession((code) => sender.session.executeAndFetchString(code), id, serial, gemPid);
     if (!stillOnStone()) return 'gone';
-    const command = (await shell(`ps -p ${gemPid} -o command= 2>/dev/null || true`)).trim();
+    const commandOfPid = async () =>
+      (await shell(`ps -p ${gemPid} -o command= 2>/dev/null || true`)).trim();
+    const command = await commandOfPid();
     if (!isGemCommand(command)) {
       throw new Error(
         command
@@ -215,15 +228,19 @@ export async function killStoneSession(
       );
     }
     for (const signal of ['TERM', 'KILL']) {
-      // `|| true` keeps kill's complaint as output: an EPERM must not read as a
-      // gem that ignored the signal.
-      const complaint = (await shell(`kill -${signal} ${gemPid} 2>&1 || true`)).trim();
-      // A gem that is already gone only needs the stone to let its session go.
-      const gemGone = /no such process/i.test(complaint);
-      if (complaint && !gemGone && stillOnStone()) throw new Error(complaint);
-      logInfo(
-        `Sent SIG${signal} to gem process ${gemPid} of session ${id} (login serial ${serial}).`,
-      );
+      // Asked again before SIGKILL: a gem that exited during the wait may have
+      // passed its process id on. A gem that is gone only needs the stone to
+      // let its session go.
+      if (signal === 'TERM' || isGemCommand(await commandOfPid())) {
+        // `|| true` keeps kill's complaint as output: an EPERM must not read as a
+        // gem that ignored the signal.
+        const complaint = (await shell(`kill -${signal} ${gemPid} 2>&1 || true`)).trim();
+        const gemGone = /no such process/i.test(complaint);
+        if (complaint && !gemGone && stillOnStone()) throw new Error(complaint);
+        logInfo(
+          `Sent SIG${signal} to gem process ${gemPid} of session ${id} (login serial ${serial}).`,
+        );
+      }
       const left = await pollUntil(
         () => !stillOnStone(),
         STOP_SESSION_WAIT_MS,

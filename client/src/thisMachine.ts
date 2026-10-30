@@ -8,18 +8,19 @@ loopback.addAddress('::1', 'ipv6');
 
 /**
  * Whether a host names this machine: a login's, for telemetry's
- * `serverLocation`, or a gem's as the stone reports it, for whether Kill is
- * offered. Deliberately broader than `isLocalHost` in databaseForLogin.ts,
- * which gates starting a stone and must stay narrow; Kill checks the process
- * is a gem before it signals anything. Names are never resolved through DNS:
- * that would put a network round trip on the connect path.
+ * `serverLocation`, or, for whether Kill is offered, a gem's as the stone
+ * reports it or the stone's own hostname. Deliberately broader than
+ * `isLocalHost` in databaseForLogin.ts, which gates starting a stone and must
+ * stay narrow; Kill checks the process is a gem before it signals anything.
+ * Names are never resolved through DNS: that would put a network round trip
+ * on the connect path.
  */
 export function isThisMachine(host: string): boolean {
   const h = normalizeHost(host);
   return (
     namesThisMachine(h) ||
     isLoopbackAddress(h) ||
-    isCachedWslAddress(h) ||
+    isCachedWslGuest(h) ||
     isOnThisMachinesInterfaces(h)
   );
 }
@@ -52,12 +53,14 @@ function isLoopbackAddress(h: string): boolean {
 
 /**
  * A stone in WSL under NAT networking is reached at the WSL VM's IP, which is
- * on no Windows interface. Only the cached probe is read, for the same
- * no-round-trip reason; before the first probe lands, such a login still
- * counts as remote.
+ * on no Windows interface, and names its machine by the distro's hostname,
+ * which a `wsl.conf` can set apart from Windows'. Only the cached probe is
+ * read, for the same no-round-trip reason; before the first probe lands, such
+ * a host still counts as remote.
  */
-function isCachedWslAddress(h: string): boolean {
-  return h === getWslNetworkInfoCached()?.ip;
+function isCachedWslGuest(h: string): boolean {
+  const wsl = getWslNetworkInfoCached();
+  return h === wsl?.ip || h === wsl?.hostname?.toLowerCase();
 }
 
 /** If the OS refuses to list interfaces, the host is judged on its name alone rather than losing the event. */

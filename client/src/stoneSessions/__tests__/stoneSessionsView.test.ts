@@ -5,6 +5,7 @@ vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 import { window } from '../../__mocks__/vscode';
 import type { ActiveSession } from '../../activeSession';
 import { DEFAULT_LOGIN } from '../../loginTypes';
+import { isThisMachine } from '../../thisMachine';
 import type { StoneSession, StoneSessionList } from '../stoneSessions';
 import {
   KILL,
@@ -54,6 +55,7 @@ describe("a stone's session list", () => {
     read: ReturnType<typeof vi.fn<(through: ActiveSession) => StoneSessionList>>;
     signalableGems: ReturnType<typeof vi.fn<(sessions: StoneSession[]) => Set<number>>>;
     stop: ReturnType<typeof vi.fn<StoneSessionsDeps['stop']>>;
+    logout: ReturnType<typeof vi.fn<StoneSessionsDeps['logout']>>;
   };
   let sessions: StoneSessions;
 
@@ -67,6 +69,7 @@ describe("a stone's session list", () => {
       commitRecordBacklog: 1,
       abortThreshold: 20,
       canStopSessions: true,
+      stoneHostname: 'uffda',
       sessions: [
         stoneSession({ id: 4, serial: 3, gemPid: 41022 }),
         stoneSession({ id: 5, serial: 9, user: 'ewinger', gemPid: 39811, host: 'thor' }),
@@ -78,14 +81,14 @@ describe("a stone's session list", () => {
       signalableGems: vi.fn(
         (all: StoneSession[]) => new Set(all.filter((s) => !s.systemGem).map((s) => s.gemPid)),
       ),
-      isThisMachine: (host) => host === 'localhost',
+      isThisMachine: (host) => host === 'uffda',
       stuck: (s) => stuck.has(s.id),
       // Jasper session 1 is GemStone's session 4, whose login is serial 3.
       loginSerialOf: (id) => (id === 1 ? '3' : undefined),
       transientLogin: vi.fn(),
       stop: vi.fn<StoneSessionsDeps['stop']>(async () => 'ended'),
       kill: vi.fn(async () => 'ended' as const),
-      logout: vi.fn(async () => true),
+      logout: vi.fn<StoneSessionsDeps['logout']>(async () => true),
     };
     sessions = new StoneSessions(deps);
   });
@@ -101,19 +104,41 @@ describe("a stone's session list", () => {
     expect(deps.signalableGems).toHaveBeenCalledTimes(1);
   });
 
-  // The stone calls gems on its own machine localhost; only the login says where that is.
-  it('offers no Kill on the localhost gems of a stone on another machine', () => {
-    windowSessions = [makeSession(1, DEFAULT_LOGIN.stone, 'thor')];
+  // The stone calls gems on its own machine localhost. Through an ssh tunnel or
+  // a container's published port the login says localhost too, so only the
+  // stone's own hostname tells where they are.
+  it('offers no Kill on the localhost gems of a stone on another machine, though the login says localhost', () => {
+    list = { ...listed(), stoneHostname: 'thor' };
+    expect(windowSessions[0].login.gem_host).toBe('localhost');
+    // As the real check does.
+    deps.isThisMachine = (host) => host === 'uffda' || host === 'localhost';
     expect(rowsOf(describeIt()).some((r) => r.canKill)).toBe(false);
   });
 
-  // On Windows the WSL guest's address counts as this machine only once probed.
+  it('offers no Kill on the localhost gems of a stone that gives no hostname', () => {
+    list = { ...listed(), stoneHostname: '' };
+    deps.isThisMachine = isThisMachine;
+    expect(rowsOf(describeIt()).some((r) => r.canKill)).toBe(false);
+  });
+
+  // On Windows the WSL guest's name counts as this machine only once probed.
   it('judges where a gem is at each showing, without reading the list again', () => {
-    windowSessions = [makeSession(1, DEFAULT_LOGIN.stone, '172.20.0.5')];
+    list = { ...listed(), stoneHostname: 'wsl-guest' };
     expect(rowsOf(describeIt())[0].canKill).toBe(false);
-    deps.isThisMachine = (host) => host === '172.20.0.5';
+    deps.isThisMachine = (host) => host === 'wsl-guest';
     expect(rowsOf(describeIt())[0].canKill).toBe(true);
     expect(deps.read).toHaveBeenCalledTimes(1);
+  });
+
+  // The check blocks the window, on Windows for a wsl.exe.
+  it('asks which gems Kill can end only once a gem is judged here, and only once per read', () => {
+    list = { ...listed(), stoneHostname: 'thor' };
+    describeIt();
+    expect(deps.signalableGems).not.toHaveBeenCalled();
+    deps.isThisMachine = (host) => host === 'thor';
+    describeIt();
+    describeIt();
+    expect(deps.signalableGems).toHaveBeenCalledTimes(1);
   });
 
   it('reads it again once forgotten, as Refresh and Stop do', () => {
@@ -178,9 +203,28 @@ describe("a stone's session list", () => {
 
       vi.advanceTimersByTime(REREAD_AFTER_LOGOUT_MS);
 
-      expect(changed).toHaveBeenCalledTimes(2);
+      expect(changed).toHaveBeenCalledTimes(1);
       describeIt();
       expect(deps.read).toHaveBeenCalledTimes(2);
+    });
+
+    // Its logout asks for a re-read, and so does the command.
+    it("reads it again once after Kill on this window's own session", async () => {
+      windowSessions = [makeSession(2), makeSession(1)];
+      describeIt();
+      deps.logout.mockImplementation(async () => {
+        windowSessions = [makeSession(2)];
+        describeIt();
+        return true;
+      });
+      const changed = vi.fn();
+      sessions.onDidChange(changed);
+      vi.mocked(window.showWarningMessage).mockResolvedValue(KILL);
+      await sessions.kill('db:db-1', 3);
+
+      vi.advanceTimersByTime(REREAD_AFTER_LOGOUT_MS);
+
+      expect(changed).toHaveBeenCalledTimes(1);
     });
 
     it('keeps the row of a session that is still on the stone after Stop', async () => {
@@ -217,6 +261,15 @@ describe("a stone's session list", () => {
 
   // The stone gives a session number to the next login once a gem has gone,
   // even while the Jasper session that had it is still open here.
+  // Stop and Kill log a marked session out after ending its gem.
+  it("marks a session of this window on this stone that reached it by another of this machine's names", () => {
+    deps.isThisMachine = (host) => host === 'uffda' || host === 'localhost';
+    deps.loginSerialOf = (id) => (id === 1 ? '3' : id === 2 ? '9' : undefined);
+    windowSessions = [makeSession(1), makeSession(2, DEFAULT_LOGIN.stone, 'uffda')];
+    const rows = rowsOf(describeIt());
+    expect(rows.find((r) => r.serial === 9)?.jasperSessionId).toBe(2);
+  });
+
   it("doesn't mark a newer login that was given this window's session number", () => {
     list = {
       ...listed(),
@@ -327,6 +380,17 @@ describe("a stone's session list", () => {
     expect(sessions.rowOf(2)).toBeUndefined();
     expect(sessions.target('db:db-1', 9)?.stoneSession.user).toBe('ewinger');
     expect(sessions.target('db:db-1', 999)).toBeUndefined();
+  });
+
+  // A stone that stopped, or that no session of this window is logged in to, is no longer drawn.
+  it('forgets the rows of a list the panel no longer shows, and reads it again if it does', () => {
+    describeIt();
+    sessions.describe('db:db-2', windowSessions[0], windowSessions);
+    sessions.retain(new Set(['db:db-2']));
+    expect(sessions.rowOf(1)).toEqual({ key: 'db:db-2', serial: 3 });
+    expect(sessions.target('db:db-1', 9)).toBeUndefined();
+    describeIt();
+    expect(deps.read).toHaveBeenCalledTimes(3);
   });
 
   it('acts only on a row it showed, and Kills only where Kill was offered', async () => {

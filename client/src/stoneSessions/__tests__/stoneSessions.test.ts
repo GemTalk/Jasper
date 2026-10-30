@@ -30,7 +30,7 @@ import {
 describe('parseStoneSessions', () => {
   it("reads the stone's clock, its commit-record backlog, and one session per line", () => {
     const text =
-      '1793224302\t34\t20\ttrue\t7\n' +
+      '1793224302\t34\t20\ttrue\tuffda\t7\n' +
       '2\t1\tGcUser\t3886706\tlocalhost\t1793224153\t0\treclaimgcgem\n' +
       '7\t12\tDataCurator\t41377\tthor\t1793223402\t1\t';
 
@@ -40,6 +40,7 @@ describe('parseStoneSessions', () => {
       commitRecordBacklog: 34,
       abortThreshold: 20,
       canStopSessions: true,
+      stoneHostname: 'uffda',
       sessions: [
         {
           id: 2,
@@ -68,19 +69,20 @@ describe('parseStoneSessions', () => {
   });
 
   it('reads a stone with no other session as an empty list', () => {
-    expect(parseStoneSessions('1793224302\t1\t20\tfalse\t')).toEqual({
+    expect(parseStoneSessions('1793224302\t1\t20\tfalse\tuffda\t')).toEqual({
       kind: 'sessions',
       serverNow: 1793224302,
       commitRecordBacklog: 1,
       abortThreshold: 20,
       canStopSessions: false,
+      stoneHostname: 'uffda',
       sessions: [],
     });
   });
 
   it('reads a transactionless session, and one with no user yet', () => {
     const [row] = (
-      parseStoneSessions('100\t1\t20\ttrue\t\n9\t30\t\t555\tlocalhost\t90\t-1\t') as {
+      parseStoneSessions('100\t1\t20\ttrue\tuffda\t\n9\t30\t\t555\tlocalhost\t90\t-1\t') as {
         sessions: StoneSession[];
       }
     ).sessions;
@@ -531,6 +533,42 @@ describe('killStoneSession', () => {
     await expect(outcome).resolves.toBe('ended');
   });
 
+  // The gem exited during the wait, and its process id has passed to another process.
+  it('sends no SIGKILL once the process is no longer a gem', async () => {
+    let psAsked = 0;
+    const { login, run, commands } = setUp(
+      () => true,
+      (command) => {
+        if (!command.startsWith('ps')) return '';
+        return ++psAsked === 1 ? GEM : '/usr/bin/vim notes.txt';
+      },
+    );
+
+    const outcome = killStoneSession(target, login, run);
+    await vi.advanceTimersByTimeAsync(2 * STOP_SESSION_WAIT_MS + 1000);
+
+    await expect(outcome).resolves.toBe('stuck');
+    expect(commands.filter((c) => c.startsWith('kill'))).toEqual(['kill -TERM 39811 2>&1 || true']);
+  });
+
+  it('waits for the stone without SIGKILL once the gem has gone', async () => {
+    let psAsked = 0;
+    let polls = 0;
+    const { login, run, commands } = setUp(
+      () => psAsked < 2 || ++polls <= 1,
+      (command) => {
+        if (!command.startsWith('ps')) return '';
+        return ++psAsked === 1 ? GEM : '';
+      },
+    );
+
+    const outcome = killStoneSession(target, login, run);
+    await vi.advanceTimersByTimeAsync(2 * STOP_SESSION_WAIT_MS + 1000);
+
+    await expect(outcome).resolves.toBe('ended');
+    expect(commands.some((c) => c.startsWith('kill -KILL'))).toBe(false);
+  });
+
   it('answers stuck when the session outlives SIGKILL', async () => {
     const { login, run } = setUp(
       () => true,
@@ -604,15 +642,28 @@ describe('signalableGems', () => {
   });
 
   it('asks kill -0 about each gem, and keeps those this OS user may signal', () => {
-    const shell = vi.fn(() => '100\n');
+    const shell = vi.fn(() => '100 /opt/gs/sys/gem TCP 5\n');
 
     const signalable = signalableGems([gem({ gemPid: 100 }), gem({ gemPid: 200 })], shell);
 
-    // It runs inside every list read, so a hung shell (wsl.exe) must not hold the window.
+    // It runs inside a list read, so a hung shell (wsl.exe) must not hold the window.
     expect(shell).toHaveBeenCalledWith(
-      'for p in 100 200; do kill -0 $p 2>/dev/null && echo $p; done; true',
+      'for p in 100 200; do kill -0 $p 2>/dev/null && ' +
+        'echo "$p $(ps -p $p -o command= 2>/dev/null)"; done; true',
       KILL_CHECK_TIMEOUT_MS,
     );
+    expect(signalable).toEqual(new Set([100]));
+  });
+
+  // A linked session's process is topaz itself, which Kill refuses.
+  it('keeps only processes that are gems', () => {
+    const shell = vi.fn(() => '100 /opt/gs/sys/gem TCP 5\n200 /opt/gs/bin/topaz -l\n300 \n');
+
+    const signalable = signalableGems(
+      [gem({ gemPid: 100 }), gem({ gemPid: 200 }), gem({ gemPid: 300 })],
+      shell,
+    );
+
     expect(signalable).toEqual(new Set([100]));
   });
 
@@ -638,7 +689,7 @@ describe('gemIsHere', () => {
     expect(gemIsHere('thor', 'uffda', isUffda)).toBe(false);
   });
 
-  it("takes a gem the stone calls localhost to be on the stone's machine", () => {
+  it("takes a gem the stone calls localhost to be on the stone's own machine", () => {
     expect(gemIsHere('localhost', 'thor', isUffda)).toBe(false);
     expect(gemIsHere('127.0.0.1', 'thor', isUffda)).toBe(false);
     expect(gemIsHere('localhost', 'uffda', isUffda)).toBe(true);

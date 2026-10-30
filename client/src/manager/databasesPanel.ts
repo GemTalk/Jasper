@@ -41,6 +41,7 @@ import { readWebviewScript } from '../webviewAssets';
 import { appendSysadmin, showSysadmin } from '../sysadminChannel';
 import { explainGciError } from '../gciLibraryError';
 import type { StoneSessions, StoneSessionsInfo } from '../stoneSessions/stoneSessionsView';
+import { isThisMachine } from '../thisMachine';
 
 const databasesViewJs = readWebviewScript('databasesView.js', 'manager');
 
@@ -446,6 +447,24 @@ type Inbound =
   | { command: 'stopStoneSession'; name: string; serial: number }
   | { command: 'killStoneSession'; name: string; serial: number }
   | { command: 'closePanel' };
+
+/**
+ * Whether `login` reaches the stone of a database this machine made: its host
+ * names this machine, by any spelling (`localhost`, its name, one of its
+ * addresses, or the WSL guest's on Windows). A remote login that shares the
+ * stone name must not inherit the database's directory, its database-scoped
+ * actions, its running state or its session list.
+ */
+export function pairsWithDatabase(
+  login: Pick<GemStoneLogin, 'gem_host' | 'stone' | 'version'>,
+  db: { stoneName: string; version: string },
+): boolean {
+  return (
+    isThisMachine(login.gem_host) &&
+    login.stone === db.stoneName &&
+    versionsMatch(db.version, login.version)
+  );
+}
 
 /**
  * gslist reports a start time as "Aug 06 17:40" — to the minute, with no year
@@ -1685,6 +1704,7 @@ export class DatabasesPanel {
     const selectedSessionId = this.deps.sessionManager.getSelectedSession()?.id;
     const dbs = this.deps.storage.getDatabases();
     this.lastDatabases = dbs;
+    const shownStoneSessions = new Set<string>();
     const databases: DatabaseRow[] = dbs.map((db) => {
       const cfg = db.config;
       // gslist and database.yaml spell a version differently, which is what
@@ -1734,6 +1754,7 @@ export class DatabasesPanel {
         livePort !== undefined
           ? this.deps.databaseManager.recordNetldiPort(db, livePort).netldiPort
           : cfg.netldiPort;
+      const stoneRunning = this.deps.processManager.isStoneRunning(cfg.stoneName, cfg.version);
       return {
         dirName: db.dirName,
         version: cfg.version,
@@ -1750,14 +1771,15 @@ export class DatabasesPanel {
             }
           : {}),
         ...(versionMismatch ? { versionMismatch } : {}),
-        stoneRunning: this.deps.processManager.isStoneRunning(cfg.stoneName, cfg.version),
+        stoneRunning,
         netldiRunning: this.deps.processManager.isNetldiRunning(cfg.ldiName, cfg.version),
         processes: dbProcs,
         stoneSessions: this.stoneSessionsOf(
           `db:${db.dirName}`,
-          this.deps.processManager.isStoneRunning(cfg.stoneName, cfg.version),
-          openSessions.find((sess) => dbLogins.some((l) => l.label === loginLabel(sess.login))),
+          stoneRunning,
+          openSessions.find((sess) => pairsWithDatabase(sess.login, cfg)),
           openSessions,
+          shownStoneSessions,
         ),
         logins: dbLogins,
         availableExtents: registered ? [] : this.deps.storage.getAvailableExtents(cfg.version),
@@ -1779,6 +1801,9 @@ export class DatabasesPanel {
       };
     });
 
+    const otherStoneSessions = this.otherStoneSessions(databases, openSessions, shownStoneSessions);
+    this.deps.stoneSessions?.retain(shownStoneSessions);
+
     return {
       platform: this.deps.storage.getPlatformKey() ?? process.platform,
       windows: needsWsl(),
@@ -1789,17 +1814,21 @@ export class DatabasesPanel {
       versions,
       databases,
       logins: this.buildLoginTargets(databases),
-      otherStoneSessions: this.otherStoneSessions(databases, openSessions),
+      otherStoneSessions,
       create: this.buildCreateOptions(databases),
     };
   }
 
-  /** A running stone's session list, read through `through`, a session of this window on it. */
+  /**
+   * A running stone's session list, read through `through`, a session of this
+   * window on it. Adds its key to `shown` when the list is drawn.
+   */
   private stoneSessionsOf(
     key: string,
     running: boolean,
     through: ActiveSession | undefined,
     openSessions: ActiveSession[],
+    shown: Set<string>,
   ): StoneSessionsInfo | undefined {
     const stoneSessions = this.deps.stoneSessions;
     if (!stoneSessions || !running) return undefined;
@@ -1812,6 +1841,7 @@ export class DatabasesPanel {
         detail: 'GemStone lists a stone\u2019s sessions only to a session logged in to it.',
       };
     }
+    shown.add(key);
     return stoneSessions.describe(key, through, openSessions);
   }
 
@@ -1823,21 +1853,18 @@ export class DatabasesPanel {
   private otherStoneSessions(
     databases: DatabaseRow[],
     openSessions: ActiveSession[],
+    shown: Set<string>,
   ): PanelState['otherStoneSessions'] {
     const lists: PanelState['otherStoneSessions'] = [];
     const seen = new Set<string>();
     for (const sess of openSessions) {
       const { stone, gem_host: host } = sess.login;
-      // The same pairing buildLoginTargets uses: only a localhost login sits under a database.
-      const local =
-        host === 'localhost' &&
-        databases.some(
-          (d) => d.stoneName === stone && versionsMatch(d.version, sess.login.version),
-        );
-      const key = `stone:${host}/${stone}`;
+      const local = databases.some((d) => pairsWithDatabase(sess.login, d));
+      // One list for a stone here, by whichever of this machine's names it is reached.
+      const key = `stone:${isThisMachine(host) ? 'localhost' : host}/${stone}`;
       if (local || seen.has(key)) continue;
       seen.add(key);
-      const info = this.stoneSessionsOf(key, true, sess, openSessions);
+      const info = this.stoneSessionsOf(key, true, sess, openSessions, shown);
       if (info) lists.push({ ...info, stone, host });
     }
     return lists;
@@ -1863,11 +1890,8 @@ export class DatabasesPanel {
   }
 
   /**
-   * One row per stored login, each carrying the sessions opened from it.
-   *
-   * Only a localhost login is paired to a database this machine made: a remote
-   * login that happens to share a stone name must not inherit the local
-   * database's directory, its database-scoped actions or its running state.
+   * One row per stored login, each carrying the sessions opened from it, and
+   * the database it reaches by {@link pairsWithDatabase}.
    */
   private buildLoginTargets(databases: DatabaseRow[]): LoginTarget[] {
     const open = this.deps.sessionManager.getSessions();
@@ -1876,13 +1900,7 @@ export class DatabasesPanel {
 
     const targets = this.deps.getLogins().map((l) => {
       const label = loginLabel(l);
-      // Only a local login (localhost) pairs to a database this machine made; a
-      // remote login that shares the stone name must not inherit the local db's
-      // dirName (and its db-scoped actions) or its running state.
-      const db =
-        l.gem_host === 'localhost'
-          ? databases.find((d) => d.stoneName === l.stone && versionsMatch(d.version, l.version))
-          : undefined;
+      const db = databases.find((d) => pairsWithDatabase(l, d));
       return {
         label,
         user: l.gs_user,

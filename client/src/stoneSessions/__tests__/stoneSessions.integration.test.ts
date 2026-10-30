@@ -91,21 +91,21 @@ describe('Stone sessions (integration)', () => {
     expect(list.canStopSessions).toBe(hasIt === 'true');
   });
 
-  // On Windows the gems, and so the check, are inside WSL, and the stone is
-  // reached at the WSL guest's address, which counts as this machine only once
-  // probed, as the process watcher does for the panel.
-  it('offers Kill on a gem this OS user runs, and not on a process it may not signal', async () => {
+  // On Windows the gems, and so the check, are inside WSL, and the stone names
+  // its machine by the WSL guest's hostname, which counts as this machine only
+  // once probed, as the process watcher does for the panel.
+  it('offers Kill on a gem this OS user runs, and not on a process that is no gem', async () => {
     if (needsWsl()) await refreshWslNetworkInfo();
     const { serial } = otherSession();
-    const row = rowFor(listStoneSessions(loginAs()), serial)!;
-    // Process 1 is init, which only root may signal.
+    const list = listStoneSessions(loginAs());
+    if (list.kind !== 'sessions') throw new Error(list.kind);
+    const row = rowFor(list, serial)!;
+    // Process 1 is init: only root may signal it, and it is no gem either way.
     const init = { ...row, gemPid: 1 };
 
-    expect(gemIsHere(row.host, session.login.gem_host, isThisMachine)).toBe(true);
-    // WSL on a CI runner can run as root, which may signal anything.
-    const root = wslExecSync('id -u').trim() === '0';
+    expect(gemIsHere(row.host, list.stoneHostname, isThisMachine)).toBe(true);
     expect(signalableGems([row, init], (command) => wslExecSync(command))).toEqual(
-      new Set(root ? [row.gemPid, 1] : [row.gemPid]),
+      new Set([row.gemPid]),
     );
   });
 

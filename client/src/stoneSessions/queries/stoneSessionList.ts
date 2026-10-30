@@ -8,15 +8,17 @@ export const NO_SESSION_ACCESS = 'noSessionAccess';
  * Every session on the stone except the one asking. One line per session,
  * tab-separated; the first line is the stone's clock, the commit-record
  * backlog, the stone's abort threshold, whether the login has SystemControl,
- * and the sessions holding the oldest commit record. A session that logs out
- * while the list is read answers a session number of 0 and is left out.
+ * the stone's hostname, and the sessions holding the oldest commit
+ * record. A session that logs out while the list is read answers a session
+ * number of 0 and is left out.
  */
 export function stoneSessionList(execute: QueryExecutor): string {
   return execute(
     '| out me noAccess | out := WriteStream on: String new. me := System session. ' +
       'noAccess := false. out print: System timeGmt; tab; print: System commitRecordBacklog; tab; ' +
       'print: (System stoneConfigurationAt: #StnSignalAbortCrBacklog); tab; ' +
-      'print: (System myUserProfile privileges includes: #SystemControl); tab. ' +
+      'print: (System myUserProfile privileges includes: #SystemControl); tab; ' +
+      "nextPutAll: ((System stoneVersionAt: #nodeName) ifNil: ['']); tab. " +
       'System sessionsReferencingOldestCr do: [:id | out print: id] separatedBy: [out space]. ' +
       'System currentSessions do: [:id | | d | id = me ifFalse: [' +
       'd := [System descriptionOfSession: id] on: Error do: [:e | ' +
