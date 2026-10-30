@@ -648,11 +648,17 @@ describe('signalableGems', () => {
 
     // It runs inside a list read, so a hung shell (wsl.exe) must not hold the window.
     expect(shell).toHaveBeenCalledWith(
-      'for p in 100 200; do kill -0 $p 2>/dev/null && ' +
-        'echo "$p $(ps -p $p -o command= 2>/dev/null)"; done; true',
+      'for p in 100 200; do kill -0 $p 2>/dev/null && ps -o pid=,command= -p $p; done; true',
       KILL_CHECK_TIMEOUT_MS,
     );
     expect(signalable).toEqual(new Set([100]));
+  });
+
+  // On Windows the command reaches WSL inside cmd.exe's double-quoted `sh -c "…"`.
+  it('sends a command with no double quote in it', () => {
+    const shell = vi.fn((_command: string, _timeoutMs: number) => '');
+    signalableGems([gem({ gemPid: 100 })], shell);
+    expect(shell.mock.calls[0][0]).not.toContain('"');
   });
 
   // A linked session's process is topaz itself, which Kill refuses.

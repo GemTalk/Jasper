@@ -129,14 +129,16 @@ export function signalableGems(
   const pids = sessions.filter((s) => !s.systemGem).map((s) => s.gemPid);
   if (pids.length === 0) return new Set();
   try {
+    // No double quotes: on Windows the command reaches WSL inside cmd.exe's
+    // double-quoted `sh -c "…"`, which an inner quote would end.
     const answer = shellSync(
       `for p in ${pids.join(' ')}; do kill -0 $p 2>/dev/null && ` +
-        'echo "$p $(ps -p $p -o command= 2>/dev/null)"; done; true',
+        'ps -o pid=,command= -p $p; done; true',
       KILL_CHECK_TIMEOUT_MS,
     );
     const gems = answer
       .split(/\r?\n/)
-      .map((line) => line.trim().match(/^(\d+) (.*)$/))
+      .map((line) => line.trim().match(/^(\d+)\s+(.*)$/))
       .filter((m): m is RegExpMatchArray => m !== null && isGemCommand(m[2]));
     return new Set(gems.map((m) => Number(m[1])));
   } catch (e) {
