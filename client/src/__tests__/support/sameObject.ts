@@ -11,6 +11,8 @@
  */
 export function sameObject(expected: unknown) {
   return {
+    // Without this tag, a failure prints the matcher's fields instead of its label.
+    $$typeof: Symbol.for('jest.asymmetricMatcher'),
     asymmetricMatch: (actual: unknown) => actual === expected,
     toAsymmetricMatcher: () => 'sameObject(<the expected instance>)',
   };

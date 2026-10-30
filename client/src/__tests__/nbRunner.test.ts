@@ -323,8 +323,8 @@ describe('runNbCall — one press is enough', () => {
       await expect(p).rejects.toBeInstanceOf(NbCancelledError);
 
       expect(gci.GciTsBreak.mock.calls).toEqual([
-        [handle, false],
-        [handle, false],
+        [sameObject(handle), false],
+        [sameObject(handle), false],
       ]);
       vi.clearAllTimers();
     } finally {

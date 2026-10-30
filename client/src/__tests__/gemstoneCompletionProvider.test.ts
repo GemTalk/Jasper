@@ -152,11 +152,14 @@ describe('GemStoneCompletionProvider', () => {
       const labels = () =>
         provider.provideCompletionItems(makeDocument('file:///test.tpz')).map((i) => i.label);
 
-      expect(labels()).toEqual(['Array']);
+      const first = labels();
       vi.mocked(sessions.manager.getSelectedSession).mockReturnValue(
         sessions.manager.getSession(2),
       );
-      expect(labels()).toEqual(['Bag']);
+      const second = labels();
+
+      expect(first).toEqual(['Array']);
+      expect(second).toEqual(['Bag']);
     });
   });
 
