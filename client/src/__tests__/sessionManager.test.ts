@@ -883,7 +883,7 @@ describe('SessionManager', () => {
 
       expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
         expect.stringMatching(
-          /^Session \d+ is logged out, but its run .* still running on the server\. .*SessionAccess privilege.*System stopSession: 42$/,
+          /^Session \d+ is logged out, but its run .* still running on the server\. .*SessionAccess and SystemControl privileges.*System stopSession: 42$/,
         ),
       );
       expect(manager.getSession(session.id)).toBeUndefined();

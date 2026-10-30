@@ -31,6 +31,9 @@ export interface WslNetworkInfo {
   /** First IPv4 address reported by `hostname -I` inside the default distro,
    *  or undefined if the probe failed. Unstable across `wsl --shutdown`. */
   ip: string | undefined;
+  /** The default distro's `hostname`, as a stone running there names its own
+   *  machine; undefined if the probe failed. */
+  hostname?: string;
   /** Best host string to use in a GemStone login when reaching a service
    *  inside WSL: `'localhost'` under mirrored mode, otherwise the WSL IP.
    *  Undefined only when both checks failed. */
@@ -246,6 +249,18 @@ export async function getWslIpAddressAsync(): Promise<string | undefined> {
   return undefined;
 }
 
+/** Probe `hostname` inside the default WSL distro, or undefined if the probe fails. */
+export async function getWslHostnameAsync(): Promise<string | undefined> {
+  if (!(await isWslInstalledAsync())) return undefined;
+  const stdout = await new Promise<string | undefined>((resolve) => {
+    exec('wsl.exe -e hostname', { timeout: 10000, encoding: 'utf-8' }, (err, out) => {
+      if (err) resolve(undefined);
+      else resolve(String(out));
+    });
+  });
+  return stdout?.replace(/\0/g, '').trim() || undefined;
+}
+
 /**
  * Parse the output of `wsl --version`. Returns the core package version
  * (e.g. `"2.0.9.0"`) or undefined when the header line is missing.
@@ -302,14 +317,16 @@ export async function refreshWslNetworkInfo(): Promise<WslNetworkInfo> {
     return cachedWslNetworkInfo;
   }
   const mirrored = readWslConfigMirrored();
-  const [ip, wslCoreVersion] = await Promise.all([
+  const [ip, wslCoreVersion, hostname] = await Promise.all([
     mirrored ? Promise.resolve(undefined) : getWslIpAddressAsync(),
     getWslCoreVersionAsync(),
+    getWslHostnameAsync(),
   ]);
   const netldiHost = mirrored ? 'localhost' : ip;
   cachedWslNetworkInfo = {
     mirrored,
     ip,
+    hostname,
     netldiHost,
     wslCoreVersion,
     supportsMirrored: isMirroredCapable(wslCoreVersion),

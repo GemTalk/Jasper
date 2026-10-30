@@ -2,6 +2,7 @@ import type { ActiveSession } from './activeSession';
 import { GciLibraryError } from './gciLibraryError';
 import { logInfo } from './gciLog';
 import { isRunning, stoppedRunHolds } from './nbRunner';
+import { stopSessionOfLogin } from './queries/sessionOfLogin';
 
 /** The error a session raises when another session signals it (`InterSessionSignal`). */
 export const SESSION_SIGNAL_ERROR = 6010;
@@ -81,6 +82,11 @@ export function serverSessionOf(sessionId: number): string | undefined {
   return serverSessions.get(sessionId);
 }
 
+/** The serial number of an armed session's login. */
+export function loginSerialOf(sessionId: number): string | undefined {
+  return loginSerials.get(sessionId);
+}
+
 /** Forget a session that has logged out. */
 export function forgetForceStop(sessionId: number): void {
   serverSessions.delete(sessionId);
@@ -107,14 +113,29 @@ export async function forceStop(session: ActiveSession, deps: ForceStopDeps): Pr
   if (!stoppedRunHolds(session)) return true;
   sendStopSignal(session, serverSession, deps);
 
-  const deadline = Date.now() + FORCE_STOP_WAIT_MS;
-  while (stoppedRunHolds(session)) {
-    if (Date.now() >= deadline) return false;
-    await new Promise((resolve) => setTimeout(resolve, FORCE_STOP_POLL_MS));
-  }
+  const free = await pollUntil(
+    () => !stoppedRunHolds(session),
+    FORCE_STOP_WAIT_MS,
+    FORCE_STOP_POLL_MS,
+  );
+  if (!free) return false;
   // A run started in the meantime holds the session: re-arming then waits for the
   // next stopped run to be collected.
   if (!isRunning(session)) rearmAfterForceStop(session);
+  return true;
+}
+
+/** Whether `done` turns true within `timeoutMs`, asked every `everyMs`. */
+export async function pollUntil(
+  done: () => boolean,
+  timeoutMs: number,
+  everyMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (!done()) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, everyMs));
+  }
   return true;
 }
 
@@ -136,14 +157,11 @@ export function sendStopSignal(
   logInfo(`[Session ${session.id}] Force Stop signal sent.`);
 }
 
-/** The error GemStone raises for an operation that needs a privilege the user lacks. */
-export const NO_PRIVILEGE_ERROR = 2151;
-
 /**
  * End `serverSession`'s gem from a short-lived login of `from`'s, which may
  * already be logged out: the last resort for a run that caught Force Stop, whose
- * gem a logout leaves running. Needs the SessionAccess privilege
- * ({@link NO_PRIVILEGE_ERROR} otherwise).
+ * gem a logout leaves running. Needs the SessionAccess and SystemControl
+ * privileges (`NO_PRIVILEGE_ERROR` otherwise).
  *
  * Ends it only while the session number still belongs to `from`'s login: once
  * the gem has gone, the number can already be another login's. Force Stop's
@@ -160,18 +178,18 @@ export function endServerSession(
     throw new Error(`Session ${from.id}'s login is not known, so its gem can't be told apart.`);
   }
   const sender = deps.loginTransient(from);
-  let ended: string;
+  let ended: boolean;
   try {
-    ended = sender.session.executeAndFetchString(
-      `| now | now := (System descriptionOfSessionSerialNum: ${serial}) at: 10. ` +
-        `now = ${serverSession} ifTrue: [System stopSession: now]. ` +
-        `(now = ${serverSession}) printString`,
+    ended = stopSessionOfLogin(
+      (code) => sender.session.executeAndFetchString(code),
+      serverSession,
+      serial,
     );
   } finally {
     sender.logout();
   }
   logInfo(
-    ended === 'true'
+    ended
       ? `[Session ${from.id}] Ended its server session ${serverSession}.`
       : `[Session ${from.id}] Its server session ${serverSession} had already ended.`,
   );

@@ -239,6 +239,16 @@ describe('refreshWslNetworkInfo', () => {
     });
   });
 
+  it("reports the distro's hostname, in either networking mode", async () => {
+    setPlatform('win32');
+    vi.mocked(fs.readFileSync).mockReturnValue('[wsl2]\nnetworkingMode=mirrored\n');
+    mockExecByCommand([
+      { match: /-e hostname$/, stdout: 'dev-distro\n' },
+      { match: /--version/, stdout: 'WSL version: 2.0.9.0\n' },
+    ]);
+    expect((await refreshWslNetworkInfo()).hostname).toBe('dev-distro');
+  });
+
   it('on older WSL where --version errors, reports supportsMirrored=false', async () => {
     setPlatform('win32');
     vi.mocked(fs.readFileSync).mockReturnValue('[wsl2]\n');
