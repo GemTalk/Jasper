@@ -2255,7 +2255,7 @@ describe('ProcessManager', () => {
 
       const error = await failedStart();
 
-      expect(error.message).toContain('lsof');
+      expect(error.message).toContain('/proc/[0-9]*/fd');
       expect(error.message).toContain('open by another process');
     });
 
@@ -2320,15 +2320,14 @@ describe('ProcessManager', () => {
 
       const holders = await new ProcessManager(makeStorage()).findExtentHolders(db());
 
-      expect(holders.map((h) => h.pid)).toEqual([111, 222]);
-      expect(holders[0].command).toBe('/gs/sys/gem TCP 5');
+      expect(holders?.map((h) => h.pid)).toEqual([111, 222]);
+      expect(holders?.[0].command).toBe('/gs/sys/gem TCP 5');
       expect(scanCommands()[0]).toContain(nodePath.join(dbDir, 'data', 'extent0.dbf'));
     });
 
     it('runs neither fuser nor lsof on Linux', async () => {
-      // Both check every mount, and an unresponsive network mount hangs them.
-      // The timeout ended the shell around them but not the tool itself, so
-      // each check left one more stuck process behind.
+      // Both check every mount, and an unresponsive network mount hangs them;
+      // a timeout through a shell ends only the shell, leaving the tool stuck.
       probe((cmd) => (cmd.includes('/proc/') ? scanFinding(111) : ''));
 
       await new ProcessManager(makeStorage()).findExtentHolders(db());
@@ -2375,16 +2374,25 @@ describe('ProcessManager', () => {
       expect(scanCommands()[0]).not.toContain('wsl$');
     });
 
-    it('reports nothing when the scan fails, rather than throwing', async () => {
+    it('says it could not check when the scan could open no extent', async () => {
+      // The script prints nothing at all then; "nobody" would let Stop go ahead.
+      probe(() => '');
+
+      expect(await new ProcessManager(makeStorage()).findExtentHolders(db())).toBeUndefined();
+    });
+
+    it('says it could not check when the scan fails, rather than throwing', async () => {
+      // Not an empty list: that reads as "nothing attached", and Stop would go
+      // ahead without asking.
       probe(() => {
         throw new Error('sh: cannot fork');
       });
 
-      expect(await new ProcessManager(makeStorage()).findExtentHolders(db())).toEqual([]);
+      expect(await new ProcessManager(makeStorage()).findExtentHolders(db())).toBeUndefined();
     });
 
     it('finds nothing when nothing holds the extents', async () => {
-      probe(() => '');
+      probe((cmd) => (cmd.includes('/proc/') ? scanFinding() : ''));
 
       expect(await new ProcessManager(makeStorage()).findExtentHolders(db())).toEqual([]);
     });
@@ -2441,7 +2449,7 @@ describe('ProcessManager', () => {
 
         const holders = await new ProcessManager(makeStorage()).findExtentHolders(db());
 
-        expect(holders.map((h) => h.pid)).toEqual([333]);
+        expect(holders?.map((h) => h.pid)).toEqual([333]);
         const [file, args, options] = vi.mocked(execFile).mock.calls[0] as unknown as [
           string,
           string[],
@@ -2449,6 +2457,9 @@ describe('ProcessManager', () => {
         ];
         expect(file).toBe('lsof');
         expect(args).toContain('-t');
+        // Without -O, lsof makes its risky calls in a child process, which the
+        // timeout's SIGKILL to lsof does not reach.
+        expect(args).toContain('-O');
         expect(args).toContain(nodePath.join(dbDir, 'data', 'extent0.dbf'));
         expect(options.timeout).toBeGreaterThan(0);
         expect(options.killSignal).toBe('SIGKILL');
@@ -2487,12 +2498,30 @@ describe('ProcessManager', () => {
         expect(holders).toEqual([{ pid: 777, command: '' }]);
       });
 
-      it('reports nothing when lsof is missing or timed out, rather than throwing', async () => {
+      it('gives up on an lsof that has not exited even after its timeout', async () => {
+        // execFile reports only once lsof has exited. A process waiting in the
+        // kernel on a hard NFS mount may not die even on SIGKILL until the mount
+        // answers, and the stop would wait on it for ever.
+        vi.useFakeTimers();
+        try {
+          vi.mocked(execFile).mockImplementation(() => ({}) as ReturnType<typeof execFile>);
+          probe(() => '');
+
+          const holders = new ProcessManager(makeStorage()).findExtentHolders(db());
+          await vi.advanceTimersByTimeAsync(60_000);
+
+          expect(await holders).toBeUndefined();
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('says it could not check when lsof is missing or timed out, rather than throwing', async () => {
         lsofAnswers(Object.assign(new Error('spawn lsof ENOENT'), { code: 'ENOENT' }), '');
-        expect(await new ProcessManager(makeStorage()).findExtentHolders(db())).toEqual([]);
+        expect(await new ProcessManager(makeStorage()).findExtentHolders(db())).toBeUndefined();
 
         lsofAnswers(Object.assign(new Error('timed out'), { killed: true, code: null }), '');
-        expect(await new ProcessManager(makeStorage()).findExtentHolders(db())).toEqual([]);
+        expect(await new ProcessManager(makeStorage()).findExtentHolders(db())).toBeUndefined();
       });
     });
   });

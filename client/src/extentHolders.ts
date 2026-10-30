@@ -15,6 +15,8 @@
 
 import { execFile } from 'child_process';
 
+import { shellQuote } from './shellQuote';
+
 /** A process holding one of a database's files open. */
 export interface ExtentHolder {
   pid: number;
@@ -39,10 +41,6 @@ export function parseHolderPids(output: string): number[] {
   return [...new Set(pids)];
 }
 
-function shellQuote(text: string): string {
-  return `'${text.replace(/'/g, `'\\''`)}'`;
-}
-
 /**
  * A shell script that lists the processes holding any of `extents` open, from
  * `/proc` alone. For Linux, and for Windows, whose servers run inside WSL.
@@ -55,33 +53,62 @@ function shellQuote(text: string): string {
  * Matched by device and inode, not by path: one disk can be mounted twice (a
  * bind mount), and a gem that opened the extent through the other path would
  * be missed by a path comparison. A `fdinfo` gives the inode and a mount id,
- * and `mountinfo` turns the mount id into a device. Kernels before Linux 5.14
- * have no `ino:` in `fdinfo`, and there the script runs `stat` on just the
- * descriptors whose name matched; that does touch their mount, so on those
- * kernels a same-named file held on a dead mount can still stall the scan.
+ * and `mountinfo` turns the mount id into a device. Mount ids are unique
+ * system-wide, but each mount namespace's `mountinfo` lists only its own, so
+ * for a holder in a container the script reads that holder's `mountinfo` too.
+ * The extent is identified the same way, by opening it read-only for a moment
+ * and reading the script's own `fdinfo`: `stat` would name a btrfs subvolume's
+ * own device, which `mountinfo` never shows, and nothing would ever match.
  *
- * Without root it sees only the user's own processes, as `fuser` did.
+ * Only descriptors whose link ends in an extent's name, or in the name of the
+ * file it is a symlink to, are looked at; reading every descriptor's `fdinfo`
+ * measured 1.3 s against 0.05 s. Kernels before Linux 5.14 have no `ino:` in
+ * `fdinfo`, and there both sides fall back to `stat`; that does touch the
+ * mount, so on those kernels a same-named file held on a dead mount can still
+ * stall the scan.
  *
- * Prints `E <st_dev> <ino>` per extent, `M <mount id> <major:minor>` per mount,
- * and `F <pid> m<mount id> <ino>` (or `F <pid> <st_dev> <ino>`) per candidate
- * descriptor; `parseProcHolders` reads it.
+ * Without root it sees only the user's own processes.
+ *
+ * Prints `E` per extent and `F <pid>` per candidate descriptor, each followed
+ * by `m<mount id> <ino>` (or `<st_dev> <ino>` from `stat`); a bare `U` for an
+ * extent that exists but cannot be opened; and `M <mount id> <major:minor>`
+ * per mount. `parseProcHolders` reads it.
  */
 export function procHoldersScript(extents: string[]): string {
-  const names = [...new Set(extents.map((e) => e.slice(e.lastIndexOf('/') + 1)))]
-    .map((name) => `-lname ${shellQuote(`*/${name.replace(/[[\]*?\\]/g, '\\$&')}`)}`)
-    .join(' -o ');
-  return [
-    `stat -L -c 'E %d %i' -- ${extents.map(shellQuote).join(' ')} 2>/dev/null`,
-    `while read -r id _ dev _; do echo "M $id $dev"; done < /proc/self/mountinfo`,
-    `find /proc/[0-9]*/fd -mindepth 1 -maxdepth 1 \\( ${names} \\) 2>/dev/null |`,
-    `while IFS= read -r fd; do`,
+  const readFdinfo = (file: string) => [
     `  mnt= ino=`,
     `  while IFS=': \t' read -r key value; do`,
     `    case $key in mnt_id) mnt=$value ;; ino) ino=$value ;; esac`,
-    `  done < "\${fd%/fd/*}/fdinfo/\${fd##*/}"`,
+    `  done < ${file}`,
+  ];
+  return [
+    // A failed `exec` redirect would otherwise end the script under dash.
+    `exec 2>/dev/null`,
+    // find's -lname takes a pattern; `[1]` in a name would match "1", not itself.
+    `glob() { printf '%s\\n' "$1" | sed 's/[][*?\\\\]/\\\\&/g'; }`,
+    `set --`,
+    `for e in ${extents.map(shellQuote).join(' ')}; do`,
+    `  command exec 9< "$e" || { [ -e "$e" ] && echo U; continue; }`,
+    ...readFdinfo(`/proc/$$/fdinfo/9`),
+    `  if [ -n "$ino" ]; then echo "E m$mnt $ino"`,
+    `  else echo "E $(stat -L -c '%d %i' "$e")"; fi`,
+    `  real=$(readlink /proc/$$/fd/9)`,
+    `  exec 9<&-`,
+    `  set -- "$@" -o -lname "*/$(glob "\${e##*/}")" -o -lname "*/$(glob "\${real##*/}")"`,
+    `done`,
+    `[ $# -gt 0 ] || exit 0`,
+    `shift`,
+    `known=' '`,
+    `while read -r id _ dev _; do echo "M $id $dev"; known="$known$id "; done < /proc/self/mountinfo`,
+    `find /proc/[0-9]*/fd -mindepth 1 -maxdepth 1 \\( "$@" \\) |`,
+    `while IFS= read -r fd; do`,
+    ...readFdinfo(`"\${fd%/fd/*}/fdinfo/\${fd##*/}"`),
     `  pid=\${fd#/proc/}; pid=\${pid%%/*}`,
+    `  case $known in *" $mnt "*) ;; *)`,
+    `    while read -r id _ dev _; do echo "M $id $dev"; known="$known$id "; done < /proc/$pid/mountinfo`,
+    `  esac`,
     `  if [ -n "$ino" ]; then echo "F $pid m$mnt $ino"`,
-    `  else echo "F $pid $(stat -L -c '%d %i' "$fd" 2>/dev/null)"; fi`,
+    `  else echo "F $pid $(stat -L -c '%d %i' "$fd")"; fi`,
     `done`,
   ].join('\n');
 }
@@ -95,37 +122,54 @@ function deviceName(stDev: string): string {
   return `${major}:${minor}`;
 }
 
-/** The PIDs `procHoldersScript` found holding one of the extents. */
-export function parseProcHolders(output: string): number[] {
-  const extents = new Set<string>();
+/** The PIDs `procHoldersScript` found holding one of the extents, or undefined
+ *  when it could not identify every extent that exists (`U`: one could not be
+ *  opened), since who holds that one is then unknown. */
+export function parseProcHolders(output: string): number[] | undefined {
+  const extents: { where: string; ino: string }[] = [];
   const mounts = new Map<string, string>();
   const descriptors: { pid: number; where: string; ino: string }[] = [];
   for (const line of output.split('\n')) {
     const [kind, a, b, c] = line.trim().split(/\s+/);
-    if (kind === 'E' && /^\d+$/.test(a ?? '') && b) extents.add(`${deviceName(a)} ${b}`);
+    if (kind === 'E' && b) extents.push({ where: a, ino: b });
+    else if (kind === 'U') return undefined;
     else if (kind === 'M' && b) mounts.set(a, b);
     else if (kind === 'F' && c) descriptors.push({ pid: Number(a), where: b, ino: c });
   }
+  const identity = ({ where, ino }: { where: string; ino: string }) => {
+    const device = where.startsWith('m')
+      ? mounts.get(where.slice(1))
+      : /^\d+$/.test(where)
+        ? deviceName(where)
+        : undefined;
+    return device === undefined ? undefined : `${device} ${ino}`;
+  };
+  if (extents.length === 0) return undefined;
+  const held = new Set(extents.map(identity).filter((id) => id !== undefined));
   const pids = descriptors
-    .filter(({ where, ino }) => {
-      const device = where.startsWith('m')
-        ? mounts.get(where.slice(1))
-        : /^\d+$/.test(where)
-          ? deviceName(where)
-          : undefined;
-      return device !== undefined && extents.has(`${device} ${ino}`);
+    .filter((d) => {
+      const id = identity(d);
+      return id !== undefined && held.has(id);
     })
     .map(({ pid }) => pid);
   return [...new Set(pids)];
 }
+
+/** How long past its own timeout `lsofHolderPids` waits for `lsof` to exit. */
+const LSOF_EXIT_GRACE_MS = 1_000;
 
 /**
  * The PIDs holding any of `extents` open, from `lsof`. For macOS, which has no
  * `/proc`.
  *
  * Run directly, not through a shell, so the timeout ends `lsof` itself; with a
- * shell in between it ends only the shell. SIGKILL is what ended the stuck
- * `fuser` processes this replaced.
+ * shell in between it ends only the shell. `-O` keeps `lsof` from making its
+ * risky calls in a child process, which the timeout would not reach either.
+ * SIGKILL, because it cannot be caught or ignored.
+ *
+ * `execFile` reports only once `lsof` has exited, and a process waiting in the
+ * kernel on a hard NFS mount may not die even on SIGKILL until the mount
+ * answers; a second timer gives up on it regardless.
  *
  * `lsof` exits 1 when nothing is open, and also when only some of the named
  * files are, after printing their holders; either way its stdout is the
@@ -133,11 +177,16 @@ export function parseProcHolders(output: string): number[] {
  */
 export function lsofHolderPids(extents: string[], timeoutMs: number): Promise<number[]> {
   return new Promise((resolve, reject) => {
+    const deadline = setTimeout(
+      () => reject(new Error(`lsof did not exit within ${timeoutMs + LSOF_EXIT_GRACE_MS} ms`)),
+      timeoutMs + LSOF_EXIT_GRACE_MS,
+    );
     execFile(
       'lsof',
-      ['-n', '-P', '-w', '-t', '--', ...extents],
+      ['-n', '-P', '-w', '-O', '-t', '--', ...extents],
       { encoding: 'utf-8', timeout: timeoutMs, killSignal: 'SIGKILL' },
       (error, stdout) => {
+        clearTimeout(deadline);
         if (error && typeof error.code !== 'number') reject(error);
         else resolve(parseHolderPids(stdout));
       },
@@ -202,11 +251,16 @@ export function describeHolder(holder: ExtentHolder): string {
  * Whether a gem is safe to signal depends on what is inside it — an orphan of a
  * stone that died an hour ago is one thing, a colleague's live topaz quite
  * another — and that is the user's call, not Jasper's.
+ *
+ * The by-hand command for Linux reads `/proc` rather than running `lsof`: an
+ * empty scan can mean a dead mount, and `lsof` would hang the user's terminal
+ * on it the same way.
  */
 export function explainExtentLocked(
   stoneName: string,
   output: string,
   holders: ExtentHolder[],
+  platform: NodeJS.Platform = process.platform,
 ): string | undefined {
   if (!isExtentLocked(output)) return undefined;
 
@@ -215,7 +269,10 @@ export function explainExtentLocked(
   if (holders.length === 0) {
     return (
       `${preamble}Jasper could not determine which process holds it. To find it by hand:\n\n` +
-      `    lsof <database>/data/extent0.dbf\n\n` +
+      (platform === 'darwin'
+        ? `    lsof <database>/data/extent0.dbf\n\n`
+        : `    find /proc/[0-9]*/fd -lname '<database>/data/extent0.dbf' 2>/dev/null\n\n` +
+          `  (each line is /proc/<process id>/fd/…)\n\n`) +
       `The usual cause is a gem left over from a stone that was force-stopped: it survives ` +
       `its stone and keeps the extent open. Such a gem cannot commit anything — its stone is ` +
       `gone — so ending it loses nothing, but check the command line before you do.\n\n` +

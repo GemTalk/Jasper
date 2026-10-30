@@ -4,6 +4,7 @@ import {
   bringUpDatabase,
   takeDownDatabase,
   clearSessionsForStop,
+  goAheadWithStop,
   ServerTarget,
 } from '../databaseLifecycle';
 import { ExtentHolder } from '../../extentHolders';
@@ -146,7 +147,7 @@ describe('clearSessionsForStop', () => {
   /** A clock and a probe under the test's control: `probes` is what each
    *  successive look at the extents returns, so a gem "exiting" is just the
    *  next entry having one fewer holder. */
-  function deps(reaped: number, probes: ExtentHolder[][]) {
+  function deps(reaped: number, probes: (ExtentHolder[] | undefined)[]) {
     let clock = 0;
     let i = 0;
     return {
@@ -170,7 +171,7 @@ describe('clearSessionsForStop', () => {
 
     const holders = await clearSessionsForStop(d, OPTS);
 
-    expect(holders.map((h) => h.pid)).toEqual([111]);
+    expect(holders?.map((h) => h.pid)).toEqual([111]);
     expect(d.wait).not.toHaveBeenCalled();
     expect(d.attachedHolders).toHaveBeenCalledTimes(1);
   });
@@ -191,7 +192,7 @@ describe('clearSessionsForStop', () => {
 
     const holders = await clearSessionsForStop(d, OPTS);
 
-    expect(holders.map((h) => h.pid)).toEqual([111]);
+    expect(holders?.map((h) => h.pid)).toEqual([111]);
     expect(d.wait).toHaveBeenCalledTimes(1);
   });
 
@@ -206,7 +207,7 @@ describe('clearSessionsForStop', () => {
 
     const holders = await clearSessionsForStop(d, OPTS);
 
-    expect(holders.map((h) => h.pid).sort()).toEqual([111, 222]);
+    expect(holders?.map((h) => h.pid).sort()).toEqual([111, 222]);
     expect(d.wait).toHaveBeenCalledTimes(1);
   });
 
@@ -241,6 +242,21 @@ describe('clearSessionsForStop', () => {
     expect(d.wait.mock.calls.length).toBe(OPTS.timeoutMs / OPTS.pollMs);
   });
 
+  it('says it could not check when the look at the extents fails', async () => {
+    // An empty list would read as "nothing attached", and the stop would go
+    // ahead on top of gems nobody saw.
+    const d = deps(0, [undefined]);
+
+    expect(await clearSessionsForStop(d, OPTS)).toBeUndefined();
+  });
+
+  it('says it could not check when a later look fails while gems were leaving', async () => {
+    // The first look saw a gem; whether it has gone since is unknown.
+    const d = deps(1, [[holder(111)], undefined]);
+
+    expect(await clearSessionsForStop(d, OPTS)).toBeUndefined();
+  });
+
   it('logs out before it looks, never the other way round', async () => {
     // Probing first would see Jasper's own gems and report them as foreign.
     const order: string[] = [];
@@ -260,5 +276,38 @@ describe('clearSessionsForStop', () => {
     await clearSessionsForStop(d, OPTS);
 
     expect(order).toEqual(['reap', 'probe']);
+  });
+});
+
+describe('goAheadWithStop', () => {
+  const ask = () => ({
+    holders: vi.fn(async () => true),
+    unchecked: vi.fn(async () => true),
+  });
+
+  it('goes ahead without asking when nothing is attached', async () => {
+    const a = ask();
+
+    expect(await goAheadWithStop([], a)).toBe(true);
+    expect(a.holders).not.toHaveBeenCalled();
+    expect(a.unchecked).not.toHaveBeenCalled();
+  });
+
+  it('asks about the processes still attached', async () => {
+    const a = ask();
+    a.holders.mockResolvedValue(false);
+    const attached = [{ pid: 111, command: '/gs/sys/gem TCP 5' }];
+
+    expect(await goAheadWithStop(attached, a)).toBe(false);
+    expect(a.holders).toHaveBeenCalledWith(attached);
+  });
+
+  it('asks, rather than going ahead, when Jasper could not check', async () => {
+    const a = ask();
+    a.unchecked.mockResolvedValue(false);
+
+    expect(await goAheadWithStop(undefined, a)).toBe(false);
+    expect(a.unchecked).toHaveBeenCalled();
+    expect(a.holders).not.toHaveBeenCalled();
   });
 });

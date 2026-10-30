@@ -119,13 +119,37 @@ describe('parseProcHolders', () => {
   });
 
   it('skips a descriptor whose process exited mid-scan', () => {
-    // Its fdinfo is gone by the time it is read, so the line carries no identity.
-    expect(parseProcHolders(`${BIND_MOUNTED}\nF 777 m\nF 778 `)).toEqual([1313359]);
+    // Its fdinfo is gone by the time it is read, and so is the file stat would
+    // follow, so the line carries no identity.
+    expect(parseProcHolders(`${BIND_MOUNTED}\nF 778 `)).toEqual([1313359]);
   });
 
-  it('finds nothing when the extents could not be identified', () => {
-    // No `E` line means stat failed on every extent; nothing can match.
-    expect(parseProcHolders('M 131 253:4\nF 1313359 m131 41028871')).toEqual([]);
+  it('identifies the extent through mountinfo too, as it does a holder', () => {
+    // On btrfs, stat reports a subvolume's own device, which mountinfo never
+    // shows; an extent identified by stat and holders by mountinfo would never
+    // match. The script opens the extent and reads its own fdinfo, so both
+    // sides name their device the same way.
+    expect(
+      parseProcHolders('E m1224 41028871\nM 131 253:4\nM 1224 253:4\nF 77 m131 41028871'),
+    ).toEqual([77]);
+  });
+
+  it('says it could not check when no extent could be identified', () => {
+    // No `E` line means the script could open no extent, say one the user may
+    // not read. That is not "nobody holds it": fuser, which only stats the
+    // path, would still have found a holder.
+    expect(parseProcHolders('M 131 253:4\nF 1313359 m131 41028871')).toBeUndefined();
+    expect(parseProcHolders('')).toBeUndefined();
+  });
+
+  it('says it could not check when any one extent could not be opened', () => {
+    // A database has several extents; identifying extent0 says nothing about
+    // who holds an unreadable extent1.
+    expect(parseProcHolders('E m131 41028871\nU\nM 131 253:4')).toBeUndefined();
+  });
+
+  it('finds nothing, rather than not knowing, when an identified extent has no holder', () => {
+    expect(parseProcHolders('E m131 41028871\nM 131 253:4')).toEqual([]);
   });
 
   it('decodes a device number with a minor above 255', () => {
@@ -142,17 +166,6 @@ describe('procHoldersScript', () => {
 
     expect(script).toContain(`'/db'\\''s/data/extent0.dbf'`);
     expect(script).toContain(`'/db 2/data/extent1.dbf'`);
-  });
-
-  it('narrows the scan to descriptors named like one of the extents', () => {
-    const script = procHoldersScript(['/db/data/extent0.dbf', '/db/data/extent1.dbf']);
-
-    expect(script).toContain(`-lname '*/extent0.dbf'`);
-    expect(script).toContain(`-lname '*/extent1.dbf'`);
-  });
-
-  it('escapes glob characters in an extent name', () => {
-    expect(procHoldersScript(['/db/data/extent[1].dbf'])).toContain(`-lname '*/extent\\[1\\].dbf'`);
   });
 
   it('runs neither fuser nor lsof, which hang on an unresponsive mount', () => {
@@ -280,10 +293,22 @@ describe('explainExtentLocked', () => {
   });
 
   it('tells the user how to look when it could not name the holder', () => {
-    const text = explainExtentLocked('gs64stone', FAILURE, [])!;
+    const text = explainExtentLocked('gs64stone', FAILURE, [], 'linux')!;
+
+    expect(text).toContain('/proc/[0-9]*/fd');
+    expect(text).toContain(FAILURE);
+  });
+
+  it('never suggests lsof on Linux, where a dead mount hangs it as it hung Jasper', () => {
+    // The scan coming back empty can be the very sign of a dead mount.
+    expect(explainExtentLocked('gs64stone', FAILURE, [], 'linux')).not.toContain('lsof');
+  });
+
+  it('suggests lsof on macOS, which has no /proc', () => {
+    const text = explainExtentLocked('gs64stone', FAILURE, [], 'darwin')!;
 
     expect(text).toContain('lsof');
-    expect(text).toContain(FAILURE);
+    expect(text).not.toContain('/proc');
   });
 
   it('keeps GemStone’s own output, so nothing is hidden', () => {

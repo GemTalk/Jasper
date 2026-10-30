@@ -16,6 +16,7 @@ import {
   explainExtentLocked,
 } from '../extentHolders';
 import { wslReaddirSync } from '../wslFs';
+import { shellQuote } from '../shellQuote';
 import { versionsMatch } from './versionMatch';
 import { isRegisteredDatabase, registeredPaths, versionMismatchNote } from './registeredDatabase';
 import {
@@ -171,18 +172,12 @@ export function parseGslist(output: string): GemStoneProcess[] {
   return processes;
 }
 
-/** Wrap a value in single quotes, escaping any single quotes it contains,
- *  so it survives verbatim through a POSIX shell. */
-export function shellSingleQuote(v: string): string {
-  return `'${v.split("'").join(`'\\''`)}'`;
-}
-
 /** Shell `export` statements for an environment, single-quote escaped.
  *  Used both to seed a WSL terminal and to re-assert Jasper's values in a
  *  native one after the user's startup files have had their turn. */
 export function exportCommand(env: Record<string, string>): string {
   return Object.entries(env)
-    .map(([k, v]) => `export ${k}=${shellSingleQuote(v)}`)
+    .map(([k, v]) => `export ${k}=${shellQuote(v)}`)
     .join('; ');
 }
 
@@ -972,7 +967,7 @@ export class ProcessManager {
       const explained = explainExtentLocked(
         db.config.stoneName,
         output,
-        await this.findExtentHolders(db),
+        (await this.findExtentHolders(db)) ?? [],
       );
       throw explained ? new Error(explained) : e;
     }
@@ -1004,8 +999,8 @@ export class ProcessManager {
    * Linux, and Windows through WSL, read `/proc` (`procHoldersScript`), which
    * does not wait on an unresponsive mount the way `fuser` and `lsof` do. macOS
    * has no `/proc` and runs `lsof` directly, so its timeout ends it
-   * (`lsofHolderPids`). A probe that fails or times out is not an error; it
-   * means Jasper cannot name the holder and says so.
+   * (`lsofHolderPids`). A probe that fails or times out answers undefined, not
+   * an empty list: "nobody holds it" would let a stop go ahead unasked.
    *
    * Asynchronous throughout: run on the extension host's event loop, even a
    * quick probe stalls every other extension, and the stop path can repeat it
@@ -1022,7 +1017,7 @@ export class ProcessManager {
    * four live processes on it would have Jasper stop a stone on top of its own
    * gems — the exact failure this exists to prevent.
    */
-  async findExtentHolders(db: GemStoneDatabase): Promise<ExtentHolder[]> {
+  async findExtentHolders(db: GemStoneDatabase): Promise<ExtentHolder[] | undefined> {
     const dataDir = path.join(db.path, 'data');
     let extents: string[];
     try {
@@ -1030,11 +1025,11 @@ export class ProcessManager {
         .filter((f) => /^extent.*\.dbf$/i.test(f))
         .map((f) => path.join(dataDir, f));
     } catch {
-      return [];
+      return undefined;
     }
     if (extents.length === 0) return [];
 
-    let pids: number[];
+    let pids: number[] | undefined;
     try {
       pids =
         process.platform === 'darwin'
@@ -1047,8 +1042,9 @@ export class ProcessManager {
               ),
             );
     } catch {
-      return [];
+      return undefined;
     }
+    if (pids === undefined) return undefined;
     if (pids.length === 0) return [];
 
     let detailed: ExtentHolder[] = [];
@@ -1309,10 +1305,7 @@ export class ProcessManager {
       // of the user's PATH intact.
       const { PATH, ...gsEnv } = env;
       const gsBin = PATH.split(':')[0];
-      terminal.sendText(
-        `${exportCommand(gsEnv)}; export PATH=${shellSingleQuote(gsBin)}:"$PATH"`,
-        true,
-      );
+      terminal.sendText(`${exportCommand(gsEnv)}; export PATH=${shellQuote(gsBin)}:"$PATH"`, true);
       if (prepared) terminal.sendText(prepared, false);
     }
   }
