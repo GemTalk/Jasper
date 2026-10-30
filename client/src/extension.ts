@@ -87,8 +87,17 @@ import {
   setRunInProgressHandler,
   setStillRunningHandler,
   setStoppedRunCollectedHandler,
+  stoppedRunHolds,
 } from './nbRunner';
-import { forceStop, rearmAfterForceStop } from './forceStop';
+import { forceStop, loginSerialOf, rearmAfterForceStop } from './forceStop';
+import {
+  signalableGems,
+  killStoneSession,
+  listStoneSessions,
+  stopStoneSession,
+} from './stoneSessions/stoneSessions';
+import { StoneSessions } from './stoneSessions/stoneSessionsView';
+import { isThisMachine } from './thisMachine';
 import { showRunInProgress, showStillRunning } from './stillRunningNotice';
 import { RowanRepoRegistry } from './rowanRepos';
 import {
@@ -262,6 +271,8 @@ import {
   invalidateWslCache,
   getWslNetworkInfoCached,
   refreshWslNetworkInfo,
+  wslExec,
+  wslExecSync,
 } from './wslBridge';
 import { isWslInstalledAsync } from './wslInstall';
 import { recheckWsl } from './wslRecheck';
@@ -938,7 +949,25 @@ export function activate(context: vscode.ExtensionContext) {
   // SessionManager is created early so the Logins panel can mark the connected
   // login row (and swap its inline Login action for Logout) in single-session mode.
   sessionManager = new SessionManager();
+  // Every stone's session list, shown in the Databases & Versions panel.
+  const stoneSessions = new StoneSessions({
+    read: (through) => listStoneSessions(transientLoginOn(through)),
+    signalableGems: (sessions) =>
+      signalableGems(sessions, (command, timeout) => wslExecSync(command, undefined, { timeout })),
+    isThisMachine,
+    stuck: stoppedRunHolds,
+    loginSerialOf,
+    transientLogin: (through) => transientLoginOn(through),
+    stop: stopStoneSession,
+    kill: (target, login) => killStoneSession(target, login, (command) => wslExec(command)),
+    logout: (id) => sessionManager.logout(id, true),
+  });
+  function transientLoginOn(through: ActiveSession) {
+    return () => sessionManager.loginTransient(through.login, through);
+  }
   setStillRunningHandler((session) => {
+    // The session's row in the panel gains its flag.
+    DatabasesPanel.refreshIfOpen();
     void showStillRunning(session, {
       isRegistered: (id) => sessionManager.getSession(id) !== undefined,
       cleaningUp: clearHolds,
@@ -946,6 +975,7 @@ export function activate(context: vscode.ExtensionContext) {
         forceStop(s, { loginTransient: (from) => sessionManager.loginTransient(from.login, from) }),
       // Force Stop has just failed: the logout need not try it again.
       logout: (id) => sessionManager.logout(id, true),
+      showInSessions: (s) => DatabasesPanel.showStoneSession(databasesPanelDeps(), s.id),
     });
   });
   setRunInProgressHandler((session) => {
@@ -954,7 +984,11 @@ export function activate(context: vscode.ExtensionContext) {
       stop: cancelRunOn,
     });
   });
-  setStoppedRunCollectedHandler(rearmAfterForceStop);
+  setStoppedRunCollectedHandler((session) => {
+    rearmAfterForceStop(session);
+    // The session's row in the panel loses its flag.
+    DatabasesPanel.refreshIfOpen();
+  });
 
   // De-duplicates connect clicks: the blocking GciTsLogin freezes the extension
   // host while it runs, so extra clicks during a slow login queue up and replay
@@ -4643,6 +4677,7 @@ export function activate(context: vscode.ExtensionContext) {
       saveLogin: (login: GemStoneLogin) => storage.saveLogin(login),
       refreshAdminViews,
       sessionManager,
+      stoneSessions,
       onAdminChange: [
         databaseProvider.onDidChangeTreeData,
         processWatcher.onDidChange,
