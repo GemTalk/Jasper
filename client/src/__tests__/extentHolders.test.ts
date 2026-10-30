@@ -9,6 +9,8 @@ import {
   sessionHolders,
   explainExtentLocked,
   isExtentLocked,
+  extentsAmongOpenFiles,
+  procOpenFilesScript,
 } from '../extentHolders';
 
 // Captured verbatim from a running 3.7.6 database on Linux, so the parsers are
@@ -148,6 +150,18 @@ describe('parseProcHolders', () => {
     expect(parseProcHolders('E m131 41028871\nU\nM 131 253:4')).toBeUndefined();
   });
 
+  it('says it could not check when an extent carries no device and inode', () => {
+    // The stat fallback fails on a pre-5.14 kernel; the other extent's answer
+    // says nothing about who holds this one.
+    expect(parseProcHolders('E m131 41028871\nE \nM 131 253:4\nF 9 m131 41028871')).toBeUndefined();
+  });
+
+  it('says it could not check when an extent is on a mount it cannot place', () => {
+    expect(
+      parseProcHolders('E m131 41028871\nE m999 5\nM 131 253:4\nF 9 m131 41028871'),
+    ).toBeUndefined();
+  });
+
   it('finds nothing, rather than not knowing, when an identified extent has no holder', () => {
     expect(parseProcHolders('E m131 41028871\nM 131 253:4')).toEqual([]);
   });
@@ -157,6 +171,55 @@ describe('parseProcHolders', () => {
     // whose st_dev splits the minor across two bit ranges.
     const dev = (0 << 8) | (300 & 0xff) | ((300 & ~0xff) << 12);
     expect(parseProcHolders(`E ${dev} 5\nM 77 0:300\nF 12 m77 5`)).toEqual([12]);
+  });
+});
+
+describe('extentsAmongOpenFiles', () => {
+  // Captured from /proc/<pid>/fd of a running 3.6.2 stone on Linux, trimmed.
+  const STONE_FILES = [
+    '/dev/null',
+    '/gs/GemStone64Bit3.6.2-x86_64.Linux/data/jasper-test-3.6.2-gs64-stone.log',
+    '/gs/GemStone64Bit3.6.2-x86_64.Linux/data/extent0.dbf',
+    'socket:[98631241]',
+    '/gs/GemStone64Bit3.6.2-x86_64.Linux/data/jasper-test-3.6.2-gs64-stone_721240pagemanager.log',
+    'anon_inode:[eventpoll]',
+    '/gs/GemStone64Bit3.6.2-x86_64.Linux/data/tranlog1.dbf',
+    '/dev/zero',
+    '/gs/GemStone64Bit3.6.2-x86_64.Linux/sys/services.dat',
+  ];
+
+  it('picks out the extents from everything else a stone holds open', () => {
+    expect(extentsAmongOpenFiles(STONE_FILES)).toEqual([
+      '/gs/GemStone64Bit3.6.2-x86_64.Linux/data/extent0.dbf',
+    ]);
+  });
+
+  it('finds extents wherever the installation keeps them, whatever they are called', () => {
+    const files = ['/srv/gs/data/extent0.dbf', '/mnt/fast/second.DBF'];
+
+    expect(extentsAmongOpenFiles(files)).toEqual(files);
+  });
+
+  it('skips an extent that was deleted while open', () => {
+    // /proc shows such a file as "<path> (deleted)"; no other process can open
+    // it by that name.
+    expect(extentsAmongOpenFiles(['/db/data/extent0.dbf (deleted)'])).toEqual([]);
+  });
+
+  it('lists an extent held through two descriptors once', () => {
+    expect(extentsAmongOpenFiles(['/db/extent0.dbf', '/db/extent0.dbf'])).toEqual([
+      '/db/extent0.dbf',
+    ]);
+  });
+});
+
+describe('procOpenFilesScript', () => {
+  it('reads only the link text, which never touches the file’s mount', () => {
+    const script = procOpenFilesScript(4242);
+
+    expect(script).toContain('/proc/4242/fd/');
+    expect(script).toContain('readlink');
+    expect(script).not.toMatch(/\b(fuser|lsof|stat|cat)\b/);
   });
 });
 
@@ -299,6 +362,20 @@ describe('explainExtentLocked', () => {
     expect(text).toContain(FAILURE);
   });
 
+  it('suggests a search that needs no database path', () => {
+    // A path typed through a symlink would match nothing, since find compares
+    // the resolved link text.
+    const text = explainExtentLocked('gs64stone', FAILURE, [], 'linux')!;
+
+    expect(text).toContain(`-lname '*/extent0.dbf'`);
+    expect(text).not.toContain('<database>');
+  });
+
+  it('tells a Windows user to run the search inside WSL', () => {
+    expect(explainExtentLocked('gs64stone', FAILURE, [], 'win32')).toContain('WSL');
+    expect(explainExtentLocked('gs64stone', FAILURE, [], 'linux')).not.toContain('WSL');
+  });
+
   it('never suggests lsof on Linux, where a dead mount hangs it as it hung Jasper', () => {
     // The scan coming back empty can be the very sign of a dead mount.
     expect(explainExtentLocked('gs64stone', FAILURE, [], 'linux')).not.toContain('lsof');
@@ -309,6 +386,7 @@ describe('explainExtentLocked', () => {
 
     expect(text).toContain('lsof');
     expect(text).not.toContain('/proc');
+    expect(text).not.toContain('/data/');
   });
 
   it('keeps GemStone’s own output, so nothing is hidden', () => {

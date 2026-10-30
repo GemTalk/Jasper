@@ -2304,7 +2304,105 @@ describe('ProcessManager', () => {
       vi
         .mocked(wslBridge.wslExec)
         .mock.calls.map((c) => c[0])
-        .filter((c) => c.includes('/proc/'));
+        .filter((c) => c.includes('/proc/[0-9]*/fd'));
+
+    /** A ProcessManager whose gslist shows this stone running as PID 4242. */
+    function withStoneRunning(stoneName = 'gs64stone', version = '3.7.4') {
+      vi.mocked(wslBridge.wslExecSync).mockReturnValue(
+        `OK     ${version}     ewinger      4242 43925 Sep 03 11:34 Stone       ${stoneName}`,
+      );
+      const manager = new ProcessManager(makeStorage());
+      manager.refreshProcesses();
+      vi.mocked(wslBridge.wslExecSync).mockReset();
+      return manager;
+    }
+
+    const isStoneFilesRead = (cmd: string) => cmd.startsWith('for f in /proc/4242/fd/');
+
+    describe('with the stone running', () => {
+      it('asks the stone which extents it runs on', async () => {
+        // A registered database's extents are wherever its installation keeps
+        // them; Jasper's own record directory has none.
+        probe((cmd) => {
+          if (isStoneFilesRead(cmd)) return '/opt/theirs/data/extent0.dbf\n/opt/theirs/log/x.log\n';
+          if (cmd.includes('/proc/[0-9]*/fd')) return scanFinding(111);
+          return '';
+        });
+        const manager = withStoneRunning('theirstone', '3.7.5');
+
+        const holders = await manager.findExtentHolders(makeRegisteredDatabase());
+
+        expect(holders?.map((h) => h.pid)).toEqual([111]);
+        expect(scanCommands()[0]).toContain(`'/opt/theirs/data/extent0.dbf'`);
+        expect(scanCommands()[0]).not.toContain('x.log');
+      });
+
+      it('asks the stone for a database Jasper created too', async () => {
+        // An extent added outside data/ is still one a gem can hold.
+        probe((cmd) => {
+          if (isStoneFilesRead(cmd)) return '/mnt/fast/extent1.dbf\n';
+          if (cmd.includes('/proc/[0-9]*/fd')) return scanFinding();
+          return '';
+        });
+
+        await withStoneRunning().findExtentHolders(db());
+
+        expect(scanCommands()[0]).toContain(`'/mnt/fast/extent1.dbf'`);
+      });
+
+      it('falls back to data/ for a created database when the stone’s files cannot be read', async () => {
+        // A stone run by another user hides its descriptors.
+        probe((cmd) => (cmd.includes('/proc/[0-9]*/fd') ? scanFinding() : ''));
+
+        await withStoneRunning().findExtentHolders(db());
+
+        expect(scanCommands()[0]).toContain(nodePath.join(dbDir, 'data', 'extent0.dbf'));
+      });
+
+      it('says it could not check a registered database whose stone’s files cannot be read', async () => {
+        probe((cmd) => (cmd.includes('/proc/[0-9]*/fd') ? scanFinding() : ''));
+        const manager = withStoneRunning('theirstone', '3.7.5');
+
+        expect(await manager.findExtentHolders(makeRegisteredDatabase())).toBeUndefined();
+        expect(scanCommands()).toEqual([]);
+      });
+
+      it('reads the stone’s files on macOS with lsof, bounded by the same timeout', async () => {
+        setPlatform('darwin');
+        vi.mocked(execFile).mockImplementation((...args: unknown[]) => {
+          const callback = args[args.length - 1] as (e: unknown, out: string, err: string) => void;
+          const argv = args[1] as string[];
+          callback(
+            null,
+            argv.includes('-p') ? 'p4242\nfcwd\nn/\nf5\nn/opt/theirs/extent0.dbf\n' : '',
+            '',
+          );
+          return {} as ReturnType<typeof execFile>;
+        });
+        const manager = withStoneRunning('theirstone', '3.7.5');
+
+        expect(await manager.findExtentHolders(makeRegisteredDatabase())).toEqual([]);
+        const [listCall, holdersCall] = vi.mocked(execFile).mock.calls as unknown as [
+          string,
+          string[],
+          { timeout?: number; killSignal?: string },
+        ][];
+        expect(listCall[1]).toEqual(expect.arrayContaining(['-O', '-p', '4242']));
+        expect(listCall[2].killSignal).toBe('SIGKILL');
+        expect(holdersCall[1]).toContain('/opt/theirs/extent0.dbf');
+      });
+    });
+
+    it('says it could not check a registered database whose stone is down', async () => {
+      // There is no data/ directory to fall back on, and the start failure
+      // that asks then names no holder rather than a wrong one.
+      probe(() => '');
+
+      expect(
+        await new ProcessManager(makeStorage()).findExtentHolders(makeRegisteredDatabase()),
+      ).toBeUndefined();
+      expect(wslBridge.wslExec).not.toHaveBeenCalled();
+    });
 
     it('reads the holders from /proc, and asks ps about them', async () => {
       probe((cmd) => {
@@ -2435,10 +2533,11 @@ describe('ProcessManager', () => {
       function lsofAnswers(
         err: (Error & { code?: unknown; killed?: boolean }) | null,
         stdout: string,
+        stderr = '',
       ) {
         vi.mocked(execFile).mockImplementation((...args: unknown[]) => {
           const callback = args[args.length - 1] as (e: unknown, out: string, err: string) => void;
-          callback(err, stdout, '');
+          callback(err, stdout, stderr);
           return {} as ReturnType<typeof execFile>;
         });
       }
@@ -2496,6 +2595,20 @@ describe('ProcessManager', () => {
         const holders = await new ProcessManager(makeStorage()).findExtentHolders(db());
 
         expect(holders).toEqual([{ pid: 777, command: '' }]);
+      });
+
+      it('says it could not check when lsof reports an error, even beside holders it found', async () => {
+        // lsof exits 1 for an extent it could not stat as it does for one
+        // nobody holds; under -w only the error writes to stderr. Who holds the
+        // extent it failed on is unknown.
+        lsofAnswers(
+          Object.assign(new Error('Command failed'), { code: 1 }),
+          '777\n',
+          'lsof: status error on /db/data/extent1.dbf: Stale NFS file handle\n',
+        );
+        probe(() => '');
+
+        expect(await new ProcessManager(makeStorage()).findExtentHolders(db())).toBeUndefined();
       });
 
       it('gives up on an lsof that has not exited even after its timeout', async () => {

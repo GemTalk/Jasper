@@ -12,6 +12,9 @@ import {
   parseProcHolders,
   procHoldersScript,
   lsofHolderPids,
+  lsofOpenFiles,
+  procOpenFilesScript,
+  extentsAmongOpenFiles,
   parseHolderDetails,
   explainExtentLocked,
 } from '../extentHolders';
@@ -996,6 +999,9 @@ export class ProcessManager {
    * process it did not start, holding a file it cannot see inside, is the
    * user's to judge.
    *
+   * Which files are the extents comes from the running stone where there is one
+   * (`extentPaths`).
+   *
    * Linux, and Windows through WSL, read `/proc` (`procHoldersScript`), which
    * does not wait on an unresponsive mount the way `fuser` and `lsof` do. macOS
    * has no `/proc` and runs `lsof` directly, so its timeout ends it
@@ -1018,15 +1024,8 @@ export class ProcessManager {
    * gems — the exact failure this exists to prevent.
    */
   async findExtentHolders(db: GemStoneDatabase): Promise<ExtentHolder[] | undefined> {
-    const dataDir = path.join(db.path, 'data');
-    let extents: string[];
-    try {
-      extents = wslReaddirSync(dataDir)
-        .filter((f) => /^extent.*\.dbf$/i.test(f))
-        .map((f) => path.join(dataDir, f));
-    } catch {
-      return undefined;
-    }
+    const extents = await this.extentPaths(db);
+    if (extents === undefined) return undefined;
     if (extents.length === 0) return [];
 
     let pids: number[] | undefined;
@@ -1035,11 +1034,7 @@ export class ProcessManager {
         process.platform === 'darwin'
           ? await lsofHolderPids(extents, PS_TIMEOUT_MS)
           : parseProcHolders(
-              await wslExec(
-                procHoldersScript(needsWsl() ? extents.map(windowsPathToWsl) : extents),
-                undefined,
-                { timeout: PS_TIMEOUT_MS },
-              ),
+              await wslExec(procHoldersScript(extents), undefined, { timeout: PS_TIMEOUT_MS }),
             );
     } catch {
       return undefined;
@@ -1066,6 +1061,57 @@ export class ProcessManager {
     // that was" is actionable, "Jasper could not determine which process holds
     // it" is not.
     return detailed.length > 0 ? detailed : pids.map((pid) => ({ pid, command: '' }));
+  }
+
+  /**
+   * Where a database's extents are, as the probe sees them: inside WSL on
+   * Windows. Undefined when Jasper cannot tell.
+   *
+   * A running stone is asked, through the files it holds open
+   * (`extentsAmongOpenFiles`). A registered database's extents are wherever its
+   * installation's configuration puts them, and even a created one's need not
+   * all be in `data/`. A stone that is down, or whose files cannot be read (one
+   * run by another user), leaves only the `data/` directory Jasper laid out for
+   * a database it created; a registered database has no such directory.
+   */
+  private async extentPaths(db: GemStoneDatabase): Promise<string[] | undefined> {
+    const pid = this.stonePid(db);
+    if (pid !== undefined) {
+      try {
+        const open =
+          process.platform === 'darwin'
+            ? await lsofOpenFiles(pid, PS_TIMEOUT_MS)
+            : (
+                await wslExec(procOpenFilesScript(pid), undefined, { timeout: PS_TIMEOUT_MS })
+              ).split('\n');
+        const extents = extentsAmongOpenFiles(open);
+        if (extents.length > 0) return extents;
+      } catch {
+        // Fall back to data/ below.
+      }
+    }
+    if (isRegisteredDatabase(db)) return undefined;
+    const dataDir = path.join(db.path, 'data');
+    try {
+      const extents = wslReaddirSync(dataDir)
+        .filter((f) => /^extent.*\.dbf$/i.test(f))
+        .map((f) => path.join(dataDir, f));
+      return needsWsl() ? extents.map(windowsPathToWsl) : extents;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** The PID of this database's running stone, from Jasper's gslist or, for
+   *  one started elsewhere, the host's process table. */
+  private stonePid(db: GemStoneDatabase): number | undefined {
+    const listed = this.cachedProcesses.find(
+      (p) =>
+        p.type === 'stone' &&
+        p.name === db.config.stoneName &&
+        versionsMatch(p.version, db.config.version),
+    );
+    return listed?.pid ?? this.getExternalServers(db).stone?.process.pid;
   }
 
   /** Force-stop a running stone by signalling its process, for when a clean

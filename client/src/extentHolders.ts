@@ -124,15 +124,18 @@ function deviceName(stDev: string): string {
 
 /** The PIDs `procHoldersScript` found holding one of the extents, or undefined
  *  when it could not identify every extent that exists (`U`: one could not be
- *  opened), since who holds that one is then unknown. */
+ *  opened; or its device and inode are missing or name no known mount), since
+ *  who holds that one is then unknown. */
 export function parseProcHolders(output: string): number[] | undefined {
   const extents: { where: string; ino: string }[] = [];
   const mounts = new Map<string, string>();
   const descriptors: { pid: number; where: string; ino: string }[] = [];
   for (const line of output.split('\n')) {
     const [kind, a, b, c] = line.trim().split(/\s+/);
-    if (kind === 'E' && b) extents.push({ where: a, ino: b });
-    else if (kind === 'U') return undefined;
+    if (kind === 'E') {
+      if (!b) return undefined;
+      extents.push({ where: a, ino: b });
+    } else if (kind === 'U') return undefined;
     else if (kind === 'M' && b) mounts.set(a, b);
     else if (kind === 'F' && c) descriptors.push({ pid: Number(a), where: b, ino: c });
   }
@@ -145,7 +148,8 @@ export function parseProcHolders(output: string): number[] | undefined {
     return device === undefined ? undefined : `${device} ${ino}`;
   };
   if (extents.length === 0) return undefined;
-  const held = new Set(extents.map(identity).filter((id) => id !== undefined));
+  if (extents.some((e) => identity(e) === undefined)) return undefined;
+  const held = new Set(extents.map(identity));
   const pids = descriptors
     .filter((d) => {
       const id = identity(d);
@@ -155,12 +159,11 @@ export function parseProcHolders(output: string): number[] | undefined {
   return [...new Set(pids)];
 }
 
-/** How long past its own timeout `lsofHolderPids` waits for `lsof` to exit. */
+/** How long past its own timeout `runLsof` waits for `lsof` to exit. */
 const LSOF_EXIT_GRACE_MS = 1_000;
 
 /**
- * The PIDs holding any of `extents` open, from `lsof`. For macOS, which has no
- * `/proc`.
+ * Run `lsof` and answer its stdout. For macOS, which has no `/proc`.
  *
  * Run directly, not through a shell, so the timeout ends `lsof` itself; with a
  * shell in between it ends only the shell. `-O` keeps `lsof` from making its
@@ -171,11 +174,12 @@ const LSOF_EXIT_GRACE_MS = 1_000;
  * kernel on a hard NFS mount may not die even on SIGKILL until the mount
  * answers; a second timer gives up on it regardless.
  *
- * `lsof` exits 1 when nothing is open, and also when only some of the named
- * files are, after printing their holders; either way its stdout is the
- * answer. A missing `lsof` or a timeout rejects.
+ * `lsof` exits 1 both when nothing is open and when it hit an error, such as a
+ * file it could not stat. Under `-w` only the error writes to stderr, so that
+ * is what tells them apart. An error rejects even when stdout has an answer for
+ * the other files: what it says about the one that failed is unknown.
  */
-export function lsofHolderPids(extents: string[], timeoutMs: number): Promise<number[]> {
+function runLsof(args: string[], timeoutMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const deadline = setTimeout(
       () => reject(new Error(`lsof did not exit within ${timeoutMs + LSOF_EXIT_GRACE_MS} ms`)),
@@ -183,15 +187,56 @@ export function lsofHolderPids(extents: string[], timeoutMs: number): Promise<nu
     );
     execFile(
       'lsof',
-      ['-n', '-P', '-w', '-O', '-t', '--', ...extents],
+      ['-n', '-P', '-w', '-O', ...args],
       { encoding: 'utf-8', timeout: timeoutMs, killSignal: 'SIGKILL' },
-      (error, stdout) => {
+      (error, stdout, stderr) => {
         clearTimeout(deadline);
-        if (error && typeof error.code !== 'number') reject(error);
-        else resolve(parseHolderPids(stdout));
+        if ((error && typeof error.code !== 'number') || stderr.trim()) {
+          reject(error ?? new Error(stderr));
+        } else resolve(stdout);
       },
     );
   });
+}
+
+/** The PIDs holding any of `extents` open, from `lsof`. */
+export async function lsofHolderPids(extents: string[], timeoutMs: number): Promise<number[]> {
+  return parseHolderPids(await runLsof(['-t', '--', ...extents], timeoutMs));
+}
+
+/** Every file process `pid` has open, from `lsof -Fn`, whose name lines start
+ *  with `n`. */
+export async function lsofOpenFiles(pid: number, timeoutMs: number): Promise<string[]> {
+  const output = await runLsof(['-p', String(pid), '-Fn'], timeoutMs);
+  return output
+    .split('\n')
+    .filter((line) => line.startsWith('n'))
+    .map((line) => line.slice(1));
+}
+
+/** A shell script printing the file behind each of process `pid`'s
+ *  descriptors. `readlink` reads only the link's text, so like
+ *  `procHoldersScript` it never touches the file's mount. */
+export function procOpenFilesScript(pid: number): string {
+  return `for f in /proc/${pid}/fd/*; do readlink "$f"; done 2>/dev/null`;
+}
+
+/**
+ * The extents among the files a running stone has open.
+ *
+ * A stone holds every extent it runs on, which is how Jasper finds a registered
+ * database's extents, wherever its installation keeps them. It holds other
+ * files too: its log, its transaction logs (also `.dbf`, named `tranlog<n>` by
+ * default), and whatever it inherited from the process that started it. An
+ * extent named some other way is missed, which leaves the caller unable to
+ * check rather than wrongly sure.
+ */
+export function extentsAmongOpenFiles(files: string[]): string[] {
+  const extents = files.filter((file) => {
+    const name = file.slice(file.lastIndexOf('/') + 1);
+    return /\.dbf$/i.test(name) && !/^tranlog/i.test(name);
+  });
+  return [...new Set(extents)];
 }
 
 /**
@@ -254,7 +299,10 @@ export function describeHolder(holder: ExtentHolder): string {
  *
  * The by-hand command for Linux reads `/proc` rather than running `lsof`: an
  * empty scan can mean a dead mount, and `lsof` would hang the user's terminal
- * on it the same way.
+ * on it the same way. It matches on the extent's name alone, because `-lname`
+ * compares the resolved path and a database path typed through a symlink would
+ * match nothing; each line names the extent, so the user can tell databases
+ * apart.
  */
 export function explainExtentLocked(
   stoneName: string,
@@ -270,9 +318,10 @@ export function explainExtentLocked(
     return (
       `${preamble}Jasper could not determine which process holds it. To find it by hand:\n\n` +
       (platform === 'darwin'
-        ? `    lsof <database>/data/extent0.dbf\n\n`
-        : `    find /proc/[0-9]*/fd -lname '<database>/data/extent0.dbf' 2>/dev/null\n\n` +
-          `  (each line is /proc/<process id>/fd/…)\n\n`) +
+        ? `    lsof <path to extent0.dbf>\n\n`
+        : (platform === 'win32' ? `  In a WSL terminal:\n\n` : '') +
+          `    find /proc/[0-9]*/fd -lname '*/extent0.dbf' -printf '%p -> %l\\n' 2>/dev/null\n\n` +
+          `  (each line is /proc/<process id>/fd/… -> the extent it holds)\n\n`) +
       `The usual cause is a gem left over from a stone that was force-stopped: it survives ` +
       `its stone and keeps the extent open. Such a gem cannot commit anything — its stone is ` +
       `gone — so ending it loses nothing, but check the command line before you do.\n\n` +
