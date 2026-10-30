@@ -800,6 +800,45 @@ describe('after the runner stops waiting', () => {
     }
   });
 
+  it('unexports the result of a disposable call that finished as the runner stopped waiting', async () => {
+    vi.useFakeTimers();
+    try {
+      const { session, gci, handle } = makeSession([{ result: 0 }]);
+      const poll = gci.GciTsNbPoll as ReturnType<typeof vi.fn>;
+      poll.mockReturnValue({ result: 0, err: noErr });
+      (gci.GciTsNbResult as ReturnType<typeof vi.fn>).mockReturnValue({
+        result: 0x5151n,
+        err: noErr,
+      });
+      let cancel: (() => void) | undefined;
+      const p = runNbCall(
+        session,
+        () => ({ success: true, err: noErr as never }),
+        () => 'unreachable',
+        {
+          suppressNotification: true,
+          disposableProcess: true,
+          onStart: (c) => {
+            cancel = c;
+          },
+        },
+      );
+      p.catch(() => {});
+      cancel!();
+      cancel!();
+      await vi.advanceTimersByTimeAsync(SETTLE_MS);
+      await expect(p).rejects.toBeInstanceOf(NbCancelledError);
+
+      poll.mockReturnValue({ result: 1, err: noErr });
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(gci.GciTsReleaseObjs).toHaveBeenCalledWith(handle, [0x5151n]);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it('leaves the stopped process alone when the caller did not declare it disposable', async () => {
     // What a debugger step is: the message is performed ON the process the panel
     // is showing, so the process a break stops is the user's stack, not the

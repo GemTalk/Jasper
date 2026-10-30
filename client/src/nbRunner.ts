@@ -3,7 +3,7 @@ import { ActiveSession } from './sessionManager';
 import { GciError } from './gciLibrary';
 import { pollReadable } from './socketPoll';
 import { logInfo } from './gciLog';
-import { OOP_NIL } from './gciConstants';
+import { OOP_ILLEGAL, OOP_NIL } from './gciConstants';
 
 /**
  * Shared non-blocking GCI call runner.
@@ -367,8 +367,8 @@ export const STOP_CALLS_WAIT_MS = 2000;
  * no longer than that. A result that is not in by then is collected later, in
  * the background or by the next call (see {@link collectLate}).
  *
- * The process the result names is cleared, then unexported with its exception,
- * only when the caller declared it disposable (see
+ * The process the result names is cleared, then unexported with its exception
+ * and the result itself, only when the caller declared it disposable (see
  * `NbRunOptions.disposableProcess`): clearing is what releases
  * the Transcript semaphore a suspended writer holds, and is destructive to a
  * process the user is debugging. This code cannot tell the two apart — the
@@ -393,15 +393,15 @@ function drainAbandonedCall(
     try {
       const { result, err } = pollNbResultReady(session);
       if (result === 1) {
-        const { err } = session.GciTsNbResult();
+        const collected = session.GciTsNbResult();
+        const { err } = collected;
         if (disposableProcess) {
           runHook(session, onCollected);
-          void clearInBackground(
-            session,
+          void clearInBackground(session, err?.context, undefined, [
+            collected.result,
             err?.context,
-            undefined,
-            err ? [err.context, err.exceptionObj] : [],
-          );
+            err?.exceptionObj,
+          ]);
         } else {
           runCollectedHook(session, onCollected);
         }
@@ -813,8 +813,9 @@ function isProcess(context: unknown): context is bigint | number {
  * ignores the stop. `then` runs once the
  * session is free. Best-effort: a failure is logged, never thrown.
  *
- * `release` names oops to unexport once the clear is back, such as the
- * stopped run's process and exception. Never by default: the PureExportSet
+ * `release` names oops to unexport once the clear is back, or at once when
+ * there is no process to clear, such as the stopped run's process, exception
+ * and result. Never by default: the PureExportSet
  * doesn't count exports, so releasing a process the debugger still shows would
  * unexport it for the debugger too. Not before the clear is back either: the
  * main thread can't call into the session while the worker has it.
@@ -826,6 +827,7 @@ export function clearInBackground(
   release: readonly unknown[] = [],
 ): Promise<void> {
   if (!isProcess(context)) {
+    releaseExports(session, release);
     runCollectedHook(session, then);
     return Promise.resolve();
   }
@@ -862,7 +864,7 @@ function releaseExports(session: ActiveSession, oops: readonly unknown[]): void 
   const exported = oops
     .filter((oop): oop is bigint | number => typeof oop === 'bigint' || typeof oop === 'number')
     .map(BigInt)
-    .filter((oop) => oop !== OOP_NIL && oop !== 0n);
+    .filter((oop) => oop !== OOP_NIL && oop !== OOP_ILLEGAL && oop !== 0n);
   if (exported.length === 0) return;
   try {
     const { success, err } = session.GciTsReleaseObjs(exported);
