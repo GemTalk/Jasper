@@ -10,7 +10,7 @@ import {
 import type { GciError } from '../gciLibrary';
 import { logInfo, logError } from '../gciLog';
 import { explainGciError } from '../gciLibraryError';
-import { clearInBackground, runNbCall, NbRunOptions } from '../nbRunner';
+import { clearInBackground, discardStoppedProcess, runNbCall, NbRunOptions } from '../nbRunner';
 import {
   DUMP_PAYLOAD_TEMPS,
   dumpPayloadPrelude,
@@ -1435,6 +1435,7 @@ export async function evaluateInFrameNb(
     () => {
       const { result, err } = session.GciTsNbResult();
       if (err.number !== 0) {
+        discardStoppedProcess(session, err);
         throw new Error(
           withSelfUnavailableNote(
             explainGciError(err) || `GCI error ${err.number} in ${selector}`,

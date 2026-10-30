@@ -3,7 +3,7 @@ import { ActiveSession } from './sessionManager';
 import { GciError } from './gciLibrary';
 import { pollReadable } from './socketPoll';
 import { logInfo } from './gciLog';
-import { OOP_NIL } from './gciConstants';
+import { OOP_NIL, SOFT_BREAK_ERROR } from './gciConstants';
 
 /**
  * Shared non-blocking GCI call runner.
@@ -367,8 +367,9 @@ export const STOP_CALLS_WAIT_MS = 2000;
  * no longer than that. A result that is not in by then is collected later, in
  * the background or by the next call (see {@link collectLate}).
  *
- * The process the result names is cleared only when the caller declared it
- * disposable (see `NbRunOptions.disposableProcess`): clearing is what releases
+ * The process the result names is cleared, then unexported with its exception,
+ * only when the caller declared it disposable (see
+ * `NbRunOptions.disposableProcess`): clearing is what releases
  * the Transcript semaphore a suspended writer holds, and is destructive to a
  * process the user is debugging. This code cannot tell the two apart — the
  * caller that chose the receiver can.
@@ -395,7 +396,12 @@ function drainAbandonedCall(
         const { err } = session.GciTsNbResult();
         if (disposableProcess) {
           runHook(session, onCollected);
-          void clearInBackground(session, err?.context);
+          void clearInBackground(
+            session,
+            err?.context,
+            undefined,
+            err ? [err.context, err.exceptionObj] : [],
+          );
         } else {
           runCollectedHook(session, onCollected);
         }
@@ -635,6 +641,8 @@ export interface TrackedRun {
   cancel: () => void;
   /** Stop it and stop waiting at once, for a logout; settles when it has. */
   stop: () => Promise<unknown>;
+  /** Whether its process is its own to throw away; see `NbRunOptions.disposableProcess`. */
+  disposableProcess?: boolean;
 }
 
 /**
@@ -806,11 +814,18 @@ function isProcess(context: unknown): context is bigint | number {
  * Stop notice, and clean-up that hangs takes the same way out as a run that
  * ignores the stop. `then` runs once the
  * session is free. Best-effort: a failure is logged, never thrown.
+ *
+ * `release` names oops to unexport once the clear is back, such as the
+ * stopped run's process and exception. Never by default: the PureExportSet
+ * doesn't count exports, so releasing a process the debugger still shows would
+ * unexport it for the debugger too. Not before the clear is back either: the
+ * main thread can't call into the session while the worker has it.
  */
 export function clearInBackground(
   session: ActiveSession,
   context: unknown,
   then?: () => void,
+  release: readonly unknown[] = [],
 ): Promise<void> {
   if (!isProcess(context)) {
     runCollectedHook(session, then);
@@ -836,11 +851,53 @@ export function clearInBackground(
     } catch (e) {
       failed(e instanceof Error ? e.message : String(e));
     } finally {
+      releaseExports(session, release);
       // Only its own: a logout forgets it, and the id can come back for another login.
       if (clearing.get(session.id) === mine) clearing.delete(session.id);
     }
   })();
   return awaitAbandonedRead(session, cleared, then);
+}
+
+/** Unexport what a stopped run left behind. Best-effort: a failure is logged, never thrown. */
+function releaseExports(session: ActiveSession, oops: readonly unknown[]): void {
+  const exported = oops
+    .filter((oop): oop is bigint | number => typeof oop === 'bigint' || typeof oop === 'number')
+    .map(BigInt)
+    .filter((oop) => oop !== OOP_NIL && oop !== 0n);
+  if (exported.length === 0) return;
+  try {
+    const { success, err } = session.GciTsReleaseObjs(exported);
+    if (!success) throw new Error(err.message || `GemStone error ${err.number}`);
+  } catch (e) {
+    logInfo(
+      `[Session ${session.id}] Could not release a stopped run's objects: ` +
+        (e instanceof Error ? e.message : String(e)),
+    );
+  }
+}
+
+/**
+ * For an `onReady` whose call the runner stopped with a soft break: whether
+ * `err` is the gem's answer to that break, and if so, clear the call's process
+ * and unexport it with its exception. A call that didn't declare its process
+ * disposable (see `NbRunOptions.disposableProcess`) gets `false`, and so does an
+ * `onReady` the runner stopped waiting for, since the runner has already given
+ * up on it.
+ *
+ * The break leaves the process suspended and, with the Break, in the export set
+ * until logout. Clearing terminates it but doesn't unexport it, so both are
+ * released once it is cleared. Not awaited: the clear holds the session until it
+ * is done, and awaiting it would keep the runner's stop-waiting timer armed
+ * through it.
+ */
+export function discardStoppedProcess(session: ActiveSession, err: GciError): boolean {
+  const run = live.get(session.id);
+  if (err.number !== SOFT_BREAK_ERROR || run?.disposableProcess !== true || !run.stopRequested()) {
+    return false;
+  }
+  void clearInBackground(session, err.context, undefined, [err.context, err.exceptionObj]);
+  return true;
 }
 
 /**
@@ -892,6 +949,7 @@ export function pollNbToCompletion<T>(
     let stopped = false;
     const liveEntry = {
       stopRequested: (): boolean => softBreakSent,
+      disposableProcess: opts.disposableProcess === true,
       // What the run's own Cancel does.
       cancel: (): void => requestCancel(),
       // Twice, like pressing Cancel twice: a soft break, then stop waiting. A run

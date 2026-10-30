@@ -1,9 +1,10 @@
 import { ActiveSession } from './sessionManager';
-import { GCI_ERR_OP_IN_PROGRESS, OOP_ILLEGAL, OOP_NIL, SOFT_BREAK_ERROR } from './gciConstants';
+import { GCI_ERR_OP_IN_PROGRESS, OOP_ILLEGAL, OOP_NIL } from './gciConstants';
 import { explainGciError, GciLibraryError, SESSION_BUSY_MESSAGE } from './gciLibraryError';
 import { logError } from './gciLog';
 import {
   abandonedRunHolds,
+  discardStoppedProcess,
   isRunning,
   NbCancelledError,
   NbSessionBusyError,
@@ -441,7 +442,6 @@ export async function executeFetchStringAsync(
   code: string,
   title = 'GemStone: Running query…',
 ): Promise<string> {
-  let stopRequested = (): boolean => false;
   try {
     return await runNbCall(
       session,
@@ -470,7 +470,7 @@ export async function executeFetchStringAsync(
       () => {
         const { result, err } = session.GciTsNbResult();
         // The gem answers a Cancel's soft break with a Break error, not a result.
-        if (err.number === SOFT_BREAK_ERROR && stopRequested()) throw new NbCancelledError();
+        if (discardStoppedProcess(session, err)) throw new NbCancelledError();
         if (err.number !== 0) {
           throw queryFailed(session, explainGciError(err) || `GCI error ${err.number}`, err.number);
         }
@@ -484,11 +484,7 @@ export async function executeFetchStringAsync(
           );
         }
       },
-      {
-        title,
-        disposableProcess: true,
-        onStart: (_cancel, requested) => (stopRequested = requested),
-      },
+      { title, disposableProcess: true },
     );
   } catch (e) {
     // nbRunner has already told the user what holds the session.
@@ -551,6 +547,7 @@ export async function executeFetchStringNb(
     () => {
       const { result: resultOop, err } = session.GciTsNbResult();
       if (err.number !== 0) {
+        discardStoppedProcess(session, err);
         const msg = err.message || `GCI error ${err.number}`;
         logError(session.id, msg);
         throw new BrowserQueryError(msg, err.number);
