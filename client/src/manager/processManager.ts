@@ -9,7 +9,9 @@ import { appendSysadmin, showSysadmin } from '../sysadminChannel';
 import { needsWsl, windowsPathToWsl, wslSpawn, wslExecSync, wslExec } from '../wslBridge';
 import {
   ExtentHolder,
-  parseHolderPids,
+  parseProcHolders,
+  procHoldersScript,
+  lsofHolderPids,
   parseHolderDetails,
   explainExtentLocked,
 } from '../extentHolders';
@@ -999,26 +1001,23 @@ export class ProcessManager {
    * process it did not start, holding a file it cannot see inside, is the
    * user's to judge.
    *
-   * `fuser` first, `lsof -t` second: both print bare PIDs on stdout and both
-   * report the same holders, but `fuser` interrogates one file while `lsof`
-   * walks every process on the host — measured at 0.2s against 1.5s on a
-   * developer machine. Neither being available is not an error; it means
-   * Jasper cannot name the holder and says so.
+   * Linux, and Windows through WSL, read `/proc` (`procHoldersScript`), which
+   * does not wait on an unresponsive mount the way `fuser` and `lsof` do. macOS
+   * has no `/proc` and runs `lsof` directly, so its timeout ends it
+   * (`lsofHolderPids`). A probe that fails or times out is not an error; it
+   * means Jasper cannot name the holder and says so.
    *
-   * Asynchronous throughout: even the fast path is slow enough that running it
-   * on the extension host's event loop would stall every other extension, and
-   * the stop path can repeat it while waiting for gems to exit.
+   * Asynchronous throughout: run on the extension host's event loop, even a
+   * quick probe stalls every other extension, and the stop path can repeat it
+   * while waiting for gems to exit.
    *
-   * Every probe carries a timeout, and being asynchronous is exactly why it
-   * has to. `lsof` can wedge on an unresponsive mount; run synchronously that
-   * froze the window, which was at least unmistakable. Awaited, a probe that
-   * never returns leaves the progress notification up for ever with the editor
-   * working normally around it — the stop simply never happens and nothing
-   * says so. A timed-out probe falls through to the next one, or to the bare
-   * PIDs, the same as a missing tool.
+   * Every shell-out carries a timeout, and being asynchronous is exactly why it
+   * has to. Awaited, a probe that never returns leaves the progress
+   * notification up for ever with the editor working normally around it — the
+   * stop simply never happens and nothing says so.
    *
-   * `lsof -b` is not used, though it is fifteen times faster again: it skips
-   * the kernel calls that could block, and on a plain ext4 extent it returns
+   * `lsof -b` is not used, though it is fifteen times faster: it skips the
+   * kernel calls that could block, and on a plain ext4 extent it returns
    * *nothing at all*. A probe that reports an empty list for a database with
    * four live processes on it would have Jasper stop a stone on top of its own
    * gems — the exact failure this exists to prevent.
@@ -1035,20 +1034,20 @@ export class ProcessManager {
     }
     if (extents.length === 0) return [];
 
-    const quoted = extents.map((e) => `"${e}"`).join(' ');
-    let pids: number[] = [];
-    for (const probe of [`fuser ${quoted}`, `lsof -n -P -w -t -- ${quoted}`]) {
-      try {
-        // Both exit non-zero when nothing holds the file, which exec rejects
-        // on — `|| true` keeps "no holders" from reading as "probe failed", so
-        // the fallback only runs when the tool itself is missing.
-        pids = parseHolderPids(
-          await wslExec(`${probe} 2>/dev/null || true`, undefined, { timeout: PS_TIMEOUT_MS }),
-        );
-      } catch {
-        continue;
-      }
-      if (pids.length > 0) break;
+    let pids: number[];
+    try {
+      pids =
+        process.platform === 'darwin'
+          ? await lsofHolderPids(extents, PS_TIMEOUT_MS)
+          : parseProcHolders(
+              await wslExec(
+                procHoldersScript(needsWsl() ? extents.map(windowsPathToWsl) : extents),
+                undefined,
+                { timeout: PS_TIMEOUT_MS },
+              ),
+            );
+    } catch {
+      return [];
     }
     if (pids.length === 0) return [];
 

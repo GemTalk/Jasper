@@ -124,8 +124,8 @@ export async function clearSessionsForStop(
   return holders;
 }
 
-/** Whether two probes found the same holders, compared as sets: neither `fuser`
- *  nor `lsof -t` promises an order, so the same processes coming back shuffled
+/** Whether two probes found the same holders, compared as sets: neither the
+ *  `/proc` scan nor `lsof -t` promises an order, so the same processes coming back shuffled
  *  is not a change, and treating it as one buys another poll — and another
  *  shell-out — for nothing. */
 function samePids(a: ExtentHolder[], b: ExtentHolder[]): boolean {

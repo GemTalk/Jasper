@@ -196,7 +196,7 @@ describe('clearSessionsForStop', () => {
   });
 
   it('treats the same holders in a different order as settled', async () => {
-    // Neither `fuser` nor `lsof -t` promises an order. Comparing pid-by-index
+    // Neither the `/proc` scan nor `lsof -t` promises an order. Comparing pid-by-index
     // would read a shuffle as a change and buy another poll — another shell-out
     // — for a list that had not moved.
     const d = deps(1, [

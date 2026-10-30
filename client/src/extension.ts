@@ -4421,8 +4421,8 @@ export function activate(context: vscode.ExtensionContext) {
    * Returns the holders still attached — empty when the database is clear.
    */
   async function clearSessionsBeforeStop(db: GemStoneDatabase): Promise<ExtentHolder[]> {
-    // Under a progress notification: probing the extents shells out to lsof and
-    // ps, and on a database with sessions to log out this takes long enough
+    // Under a progress notification: probing the extents shells out twice, and
+    // on a database with sessions to log out this takes long enough
     // that a silent pause reads as a click that did nothing.
     //
     // The probing and the wait around it are awaited, not blocking, so the

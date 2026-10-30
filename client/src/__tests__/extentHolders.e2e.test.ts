@@ -4,13 +4,19 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { parseHolderPids, parseHolderDetails, sessionHolders } from '../extentHolders';
+import {
+  lsofHolderPids,
+  parseHolderDetails,
+  parseProcHolders,
+  procHoldersScript,
+  sessionHolders,
+} from '../extentHolders';
 
 /**
  * The extent probe against real processes holding a real file.
  *
  * The unit tests pin the parsers to captured output, which is only ever as
- * honest as the capture. This drives the actual tools on the actual machine,
+ * honest as the capture. This drives the actual probe on the actual machine,
  * and it exists because a faster-looking probe (`lsof -b`) was measured at
  * fifteen times the speed and returns *nothing at all* on a real extent — a
  * mocked test agreed with it happily. A probe that answers "nobody" for a
@@ -26,86 +32,42 @@ import { parseHolderPids, parseHolderDetails, sessionHolders } from '../extentHo
 /** Windows runs its servers inside WSL, where Jasper's probes go through
  *  `wsl.exe`; this harness has no way to spawn a holder on that side. */
 const NOT_POSIX = process.platform === 'win32';
+const ON_MAC = process.platform === 'darwin';
 
-function toolAvailable(tool: string): boolean {
+const PROBE_TIMEOUT_MS = 5_000;
+
+function lsofAvailable(): boolean {
   try {
-    execFileSync('sh', ['-c', `command -v ${tool}`], { stdio: 'ignore' });
+    execFileSync('sh', ['-c', 'command -v lsof'], { stdio: 'ignore' });
     return true;
   } catch {
     return false;
   }
 }
 
-/** Neither tool is guaranteed on a build machine — `lsof` is absent from a
- *  stock Ubuntu image and `fuser` needs psmisc. Skipping is honest; failing
- *  would only report the image's package list.
- *
- *  Resolved at load, not in a `beforeAll`, so it can gate `skipIf`: a guard
- *  inside the body would let a machine with neither tool report five passing
- *  tests that asserted nothing. */
-const NO_PROBE_TOOL = NOT_POSIX || ['fuser', 'lsof'].filter(toolAvailable).length === 0;
+/** Resolved at load, not in a `beforeAll`, so it can gate `skipIf`: a guard
+ *  inside the body would let a machine without the probe report passing tests
+ *  that asserted nothing. */
+const NO_PROBE = NOT_POSIX || (ON_MAC && !lsofAvailable());
 
-/** Like the product's probes, every one here is time-limited: `fuser` and `lsof`
- *  stat every mount, and an unresponsive network mount blocks them for ever. */
-const PROBE_TIMEOUT_MS = 5_000;
-
-function timedOut(e: unknown): boolean {
-  return (e as NodeJS.ErrnoException).code === 'ETIMEDOUT';
-}
-
-/** A machine with a dead mount can't run these at all, which says nothing about
- *  the code; skip, and say why, rather than fail or hang the whole suite. */
-function probeHangs(): boolean {
-  const scratch = path.join(os.tmpdir(), `jasper-extent-probe-${process.pid}`);
-  fs.writeFileSync(scratch, '');
-  try {
-    execFileSync('sh', ['-c', `fuser "${scratch}" 2>/dev/null || true`], {
-      timeout: PROBE_TIMEOUT_MS,
-    });
-    return false;
-  } catch (e) {
-    return timedOut(e);
-  } finally {
-    fs.rmSync(scratch, { force: true });
-  }
-}
-
-const PROBE_HANGS = !NO_PROBE_TOOL && probeHangs();
-if (PROBE_HANGS) {
-  console.warn(
-    `extentHolders e2e skipped: fuser did not answer within ${PROBE_TIMEOUT_MS}ms, ` +
-      'most likely an unresponsive network mount on this machine.',
-  );
-}
-const NO_PROBE = NO_PROBE_TOOL || PROBE_HANGS;
-
-/** The production probe, run for real: `fuser` first, `lsof` as the fallback. */
-function findHolders(extent: string) {
-  for (const probe of [`fuser "${extent}"`, `lsof -n -P -w -t -- "${extent}"`]) {
-    let pids: number[];
-    try {
-      pids = parseHolderPids(
-        execFileSync('sh', ['-c', `${probe} 2>/dev/null || true`], {
+/** The production probe, run for real: the `/proc` scan, or `lsof` on macOS. */
+async function findHolders(extent: string) {
+  const pids = ON_MAC
+    ? await lsofHolderPids([extent], PROBE_TIMEOUT_MS)
+    : parseProcHolders(
+        execFileSync('sh', ['-c', procHoldersScript([extent])], {
           encoding: 'utf-8',
           timeout: PROBE_TIMEOUT_MS,
         }),
       );
-    } catch (e) {
-      if (timedOut(e)) {
-        throw new Error(`${probe} did not answer within ${PROBE_TIMEOUT_MS}ms`, { cause: e });
-      }
-      continue;
-    }
-    if (pids.length === 0) continue;
-    return parseHolderDetails(
-      execFileSync(
-        'sh',
-        ['-c', `ps -o pid=,user=,lstart=,args= -p ${pids.join(',')} 2>/dev/null || true`],
-        { encoding: 'utf-8', timeout: PROBE_TIMEOUT_MS },
-      ),
-    );
-  }
-  return [];
+  if (pids.length === 0) return [];
+  return parseHolderDetails(
+    execFileSync(
+      'sh',
+      ['-c', `ps -o pid=,user=,lstart=,args= -p ${pids.join(',')} 2>/dev/null || true`],
+      { encoding: 'utf-8', timeout: PROBE_TIMEOUT_MS },
+    ),
+  );
 }
 
 /** Poll until the predicate holds, or fail saying what was still true. Never a
@@ -113,15 +75,15 @@ function findHolders(extent: string) {
  *  is either slow on every run or wrong on a loaded machine. */
 async function waitFor<T>(
   describeFailure: string,
-  produce: () => T,
+  produce: () => Promise<T>,
   holds: (value: T) => boolean,
   timeoutMs = 10_000,
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
-  let last = produce();
+  let last = await produce();
   while (!holds(last) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 50));
-    last = produce();
+    last = await produce();
   }
   if (!holds(last)) {
     throw new Error(`${describeFailure} within ${timeoutMs}ms; last saw ${JSON.stringify(last)}`);
@@ -162,17 +124,54 @@ describe('finding what holds an extent open, against real processes', () => {
    * session's gem does not. That difference is the whole of `sessionHolders`.
    */
   function startHolder(...extraArgs: string[]): ChildProcess {
+    return startHolderOf(extent, ...extraArgs);
+  }
+
+  function startHolderOf(file: string, ...extraArgs: string[]): ChildProcess {
     const child = spawn(
       'sh',
-      ['-c', 'exec 3< "$1"; while : ; do sleep 1; done', 'holder', extent, ...extraArgs],
+      ['-c', 'exec 3< "$1"; while : ; do sleep 1; done', 'holder', file, ...extraArgs],
       { detached: true, stdio: 'ignore' },
     );
     started.push(child);
     return child;
   }
 
-  it.skipIf(NO_PROBE)('finds nothing when nothing has the extent open', () => {
-    expect(findHolders(extent)).toEqual([]);
+  it.skipIf(NO_PROBE)('finds nothing when nothing has the extent open', async () => {
+    expect(await findHolders(extent)).toEqual([]);
+  });
+
+  it.skipIf(NO_PROBE)('finds a holder that opened the extent through a symlink', async () => {
+    const link = path.join(dir, 'via-link');
+    fs.symlinkSync(dir, link);
+    const holder = startHolderOf(path.join(link, 'extent0.dbf'));
+
+    await waitFor(
+      'the holder never appeared',
+      () => findHolders(extent),
+      (holders) => holders.some((h) => h.pid === holder.pid),
+    );
+  });
+
+  it.skipIf(NO_PROBE)('ignores a process holding another file of the same name', async () => {
+    // Every database's first extent is called extent0.dbf.
+    const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jasper-extent-e2e-other-'));
+    try {
+      const other = path.join(otherDir, 'extent0.dbf');
+      fs.writeFileSync(other, 'another database');
+      const stranger = startHolderOf(other);
+      const holder = startHolder();
+
+      const found = await waitFor(
+        'the holder never appeared',
+        () => findHolders(extent),
+        (holders) => holders.some((h) => h.pid === holder.pid),
+      );
+
+      expect(found.map((h) => h.pid)).not.toContain(stranger.pid);
+    } finally {
+      fs.rmSync(otherDir, { recursive: true, force: true });
+    }
   });
 
   it.skipIf(NO_PROBE)('names the process that has the extent open', async () => {
