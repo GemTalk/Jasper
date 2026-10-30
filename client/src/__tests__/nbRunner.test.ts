@@ -11,6 +11,7 @@ import {
   clearHolds,
   clearInBackground,
   discardStoppedProcess,
+  NbRunOptions,
   runNbCall,
   pollNbResultReady,
   NbCancelledError,
@@ -795,6 +796,65 @@ describe('after the runner stops waiting', () => {
       await vi.advanceTimersByTimeAsync(500);
 
       expect(gci.GciTsReleaseObjs).toHaveBeenCalledWith(handle, [0x4242n, 0x4343n]);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  /** A disposable call that answers 0x5151 just as the runner stops waiting for it. */
+  async function collectedAfterStoppingWaiting(options: NbRunOptions) {
+    const made = makeSession([{ result: 0 }]);
+    const poll = made.gci.GciTsNbPoll as ReturnType<typeof vi.fn>;
+    poll.mockReturnValue({ result: 0, err: noErr });
+    (made.gci.GciTsNbResult as ReturnType<typeof vi.fn>).mockReturnValue({
+      result: 0x5151n,
+      err: noErr,
+    });
+    let cancel: (() => void) | undefined;
+    const p = runNbCall(
+      made.session,
+      () => ({ success: true, err: noErr as never }),
+      () => 'unreachable',
+      {
+        ...options,
+        suppressNotification: true,
+        disposableProcess: true,
+        onStart: (c) => {
+          cancel = c;
+        },
+      },
+    );
+    p.catch(() => {});
+    cancel!();
+    cancel!();
+    await vi.advanceTimersByTimeAsync(SETTLE_MS);
+    await expect(p).rejects.toBeInstanceOf(NbCancelledError);
+    poll.mockReturnValue({ result: 1, err: noErr });
+    await vi.advanceTimersByTimeAsync(500);
+    return made;
+  }
+
+  it('unexports the result of a call that finished as the runner stopped waiting, when the call owns it', async () => {
+    vi.useFakeTimers();
+    try {
+      const { gci, handle } = await collectedAfterStoppingWaiting({ disposableResult: true });
+
+      expect(gci.GciTsReleaseObjs).toHaveBeenCalledWith(handle, [0x5151n]);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the result of a call that finished as the runner stopped waiting exported, unless the call owns it', async () => {
+    // The debugger's in-frame evaluation: `self` answers an object the panel may
+    // already hold exported, and unexporting it would unexport it for the panel.
+    vi.useFakeTimers();
+    try {
+      const { gci } = await collectedAfterStoppingWaiting({});
+
+      expect(gci.GciTsReleaseObjs).not.toHaveBeenCalled();
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();

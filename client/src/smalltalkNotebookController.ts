@@ -100,6 +100,7 @@ async function runCell(
       {
         title: 'GemStone: Running cell…',
         disposableProcess: true,
+        disposableResult: true,
         onStart,
         // The `finally`'s end is refused while a cell the runner stopped waiting
         // for is being collected; this is where it can succeed.

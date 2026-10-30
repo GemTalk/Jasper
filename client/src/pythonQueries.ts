@@ -35,7 +35,7 @@ export async function evalPythonInScopeNb(
       if (err.number !== 0) return await failCell(session, err);
       return fetchCellResult(session, result);
     },
-    { title: 'GemStone: Running cell…', disposableProcess: true, onStart },
+    { title: 'GemStone: Running cell…', disposableProcess: true, disposableResult: true, onStart },
   );
 }
 

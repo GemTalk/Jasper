@@ -484,7 +484,7 @@ export async function executeFetchStringAsync(
           );
         }
       },
-      { title, disposableProcess: true },
+      { title, disposableProcess: true, disposableResult: true },
     );
   } catch (e) {
     // nbRunner has already told the user what holds the session.
@@ -565,6 +565,7 @@ export async function executeFetchStringNb(
       suppressNotification,
       onStart,
       disposableProcess: true,
+      disposableResult: true,
     },
   );
 

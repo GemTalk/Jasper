@@ -3,7 +3,7 @@ import { ActiveSession } from './sessionManager';
 import { GciError } from './gciLibrary';
 import { pollReadable } from './socketPoll';
 import { logInfo } from './gciLog';
-import { OOP_NIL, SOFT_BREAK_ERROR } from './gciConstants';
+import { OOP_ILLEGAL, OOP_NIL, SOFT_BREAK_ERROR } from './gciConstants';
 
 /**
  * Shared non-blocking GCI call runner.
@@ -119,6 +119,17 @@ export interface NbRunOptions {
    * panel still says "Step cancelled." and offers to step it again.
    */
   disposableProcess?: boolean;
+  /**
+   * Whether the call's result is a new object only this call holds, such as a
+   * String the code built, so a result the runner collects after it stopped
+   * waiting is unexported. Only with `disposableProcess`.
+   *
+   * Off by default, because code that answers an existing object (Execute It,
+   * the debugger's in-frame evaluation) may answer one a panel already holds
+   * exported, and the export set doesn't count exports: unexporting it would
+   * unexport it for that panel too.
+   */
+  disposableResult?: boolean;
   /**
    * Called once a call the runner stopped waiting for has been collected and the
    * session is idle again, before any call waiting on the session starts, and
@@ -367,8 +378,9 @@ export const STOP_CALLS_WAIT_MS = 2000;
  * no longer than that. A result that is not in by then is collected later, in
  * the background or by the next call (see {@link collectLate}).
  *
- * The process the result names is cleared, then unexported with its exception,
- * only when the caller declared it disposable (see
+ * The process the result names is cleared, then unexported with its exception
+ * (and the result itself, if `NbRunOptions.disposableResult`), only when the
+ * caller declared it disposable (see
  * `NbRunOptions.disposableProcess`): clearing is what releases
  * the Transcript semaphore a suspended writer holds, and is destructive to a
  * process the user is debugging. This code cannot tell the two apart — the
@@ -380,6 +392,7 @@ export const STOP_CALLS_WAIT_MS = 2000;
 function drainAbandonedCall(
   session: ActiveSession,
   disposableProcess: boolean,
+  disposableResult: boolean,
   onCollected?: () => void,
 ): Promise<void> {
   const existing = draining.get(session.id);
@@ -393,15 +406,15 @@ function drainAbandonedCall(
     try {
       const { result, err } = pollNbResultReady(session);
       if (result === 1) {
-        const { err } = session.GciTsNbResult();
+        const collected = session.GciTsNbResult();
+        const { err } = collected;
         if (disposableProcess) {
           runHook(session, onCollected);
-          void clearInBackground(
-            session,
+          void clearInBackground(session, err?.context, undefined, [
+            disposableResult ? collected.result : undefined,
             err?.context,
-            undefined,
-            err ? [err.context, err.exceptionObj] : [],
-          );
+            err?.exceptionObj,
+          ]);
         } else {
           runCollectedHook(session, onCollected);
         }
@@ -815,8 +828,9 @@ function isProcess(context: unknown): context is bigint | number {
  * ignores the stop. `then` runs once the
  * session is free. Best-effort: a failure is logged, never thrown.
  *
- * `release` names oops to unexport once the clear is back, such as the
- * stopped run's process and exception. Never by default: the PureExportSet
+ * `release` names oops to unexport once the clear is back, or at once when
+ * there is no process to clear, such as the stopped run's process, exception
+ * and result. Never by default: the PureExportSet
  * doesn't count exports, so releasing a process the debugger still shows would
  * unexport it for the debugger too. Not before the clear is back either: the
  * main thread can't call into the session while the worker has it.
@@ -828,6 +842,7 @@ export function clearInBackground(
   release: readonly unknown[] = [],
 ): Promise<void> {
   if (!isProcess(context)) {
+    releaseExports(session, release);
     runCollectedHook(session, then);
     return Promise.resolve();
   }
@@ -864,7 +879,7 @@ function releaseExports(session: ActiveSession, oops: readonly unknown[]): void 
   const exported = oops
     .filter((oop): oop is bigint | number => typeof oop === 'bigint' || typeof oop === 'number')
     .map(BigInt)
-    .filter((oop) => oop !== OOP_NIL && oop !== 0n);
+    .filter((oop) => oop !== OOP_NIL && oop !== OOP_ILLEGAL && oop !== 0n);
   if (exported.length === 0) return;
   try {
     const { success, err } = session.GciTsReleaseObjs(exported);
@@ -1024,6 +1039,7 @@ export function pollNbToCompletion<T>(
         void drainAbandonedCall(
           session,
           opts.disposableProcess === true,
+          opts.disposableResult === true,
           opts.onAbandonedCollected,
         );
       }
@@ -1091,6 +1107,7 @@ export function pollNbToCompletion<T>(
         void drainAbandonedCall(
           session,
           opts.disposableProcess === true,
+          opts.disposableResult === true,
           opts.onAbandonedCollected,
         );
         settle(() => reject(new Error(pollErr.message || `GemStone poll error ${pollErr.number}`)));
