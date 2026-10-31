@@ -6,6 +6,7 @@ import {
   GCI_PERFORM_FLAG_ENABLE_DEBUG,
   GCI_PERFORM_FLAG_SINGLE_STEP,
   GCI_PERFORM_FLAG_INTERPRETED,
+  SOFT_BREAK_ERROR,
   toBigInt,
 } from './gciConstants';
 import { logError, logInfo } from './gciLog';
@@ -30,7 +31,6 @@ import {
 import {
   BREAKPOINT_ERROR,
   CONTINUE_FLAGS,
-  SOFT_BREAK_ERROR,
   resolveBreakpointStop,
 } from './debugger/conditionalBreakpoints';
 
