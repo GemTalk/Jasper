@@ -6,6 +6,7 @@ import type { ActiveSession } from '../activeSession';
 import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
 import {
   clearInBackground,
+  NbCancelledError,
   runNbCall,
   setStillRunningHandler,
   setStoppedRunCollectedHandler,
@@ -38,6 +39,44 @@ describe('clearing a stopped run in the background (integration)', () => {
   });
 
   const { armedSession } = forceStopSupport(() => session);
+
+  describe('a run that finishes as Jasper stops waiting for it', () => {
+    it('leaves its result in the session no longer than the run', async () => {
+      const own = armedSession();
+      const run = runNbCall(
+        own,
+        () =>
+          own.GciTsNbExecute(
+            `Array with: #givenUpOn with: 'result'`,
+            OOP_CLASS_UTF8,
+            OOP_ILLEGAL,
+            OOP_NIL,
+            0,
+            0,
+          ),
+        () => 'read',
+        {
+          suppressNotification: true,
+          disposableProcess: true,
+          onStart: (cancel) => {
+            cancel();
+            cancel();
+          },
+        },
+      );
+
+      await expect(run).rejects.toBeInstanceOf(NbCancelledError);
+      await vi.waitFor(() => expect(stoppedRunHolds(own)).toBe(false), { timeout: 15_000 });
+
+      expect(
+        executeFetchString(
+          own,
+          `((GsBitmap newForHiddenSet: #PureExportSet) asArray select: [:each |
+            each class == Array and: [each size = 2 and: [(each at: 1) == #givenUpOn]]]) size printString`,
+        ),
+      ).toBe('0');
+    }, 30_000);
+  });
 
   // Clearing a paused run runs its ensure: blocks inside the call.
   describe('clearing a stopped run', () => {

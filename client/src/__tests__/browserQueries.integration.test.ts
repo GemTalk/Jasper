@@ -3,7 +3,13 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 import { GciLibrary } from '../gciLibrary';
 import { GCI_ERR_OP_IN_PROGRESS, OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
-import { cancelRunOn, NbCancelledError, pollNbResultReady, runNbCall } from '../nbRunner';
+import {
+  cancelRunOn,
+  NbCancelledError,
+  pollNbResultReady,
+  runNbCall,
+  stoppedRunHolds,
+} from '../nbRunner';
 import * as queries from '../browserQueries';
 import type { ActiveSession } from '../sessionManager';
 import { useIntegrationTest } from './useIntegrationTest';
@@ -572,6 +578,47 @@ describe('browser queries (integration)', () => {
 
       await expect(query).rejects.toBeInstanceOf(NbCancelledError);
     });
+
+    function leftBehindIn(transient: ActiveSession): string {
+      return queries.executeFetchString(
+        transient,
+        `((GsBitmap newForHiddenSet: #PureExportSet) asArray
+          select: [:each | (each isKindOf: GsProcess) or: [each isKindOf: Break]]) size printString`,
+      );
+    }
+
+    async function sessionLetGo(transient: ActiveSession): Promise<void> {
+      await vi.waitFor(() => expect(stoppedRunHolds(transient)).toBe(false), { timeout: 15_000 });
+    }
+
+    it('leaves nothing of a cancelled query behind in the session', async () => {
+      const transient = loggedInSession();
+      const query = queries.executeFetchStringAsync(
+        transient,
+        `(Delay forSeconds: 5) wait. 'late'`,
+      );
+
+      await vi.waitFor(() => expect(cancelRunOn(transient)).toBe(true));
+      await expect(query).rejects.toBeInstanceOf(NbCancelledError);
+      await sessionLetGo(transient);
+
+      expect(leftBehindIn(transient)).toBe('0');
+    }, 30_000);
+
+    it('leaves nothing behind when the user stops waiting for a cancelled query', async () => {
+      const transient = loggedInSession();
+      const query = queries.executeFetchStringAsync(
+        transient,
+        `(Delay forSeconds: 5) wait. 'late'`,
+      );
+
+      await vi.waitFor(() => expect(cancelRunOn(transient)).toBe(true));
+      cancelRunOn(transient);
+      await expect(query).rejects.toBeInstanceOf(NbCancelledError);
+      await sessionLetGo(transient);
+
+      expect(leftBehindIn(transient)).toBe('0');
+    }, 30_000);
 
     it('is refused as busy while another query runs', async () => {
       const transient = loggedInSession();
