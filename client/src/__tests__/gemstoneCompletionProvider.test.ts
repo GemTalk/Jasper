@@ -140,6 +140,27 @@ describe('GemStoneCompletionProvider', () => {
       expect(result).toHaveLength(1);
       expect(result[0].kind).toBe(CompletionItemKind.Class);
     });
+
+    // No selection or removal event between the two requests, so only the cache key
+    // keeps the first session's list from being served to the second.
+    it('serves each session its own class list, even with no event between them', () => {
+      mockGetAllClassNames.mockImplementation((s) => [
+        { dictIndex: 1, dictName: 'Globals', className: s.id === 1 ? 'Array' : 'Bag' },
+      ]);
+      const sessions = makeSessions(true, 1);
+      const provider = new GemStoneCompletionProvider(sessions.manager);
+      const labels = () =>
+        provider.provideCompletionItems(makeDocument('file:///test.tpz')).map((i) => i.label);
+
+      const first = labels();
+      vi.mocked(sessions.manager.getSelectedSession).mockReturnValue(
+        sessions.manager.getSession(2),
+      );
+      const second = labels();
+
+      expect(first).toEqual(['Array']);
+      expect(second).toEqual(['Bag']);
+    });
   });
 
   describe('instance variable completions', () => {

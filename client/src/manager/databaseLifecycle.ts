@@ -83,21 +83,22 @@ export async function takeDownDatabase(
 export interface SessionClearDeps {
   /** Log out Jasper's sessions on the database; returns how many there were. */
   reapSessions(): Promise<number>;
-  /** Processes holding the extents, excluding the stone's own. Asynchronous
-   *  because the probe shells out, and the extension host must stay responsive
-   *  while it does. */
-  attachedHolders(): Promise<ExtentHolder[]>;
+  /** Processes holding the extents, excluding the stone's own; undefined when
+   *  the probe could not tell. Asynchronous because the probe shells out, and
+   *  the extension host must stay responsive while it does. */
+  attachedHolders(): Promise<ExtentHolder[] | undefined>;
   wait(ms: number): Promise<void>;
   now(): number;
 }
 
 /**
  * Log a database's sessions out and wait for their gems to actually go, then
- * report whatever is still attached.
+ * report whatever is still attached, or undefined if a look at the extents
+ * failed: a gem it saw may or may not have gone since.
  *
  * Two things keep this quick, both learned the slow way — each probe is a
- * shell-out costing up to a second and a half, and the user is watching a
- * progress notification for the whole of it.
+ * shell-out (`lsof` on macOS can take a second and a half), and the user is
+ * watching a progress notification for the whole of it.
  *
  * Nothing logged out means nothing is on its way out: whatever holds the
  * extents now is foreign and will still be foreign in ten seconds, so there is
@@ -109,14 +110,15 @@ export interface SessionClearDeps {
 export async function clearSessionsForStop(
   deps: SessionClearDeps,
   opts: { timeoutMs: number; pollMs: number },
-): Promise<ExtentHolder[]> {
+): Promise<ExtentHolder[] | undefined> {
   if ((await deps.reapSessions()) === 0) return await deps.attachedHolders();
 
   const deadline = deps.now() + opts.timeoutMs;
   let holders = await deps.attachedHolders();
-  while (holders.length > 0 && deps.now() < deadline) {
+  while (holders !== undefined && holders.length > 0 && deps.now() < deadline) {
     await deps.wait(opts.pollMs);
     const next = await deps.attachedHolders();
+    if (next === undefined) return undefined;
     const settled = samePids(holders, next);
     holders = next;
     if (settled) break;
@@ -124,8 +126,25 @@ export async function clearSessionsForStop(
   return holders;
 }
 
-/** Whether two probes found the same holders, compared as sets: neither `fuser`
- *  nor `lsof -t` promises an order, so the same processes coming back shuffled
+/**
+ * Whether a stop should go ahead after `clearSessionsForStop`: at once when
+ * nothing is attached, otherwise only if the user says so. Not knowing is
+ * asked about too; treated as "nothing attached", a failed look would stop the
+ * stone on top of gems nobody saw.
+ */
+export async function goAheadWithStop(
+  holders: ExtentHolder[] | undefined,
+  ask: {
+    holders(attached: ExtentHolder[]): Promise<boolean>;
+    unchecked(): Promise<boolean>;
+  },
+): Promise<boolean> {
+  if (holders === undefined) return await ask.unchecked();
+  return holders.length === 0 || (await ask.holders(holders));
+}
+
+/** Whether two probes found the same holders, compared as sets: neither the
+ *  `/proc` scan nor `lsof -t` promises an order, so the same processes coming back shuffled
  *  is not a change, and treating it as one buys another poll — and another
  *  shell-out — for nothing. */
 function samePids(a: ExtentHolder[], b: ExtentHolder[]): boolean {

@@ -37,8 +37,10 @@ vi.mock('../enhancedInspectorAvailability', () => ({
 import { ActiveSession, SessionManager } from '../../sessionManager';
 import { uninstallEnhancedInspectorFeature } from '../enhancedInspectorUninstallCommand';
 import { fakeActiveSession } from '../../__tests__/fakeActiveSession';
+import { sameObject } from '../../__tests__/support/sameObject';
 
 const logout = vi.fn(() => true);
+const systemUserHandle = {};
 function createBaseSession(): ActiveSession {
   return fakeActiveSession({
     id: 1,
@@ -55,7 +57,7 @@ const uninstall = (base: ActiveSession, interactive: boolean) =>
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.obtainSystemUserSession.mockResolvedValue(
-    fakeActiveSession({ gci: { logout }, handle: {} }),
+    fakeActiveSession({ gci: { logout }, handle: systemUserHandle }),
   );
   mocks.refreshWorkingSession.mockResolvedValue(true);
   mocks.uninstallSupport.mockResolvedValue({
@@ -86,6 +88,7 @@ describe('uninstallEnhancedInspectorFeature', () => {
     await uninstall(base, true);
 
     expect(logout).toHaveBeenCalledTimes(1);
+    expect(logout).toHaveBeenCalledWith(sameObject(systemUserHandle));
   });
 
   it('does not run the removal and warns when the default password is rejected non-interactively', async () => {

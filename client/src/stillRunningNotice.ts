@@ -5,6 +5,7 @@ import { loginLabel } from './loginTypes';
 export const FORCE_STOP = 'Force Stop';
 export const LOG_OUT = 'Log Out';
 export const STOP = 'Stop';
+export const SHOW_IN_SESSIONS = 'Show in Sessions';
 
 export interface StillRunningDeps {
   /** Whether the session is one the user can see and log out. */
@@ -14,6 +15,8 @@ export interface StillRunningDeps {
   /** Answers whether the run ended; see forceStop.ts. */
   forceStop(session: ActiveSession): Promise<boolean>;
   logout(sessionId: number): Promise<unknown>;
+  /** Reveal the session's row in the stone's session list, where Kill is. */
+  showInSessions(session: ActiveSession): void;
 }
 
 /**
@@ -49,22 +52,26 @@ export async function showRunInProgress(
 ): Promise<void> {
   if (!deps.isRegistered(session.id) || !mayShow('running', session.id)) return;
   const pick = await vscode.window.showWarningMessage(
-    `Session ${session.id} — ${loginLabel(session.login)}: a run is still going on this ` +
+    `Jasper session ${session.id} — ${loginLabel(session.login)}: a run is still going on this ` +
       'session. Nothing else can run on it until that run ends.',
     STOP,
   );
   if (pick !== STOP || !deps.isRegistered(session.id)) return;
   if (!deps.stop(session)) {
-    void vscode.window.showInformationMessage(`Session ${session.id}: that run has already ended.`);
+    void vscode.window.showInformationMessage(
+      `Jasper session ${session.id}: that run has already ended.`,
+    );
   }
 }
 
 /**
- * Tell the user a stopped run is still running, and offer Force Stop. A run that
- * ignores that too can only be ended by logging out, which is offered next,
- * asking first. Jasper's own short-lived logins get no notice: they aren't the
- * user's to stop. A clean-up is named as one: closing a debugger starts one too,
- * with nothing stopped by the user.
+ * Tell the user a stopped run is still running, and offer Force Stop, or Show
+ * in Sessions for the session's row in the stone's session list. A run that
+ * ignores Force Stop too is ended by logging out, which is offered next, asking
+ * first; a gem frozen for good is ended by Kill on that row. Jasper's own
+ * short-lived logins get no notice: they aren't the user's to stop. A clean-up
+ * is named as one: closing a debugger starts one too, with nothing stopped by
+ * the user.
  */
 export async function showStillRunning(
   session: ActiveSession,
@@ -75,24 +82,30 @@ export async function showStillRunning(
     ? 'a previous run is still cleaning up on the server'
     : 'the stopped run is still running on the server';
   const pick = await vscode.window.showWarningMessage(
-    `Session ${session.id} — ${loginLabel(session.login)}: ${what}. Nothing else can run on ` +
+    `Jasper session ${session.id} — ${loginLabel(session.login)}: ${what}. Nothing else can run on ` +
       'this session until it ends.',
     FORCE_STOP,
+    SHOW_IN_SESSIONS,
   );
-  if (pick !== FORCE_STOP || !deps.isRegistered(session.id)) return;
+  if (!deps.isRegistered(session.id)) return;
+  if (pick === SHOW_IN_SESSIONS) {
+    deps.showInSessions(session);
+    return;
+  }
+  if (pick !== FORCE_STOP) return;
 
   let why: string;
   try {
     const stopped = await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: `Force-stopping session ${session.id}…`,
+        title: `Force-stopping Jasper session ${session.id}…`,
       },
       () => deps.forceStop(session),
     );
     if (stopped) {
       void vscode.window.showInformationMessage(
-        `Session ${session.id}: the run is stopped. Uncommitted changes are kept.`,
+        `Jasper session ${session.id}: the run is stopped. Uncommitted changes are kept.`,
       );
       return;
     }
@@ -102,7 +115,7 @@ export async function showStillRunning(
   }
   if (!deps.isRegistered(session.id)) return;
   const confirmed = await vscode.window.showWarningMessage(
-    `${why} Log out session ${session.id} to end it? Any uncommitted changes in this session ` +
+    `${why} Log out Jasper session ${session.id} to end it? Any uncommitted changes in this session ` +
       'are lost.',
     { modal: true },
     LOG_OUT,

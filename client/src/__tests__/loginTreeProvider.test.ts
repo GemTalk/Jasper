@@ -205,6 +205,14 @@ describe('GemStoneSessionItem', () => {
 
   // The label's own wording is transactionStateLabel's, pinned in
   // transactionMode.test.ts; what the row owns is where it goes.
+  // The name its row carries in the stone's Session Processes.
+  it("names the session 'Jasper session N' in its tooltip", () => {
+    const tooltip = new GemStoneSessionItem(sessionInMode('manualBegin', false), true).tooltip as {
+      value: string;
+    };
+    expect(tooltip.value).toMatch(/^\*\*Jasper session 3\*\* — /);
+  });
+
   it('says which transaction mode the session is in, after its number', () => {
     expect(new GemStoneSessionItem(sessionInMode('manualBegin', false), true).description).toBe(
       'Session 3 (3.7.2) · Manual · not in transaction',

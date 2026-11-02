@@ -87,8 +87,18 @@ import {
   setRunInProgressHandler,
   setStillRunningHandler,
   setStoppedRunCollectedHandler,
+  stoppedRunHolds,
 } from './nbRunner';
-import { forceStop, rearmAfterForceStop } from './forceStop';
+import { GCI_ERR_OP_IN_PROGRESS } from './gciConstants';
+import { forceStop, loginSerialOf, rearmAfterForceStop } from './forceStop';
+import {
+  signalableGems,
+  killStoneSession,
+  listStoneSessions,
+  stopStoneSession,
+} from './stoneSessions/stoneSessions';
+import { StoneSessions } from './stoneSessions/stoneSessionsView';
+import { isThisMachine } from './thisMachine';
 import { showRunInProgress, showStillRunning } from './stillRunningNotice';
 import { RowanRepoRegistry } from './rowanRepos';
 import {
@@ -223,6 +233,7 @@ import {
   bringUpDatabase,
   takeDownDatabase,
   clearSessionsForStop,
+  goAheadWithStop,
   ServerTarget,
 } from './manager/databaseLifecycle';
 import {
@@ -262,6 +273,8 @@ import {
   invalidateWslCache,
   getWslNetworkInfoCached,
   refreshWslNetworkInfo,
+  wslExec,
+  wslExecSync,
 } from './wslBridge';
 import { isWslInstalledAsync } from './wslInstall';
 import { recheckWsl } from './wslRecheck';
@@ -938,7 +951,25 @@ export function activate(context: vscode.ExtensionContext) {
   // SessionManager is created early so the Logins panel can mark the connected
   // login row (and swap its inline Login action for Logout) in single-session mode.
   sessionManager = new SessionManager();
+  // Every stone's session list, shown in the Databases & Versions panel.
+  const stoneSessions = new StoneSessions({
+    read: (through) => listStoneSessions(transientLoginOn(through)),
+    signalableGems: (sessions) =>
+      signalableGems(sessions, (command, timeout) => wslExecSync(command, undefined, { timeout })),
+    isThisMachine,
+    stuck: stoppedRunHolds,
+    loginSerialOf,
+    transientLogin: (through) => transientLoginOn(through),
+    stop: stopStoneSession,
+    kill: (target, login) => killStoneSession(target, login, (command) => wslExec(command)),
+    logout: (id) => sessionManager.logout(id, true),
+  });
+  function transientLoginOn(through: ActiveSession) {
+    return () => sessionManager.loginTransient(through.login, through);
+  }
   setStillRunningHandler((session) => {
+    // The session's row in the panel gains its flag.
+    DatabasesPanel.refreshIfOpen();
     void showStillRunning(session, {
       isRegistered: (id) => sessionManager.getSession(id) !== undefined,
       cleaningUp: clearHolds,
@@ -946,6 +977,7 @@ export function activate(context: vscode.ExtensionContext) {
         forceStop(s, { loginTransient: (from) => sessionManager.loginTransient(from.login, from) }),
       // Force Stop has just failed: the logout need not try it again.
       logout: (id) => sessionManager.logout(id, true),
+      showInSessions: (s) => DatabasesPanel.showStoneSession(databasesPanelDeps(), s.id),
     });
   });
   setRunInProgressHandler((session) => {
@@ -954,7 +986,11 @@ export function activate(context: vscode.ExtensionContext) {
       stop: cancelRunOn,
     });
   });
-  setStoppedRunCollectedHandler(rearmAfterForceStop);
+  setStoppedRunCollectedHandler((session) => {
+    rearmAfterForceStop(session);
+    // The session's row in the panel loses its flag.
+    DatabasesPanel.refreshIfOpen();
+  });
 
   // De-duplicates connect clicks: the blocking GciTsLogin freezes the extension
   // host while it runs, so extra clicks during a slow login queue up and replay
@@ -3186,15 +3222,28 @@ export function activate(context: vscode.ExtensionContext) {
 
         let results: queries.MethodSearchResult[];
         try {
-          results = await vscode.window.withProgress(
-            {
-              location: vscode.ProgressLocation.Notification,
-              title: `Searching methods for "${args.term}"...`,
-              cancellable: false,
-            },
-            () => Promise.resolve(queries.searchMethodSource(session, args.term, true)),
+          const search = queries.searchMethodSourceAsync(
+            session,
+            args.term,
+            true,
+            'substring',
+            `GemStone: Searching methods for "${args.term}"…`,
           );
+          // From the start: the notification only shows once a search runs past ~2s.
+          vscode.window.setStatusBarMessage(
+            `$(loading~spin) Searching methods for "${args.term}"…`,
+            search,
+          );
+          results = await search;
         } catch (e: unknown) {
+          if (e instanceof NbCancelledError) return;
+          // The busy notice has already said what holds the session.
+          if (
+            e instanceof queries.BrowserQueryError &&
+            e.gciErrorNumber === GCI_ERR_OP_IN_PROGRESS
+          ) {
+            return;
+          }
           const msg = e instanceof Error ? e.message : String(e);
           vscode.window.showErrorMessage(`Search failed: ${msg}`);
           return;
@@ -4418,11 +4467,14 @@ export function activate(context: vscode.ExtensionContext) {
    * alone. It could be a topaz session with uncommitted work, or a gem of
    * another checkout's stone; killing it on a guess is not Jasper's call.
    *
-   * Returns the holders still attached — empty when the database is clear.
+   * Returns the holders still attached — empty when the database is clear,
+   * undefined when Jasper could not tell.
    */
-  async function clearSessionsBeforeStop(db: GemStoneDatabase): Promise<ExtentHolder[]> {
-    // Under a progress notification: probing the extents shells out to lsof and
-    // ps, and on a database with sessions to log out this takes long enough
+  async function clearSessionsBeforeStop(
+    db: GemStoneDatabase,
+  ): Promise<ExtentHolder[] | undefined> {
+    // Under a progress notification: probing the extents shells out twice, and
+    // on a database with sessions to log out this takes long enough
     // that a silent pause reads as a click that did nothing.
     //
     // The probing and the wait around it are awaited, not blocking, so the
@@ -4437,15 +4489,17 @@ export function activate(context: vscode.ExtensionContext) {
     );
   }
 
-  async function clearSessions(db: GemStoneDatabase): Promise<ExtentHolder[]> {
+  async function clearSessions(db: GemStoneDatabase): Promise<ExtentHolder[] | undefined> {
     return await clearSessionsForStop(
       {
         reapSessions: () => reapSessionsOf(db),
         // The stone's own processes are filtered out: a running stone and its
         // housekeeping gems hold its extents by definition, and reporting those
         // would put a question on every stop of a perfectly healthy database.
-        attachedHolders: async () =>
-          sessionHolders(await processManager.findExtentHolders(db), db.config.stoneName),
+        attachedHolders: async () => {
+          const holders = await processManager.findExtentHolders(db);
+          return holders && sessionHolders(holders, db.config.stoneName);
+        },
         wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
         now: () => Date.now(),
       },
@@ -4482,6 +4536,26 @@ export function activate(context: vscode.ExtensionContext) {
       return false;
     }
     return choice === 'Stop Anyway';
+  }
+
+  /** Ask before stopping a database when Jasper could not check what is
+   *  attached to it. Returns true to go ahead. */
+  async function confirmStopUnchecked(db: GemStoneDatabase): Promise<boolean> {
+    const choice = await vscode.window.showWarningMessage(
+      `Jasper could not check whether anything is still attached to "${db.config.stoneName}". ` +
+        `If a session's gem is still attached when the stone stops, it can keep the extent ` +
+        `open and block the next start.`,
+      { modal: true },
+      'Stop Anyway',
+    );
+    return choice === 'Stop Anyway';
+  }
+
+  function stopQuestions(db: GemStoneDatabase) {
+    return {
+      holders: (attached: ExtentHolder[]) => confirmStopWithHolders(db, attached),
+      unchecked: () => confirmStopUnchecked(db),
+    };
   }
 
   const SHOW_IN_TERMINAL = 'Show In Terminal';
@@ -4643,6 +4717,7 @@ export function activate(context: vscode.ExtensionContext) {
       saveLogin: (login: GemStoneLogin) => storage.saveLogin(login),
       refreshAdminViews,
       sessionManager,
+      stoneSessions,
       onAdminChange: [
         databaseProvider.onDidChangeTreeData,
         processWatcher.onDidChange,
@@ -4896,8 +4971,7 @@ export function activate(context: vscode.ExtensionContext) {
       // Before either server goes: get Jasper's own sessions out and confirm
       // their gems have exited, so nothing is left holding the extents when the
       // stone stops.
-      const holders = await clearSessionsBeforeStop(db);
-      if (holders.length > 0 && !(await confirmStopWithHolders(db, holders))) return;
+      if (!(await goAheadWithStop(await clearSessionsBeforeStop(db), stopQuestions(db)))) return;
       await takeDownDatabase(db, databaseLifecycleDeps(), { sessionsCleared: true });
       refreshAdminViews();
     }),
@@ -4916,7 +4990,7 @@ export function activate(context: vscode.ExtensionContext) {
         // notification would clip it to its first line — and a terminal on
         // those PIDs is the next thing the user wants either way.
         if (isExtentLocked(msg)) {
-          const holders = await processManager.findExtentHolders(node.db);
+          const holders = (await processManager.findExtentHolders(node.db)) ?? [];
           const pick = await vscode.window.showErrorMessage(
             msg,
             { modal: true },
@@ -4948,7 +5022,7 @@ export function activate(context: vscode.ExtensionContext) {
         // carries no such promise, so the `in` guard reads as "not cleared".
         if (!('sessionsCleared' in node && node.sessionsCleared)) {
           const attached = await clearSessionsBeforeStop(db);
-          if (attached.length > 0 && !(await confirmStopWithHolders(db, attached))) return;
+          if (!(await goAheadWithStop(attached, stopQuestions(db)))) return;
         }
 
         // Only DataCurator is guaranteed to have shutdown permission, and stopstone

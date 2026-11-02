@@ -15,10 +15,7 @@ import {
 } from './wslBridge';
 import { toWslPath } from './wslFs';
 import { isWslInstalledAsync } from './wslInstall';
-
-function shQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`;
-}
+import { shellQuote } from './shellQuote';
 
 export type OsConfigNode =
   | { kind: 'loading' }
@@ -112,7 +109,7 @@ export function getRemoveIpcConfigured(): boolean {
   const readText = wsl
     ? (p: string): string | undefined => {
         try {
-          return wslExecSync(`cat ${shQuote(p)} 2>/dev/null`);
+          return wslExecSync(`cat ${shellQuote(p)} 2>/dev/null`);
         } catch {
           return undefined;
         }
@@ -127,7 +124,7 @@ export function getRemoveIpcConfigured(): boolean {
   const listConfs = wsl
     ? (dir: string): string[] => {
         try {
-          return wslExecSync(`ls -A1 ${shQuote(dir)} 2>/dev/null`)
+          return wslExecSync(`ls -A1 ${shellQuote(dir)} 2>/dev/null`)
             .split('\n')
             .map((s) => s.trim())
             .filter(Boolean);
@@ -521,7 +518,7 @@ export class OsConfigTreeProvider implements vscode.TreeDataProvider<OsConfigNod
         shellArgs: ['-e', 'bash'],
       });
       terminal.show();
-      terminal.sendText(`sudo ${shQuote(toWslPath(scriptPath))} && exit`);
+      terminal.sendText(`sudo ${shellQuote(toWslPath(scriptPath))} && exit`);
       return terminal;
     }
     const terminal = vscode.window.createTerminal(name);

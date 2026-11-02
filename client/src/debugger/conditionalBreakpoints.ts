@@ -5,6 +5,7 @@ import {
   GCI_PERFORM_FLAG_INTERPRETED,
   OOP_ILLEGAL,
   OOP_NIL,
+  SOFT_BREAK_ERROR,
   toBigInt,
 } from '../gciConstants';
 import { gsStringLiteral as literal } from '../serverPlugin/installHelpers';
@@ -150,12 +151,6 @@ export const DECISION = {
 
 /** GemStone's "method breakpoint encountered". */
 export const BREAKPOINT_ERROR = 6005;
-
-/**
- * GemStone's "a soft break was received". Only ever the developer's Cancel, so
- * a skip it interrupts is a cancelled skip, not a failed one.
- */
-export const SOFT_BREAK_ERROR = 6003;
 
 /**
  * Resumed execution stays interpreted and debuggable, the same flags the
@@ -783,7 +778,8 @@ export async function applyBreakpointRules(
           if (e instanceof NbCancelledError) throw e;
           if (signal?.aborted) abandon();
           // A soft break that landed in the judgement stopped only the decider's
-          // own process; the run is still suspended at this hit.
+          // own process; the run is still suspended at this hit. It is only ever
+          // the developer's Cancel, so the skip is cancelled, not failed.
           if (cancelled || (e instanceof DeciderError && e.errorNumber === SOFT_BREAK_ERROR)) {
             return { kind: 'cancelled', context: process, skipped };
           }

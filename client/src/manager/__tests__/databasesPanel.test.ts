@@ -24,6 +24,7 @@ vi.mock('../../wslBridge', async (importOriginal) => ({
   needsWsl: vi.fn(() => false),
   // Never the real probe, which runs wsl.exe on a Windows test host.
   getWslInfoAsync: vi.fn(async () => ({ available: true })),
+  getWslNetworkInfoCached: vi.fn(() => undefined),
 }));
 
 import * as fs from 'fs';
@@ -34,7 +35,8 @@ import { DatabaseManager } from '../databaseManager';
 import { DatabasesPanel } from '../databasesPanel';
 import type { GemStoneVersion } from '../../sysadminTypes';
 import { SysadminStorage } from '../../sysadminStorage';
-import { getWslInfoAsync, needsWsl } from '../../wslBridge';
+import { getWslInfoAsync, getWslNetworkInfoCached, needsWsl } from '../../wslBridge';
+import type { WslNetworkInfo } from '../../wslBridge';
 import { showSysadmin } from '../../sysadminChannel';
 import { __setConfig, __resetConfig, __configUpdates } from '../../__mocks__/vscode';
 
@@ -1373,4 +1375,209 @@ describe('version status colors', () => {
       );
     });
   }
+});
+
+describe("each stone's sessions", () => {
+  const DC = {
+    label: 'local',
+    gs_user: 'DataCurator',
+    stone: 'gs64stone',
+    gem_host: 'localhost',
+    version: '3.7.5',
+  };
+  const FAR = { ...DC, stone: 'far', gem_host: 'thor' };
+  const session = (id: number, login: typeof DC) => ({ id, login }) as unknown;
+
+  function withStoneSessions(logins: (typeof DC)[], open: unknown[], running = true) {
+    const stoneSessions = {
+      describe: vi.fn((key: string) => ({ key, kind: 'sessions', rows: [] })),
+      forget: vi.fn(),
+      forgetAll: vi.fn(),
+      retain: vi.fn(),
+      stop: vi.fn(async () => {}),
+      kill: vi.fn(async () => {}),
+      rowOf: vi.fn((id: number) => (id === 1 ? { key: 'db:db-1', serial: 7 } : undefined)),
+      onDidChange: vi.fn(),
+    };
+    const base = makeDeps() as unknown as Record<string, Record<string, unknown>>;
+    const deps = {
+      ...base,
+      getLogins: () => logins,
+      processManager: { ...base.processManager, isStoneRunning: () => running },
+      sessionManager: { ...base.sessionManager, getSessions: () => open },
+      stoneSessions,
+    } as unknown as Parameters<typeof DatabasesPanel.show>[0];
+    return { deps, stoneSessions };
+  }
+
+  beforeEach(() => {
+    databases = [
+      {
+        dirName: 'db-1',
+        path: path.join(os.tmpdir(), 'jasper-no-such-db-1'),
+        config: { version: '3.7.5', stoneName: 'gs64stone', ldiName: 'gs64ldi' },
+      },
+    ];
+  });
+
+  const state = () =>
+    lastState() as unknown as {
+      databases: { stoneSessions?: { key: string; kind: string; message?: string } }[];
+      otherStoneSessions: { key: string; stone: string; host: string }[];
+    };
+
+  it("lists a running stone's sessions through a session of this window on it", async () => {
+    const mine = session(1, DC);
+    const { deps, stoneSessions } = withStoneSessions([DC], [mine]);
+    DatabasesPanel.show(deps);
+    await sendMessage({ command: 'ready' });
+
+    expect(stoneSessions.describe).toHaveBeenCalledWith('db:db-1', mine, [mine]);
+    expect(state().databases[0].stoneSessions).toEqual({
+      key: 'db:db-1',
+      kind: 'sessions',
+      rows: [],
+    });
+  });
+
+  it('asks for a login rather than reading a stone no session of this window is on', async () => {
+    const { deps, stoneSessions } = withStoneSessions([DC], []);
+    DatabasesPanel.show(deps);
+    await sendMessage({ command: 'ready' });
+
+    expect(stoneSessions.describe).not.toHaveBeenCalled();
+    expect(state().databases[0].stoneSessions).toMatchObject({
+      kind: 'message',
+      message: 'Log in to see the sessions on this stone',
+    });
+  });
+
+  it('shows no list for a stone that is down', async () => {
+    const { deps } = withStoneSessions([DC], [session(1, DC)], false);
+    DatabasesPanel.show(deps);
+    await sendMessage({ command: 'ready' });
+    expect(state().databases[0].stoneSessions).toBeUndefined();
+  });
+
+  it('lists a stone with no database here once, however many sessions reach it', async () => {
+    const { deps, stoneSessions } = withStoneSessions(
+      [FAR, { ...FAR, gs_user: 'SystemUser' }],
+      [session(2, FAR), session(3, { ...FAR, gs_user: 'SystemUser' })],
+    );
+    DatabasesPanel.show(deps);
+    await sendMessage({ command: 'ready' });
+
+    expect(state().otherStoneSessions).toEqual([
+      { key: 'stone:thor/far', kind: 'sessions', rows: [], stone: 'far', host: 'thor' },
+    ]);
+    expect(stoneSessions.describe).toHaveBeenCalledTimes(1);
+  });
+
+  // Its sessions would show, and be stopped, under the database here, and under Other Logins too.
+  it("lists a stone elsewhere that shares a database's name only under Other Logins", async () => {
+    const twin = { ...DC, label: 'twin', gem_host: 'thor' };
+    const { deps, stoneSessions } = withStoneSessions([DC, twin], [session(2, twin)]);
+    DatabasesPanel.show(deps);
+    await sendMessage({ command: 'ready' });
+
+    expect(state().databases[0].stoneSessions).toMatchObject({ kind: 'message' });
+    expect(state().otherStoneSessions.map((l) => l.key)).toEqual(['stone:thor/gs64stone']);
+    expect(stoneSessions.describe).toHaveBeenCalledTimes(1);
+  });
+
+  it("lists a database's sessions through a login that names this machine, not localhost", async () => {
+    const byName = { ...DC, label: 'by-name', gem_host: os.hostname() };
+    const { deps, stoneSessions } = withStoneSessions([byName], [session(1, byName)]);
+    DatabasesPanel.show(deps);
+    await sendMessage({ command: 'ready' });
+
+    expect(stoneSessions.describe).toHaveBeenCalledWith('db:db-1', session(1, byName), [
+      session(1, byName),
+    ]);
+    expect(state().otherStoneSessions).toEqual([]);
+  });
+
+  // Under WSL's default networking, a stone in WSL is logged in to at the WSL guest's address.
+  it("lists a database's sessions through a login at the WSL guest's address", async () => {
+    vi.mocked(getWslNetworkInfoCached).mockReturnValue({ ip: '172.20.1.5' } as WslNetworkInfo);
+    try {
+      const wsl = { ...DC, label: 'wsl', gem_host: '172.20.1.5' };
+      const { deps, stoneSessions } = withStoneSessions([wsl], [session(1, wsl)]);
+      DatabasesPanel.show(deps);
+      await sendMessage({ command: 'ready' });
+
+      expect(stoneSessions.describe).toHaveBeenCalledWith('db:db-1', session(1, wsl), [
+        session(1, wsl),
+      ]);
+    } finally {
+      vi.mocked(getWslNetworkInfoCached).mockReturnValue(undefined);
+    }
+  });
+
+  it('lists a stone here with no database once, by whichever name it is reached', async () => {
+    const near = { ...FAR, gem_host: 'localhost' };
+    const byName = { ...FAR, label: 'by-name', gem_host: os.hostname() };
+    const { deps, stoneSessions } = withStoneSessions(
+      [near, byName],
+      [session(2, near), session(3, byName)],
+    );
+    DatabasesPanel.show(deps);
+    await sendMessage({ command: 'ready' });
+
+    expect(state().otherStoneSessions.map((l) => l.key)).toEqual(['stone:localhost/far']);
+    expect(stoneSessions.describe).toHaveBeenCalledTimes(1);
+  });
+
+  // Show in Sessions must not find a row that isn't drawn.
+  it('keeps only the lists it draws', async () => {
+    const { deps, stoneSessions } = withStoneSessions([DC, FAR], [session(1, DC), session(2, FAR)]);
+    DatabasesPanel.show(deps);
+    await sendMessage({ command: 'ready' });
+    expect(stoneSessions.retain).toHaveBeenLastCalledWith(new Set(['db:db-1', 'stone:thor/far']));
+  });
+
+  it('keeps no list for a stone that is down', async () => {
+    const { deps, stoneSessions } = withStoneSessions([DC], [session(1, DC)], false);
+    DatabasesPanel.show(deps);
+    await sendMessage({ command: 'ready' });
+    expect(stoneSessions.retain).toHaveBeenLastCalledWith(new Set());
+  });
+
+  it('passes Refresh, Stop and Kill on to the row they name', async () => {
+    const { deps, stoneSessions } = withStoneSessions([DC], [session(1, DC)]);
+    DatabasesPanel.show(deps);
+    await sendMessage({ command: 'ready' });
+
+    await sendMessage({ command: 'refreshStoneSessions', name: 'db:db-1' });
+    await sendMessage({ command: 'stopStoneSession', name: 'db:db-1', serial: 9 });
+    await sendMessage({ command: 'killStoneSession', name: 'db:db-1', serial: 9 });
+
+    expect(stoneSessions.forget).toHaveBeenCalledWith('db:db-1');
+    expect(stoneSessions.stop).toHaveBeenCalledWith('db:db-1', 9);
+    expect(stoneSessions.kill).toHaveBeenCalledWith('db:db-1', 9);
+  });
+
+  it("opens at Show in Sessions' row, read fresh, once the state carrying it is drawn", async () => {
+    const { deps, stoneSessions } = withStoneSessions([DC], [session(1, DC)]);
+    DatabasesPanel.showStoneSession(deps, 1);
+    await sendMessage({ command: 'ready' });
+
+    expect(stoneSessions.forgetAll).toHaveBeenCalled();
+    const posted = vi.mocked(lastPanel().webview.postMessage).mock.calls.map((c) => c[0]);
+    const stateAt = posted.findIndex((m) => (m as { command: string }).command === 'state');
+    const revealAt = posted.findIndex(
+      (m) => (m as { command: string }).command === 'revealStoneSession',
+    );
+    expect(revealAt).toBeGreaterThan(stateAt);
+    expect(posted[revealAt]).toEqual({ command: 'revealStoneSession', key: 'db:db-1', serial: 7 });
+  });
+
+  it('says so when the session is in no list', async () => {
+    const { deps } = withStoneSessions([DC], [session(1, DC)]);
+    DatabasesPanel.showStoneSession(deps, 2);
+    await sendMessage({ command: 'ready' });
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      expect.stringMatching(/^Jasper session 2 isn't in its stone's session list/),
+    );
+  });
 });

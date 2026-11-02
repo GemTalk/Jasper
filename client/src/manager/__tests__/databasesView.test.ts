@@ -940,6 +940,14 @@ describe('a login row', () => {
     );
     expect(root.querySelectorAll('.db-session')).toHaveLength(2);
   });
+
+  // The name its row carries in the stone's Session Processes.
+  it("names each session 'Jasper session N' in its tooltip", () => {
+    mount(withLogin({ sessions: [{ id: 7, current: true }] }));
+    expect(root.querySelector('.db-session')!.getAttribute('data-tip')).toMatch(
+      /^Jasper session 7: /,
+    );
+  });
 });
 
 describe('folder and terminal actions', () => {
@@ -1198,6 +1206,173 @@ describe('the stone and NetLDI rows', () => {
       }),
     );
     expect(root.querySelector('[data-action="stopStone"]')).toBeNull();
+  });
+});
+
+describe("a stone's sessions, under Session Processes", () => {
+  const row = (overrides: Record<string, unknown> = {}) => ({
+    id: 5,
+    serial: 9,
+    user: 'ewinger',
+    gemPid: 39811,
+    host: 'thor',
+    age: '3h',
+    stuck: false,
+    canStop: true,
+    canKill: false,
+    tip: 'In a transaction.',
+    ...overrides,
+  });
+  const running = (stoneSessions: unknown) =>
+    state({ databases: [database({ stoneRunning: true, stoneSessions })] });
+  const listed = (...rows: unknown[]) => ({ key: 'db:db-1', kind: 'sessions', rows });
+  const groupTitled = (title: string) =>
+    Array.from(root.querySelectorAll<HTMLElement>('details.db-item .db-group')).find((g) =>
+      g.querySelector('.db-group-title')?.textContent?.startsWith(title),
+    )!;
+  const rowEl = (serial: number) =>
+    root.querySelector<HTMLElement>(`[data-stone-session="db:db-1|${serial}"]`);
+
+  it('lists each session in a group of its own beside Processes, with its gem, host and age', () => {
+    mount(
+      running(
+        listed(
+          row(),
+          row({ id: 2, serial: 1, user: 'SymbolUser', systemGem: 'symbolgem', canStop: false }),
+        ),
+      ),
+    );
+
+    const list = groupTitled('Session Processes');
+    expect(list.querySelector('.db-group-title')!.textContent).toBe('Session Processes · 2');
+    expect(list.parentElement).toBe(groupTitled('Processes').parentElement);
+    expect(groupTitled('Processes').querySelector('[data-stone-session]')).toBeNull();
+    expect(rowEl(9)!.textContent).toContain('GemStone session 5 · gem 39811 · thor · 3h');
+    expect(rowEl(1)!.textContent).toContain('system: symbolgem');
+  });
+
+  it("gives the stone's commit-record backlog in the header, and says when it asks for aborts", () => {
+    const headerDesc = () =>
+      groupTitled('Session Processes').querySelector('.group-desc')?.textContent;
+    mount(running({ ...listed(row()), commitRecords: 1, abortThreshold: 20 }));
+    expect(headerDesc()).toBe('1 commit record');
+    mount(running({ ...listed(row()), commitRecords: 3, abortThreshold: 20 }));
+    expect(headerDesc()).toBe('3 commit records');
+    mount(running({ ...listed(row()), commitRecords: 27, abortThreshold: 20 }));
+    expect(headerDesc()).toBe('27 commit records — the stone asks for aborts at 20');
+  });
+
+  it('shows nothing of the kind while the stone is down', () => {
+    mount(state({ databases: [database({ stoneRunning: false })] }));
+    expect(root.querySelector('.stone-sessions')).toBeNull();
+  });
+
+  it('offers Stop and Kill only where the host says they can work', () => {
+    mount(
+      running(
+        listed(
+          row(),
+          row({ serial: 3, canKill: true }),
+          row({ serial: 1, canStop: false, systemGem: 'symbolgem' }),
+        ),
+      ),
+    );
+    expect(rowEl(9)!.querySelector('[data-action="stopStoneSession"]')).not.toBeNull();
+    expect(rowEl(9)!.querySelector('[data-action="killStoneSession"]')).toBeNull();
+    expect(rowEl(3)!.querySelector('[data-action="killStoneSession"]')).not.toBeNull();
+    expect(
+      rowEl(9)!.querySelector('[data-action="stopStoneSession"]')!.getAttribute('data-tip'),
+    ).toBe('Stop GemStone session 5 — anything it hasn’t committed will be lost');
+    expect(
+      rowEl(3)!.querySelector('[data-action="killStoneSession"]')!.getAttribute('data-tip'),
+    ).toMatch(/^Kill GemStone session /);
+    expect(rowEl(1)!.querySelector('button')).toBeNull();
+  });
+
+  it('names the row it acts on by stone and serial number', () => {
+    mount(running(listed(row({ canKill: true }))));
+    rowEl(9)!.querySelector<HTMLElement>('[data-action="killStoneSession"]')!.click();
+    expect(host.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'killStoneSession', name: 'db:db-1', serial: 9 }),
+    );
+    click('refreshStoneSessions');
+    expect(host.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'refreshStoneSessions', name: 'db:db-1' }),
+    );
+  });
+
+  it("marks this window's own session, and the flags", () => {
+    mount(
+      running(
+        listed(
+          row({ jasperSessionId: 2, stuck: true }),
+          row({ serial: 3, heldBackCommitRecords: 27 }),
+        ),
+      ),
+    );
+    expect(rowEl(9)!.textContent).toContain('Jasper session 2');
+    expect(rowEl(9)!.textContent).toContain('still running a stopped run');
+    expect(rowEl(9)!.classList.contains('row-warn')).toBe(true);
+    expect(rowEl(3)!.textContent).toContain('⧗ holds back 27 commit records');
+  });
+
+  it('says a holder of the oldest commit record is one of several', () => {
+    mount(running(listed(row({ heldBackCommitRecords: 27, backlogHolders: 3 }))));
+    expect(rowEl(9)!.textContent).toContain('⧗ one of 3 sessions holding back 27 commit records');
+  });
+
+  it('says what stands in for the list when there is none', () => {
+    mount(
+      running({
+        key: 'db:db-1',
+        kind: 'message',
+        message: 'Log in to see the sessions on this stone',
+        detail: 'GemStone lists a stone’s sessions only to a session logged in to it.',
+      }),
+    );
+    expect(groupTitled('Session Processes').textContent).toContain(
+      'Log in to see the sessions on this stone',
+    );
+  });
+
+  // Two logins to one stone elsewhere share one list.
+  it('lists a stone with no database here once, under Other Logins', () => {
+    const login = (user: string) => ({
+      label: `${user} on far (thor)`,
+      user,
+      stone: 'far',
+      version: '3.7.5',
+      host: 'thor',
+      netldi: 'farldi',
+      running: true,
+      connected: true,
+      sessions: [],
+    });
+    mount(
+      state({
+        logins: [login('DataCurator'), login('SystemUser')],
+        otherStoneSessions: [
+          { key: 'stone:thor/far', kind: 'sessions', rows: [row()], stone: 'far', host: 'thor' },
+        ],
+      }),
+    );
+    const other = root.querySelector('[data-section="otherLogins"]') as HTMLElement;
+    expect(other.querySelectorAll('.stone-sessions')).toHaveLength(1);
+    expect(other.textContent).toContain('Session Processes on far (thor) · 1');
+  });
+
+  it('opens the panel at the row Show in Sessions asks for, and keeps it marked', () => {
+    mount(running(listed(row(), row({ serial: 3 }))));
+    const item = root.querySelector('details.db-item') as HTMLDetailsElement;
+    expect(item.open).toBe(false);
+
+    fromHost({ command: 'revealStoneSession', key: 'db:db-1', serial: 3 });
+
+    expect((root.querySelector('details.db-item') as HTMLDetailsElement).open).toBe(true);
+    expect(rowEl(3)!.classList.contains('row-reveal')).toBe(true);
+    expect(rowEl(9)!.classList.contains('row-reveal')).toBe(false);
+    api().render(running(listed(row(), row({ serial: 3 }))));
+    expect(rowEl(3)!.classList.contains('row-reveal')).toBe(true);
   });
 });
 

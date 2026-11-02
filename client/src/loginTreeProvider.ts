@@ -151,7 +151,7 @@ export class GemStoneSessionItem extends vscode.TreeItem {
     this.id = `session-${id}-${mcp}-${sessionContextValue(activeSession)}-${this.description}`;
     const tooltip = new vscode.MarkdownString();
     tooltip.appendMarkdown(
-      `**Session ${id}** — ${loginLabel(activeSession.login)} (${stoneVersion})\n\n`,
+      `**Jasper session ${id}** — ${loginLabel(activeSession.login)} (${stoneVersion})\n\n`,
     );
     if (mcp === 'serving') {
       tooltip.appendMarkdown(

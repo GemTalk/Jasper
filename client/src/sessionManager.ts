@@ -9,12 +9,12 @@ import { logInfo, logWarning } from './gciLog';
 import { createSessionGciLibrary } from './enhancedInspector/enhancedInspectorPerfTracker';
 import { installTranscriptSink } from './transcriptSink';
 import { forgetSession, isRunning, stopCallsOn, stoppedRunHolds } from './nbRunner';
+import { NO_PRIVILEGE_ERROR } from './queries/sessionOfLogin';
 import {
   armForceStop,
   endServerSession,
   forceStop,
   forgetForceStop,
-  NO_PRIVILEGE_ERROR,
   sendStopSignal,
   serverSessionOf,
   type ForceStopDeps,
@@ -484,7 +484,8 @@ export class SessionManager {
    * the stop: a gem whose run has resumed a soft break keeps running after its
    * logout, for good (measured on 3.6.2 and 3.7.5). A run that ignores Force Stop
    * too is ended on the server after the logout, which needs the SessionAccess
-   * privilege; without it the user is told what is left running.
+   * and SystemControl privileges; without them the user is told what is left
+   * running.
    *
    * A logout of a session already being logged out waits for that one and
    * shares its outcome.
@@ -792,7 +793,7 @@ export class SessionManager {
     if (failure === undefined) return;
     void vscode.window.showWarningMessage(
       failure instanceof GciLibraryError && failure.number === NO_PRIVILEGE_ERROR
-        ? `${left} Ending it needs the SessionAccess privilege, which ${s.login.gs_user} ` +
+        ? `${left} Ending it needs the SessionAccess and SystemControl privileges, which ${s.login.gs_user} ` +
             `doesn't have. An administrator can end it with: System stopSession: ${serverSession}`
         : `${left} It could not be ended (${failure instanceof Error ? failure.message : String(failure)}). ` +
             `An administrator can end it with: System stopSession: ${serverSession}`,
