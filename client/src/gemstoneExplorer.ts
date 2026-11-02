@@ -2858,8 +2858,11 @@ export class ExplorerController {
           superclass: supers.length > 0 ? supers[supers.length - 1].className : undefined,
           subclasses: entries.filter((e) => e.kind === 'subclass').map((e) => e.className),
         };
-      } catch {
-        /* leave empty — treated as a leaf with no superclass */
+      } catch (e) {
+        // Treated as a leaf with no superclass. A busy session's refusal isn't
+        // memoized: once its run ends, the memo would keep the empty answer
+        // until the class list reloads.
+        if (queries.isBusyRefusal(e)) return neighbors;
       }
     }
     this.hierNeighborsCache.set(className, neighbors);
@@ -2878,8 +2881,9 @@ export class ExplorerController {
     if (session) {
       try {
         names = queries.getDefinedInstVarNames(session, className, this.state.dictIndex);
-      } catch {
-        /* leave empty — the row simply shows no children */
+      } catch (e) {
+        // The row simply shows no children; a busy refusal isn't memoized, see hierNeighbors.
+        if (queries.isBusyRefusal(e)) return names;
       }
     }
     this.definedIvarNamesCache.set(className, names);
@@ -2895,8 +2899,10 @@ export class ExplorerController {
     if (session) {
       try {
         names = queries.getDefinedClassVarNames(session, className, this.state.dictIndex);
-      } catch {
-        /* leave empty — the row simply shows no class-variable children */
+      } catch (e) {
+        // The row simply shows no class-variable children; a busy refusal isn't
+        // memoized, see hierNeighbors.
+        if (queries.isBusyRefusal(e)) return names;
       }
     }
     this.definedClassVarNamesCache.set(className, names);
