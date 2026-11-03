@@ -356,6 +356,15 @@ export class BrowserQueryError extends Error {
   }
 }
 
+/**
+ * Whether `e` is a query refused because a call already held the session.
+ * Such a refusal says nothing about the answer, so a caller that remembers
+ * answers shouldn't remember it; any other failure answers the same next time.
+ */
+export function isBusyRefusal(e: unknown): boolean {
+  return e instanceof BrowserQueryError && e.gciErrorNumber === GCI_ERR_OP_IN_PROGRESS;
+}
+
 function resolveClassUtf8(session: ActiveSession): bigint {
   return session.utf8ClassOop();
 }

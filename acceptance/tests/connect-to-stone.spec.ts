@@ -7,11 +7,11 @@ import { readTestStone } from '../helpers/testStone';
  * `npm run test:server:start`; without it the spec skips rather than fails.
  */
 const stone = readTestStone();
-// `readTestStone` collapses five distinct conditions (missing `.env.test`,
+// `readTestStone` collapses six distinct conditions (missing `.env.test`,
 // missing GCI library, an unset/unparseable Stone NRS, an unextractable
-// NetLDI name, or an unresolvable version) into a single `undefined` — it
-// can't tell "never provisioned" from "provisioned but incomplete or
-// unreadable", so the skip reason must not claim either one specifically.
+// NetLDI name, an unresolvable version, or an unset global dir) into a single
+// `undefined` — it can't tell "never provisioned" from "provisioned but
+// incomplete or unreadable", so the skip reason must not claim either one.
 const skipReason = 'test stone env is missing or incomplete (run npm run test:server:start)';
 
 test.describe('connecting to a stone', () => {
@@ -19,6 +19,9 @@ test.describe('connecting to a stone', () => {
 
   test.use({
     workspaceSettings: {
+      // Jasper finds a NetLDI by name in `gemstone.rootPath`, so it must be
+      // the directory the test stone registered in.
+      'gemstone.rootPath': stone?.globalDir,
       'gemstone.gciLibraries': stone ? { [stone.version]: stone.gciLibraryPath } : {},
     },
     userSettings: {

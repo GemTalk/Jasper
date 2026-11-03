@@ -75,8 +75,8 @@ const VSCODE_VERSION = '1.129.1';
  *   - a throwaway workspace folder
  *   - HOME pointed at the profile, so `~/.claude.json` and `~/Documents/GemStone`
  *     resolve to empty throwaway paths (no MCP write to your real config)
- *   - `gemstone.rootPath` at an empty temp dir, so the Versions and Databases
- *     panels never surface your real GemStone installs
+ *   - `gemstone.rootPath` at an empty temp dir, so the Databases view and the
+ *     Databases & Versions panel never surface your real GemStone installs
  *   - secrets kept in memory, never the OS keychain (see `persistentSecrets`)
  *
  * Fixtures:
@@ -150,8 +150,8 @@ export const test = base.extend<{
     // In the container a stone is already up, so seed the login it expects (in
     // user settings, below) and point at its install — a scenario can then log in as a user would, with
     // no per-scenario configuration. On a host run there is no such stone and
-    // the isolation below stands: an empty root, so the Versions and Databases
-    // panels never surface your own GemStone installs.
+    // the isolation below stands: an empty root, so the Databases view and the
+    // Databases & Versions panel never surface your own GemStone installs.
     const containerStone = readContainerStone();
     const stoneSettings = containerStone
       ? {
