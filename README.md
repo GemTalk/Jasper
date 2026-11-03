@@ -159,6 +159,8 @@ The **Logins & Sessions** view stores connection configurations for your GemSton
 - GemStone and host credentials
 - Optional per-login export path template
 
+Logins are kept in your VS Code user settings, under `gemstone.logins`; a list in a folder's `.vscode/settings.json` is ignored. That setting's description says how to take them to another machine.
+
 **Where passwords are kept.** Each of a login's two passwords, GemStone and host, is either filled in or left blank, and the **Keep saved passwords in the OS keychain** box below them decides where a filled-in one goes:
 
 |                                                             | Password filled in                                       | Password left blank                  |

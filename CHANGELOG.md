@@ -4,6 +4,10 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Changed
+
+- **Logins live only in your user settings.** A folder that kept its own list of logins in `.vscode/settings.json` used to hide yours, while Jasper went on saving to yours: a login you added seemed to vanish, an edit didn't show, and a deleted login stayed in the list. Jasper and VS Code now ignore a login list in a folder's settings, so Logins & Sessions always shows the logins it saves. If you kept logins in a folder's settings, add them again in Logins & Sessions. The `gemstone.logins` setting now says how to copy your logins to another machine. ([#794](https://github.com/GemTalk/Jasper/issues/794))
+
 ## [1.17.0] - 2026-10-30
 
 ### Added

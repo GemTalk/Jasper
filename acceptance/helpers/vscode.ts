@@ -81,10 +81,11 @@ const VSCODE_VERSION = '1.129.1';
  *
  * Fixtures:
  *   - `workspaceSettings` — seeds the workspace's `.vscode/settings.json` before
- *      launch (override with `test.use({ workspaceSettings })`) to declare
- *      logins, GCI library paths, etc. Its keys win over the isolation defaults;
- *      a key set to `undefined` removes a default.
- *   - `userSettings` — the same, for the profile's user `settings.json`
+ *      launch (override with `test.use({ workspaceSettings })`) to declare GCI
+ *      library paths, etc. Its keys win over the isolation defaults; a key set
+ *      to `undefined` removes a default.
+ *   - `userSettings` — the same, for the profile's user `settings.json`; logins
+ *      go here, since VS Code ignores them in a workspace's settings
  *   - `passwordOffer` — show Jasper's startup toast that offers to move
  *      plain-text passwords to the keychain. The harness hides it unless a spec
  *      sets this, because most runs seed a plain-text login and the toast would
@@ -146,8 +147,8 @@ export const test = base.extend<{
     const gemstoneRoot = path.join(profile, 'gemstone-root');
     fs.mkdirSync(gemstoneRoot, { recursive: true });
 
-    // In the container a stone is already up, so seed the login it expects and
-    // point at its install — a scenario can then log in as a user would, with
+    // In the container a stone is already up, so seed the login it expects (in
+    // user settings, below) and point at its install — a scenario can then log in as a user would, with
     // no per-scenario configuration. On a host run there is no such stone and
     // the isolation below stands: an empty root, so the Versions and Databases
     // panels never surface your own GemStone installs.
@@ -156,6 +157,10 @@ export const test = base.extend<{
       ? {
           'gemstone.rootPath': containerStone.globalDir,
           'gemstone.gciLibraries': { [containerStone.version]: containerStone.gciLibraryPath },
+        }
+      : {};
+    const stoneLogins = containerStone
+      ? {
           'gemstone.logins': [
             {
               version: containerStone.version,
@@ -195,7 +200,7 @@ export const test = base.extend<{
     const userSettingsPath = path.join(userSettingsDir, 'settings.json');
     fs.writeFileSync(
       userSettingsPath,
-      JSON.stringify({ 'window.dialogStyle': 'custom', ...userSettings }, null, 2),
+      JSON.stringify({ 'window.dialogStyle': 'custom', ...stoneLogins, ...userSettings }, null, 2),
     );
 
     const dotVscode = path.join(workspace, '.vscode');

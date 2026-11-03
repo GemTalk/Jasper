@@ -19,15 +19,21 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/**
+ * The setting is application-scoped, so VS Code ignores a list in a folder's
+ * settings; reading only the user's value keeps the list shown the one written.
+ */
+function userLogins(): GemStoneLogin[] {
+  const config = vscode.workspace.getConfiguration('gemstone');
+  return config.inspect<GemStoneLogin[]>('logins')?.globalValue ?? [];
+}
+
 export class LoginStorage {
   constructor(private readonly secrets: vscode.SecretStorage) {}
 
   /** Each with its label, which Quick Setup and the Databases panel used to save empty. */
   getLogins(): GemStoneLogin[] {
-    const config = vscode.workspace.getConfiguration('gemstone');
-    return config
-      .get<GemStoneLogin[]>('logins', [])
-      .map((login) => ({ ...login, label: loginLabel(login) }));
+    return userLogins().map((login) => ({ ...login, label: loginLabel(login) }));
   }
 
   /**
@@ -79,27 +85,21 @@ export class LoginStorage {
   }
 
   /**
-   * Moves the plain-text passwords of the logins named in `labels`, among the
-   * logins in effect: the workspace's when it has its own, else the user's. A
-   * copy in the other file is left alone, so a stale one can't overwrite the
-   * password the login in use keeps in the keychain. Every password is stored
-   * before the file is written, so a keychain failure leaves it as it was.
+   * Moves the plain-text passwords of the logins named in `labels`. Every
+   * password is stored before the file is written, so a keychain failure
+   * leaves it as it was.
    */
   async movePasswordsToKeychain(labels: ReadonlySet<string>): Promise<boolean> {
     const config = vscode.workspace.getConfiguration('gemstone');
-    const inspected = config.inspect<GemStoneLogin[]>('logins');
-    const [target, logins] =
-      inspected?.workspaceValue !== undefined
-        ? [vscode.ConfigurationTarget.Workspace, inspected.workspaceValue]
-        : [vscode.ConfigurationTarget.Global, inspected?.globalValue ?? []];
-    const everywhere = [...(inspected?.globalValue ?? []), ...(inspected?.workspaceValue ?? [])];
+    const logins = userLogins();
     const toMove = (l: GemStoneLogin) => hasPlainTextPassword(l) && labels.has(loginLabel(l));
 
     for (const login of logins.filter(toMove)) {
-      // A login already keychain-backed, in either file, may have only its host
-      // password in plain text; storing it must not clear the GemStone password
-      // beside it, nor go ahead when that password can't be read.
-      const keychainBacked = everywhere.some(
+      // A login already keychain-backed, or with a keychain-backed twin in a
+      // hand-edited list, may have only its host password in plain text;
+      // storing it must not clear the GemStone password beside it, nor go
+      // ahead when that password can't be read.
+      const keychainBacked = logins.some(
         (l) =>
           l.password_in_keychain && loginCredentialAccount(l) === loginCredentialAccount(login),
       );
@@ -133,7 +133,7 @@ export class LoginStorage {
     const moved = logins.map((l) =>
       toMove(l) ? { ...l, gs_password: '', host_password: '', password_in_keychain: true } : l,
     );
-    await config.update('logins', moved, target);
+    await config.update('logins', moved, vscode.ConfigurationTarget.Global);
     return true;
   }
 

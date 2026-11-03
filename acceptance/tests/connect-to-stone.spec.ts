@@ -20,6 +20,8 @@ test.describe('connecting to a stone', () => {
   test.use({
     workspaceSettings: {
       'gemstone.gciLibraries': stone ? { [stone.version]: stone.gciLibraryPath } : {},
+    },
+    userSettings: {
       'gemstone.logins': stone
         ? [
             {
