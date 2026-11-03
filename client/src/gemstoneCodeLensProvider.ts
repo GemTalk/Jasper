@@ -113,6 +113,16 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
   private countCache = new Map<string, number>();
 
   /**
+   * Counts whose last lookup a busy session refused, keyed like
+   * {@link countCache}. A refusal isn't cached as a count (that would show
+   * `0 senders` until the next refresh). The next resolve shows
+   * the lens without a number and forgets the key; the resolve after that looks
+   * up again. Retrying straight away would loop while the session stays busy:
+   * the change fired after a lookup is itself what makes VS Code re-resolve.
+   */
+  private uncounted = new Set<string>();
+
+  /**
    * Counts currently being computed (keyed like {@link countCache}). The
    * sendersOf/implementorsOf lookups BLOCK the extension host — for a popular
    * selector (`initialize`: hundreds of hits) that freeze lasts seconds. So a
@@ -127,6 +137,7 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
 
   refresh(): void {
     this.countCache.clear();
+    this.uncounted.clear();
     this.pending.clear();
     this._onDidChangeCodeLenses.fire();
   }
@@ -228,6 +239,10 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
       codeLens.command = this.countCommand(count, data, session.id);
       return codeLens;
     }
+    if (this.uncounted.delete(cacheKey)) {
+      codeLens.command = this.countCommand(undefined, data, session.id);
+      return codeLens;
+    }
 
     // Not counted yet: show a spinner and compute on a later tick (see
     // `pending`). When the count lands, scheduleCount fires a change so VS Code
@@ -238,10 +253,18 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
     return codeLens;
   }
 
-  /** The resolved link for a known count (singular/plural + click command). */
-  private countCommand(count: number, data: CodeLensData, sessionId: number): vscode.Command {
+  /**
+   * The resolved link (singular/plural + click command); without a count when
+   * the lookup was refused, still clickable since the list runs its own lookup.
+   */
+  private countCommand(
+    count: number | undefined,
+    data: CodeLensData,
+    sessionId: number,
+  ): vscode.Command {
     const noun = data.kind === 'senders' ? 'sender' : 'implementor';
-    const title = count === 1 ? `1 ${noun}` : `${count} ${noun}s`;
+    const title =
+      count === undefined ? `${noun}s` : count === 1 ? `1 ${noun}` : `${count} ${noun}s`;
     const command =
       data.kind === 'senders' ? 'gemstone.sendersOfSelector' : 'gemstone.implementorsOfSelector';
     return { title, command, arguments: [{ selector: data.selector, sessionId }] };
@@ -265,6 +288,7 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
       this.countTimers.delete(timer);
       if (this.disposed) return; // editor/extension torn down before the timer fired
       let count = 0;
+      let refused = false;
       for (let env = 0; env <= maxEnv; env++) {
         try {
           count += queries.quietly(() =>
@@ -272,11 +296,15 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
               ? queries.sendersOf(session, data.selector, env).length
               : queries.implementorsOf(session, data.selector, env).length,
           );
-        } catch {
-          // Session may be busy or selector not found in this env
+        } catch (e) {
+          // A busy session's refusal leaves the count unknown. Any other
+          // failure would fail again, so this env counts as none and the total
+          // is cached, sparing a re-count on every resolve.
+          if (queries.isBusyRefusal(e)) refused = true;
         }
       }
-      this.countCache.set(cacheKey, count);
+      if (refused) this.uncounted.add(cacheKey);
+      else this.countCache.set(cacheKey, count);
       this.pending.delete(cacheKey);
       this._onDidChangeCodeLenses.fire();
     }, 0);
@@ -288,6 +316,7 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
     this.disposed = true;
     for (const timer of this.countTimers) clearTimeout(timer);
     this.countTimers.clear();
+    this.uncounted.clear();
     this.pending.clear();
     this._onDidChangeCodeLenses.dispose();
   }
