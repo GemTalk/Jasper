@@ -1,0 +1,28 @@
+# THROWAWAY: proves the sudo route for one extent-holder test. Not for merge.
+name: Probe extent-holder sudo route
+on:
+  push:
+    branches: [eric/extent-holder-sudo-probe]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: What the runner allows
+        run: |
+          cat /etc/os-release | grep PRETTY
+          cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns || true
+          unshare -rm true && echo "unprivileged: yes" || echo "unprivileged: no"
+          sudo -n unshare -m true && echo "sudo: yes" || echo "sudo: no"
+      - run: npm ci
+      - name: Run the extent-holder test file
+        working-directory: client
+        run: npx vitest run --project default src/__tests__/extentHolders.e2e.test.ts --reporter=verbose

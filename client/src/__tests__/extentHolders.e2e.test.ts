@@ -50,20 +50,27 @@ function lsofAvailable(): boolean {
  *  that asserted nothing. */
 const NO_PROBE = NOT_POSIX || (ON_MAC && !lsofAvailable());
 
-/** Whether this user may make a mount namespace of its own and bind-mount in
- *  it, which a container does. Many CI images forbid it; skip there. */
-function namespacesAllowed(): boolean {
-  if (process.platform !== 'linux') return false;
+function succeeds(command: string, args: string[]): boolean {
   try {
-    execFileSync('unshare', ['-rm', 'sh', '-c', 'mount --bind "$1" "$1"', 'check', os.tmpdir()], {
-      stdio: 'ignore',
-    });
+    execFileSync(command, args, { stdio: 'ignore' });
     return true;
   } catch {
     return false;
   }
 }
-const NO_NAMESPACES = NO_PROBE || !namespacesAllowed();
+
+/** How to start a process in a mount namespace of its own, the way a container
+ *  does. Unprivileged first; Ubuntu 23.10+ forbids that, and there `sudo`
+ *  makes the namespace instead, where it may (CI). Undefined: skip. */
+function namespaceLauncher(): 'unprivileged' | 'sudo' | undefined {
+  if (process.platform !== 'linux') return undefined;
+  const bindCheck = ['sh', '-c', 'mount --bind "$1" "$1"', 'check', os.tmpdir()];
+  if (succeeds('unshare', ['-rm', ...bindCheck])) return 'unprivileged';
+  if (succeeds('sudo', ['-n', 'unshare', '-m', ...bindCheck])) return 'sudo';
+  return undefined;
+}
+const LAUNCHER = NO_PROBE ? undefined : namespaceLauncher();
+const NO_NAMESPACES = LAUNCHER === undefined;
 
 /** root opens a file whatever its mode, so it can't make one it cannot read. */
 const IS_ROOT = process.getuid?.() === 0;
@@ -114,6 +121,9 @@ describe('finding what holds an extent open, against real processes', () => {
   let dir: string;
   let extent: string;
   const started: ChildProcess[] = [];
+  /** Holders not in a `started` process's group: a sudo-launched one's group
+   *  leader is root's, which this user cannot signal. */
+  const holderPids: number[] = [];
 
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jasper-extent-e2e-'));
@@ -129,6 +139,13 @@ describe('finding what holds an extent open, against real processes', () => {
         if (child.pid) process.kill(-child.pid, 'SIGKILL');
       } catch {
         // Already gone, which is the outcome we wanted anyway.
+      }
+    }
+    for (const pid of holderPids.splice(0)) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        // Already gone.
       }
     }
     fs.rmSync(dir, { recursive: true, force: true });
@@ -206,26 +223,55 @@ describe('finding what holds an extent open, against real processes', () => {
       // its own namespace, so the scanning shell's mountinfo cannot place it,
       // and the path it opened is not one this side can see at all.
       const mountPoint = fs.mkdtempSync(path.join(os.tmpdir(), 'jasper-extent-e2e-bind-'));
+      // The holder reports its own pid: under `sudo` the spawned process is
+      // sudo's, not the holder's.
+      const pidFile = path.join(dir, 'holder.pid');
+      const hold = 'echo $$ > "$3"; exec 3< "$2/extent0.dbf"; while : ; do sleep 1; done';
+      // Under `sudo` the mount is made as root, then the holder drops back to
+      // this user before opening the extent: the scan sees only this user's
+      // processes, so a root-owned holder would be missed for the wrong reason.
+      const [command, ...args] =
+        LAUNCHER === 'sudo'
+          ? [
+              'sudo',
+              '-n',
+              'unshare',
+              '-m',
+              'sh',
+              '-c',
+              `mount --bind "$1" "$2" && exec setpriv --reuid=${process.getuid!()} ` +
+                `--regid=${process.getgid!()} --init-groups sh -c "$4" holder "$1" "$2" "$3"`,
+              'launcher',
+              dir,
+              mountPoint,
+              pidFile,
+              hold,
+            ]
+          : [
+              'unshare',
+              '-rm',
+              'sh',
+              '-c',
+              `mount --bind "$1" "$2" && ${hold}`,
+              'holder',
+              dir,
+              mountPoint,
+              pidFile,
+            ];
       try {
-        const child = spawn(
-          'unshare',
-          [
-            '-rm',
-            'sh',
-            '-c',
-            'mount --bind "$1" "$2" && exec 3< "$2/extent0.dbf" && while : ; do sleep 1; done',
-            'holder',
-            dir,
-            mountPoint,
-          ],
-          { detached: true, stdio: 'ignore' },
+        started.push(spawn(command, args, { detached: true, stdio: 'ignore' }));
+
+        const holderPid = await waitFor(
+          'the holder never wrote its pid',
+          async () => (fs.existsSync(pidFile) ? Number(fs.readFileSync(pidFile, 'utf-8')) : 0),
+          (pid) => pid > 0,
         );
-        started.push(child);
+        holderPids.push(holderPid);
 
         await waitFor(
           'the holder never appeared',
           () => findHolders(extent),
-          (holders) => holders.some((h) => h.pid === child.pid),
+          (holders) => holders.some((h) => h.pid === holderPid),
         );
       } finally {
         fs.rmSync(mountPoint, { recursive: true, force: true });
