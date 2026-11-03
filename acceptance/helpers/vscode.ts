@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { MARKS, FRAME_SEPARATOR } from './marks';
-import { readContainerStone } from './containerStone';
+import { ContainerStone, readContainerStone } from './containerStone';
 
 /** Repo root — the extension-development path VS Code loads Jasper from. */
 const repoRoot = path.resolve(__dirname, '..', '..');
@@ -81,10 +81,11 @@ const VSCODE_VERSION = '1.129.1';
  *
  * Fixtures:
  *   - `workspaceSettings` — seeds the workspace's `.vscode/settings.json` before
- *      launch (override with `test.use({ workspaceSettings })`) to declare
- *      logins, GCI library paths, etc. Its keys win over the isolation defaults;
- *      a key set to `undefined` removes a default.
- *   - `userSettings` — the same, for the profile's user `settings.json`
+ *      launch (override with `test.use({ workspaceSettings })`) to declare GCI
+ *      library paths, etc. Its keys win over the isolation defaults; a key set
+ *      to `undefined` removes a default.
+ *   - `userSettings` — the same, for the profile's user `settings.json`; logins
+ *      go here, since VS Code ignores them in a workspace's settings
  *   - `passwordOffer` — show Jasper's startup toast that offers to move
  *      plain-text passwords to the keychain. The harness hides it unless a spec
  *      sets this, because most runs seed a plain-text login and the toast would
@@ -103,6 +104,35 @@ export interface VSCodeSession {
   workspaceSettingsPath: string;
   /** Quit VS Code and launch it again on the same profile and workspace. */
   restart(): Promise<Page>;
+}
+
+/**
+ * Logins are application-scoped, so a stone's login goes in user settings and
+ * the rest in the folder's.
+ */
+function containerStoneSettings(stone: ContainerStone | undefined): {
+  workspace: Record<string, unknown>;
+  user: Record<string, unknown>;
+} {
+  if (!stone) return { workspace: {}, user: {} };
+  return {
+    workspace: {
+      'gemstone.rootPath': stone.globalDir,
+      'gemstone.gciLibraries': { [stone.version]: stone.gciLibraryPath },
+    },
+    user: {
+      'gemstone.logins': [
+        {
+          version: stone.version,
+          gem_host: stone.host,
+          stone: stone.stone,
+          gs_user: stone.user,
+          gs_password: stone.password,
+          netldi: stone.netldi,
+        },
+      ],
+    },
+  };
 }
 
 export const test = base.extend<{
@@ -151,23 +181,7 @@ export const test = base.extend<{
     // no per-scenario configuration. On a host run there is no such stone and
     // the isolation below stands: an empty root, so the Databases view and the
     // Databases & Versions panel never surface your own GemStone installs.
-    const containerStone = readContainerStone();
-    const stoneSettings = containerStone
-      ? {
-          'gemstone.rootPath': containerStone.globalDir,
-          'gemstone.gciLibraries': { [containerStone.version]: containerStone.gciLibraryPath },
-          'gemstone.logins': [
-            {
-              version: containerStone.version,
-              gem_host: containerStone.host,
-              stone: containerStone.stone,
-              gs_user: containerStone.user,
-              gs_password: containerStone.password,
-              netldi: containerStone.netldi,
-            },
-          ],
-        }
-      : {};
+    const stoneSettings = containerStoneSettings(readContainerStone());
 
     const settings = {
       'gemstone.rootPath': gemstoneRoot,
@@ -183,7 +197,7 @@ export const test = base.extend<{
       'editor.inlineSuggest.enabled': false,
       'github.copilot.enable': { '*': false },
       'github.copilot.nextEditSuggestions.enabled': false,
-      ...stoneSettings,
+      ...stoneSettings.workspace,
       ...workspaceSettings,
     };
     // VS Code renders modal dialogs as native OS windows by default, which are
@@ -195,7 +209,11 @@ export const test = base.extend<{
     const userSettingsPath = path.join(userSettingsDir, 'settings.json');
     fs.writeFileSync(
       userSettingsPath,
-      JSON.stringify({ 'window.dialogStyle': 'custom', ...userSettings }, null, 2),
+      JSON.stringify(
+        { 'window.dialogStyle': 'custom', ...stoneSettings.user, ...userSettings },
+        null,
+        2,
+      ),
     );
 
     const dotVscode = path.join(workspace, '.vscode');

@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, onTestFinished, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
+import * as fs from 'fs';
+import * as path from 'path';
+
 import {
   __configUpdates,
   __resetConfig,
@@ -21,6 +24,22 @@ function makeLogin(overrides: Partial<GemStoneLogin> = {}): GemStoneLogin {
   const login = { ...DEFAULT_LOGIN, password_in_keychain: false, ...overrides };
   return { ...login, label: loginLabel(login) };
 }
+
+const pkg = JSON.parse(
+  fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'package.json'), 'utf-8'),
+);
+
+// LoginStorage reads only the user's list, which is right only while VS Code
+// ignores a folder's list too.
+describe('the gemstone.logins setting', () => {
+  it('is application-scoped, so VS Code reads it only from user settings', () => {
+    const settings = [pkg.contributes.configuration]
+      .flat()
+      .map((c: { properties: Record<string, { scope?: string }> }) => c.properties);
+    const logins = settings.find((p) => p['gemstone.logins'])?.['gemstone.logins'];
+    expect(logins?.scope).toBe('application');
+  });
+});
 
 const GS_KEY = 'jasper-gemstone-login:DataCurator@localhost/gs64stone';
 const HOST_KEY = `${GS_KEY}#host`;
@@ -51,6 +70,39 @@ describe('LoginStorage', () => {
       const logins = [makeLogin({ stone: 'stoneA' }), makeLogin({ stone: 'stoneB' })];
       __setConfig('gemstone', 'logins', logins);
       expect(storage.getLogins()).toEqual(logins);
+    });
+  });
+
+  // The setting is application-scoped, so VS Code ignores a folder's list; the
+  // mock doesn't, which is what lets these tests seed one.
+  describe("a list in a folder's settings", () => {
+    const mine = makeLogin({ stone: 'mine' });
+    const folders = makeLogin({ stone: 'folders' });
+
+    beforeEach(() => {
+      __setConfigLayers('gemstone', 'logins', { global: [mine], workspace: [folders] });
+    });
+
+    it('is not listed', () => {
+      expect(storage.getLogins()).toEqual([mine]);
+    });
+
+    it('does not hide a login just added', async () => {
+      const added = makeLogin({ stone: 'added' });
+
+      await storage.saveLogin(added);
+
+      expect(storage.getLogins()).toEqual([mine, added]);
+    });
+
+    it('is left as it was when a login is edited or deleted', async () => {
+      await storage.saveLogin({ ...mine, netldi: 'other-ldi' });
+      await storage.deleteLogin(loginLabel(mine));
+
+      expect(storage.getLogins()).toEqual([]);
+      expect(workspace.getConfiguration('gemstone').inspect('logins')?.workspaceValue).toEqual([
+        folders,
+      ]);
     });
   });
 
@@ -287,10 +339,10 @@ describe('LoginStorage', () => {
   });
 
   describe('movePasswordsToKeychain', () => {
-    it('moves plain-text passwords into the keychain, in the settings file that held them', async () => {
+    it('moves plain-text passwords into the keychain', async () => {
       const plain = makeLogin({ host_password: 'hostpw' });
       const empty = makeLogin({ stone: 'other', gs_password: '' });
-      __setConfig('gemstone', 'logins', [plain, empty], 'workspace');
+      __setConfig('gemstone', 'logins', [plain, empty]);
 
       expect(await storage.movePasswordsToKeychain(new Set([loginLabel(plain)]))).toBe(true);
 
@@ -298,7 +350,7 @@ describe('LoginStorage', () => {
       expect(secrets.entries.get(HOST_KEY)).toBe('hostpw');
       expect(__configUpdates.at(-1)).toMatchObject({
         key: 'logins',
-        target: ConfigurationTarget.Workspace,
+        target: ConfigurationTarget.Global,
       });
       expect(storage.getLogins()).toEqual([
         { ...plain, gs_password: '', host_password: '', password_in_keychain: true },
@@ -341,27 +393,27 @@ describe('LoginStorage', () => {
       );
     });
 
-    it('moves only the login in effect, leaving a copy the workspace hides as it is', async () => {
-      const hidden = makeLogin({ gs_password: 'old-pw' });
-      const inUse = makeLogin({ gs_password: 'new-pw' });
-      __setConfigLayers('gemstone', 'logins', { global: [hidden], workspace: [inUse] });
+    it("moves the user's login, leaving a copy in a folder's settings as it is", async () => {
+      const mine = makeLogin({ gs_password: 'new-pw' });
+      const folders = makeLogin({ gs_password: 'old-pw' });
+      __setConfigLayers('gemstone', 'logins', { global: [mine], workspace: [folders] });
 
-      await storage.movePasswordsToKeychain(new Set([loginLabel(inUse)]));
+      await storage.movePasswordsToKeychain(new Set([loginLabel(mine)]));
 
       expect(secrets.entries.get(GS_KEY)).toBe('new-pw');
       expect(workspace.getConfiguration('gemstone').inspect('logins')).toMatchObject({
-        globalValue: [hidden],
-        workspaceValue: [{ ...inUse, gs_password: '', password_in_keychain: true }],
+        globalValue: [{ ...mine, gs_password: '', password_in_keychain: true }],
+        workspaceValue: [folders],
       });
     });
 
-    it('never lets a hidden plain-text copy overwrite the password the login in use keeps', async () => {
+    it("never lets a plain-text copy in a folder's settings overwrite the keychain password", async () => {
       secrets.entries.set(GS_KEY, 'current-pw');
-      const hidden = makeLogin({ gs_password: 'old-pw' });
-      const inUse = makeLogin({ gs_password: '', password_in_keychain: true });
-      __setConfigLayers('gemstone', 'logins', { global: [hidden], workspace: [inUse] });
+      const mine = makeLogin({ gs_password: '', password_in_keychain: true });
+      const folders = makeLogin({ gs_password: 'old-pw' });
+      __setConfigLayers('gemstone', 'logins', { global: [mine], workspace: [folders] });
 
-      await storage.movePasswordsToKeychain(new Set([loginLabel(hidden)]));
+      await storage.movePasswordsToKeychain(new Set([loginLabel(folders)]));
 
       expect(secrets.entries.get(GS_KEY)).toBe('current-pw');
     });

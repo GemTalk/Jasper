@@ -6,7 +6,7 @@ import { test, expect } from '../helpers/vscode';
  * only what's declared in settings, so it needs no running stone.
  */
 test.use({
-  workspaceSettings: {
+  userSettings: {
     'gemstone.logins': [
       {
         version: '3.7.5',

@@ -146,12 +146,12 @@ test.describe('login passwords', () => {
     process.platform === 'darwin',
     'macOS ignores --password-store and asks for the login keychain password',
   );
-  // `undefined` drops the login the container run would otherwise seed into the
-  // workspace, which would hide the user settings' logins from Jasper.
+  // `undefined` drops the login a container run would otherwise seed, so the
+  // user settings hold only the logins these add.
   test.use({
     passwordOffer: true,
     persistentSecrets: true,
-    workspaceSettings: { 'gemstone.logins': undefined },
+    userSettings: { 'gemstone.logins': undefined },
   });
 
   test('a new login keeps both passwords out of settings and gets them back after a restart', async ({
@@ -248,23 +248,24 @@ test.describe('login passwords', () => {
     await expectPasswordsInEditor(window, plain, 'gs-secret', 'host-secret');
   });
 
-  test.describe('a login in the workspace settings', () => {
-    test.use({
-      workspaceSettings: { 'gemstone.logins': [{ ...LOGIN, password_in_keychain: false }] },
-    });
+  test.describe("a login list in the folder's settings", () => {
+    const folders = { ...LOGIN, password_in_keychain: false };
+    test.use({ workspaceSettings: { 'gemstone.logins': [folders] } });
 
-    test('has its plain-text passwords moved to the keychain', async ({ session }) => {
-      await session.window
-        .locator('.notification-toast')
-        .filter({ hasText: 'keeps its password as plain text' })
-        .getByRole('button', { name: 'Move to keychain' })
-        .click();
-
-      await expect
-        .poll(() => loginsIn(session.workspaceSettingsPath))
-        .toEqual([expect.objectContaining(withoutPasswords)]);
+    test('is ignored, and does not hide a login just added', async ({ session }) => {
+      const mine = { ...LOGIN, stone: 'mine-stone' };
       await showLogins(session.window);
-      await expectPasswordsInEditor(session.window, LOGIN, 'gs-secret', 'host-secret');
+      await addLogin(session, mine);
+
+      const sidebar = session.window.locator('.sidebar');
+      await expect(sidebar.getByRole('treeitem', { name: label(mine) })).toBeVisible();
+      await expect(sidebar.getByRole('treeitem', { name: label(folders) })).toHaveCount(0);
+      await expect(
+        session.window
+          .locator('.notification-toast')
+          .filter({ hasText: 'keeps its password as plain text' }),
+      ).toHaveCount(0);
+      expect(loginsIn(session.workspaceSettingsPath)).toEqual([folders]);
     });
   });
 
@@ -273,7 +274,6 @@ test.describe('login passwords', () => {
     test.skip(!stone, 'test stone env is missing or incomplete (run npm run test:server:start)');
     test.use({
       workspaceSettings: {
-        'gemstone.logins': undefined,
         // Jasper finds a NetLDI by name in `gemstone.rootPath`, so it must be
         // the directory the test stone registered in.
         'gemstone.rootPath': stone?.globalDir,

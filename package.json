@@ -399,7 +399,8 @@
           "gemstone.logins": {
             "type": "array",
             "default": [],
-            "description": "GemStone/S 64 Bit login parameters",
+            "scope": "application",
+            "markdownDescription": "The GemStone logins listed in **Logins & Sessions**, which adds, edits and deletes them. They are kept only in your user `settings.json`; a list in a folder's `.vscode/settings.json` is ignored.\n\nTo use them on another machine, open your user `settings.json` with the link below, copy the `\"gemstone.logins\"` entry, and paste it into the same file on the other machine. Or turn on VS Code's Settings Sync, which copies it for you. Passwords kept in the OS keychain are not copied: Jasper asks for them at the first login there.\n\n▶ [Open your user settings.json](command:workbench.action.openSettingsJson)",
             "items": {
               "type": "object",
               "properties": {

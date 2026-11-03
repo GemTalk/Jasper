@@ -96,11 +96,11 @@ describe('offering to move plain-text passwords to the keychain', () => {
     ]);
   });
 
-  it('asks only about the logins in effect, not a user-settings copy the workspace hides', async () => {
-    const hidden = makeLogin({ gs_password: 'old-pw' });
-    const inUse = makeLogin({ gs_password: '', password_in_keychain: true });
+  it("asks only about the user's logins, not a copy in a folder's settings", async () => {
+    const mine = makeLogin({ gs_password: '', password_in_keychain: true });
+    const folders = makeLogin({ gs_password: 'old-pw' });
     secrets.entries.set('jasper-gemstone-login:DataCurator@localhost/gs64stone', 'current-pw');
-    __setConfigLayers('gemstone', 'logins', { global: [hidden], workspace: [inUse] });
+    __setConfigLayers('gemstone', 'logins', { global: [mine], workspace: [folders] });
 
     await offerToMovePlainTextPasswords(storage, state);
 

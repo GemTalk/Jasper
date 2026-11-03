@@ -23,6 +23,8 @@ test.describe('connecting to a stone', () => {
       // the directory the test stone registered in.
       'gemstone.rootPath': stone?.globalDir,
       'gemstone.gciLibraries': stone ? { [stone.version]: stone.gciLibraryPath } : {},
+    },
+    userSettings: {
       'gemstone.logins': stone
         ? [
             {
