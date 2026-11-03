@@ -100,8 +100,7 @@ describe('instance-variable structure, committing path (gci e2e)', () => {
   });
 
   afterAll(() => {
-    session?.GciTsLogout();
-    gci?.close();
+    session?.logout();
   });
 
   it('migrates existing instances to the new version and commits (opt-in)', async (ctx) => {

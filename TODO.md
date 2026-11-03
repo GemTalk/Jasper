@@ -85,7 +85,7 @@ Several former entries now live in the issue tracker or as roadmap themes (see
 - **Workspace Variables** — Persistent bindings across evaluations (like Jade). Not yet
   tracked as an issue.
 - **All Instances / References** — Jade-style object queries.
-- **Breakpoint Conditions** — tracked under roadmap theme [#277](https://github.com/GemTalk/Jasper/issues/277) (debugging parity).
+- **Breakpoint Hit Counts** — conditions, logpoints and triggered breakpoints shipped with [#536](https://github.com/GemTalk/Jasper/issues/536); hit counts are still not honoured. Debugging parity is tracked under roadmap theme [#277](https://github.com/GemTalk/Jasper/issues/277).
 - **System Administration** — the base tooling shipped (Databases view, Quick Setup,
   backup/restore, process management); further work is tracked as the `sysadmin` roadmap
   themes in [ROADMAP.md](ROADMAP.md) ([#279](https://github.com/GemTalk/Jasper/issues/279)–[#282](https://github.com/GemTalk/Jasper/issues/282), [#298](https://github.com/GemTalk/Jasper/issues/298)–[#300](https://github.com/GemTalk/Jasper/issues/300)).
@@ -102,8 +102,6 @@ Several former entries now live in the issue tracker or as roadmap themes (see
   - Require users to use the extension's commit/abort commands (document as limitation)
 
   Tracked as roadmap theme [#278](https://github.com/GemTalk/Jasper/issues/278) (transaction awareness in the IDE).
-
-- **Multiple sessions with same credentials**: If two sessions are logged in with the same host/stone/user (and no per-login `exportPath`), they will share the same export directory. Edits in one session's files will be filed in to whichever session matches first. Use distinct `exportPath` templates on each login to avoid this.
 
 ## Deferred Optimizations
 

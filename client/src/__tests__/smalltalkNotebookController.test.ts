@@ -25,6 +25,7 @@ import {
   SMALLTALK_CONTROLLER_LABEL,
 } from '../smalltalkNotebookController';
 import { GEMSTONE_NOTEBOOK_TYPE } from '../gemstoneNotebookKernel';
+import { MAX_CELL_RESULT } from '../notebookCellResult';
 import { runNbCall, type NbRunOptions } from '../nbRunner';
 import { SessionManager } from '../sessionManager';
 import { SMALLTALK_LANGUAGE } from '../languageIds';
@@ -33,7 +34,7 @@ import {
   registerSessionAutoCommit,
 } from '../autoCommit/autoCommitState';
 import { setAutoCommitFailureHandler } from '../autoCommit/autoCommitRunner';
-import { fakeActiveSession } from './fakeActiveSession';
+import { fakeActiveSession, startNonBlockingCall } from './fakeActiveSession';
 
 // Cells run on the non-blocking execute path in clientForwarder mode. The mock
 // gci covers that path: NbExecute starts the doit, NbPoll reports ready,
@@ -41,7 +42,6 @@ import { fakeActiveSession } from './fakeActiveSession';
 // sink's start/end/drain calls go through executeAndFetchString.
 function makeGci(overrides: Record<string, unknown> = {}) {
   return {
-    GciTsCallInProgress: vi.fn(() => ({ result: 0, err: { number: 0 } })),
     GciTsNbExecute: vi.fn((..._args: unknown[]) => ({
       success: true,
       err: { number: 0, message: '' },
@@ -138,6 +138,12 @@ describe('SmalltalkNotebookController', () => {
     const item = execution.replaceOutput.mock.calls[0][0][0].items[0];
     expect(item.mime).toBe('text/plain');
     expect(new TextDecoder().decode(item.data)).toBe('7');
+    // The limit Python cells use too.
+    expect(gci.GciTsFetchUtf8).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      MAX_CELL_RESULT,
+    );
     ctrl.dispose();
   });
 
@@ -159,10 +165,10 @@ describe('SmalltalkNotebookController', () => {
     ctrl.dispose();
   });
 
-  // After a hard break the `finally`'s end is refused while the cell is still
+  // After the runner stops waiting, the `finally`'s end is refused while the cell is still
   // being collected; the runner calls this hook once it has been (when is
   // nbRunner.test.ts's to pin).
-  it('ends clientForwarder mode once a hard-broken cell is collected', async () => {
+  it('ends clientForwarder mode once a stopped cell is collected', async () => {
     const gci = makeGci();
     const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
     await runCells([makeCell('3 + 4')]);
@@ -210,7 +216,7 @@ describe('SmalltalkNotebookController', () => {
         result: 0n,
         err: { number: 2010, message: 'a Halt occurred', context: 0x99n },
       })),
-      GciTsClearStack: clearStack,
+      GciTsClearStackAsync: clearStack,
     });
     const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
 
@@ -218,6 +224,31 @@ describe('SmalltalkNotebookController', () => {
 
     expect(clearStack).toHaveBeenCalledTimes(1);
     expect(clearStack.mock.calls[0][1]).toBe(0x99n);
+    expect(executionAt(0).end).toHaveBeenCalledWith(false, expect.any(Number));
+    ctrl.dispose();
+  });
+
+  it('reports the cell failed only once the clear is done, so the next cell finds the session free', async () => {
+    // The clear runs the process's ensure: blocks on a worker thread; a cell
+    // started meanwhile would be refused.
+    let finish: (v: unknown) => void = () => {};
+    const clearStack = vi.fn(() => new Promise((resolve) => (finish = resolve)));
+    const gci = makeGci({
+      GciTsNbResult: vi.fn(() => ({
+        result: 0n,
+        err: { number: 2010, message: 'a Halt occurred', context: 0x99n },
+      })),
+      GciTsClearStackAsync: clearStack,
+    });
+    const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
+
+    const running = runCells([makeCell('Transcript nextPutAll: brokenPrintString')]);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(clearStack).toHaveBeenCalled();
+    expect(executionAt(0).end).not.toHaveBeenCalled();
+
+    finish({ success: true, err: { number: 0 } });
+    await running;
     expect(executionAt(0).end).toHaveBeenCalledWith(false, expect.any(Number));
     ctrl.dispose();
   });
@@ -232,7 +263,7 @@ describe('SmalltalkNotebookController', () => {
         result: 0n,
         err: { number: 2010, message: 'a Halt occurred', context: 0n },
       })),
-      GciTsClearStack: clearStack,
+      GciTsClearStackAsync: clearStack,
     });
     const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
 
@@ -243,10 +274,11 @@ describe('SmalltalkNotebookController', () => {
   });
 
   it('reports a busy session as a cell error without starting the execute', async () => {
-    const gci = makeGci({
-      GciTsCallInProgress: vi.fn(() => ({ result: 1, err: { number: 0 } })),
-    });
-    const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
+    const gci = makeGci();
+    const session = makeSession(gci);
+    startNonBlockingCall(session);
+    vi.mocked(gci.GciTsNbExecute).mockClear();
+    const ctrl = new SmalltalkNotebookController(makeSessionManager(session));
 
     await runCells([makeCell('3 + 4')]);
 

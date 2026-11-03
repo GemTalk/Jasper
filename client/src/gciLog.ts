@@ -10,7 +10,7 @@ export function getGciLog(): vscode.OutputChannel {
 }
 
 /** Local wall-clock time as `[HH:MM:SS.mmm]` for a log-line prefix. */
-function stamp(): string {
+export function stamp(): string {
   const d = new Date();
   const pad = (n: number, width = 2): string => n.toString().padStart(width, '0');
   return `[${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}]`;

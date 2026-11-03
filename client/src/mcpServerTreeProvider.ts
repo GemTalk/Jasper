@@ -1,7 +1,12 @@
 import * as vscode from 'vscode';
 import { loginLabel } from './loginTypes';
 import { ActiveSession } from './sessionManager';
-import { McpOwnerInfo, isPidAlive, readOwnerSidecar } from './mcpOwnerSidecar';
+import {
+  McpOwnerInfo,
+  NO_WORKSPACE_RECORDED,
+  isPidAlive,
+  readOwnerSidecar,
+} from './mcpOwnerSidecar';
 
 // No view is contributed for the tree provider below any more: MCP state is
 // reported on the session rows in Logins & Sessions (see loginTreeProvider's
@@ -157,7 +162,9 @@ function renderOtherWindow(info: McpOwnerInfo): McpNode[] {
     'A different Jasper window is currently serving MCP tool calls. ' +
     'Tools will act on whatever session is active in that window — not this one.';
 
-  const workspace = new McpNode(`Workspace: ${info.workspacePath}`);
+  const workspace = new McpNode(
+    `Workspace: ${info.workspacePath === NO_WORKSPACE_RECORDED ? 'no folder open' : info.workspacePath}`,
+  );
   workspace.iconPath = new vscode.ThemeIcon('folder');
   workspace.tooltip = `pid ${info.pid}, claimed ${info.claimedAt}`;
 

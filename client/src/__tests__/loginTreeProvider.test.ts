@@ -4,6 +4,7 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 import { __resetConfig, __setConfig, TreeItemCollapsibleState } from '../__mocks__/vscode';
 import { LoginStorage } from '../loginStorage';
+import { fakeSecretStorage } from './support/secretStorage';
 import { LoginTreeProvider, GemStoneLoginItem, GemStoneSessionItem } from '../loginTreeProvider';
 import { DEFAULT_LOGIN, GemStoneLogin } from '../loginTypes';
 import type { ActiveSession, SessionManager } from '../sessionManager';
@@ -42,7 +43,7 @@ describe('LoginTreeProvider', () => {
 
   beforeEach(() => {
     __resetConfig();
-    storage = new LoginStorage();
+    storage = new LoginStorage(fakeSecretStorage());
     provider = new LoginTreeProvider(storage);
   });
 
@@ -305,6 +306,14 @@ describe('GemStoneSessionItem', () => {
 
   // The label's own wording is transactionStateLabel's, pinned in
   // transactionMode.test.ts; what the row owns is where it goes.
+  // The name its row carries in the stone's Session Processes.
+  it("names the session 'Jasper session N' in its tooltip", () => {
+    const tooltip = new GemStoneSessionItem(sessionInMode('manualBegin', false), true).tooltip as {
+      value: string;
+    };
+    expect(tooltip.value).toMatch(/^\*\*Jasper session 3\*\* — /);
+  });
+
   it('says which transaction mode the session is in, after its number', () => {
     expect(new GemStoneSessionItem(sessionInMode('manualBegin', false), true).description).toBe(
       'Session 3 (3.7.2) · Manual · not in transaction · auto-commit off',

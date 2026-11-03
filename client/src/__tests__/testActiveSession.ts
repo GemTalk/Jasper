@@ -56,7 +56,10 @@ export function testActiveSession(gci: GciLibrary, handle: unknown): ActiveSessi
     host_password: '',
   };
 
-  // Not a real `SessionManager`-managed id: -1 signals "not managed" to any
-  // code path that checks it.
-  return new ActiveSession(-1, gci, handle, login, stoneVersionOf(gci));
+  // 0, because neither SessionManager (counting up from 1) nor a transient
+  // login (counting down from -1) hands it out: a transient login a test opens
+  // can't share an id, and with it per-session state, with the harness session.
+  // Every wrap of one handle gets the same id, so state keyed by id holds
+  // across the fresh session objects these tests build.
+  return new ActiveSession(0, gci, handle, login, stoneVersionOf(gci));
 }

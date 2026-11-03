@@ -11,6 +11,8 @@ export interface TestStone {
   user: string;
   password: string;
   gciLibraryPath: string;
+  /** Where the stone and NetLDI registered; a login resolves the NetLDI's name there. */
+  globalDir: string;
 }
 
 const envTestPath = path.resolve(__dirname, '..', '..', 'client', '.env.test');
@@ -26,8 +28,8 @@ function parseEnv(text: string): Record<string, string> {
 
 /**
  * Read the test stone provisioned by `npm run test:server:start`. Returns
- * `undefined` when it hasn't been provisioned or its GCI library is missing, so
- * the connect spec can skip rather than fail on a machine without a stone.
+ * `undefined` when it hasn't been provisioned or a value a login needs is
+ * missing, so a spec can skip rather than fail on a machine without a stone.
  */
 export function readTestStone(): TestStone | undefined {
   if (!fs.existsSync(envTestPath)) return undefined;
@@ -47,7 +49,8 @@ export function readTestStone(): TestStone | undefined {
   // the one value that must come from an atomic var; fall back to parsing the
   // GCI library filename for a stale `.env.test` predating VITE_GEMSTONE_VERSION.
   const version = env.VITE_GEMSTONE_VERSION ?? gciLibraryPath.match(/libgcits-([\d.]+)-/)?.[1];
-  if (!stoneNrs || !netldi || !version) return undefined;
+  const globalDir = env.VITE_GEMSTONE_GLOBAL_DIR;
+  if (!stoneNrs || !netldi || !version || !globalDir) return undefined;
 
   return {
     version,
@@ -57,5 +60,6 @@ export function readTestStone(): TestStone | undefined {
     user: env.VITE_GEMSTONE_USER ?? 'DataCurator',
     password: env.VITE_GEMSTONE_PASSWORD ?? '',
     gciLibraryPath,
+    globalDir,
   };
 }

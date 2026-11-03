@@ -4,7 +4,7 @@ import * as path from 'path';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
-import { maskCommentsAndStrings } from '../debuggerPanel';
+import { maskCommentsAndStrings } from '../debugger/debuggerPanel';
 
 /**
  * Characterization tests for the mask the debugger's inline-value annotations are

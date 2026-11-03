@@ -1,10 +1,21 @@
 import { ActiveSession } from './sessionManager';
-import { OOP_ILLEGAL, OOP_NIL } from './gciConstants';
+import { GCI_ERR_OP_IN_PROGRESS, OOP_ILLEGAL, OOP_NIL } from './gciConstants';
+import { explainGciError, GciLibraryError, SESSION_BUSY_MESSAGE } from './gciLibraryError';
 import { logError } from './gciLog';
-import { runNbCall } from './nbRunner';
+import {
+  abandonedRunHolds,
+  discardStoppedProcess,
+  isRunning,
+  NbCancelledError,
+  NbSessionBusyError,
+  runNbCall,
+  NbRunOptions,
+  sayRunInProgress,
+  sayStillRunning,
+} from './nbRunner';
 import { autoCommitAfterWrite } from './autoCommit/autoCommitRunner';
 
-import { QueryExecutor } from './queries/types';
+import { NbQueryExecutor, QueryExecutor } from './queries/types';
 
 // Read-path shared queries.
 import { abortTransaction as sharedAbortTransaction } from './queries/abortTransaction';
@@ -240,8 +251,8 @@ import {
 import { getAllSelectors as sharedGetAllSelectors } from './queries/getAllSelectors';
 import { getMethodList as sharedGetMethodList } from './queries/getMethodList';
 import { getSourceOffsets as sharedGetSourceOffsets } from './queries/getSourceOffsets';
-import { getStepPointSelectorRanges as sharedGetStepPointSelectorRanges } from './queries/getStepPointSelectorRanges';
-import { getStepPointBundle as sharedGetStepPointBundle } from './queries/getStepPointBundle';
+import { getStepPointSelectorRanges as sharedGetStepPointSelectorRanges } from './debugger/queries/getStepPointSelectorRanges';
+import { getStepPointBundle as sharedGetStepPointBundle } from './debugger/queries/getStepPointBundle';
 import { listRowanProjects as sharedListRowanProjects } from './queries/rowan/listRowanProjects';
 import { getGemCacheKB as sharedGetGemCacheKB } from './queries/rowan/getGemCacheKB';
 import { exportRowanProject as sharedExportRowanProject } from './queries/rowan/exportRowanProject';
@@ -265,6 +276,7 @@ import {
   referencesToClassInDict as sharedReferencesToClassInDict,
   referencesToObject as sharedReferencesToObject,
   searchMethodSource as sharedSearchMethodSource,
+  searchMethodSourceAsync as sharedSearchMethodSourceAsync,
   sendersOf as sharedSendersOf,
   MethodSearchResult,
   SourceScanMode,
@@ -291,18 +303,18 @@ import { renameDictionary as sharedRenameDictionary } from './queries/renameDict
 import { renameClassCategory as sharedRenameClassCategory } from './queries/renameClassCategory';
 import { moveDictionaryUp as sharedMoveDictionaryUp } from './queries/moveDictionaryUp';
 import { moveDictionaryDown as sharedMoveDictionaryDown } from './queries/moveDictionaryDown';
-import { setBreakAtStepPoint as sharedSetBreakAtStepPoint } from './queries/setBreakAtStepPoint';
-import { clearBreakAtStepPoint as sharedClearBreakAtStepPoint } from './queries/clearBreakAtStepPoint';
-import { clearAllBreaks as sharedClearAllBreaks } from './queries/clearAllBreaks';
-import { disableBreakAtStepPoint as sharedDisableBreakAtStepPoint } from './queries/disableBreakAtStepPoint';
-import { getAllBreakpoints as sharedGetAllBreakpoints } from './queries/getAllBreakpoints';
+import { setBreakAtStepPoint as sharedSetBreakAtStepPoint } from './debugger/queries/setBreakAtStepPoint';
+import { clearBreakAtStepPoint as sharedClearBreakAtStepPoint } from './debugger/queries/clearBreakAtStepPoint';
+import { clearAllBreaks as sharedClearAllBreaks } from './debugger/queries/clearAllBreaks';
+import { disableBreakAtStepPoint as sharedDisableBreakAtStepPoint } from './debugger/queries/disableBreakAtStepPoint';
+import { getAllBreakpoints as sharedGetAllBreakpoints } from './debugger/queries/getAllBreakpoints';
 import {
   enableAllBreakpoints as sharedEnableAllBreakpoints,
   disableAllBreakpoints as sharedDisableAllBreakpoints,
   removeAllBreakpoints as sharedRemoveAllBreakpoints,
   hasBreakpoints as sharedHasBreakpoints,
   breakpointByOop as sharedBreakpointByOop,
-} from './queries/breakpointGlobals';
+} from './debugger/queries/breakpointGlobals';
 
 // Re-export shared types so existing callers (extension.ts, systemBrowser.ts, etc.)
 // can continue to import them from './browserQueries'.
@@ -316,9 +328,9 @@ export type { ClassHierarchyEntry } from './queries/getClassHierarchy';
 export type { DescendantClass } from './refactoring/queries/getClassDescendantNames';
 export type { MoveArgs } from './refactoring/queries/previewInstVarStructure';
 export type { MethodEntry } from './queries/getMethodList';
-export type { StepPointSelectorInfo } from './queries/getStepPointSelectorRanges';
-export type { StepPointBundle } from './queries/getStepPointBundle';
-export type { GemStoneBreakpoint } from './queries/getAllBreakpoints';
+export type { StepPointSelectorInfo } from './debugger/queries/getStepPointSelectorRanges';
+export type { StepPointBundle } from './debugger/queries/getStepPointBundle';
+export type { GemStoneBreakpoint } from './debugger/queries/getAllBreakpoints';
 export type { MethodSearchResult } from './queries/methodSearch';
 export type { RowanProject, RowanProjectList } from './queries/rowan/listRowanProjects';
 export type { RowanExportResult } from './queries/rowan/exportRowanProject';
@@ -345,6 +357,15 @@ export class BrowserQueryError extends Error {
   }
 }
 
+/**
+ * Whether `e` is a query refused because a call already held the session.
+ * Such a refusal says nothing about the answer, so a caller that remembers
+ * answers shouldn't remember it; any other failure answers the same next time.
+ */
+export function isBusyRefusal(e: unknown): boolean {
+  return e instanceof BrowserQueryError && e.gciErrorNumber === GCI_ERR_OP_IN_PROGRESS;
+}
+
 function resolveClassUtf8(session: ActiveSession): bigint {
   return session.utf8ClassOop();
 }
@@ -355,21 +376,149 @@ function resolveClassUtf8(session: ActiveSession): bigint {
 // correctly regardless of their original encoding and are not capped at a
 // single fixed-size buffer.
 export function executeFetchString(session: ActiveSession, code: string): string {
-  // Check if session is busy with an async operation (e.g., Display It)
-  const { result: inProgress } = session.GciTsCallInProgress();
-  if (inProgress !== 0) {
-    const msg = 'Session is busy with another operation. Please wait or use a different session.';
-    logError(session.id, msg);
-    throw new BrowserQueryError(msg);
-  }
-
   try {
-    return session.executeAndFetchString(code);
+    // A call still in progress, a background clear say, would refuse this one.
+    if (!session.isBusy()) return session.executeAndFetchString(code);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    logError(session.id, msg);
-    throw new BrowserQueryError(msg);
+    if (!(e instanceof GciLibraryError && e.number === GCI_ERR_OP_IN_PROGRESS)) {
+      const msg = e instanceof Error ? e.message : String(e);
+      logError(session.id, msg);
+      throw new BrowserQueryError(msg);
+    }
   }
+  throw refusedAsBusy(session);
+}
+
+/** Set while {@link quietly} runs a query. */
+let quiet = false;
+
+/**
+ * Run `query`, refused without the busy notice if the session is busy: for the
+ * queries VS Code makes by itself (hover, completion, CodeLens), which would
+ * otherwise raise it every couple of seconds while a run goes on. Synchronous,
+ * so the setting can't carry over to anyone else's query.
+ */
+export function quietly<T>(query: () => T): T {
+  const was = quiet;
+  quiet = true;
+  try {
+    return query();
+  } finally {
+    quiet = was;
+  }
+}
+
+/**
+ * The error for a query a busy session refused, said in plain words, with the
+ * notice that lets the user stop what holds the session.
+ */
+function refusedAsBusy(session: ActiveSession): BrowserQueryError {
+  logError(session.id, SESSION_BUSY_MESSAGE);
+  if (!quiet) {
+    if (abandonedRunHolds(session)) sayStillRunning(session);
+    else if (isRunning(session)) sayRunInProgress(session);
+  }
+  return new BrowserQueryError(SESSION_BUSY_MESSAGE, GCI_ERR_OP_IN_PROGRESS);
+}
+
+function queryFailed(session: ActiveSession, message: string, gciErrorNumber = 0) {
+  logError(session.id, message);
+  return new BrowserQueryError(message, gciErrorNumber);
+}
+
+/**
+ * Evaluates `code` and answers its result as a UTF-8 string. Evaluating
+ * `code` doesn't block the extension host, and a query that runs past a
+ * couple of seconds shows a notification with Cancel. Reading the result
+ * back still does: encoding it and fetching its bytes are blocking GCI
+ * calls, so the stall grows with the size of the result.
+ *
+ * Answers the whole result, however large, and releases it in the gem. Use
+ * this for a new query that must not block; the older non-blocking executor
+ * below caps results at 256 KB and leaves them in the gem (#832).
+ *
+ * @param title - What that notification says. Defaults to a generic "Running
+ * query…".
+ * @throws {@link BrowserQueryError} (as a rejection) if the session is busy
+ * with another call, another query included, if the code fails to compile or
+ * execute, or if the result cannot be resolved to a String.
+ * @throws {@link NbCancelledError} (as a rejection) if the user cancels the
+ * query or a logout stops it.
+ * @throws Error (as a rejection) if polling the session fails or the session
+ * ends while the query runs.
+ */
+export async function executeFetchStringAsync(
+  session: ActiveSession,
+  code: string,
+  title = 'GemStone: Running query…',
+): Promise<string> {
+  try {
+    return await runNbCall(
+      session,
+      () => {
+        // runNbCall already refuses a busy session before calling this, so
+        // these two checks only back it up should that ever change.
+        if (session.isBusy()) throw refusedAsBusy(session);
+        const started = session.GciTsNbExecute(
+          code,
+          resolveClassUtf8(session),
+          OOP_ILLEGAL,
+          OOP_NIL,
+          0,
+          0,
+        );
+        if (started.err.number === GCI_ERR_OP_IN_PROGRESS) throw refusedAsBusy(session);
+        if (!started.success) {
+          throw queryFailed(
+            session,
+            explainGciError(started.err) || `GCI error ${started.err.number}`,
+            started.err.number,
+          );
+        }
+        return started;
+      },
+      () => {
+        const { result, err } = session.GciTsNbResult();
+        // The gem answers a Cancel's soft break with a Break error, not a result.
+        if (discardStoppedProcess(session, err)) throw new NbCancelledError();
+        if (err.number !== 0) {
+          throw queryFailed(session, explainGciError(err) || `GCI error ${err.number}`, err.number);
+        }
+        try {
+          return session.fetchStringAndRelease(result);
+        } catch (e) {
+          throw queryFailed(
+            session,
+            e instanceof Error ? e.message : String(e),
+            e instanceof GciLibraryError ? e.number : 0,
+          );
+        }
+      },
+      { title, disposableProcess: true, disposableResult: true },
+    );
+  } catch (e) {
+    // nbRunner has already told the user what holds the session.
+    if (e instanceof NbSessionBusyError) {
+      throw queryFailed(session, e.message, GCI_ERR_OP_IN_PROGRESS);
+    }
+    throw e;
+  }
+}
+
+/**
+ * Binds a session to the {@link NbQueryExecutor} shape, so its queries run
+ * without blocking the extension host.
+ *
+ * @param activeSession - The active GCI session to execute against.
+ * @param title - What the notification of a query that runs long says.
+ * @returns An {@link NbQueryExecutor} that runs `code` in `session` and
+ * resolves to its String result.
+ */
+export function nbQueryExecutorUsing(
+  activeSession: ActiveSession,
+  title?: string,
+): NbQueryExecutor {
+  return (code) => executeFetchStringAsync(activeSession, code, title);
 }
 
 // Non-blocking variant of executeFetchString for LONG-RUNNING queries (e.g. a
@@ -377,35 +526,38 @@ export function executeFetchString(session: ActiveSession, code: string): string
 // freeze the whole extension host for the duration; this one starts the
 // execution with GciTsNbExecute and polls via the shared nb runner, which keeps
 // VS Code responsive and, past ~2s, shows a cancellable progress notification
-// (soft break on first Cancel, hard break on second — see nbRunner). The result
+// (one Cancel stops it — see nbRunner). The result
 // must be a String, fetched verbatim (no printString quoting) for parity with
 // executeFetchString.
+//
+// Kept for its existing callers: it caps the result at 256 KB, leaves it in the
+// gem, and reports a busy session as NbSessionBusyError, which the Testing view
+// relies on. A new query should use executeFetchStringAsync instead (#832).
 export async function executeFetchStringNb(
   session: ActiveSession,
   label: string,
   code: string,
   progressTitle?: string,
   suppressNotification = false,
-  // Handed a `cancel` fn once polling starts — soft break on the first call, hard
-  // on the second. Lets a caller drive the break from its own UI (the Testing
+  // Handed a `cancel` fn once polling starts, which stops the call the way the
+  // toast's Cancel does. Lets a caller drive the break from its own UI (the Testing
   // view's stop button, an Explorer row's ■) rather than only the ~2s toast.
-  onStart?: (cancel: () => void) => void,
+  // See NbRunOptions.onStart for its second argument.
+  onStart?: NbRunOptions['onStart'],
 ): Promise<string> {
-  const { result: inProgress } = session.GciTsCallInProgress();
-  if (inProgress !== 0) {
-    const msg = 'Session is busy with another operation. Please wait or use a different session.';
-    logError(session.id, msg);
-    throw new BrowserQueryError(msg);
-  }
-
-  const oopClassUtf8 = resolveClassUtf8(session);
-
   const data = await runNbCall(
     session,
-    () => session.GciTsNbExecute(code, oopClassUtf8, OOP_ILLEGAL, OOP_NIL, 0, 0),
+    // Every GCI call here, the busy check included, goes inside the start, which
+    // runNbCall makes only once the session is free; see whenSessionFree.
+    () => {
+      if (session.isBusy()) throw refusedAsBusy(session);
+      const oopClassUtf8 = resolveClassUtf8(session);
+      return session.GciTsNbExecute(code, oopClassUtf8, OOP_ILLEGAL, OOP_NIL, 0, 0);
+    },
     () => {
       const { result: resultOop, err } = session.GciTsNbResult();
       if (err.number !== 0) {
+        discardStoppedProcess(session, err);
         const msg = err.message || `GCI error ${err.number}`;
         logError(session.id, msg);
         throw new BrowserQueryError(msg, err.number);
@@ -423,6 +575,7 @@ export async function executeFetchStringNb(
       suppressNotification,
       onStart,
       disposableProcess: true,
+      disposableResult: true,
     },
   );
 
@@ -441,12 +594,7 @@ export function executeFetchStringWithLimit(
   code: string,
   maxBytes: number,
 ): string {
-  const { result: inProgress } = session.GciTsCallInProgress();
-  if (inProgress !== 0) {
-    const msg = 'Session is busy with another operation. Please wait or use a different session.';
-    logError(session.id, msg);
-    throw new BrowserQueryError(msg);
-  }
+  if (session.isBusy()) throw refusedAsBusy(session);
 
   const oopClassUtf8 = resolveClassUtf8(session);
 
@@ -459,8 +607,9 @@ export function executeFetchStringWithLimit(
     maxBytes,
   );
 
+  if (err.number === GCI_ERR_OP_IN_PROGRESS) throw refusedAsBusy(session);
   if (err.number !== 0) {
-    const msg = err.message || `GCI error ${err.number}`;
+    const msg = explainGciError(err) || `GCI error ${err.number}`;
     logError(session.id, msg);
     throw new BrowserQueryError(msg, err.number);
   }
@@ -2245,6 +2394,21 @@ export function searchMethodSource(
   mode: SourceScanMode = 'substring',
 ) {
   return sharedSearchMethodSource(defaultQueryExecutorUsing(session), term, ignoreCase, mode);
+}
+
+export function searchMethodSourceAsync(
+  session: ActiveSession,
+  term: string,
+  ignoreCase: boolean,
+  mode: SourceScanMode = 'substring',
+  title?: string,
+) {
+  return sharedSearchMethodSourceAsync(
+    nbQueryExecutorUsing(session, title),
+    term,
+    ignoreCase,
+    mode,
+  );
 }
 
 // No default environment: a caller that forgot one would silently search environment 0 only.

@@ -35,6 +35,8 @@ The **GemStone Version** dropdown lists every version Jasper supports. Pick the 
 
 You can also point Jasper at a library you already have, with the `gemstone.gciLibraries` setting.
 
+**VS Code Remote-SSH isn't supported.** Run VS Code on your own machine and reach the stone on the other machine with a login, as above. A Remote-SSH window installs and runs Jasper on the remote machine instead, which is slow to set up and isn't tested.
+
 ### Full local setup (macOS, Linux, or Windows with WSL)
 
 To install, manage, and run a GemStone server locally:
@@ -43,7 +45,7 @@ To install, manage, and run a GemStone server locally:
 2. Open the **GemStone** sidebar (gem icon in the activity bar).
 3. Check the **OS Configuration** section: on macOS/Linux run the shared-memory setup if it warns; on Windows+WSL Jasper also surfaces WSL networking and services-file configuration here.
 4. Click **Manage Databases & Versions** in the **Databases** section title bar to open the panel, and install a GemStone version from its Versions list.
-5. Click **New Database** in the same title bar and fill in the form.
+5. Click **+** (**New Database on This Machine...**) in the same title bar and fill in the form.
 6. Start the stone and NetLDI from the database tree.
 7. Click **Create Login** on the database to generate a login configuration.
 8. Click **Login** to connect and start developing.
@@ -82,7 +84,7 @@ On Windows, a **Download Files** row action fetches the native Windows client fo
 
 ### Database Management
 
-The **Databases** view shows all databases under your GemStone root directory (configurable via `gemstone.rootPath`, default `~/Documents/GemStone`). Click **New Database** in its title bar to open the **Databases & Versions** panel on a form asking for the GemStone version, the base extent, a stone name and a NetLDI name — all on screen at once, with the names already in use listed beside the fields that have to avoid them. Nothing is lost if you leave VS Code to look something up. A database is made by copying an installed version, so on a machine that has none the panel opens on the lists instead and says so, with **Install Version…** waiting in the Versions section below. You do not need one to adopt a database that already exists: **Register Existing…** in the panel header works on a machine with nothing installed.
+The **Databases** view shows all databases under your GemStone root directory (configurable via `gemstone.rootPath`, default `~/Documents/GemStone`). Click **+** (**New Database on This Machine...**) in its title bar to open the **Databases & Versions** panel on a form asking for the GemStone version, the base extent, a stone name and a NetLDI name — all on screen at once, with the names already in use listed beside the fields that have to avoid them. Nothing is lost if you leave VS Code to look something up. A database is made by copying an installed version, so on a machine that has none the panel opens on the lists instead and says so, with **Install Version…** waiting in the Versions section below. You do not need one to adopt a database that already exists: **Register Existing…** in the panel header works on a machine with nothing installed.
 
 The extension creates the full directory structure (`conf/`, `data/`, `log/`, `stat/`), writes configuration files (`system.conf`, `gem.conf`, stone config), copies the key file and base extent, and writes `database.yaml`.
 
@@ -132,6 +134,12 @@ Stale processes — where `gslist` reports a `frozen`, `killed`, or `exe deleted
 
 A server started outside Jasper's environment does not appear in Jasper's own `gslist` at all; it shows on its database's row as **Running outside Jasper** (see [Servers started outside Jasper](#servers-started-outside-jasper) above), which is also where **Restart Under Jasper's Environment** is offered.
 
+Beside Processes, **Session Processes** lists every session logged in to the stone, since each is a gem process of it — yours, other people's, topaz and other tools, and GemStone's own gems — each with its user, session number, gem process, host and how long ago it logged in. A stone with no database on this machine gets the same list under **Other Logins**, once per stone however many of your logins reach it. Only a logged-in session can ask a stone who else is on it, so the list needs a session of this window on that stone; without one it says so. It is read when the panel shows it, when you press its **Refresh**, and when you log in in this window. After a logout in this window, Stop Session or Kill (both log in briefly to do their work), it is read two seconds later rather than at once, since the stone lets a gem go a moment after the logout returns; the row of a session Stop Session or Kill ended goes at once.
+
+Each row's own number is GemStone's (`GemStone session 5`). A session of yours in this window is also marked `Jasper session 3`, the number its login row shows and its tooltip names. One still running a run you stopped is flagged `⚠ still running a stopped run`, and the "still running" notice's **Show in Sessions** button opens the panel at that row. The list's header gives the stone's commit-record backlog, `3 commit records`, read again with the list. Once that backlog reaches the size at which the stone asks sessions to abort (`STN_SIGNAL_ABORT_CR_BACKLOG`), the session holding the oldest commit record is flagged with the backlog's size, `⧗ holds back 27 commit records`: until it commits or aborts, the stone can't reclaim the space behind it. Several sessions can hold the same oldest record, and each is then flagged `⧗ one of 3 sessions holding back 27 commit records`: all of them must commit or abort. The count is as of the list's last read.
+
+**Stop Session** on a row ends that session with `System stopSession:`, after warning that whatever it hasn't committed is lost. If the gem doesn't answer, Jasper says so and offers **Kill**, which ends the session by ending its gem's process — SIGTERM, then SIGKILL if the gem is frozen — after checking, before each signal, that the process is still that session's gem. Both are offered on your own sessions in this window too, since Jasper can't always tell a healthy session from a stuck one; they end it without asking about uncommitted changes, then log that Jasper session out (the session's own **Log out** asks first). Neither is offered on GemStone's own gems. Each button appears only where it can work: seeing other sessions needs the **SessionAccess** privilege, and Stop Session needs **SystemControl** too (DataCurator and SystemUser have both); Kill appears only on a gem running on this machine (inside WSL, on Windows) that your own account may end (`kill -0`), and not on a `topaz -l` session, whose process is topaz itself. Where a gem runs is judged by the stone's own hostname, not by the login: a stone reached through an ssh tunnel or a container's published port is logged in to as `localhost`, but its gems are on another machine, so it gets no Kill.
+
 ### MCP Server
 
 Jasper can serve MCP tool calls so Claude Code and Claude Desktop work directly against your GemStone session. Only one VS Code window serves it at a time — the socket is machine-wide — and it runs against the **active session of whichever window owns the server**.
@@ -150,6 +158,17 @@ The **Logins & Sessions** view stores connection configurations for your GemSton
 - Host, stone name, and NetLDI
 - GemStone and host credentials
 - Optional per-login export path template
+
+Logins are kept in your VS Code user settings, under `gemstone.logins`; a list in a folder's `.vscode/settings.json` is ignored. That setting's description says how to take them to another machine.
+
+**Where passwords are kept.** Each of a login's two passwords, GemStone and host, is either filled in or left blank, and the **Keep saved passwords in the OS keychain** box below them decides where a filled-in one goes:
+
+|                                                             | Password filled in                                       | Password left blank                  |
+| ----------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------ |
+| **Box checked** (the default for a new or duplicated login) | kept in your operating system's password store           | asked for when you log in, if needed |
+| **Box unchecked**                                           | saved as plain text in your VS Code user `settings.json` | asked for when you log in, if needed |
+
+So, for example, you can keep the host password in the keychain and be asked for the GemStone password every time. If the keychain can't be written when you save, Jasper asks whether to save the passwords as plain text instead (the box is then unchecked) or not to save them, so you are asked for them when you log in. If the keychain can't be read when you open a login, the editor shows it read-only, since saving would erase the passwords kept there, with **Edit anyway** for when you'd rather type them again; logging in says so too, then asks for the passwords. The password store is reached through VS Code: Keychain on macOS, Windows' built-in credential encryption, and GNOME Keyring or KWallet on Linux. Plain text in `settings.json` also ends up in anything that copies it — backups, a dotfiles repo, Settings Sync. When Jasper finds a login whose password is in plain text, it offers once to move it to the keychain. A password in the keychain stays on this computer: on another computer that syncs your settings, Jasper asks for it until you save it there. On Linux with no keyring running, VS Code falls back to a weaker store of its own and says so; install GNOME Keyring or KWallet to avoid that.
 
 Each login is a row in the tree; click **Login** to start a session, which appears as a child beneath it. A login with no children is idle; a login with children is connected — so the tree itself shows what's running.
 
@@ -197,7 +216,7 @@ If you need concurrent connections, enable the **beta** multiple-session mode:
 
 The only difference is cardinality: a login may now have several session children, and its **Login** action stays available while connected so you can start more.
 
-> **Note:** In multiple-session mode, an open method editor stays bound to the session that opened it even after you switch the active session, so the active session, the Explorer, and an open editor can point at different sessions at once. Its tab carries that session's number as a badge, with the full session in the tab's hover, and a debugger or inspector adds it to its title — _Inspector · Session 3_ — and the debugger to its subtitle as well. A workspace, and a notebook on the default kernel, are not bound: they run in whichever session is active, and say which. A notebook can be pinned to one session by picking that session's kernel. If you use a custom `gemstone.exportPath`, include the `{session}` variable so concurrent sessions don't overwrite each other's exported files.
+> **Note:** In multiple-session mode, an open method editor stays bound to the session that opened it even after you switch the active session, so the active session, the Explorer, and an open editor can point at different sessions at once. Its tab carries that session's number as a badge, with the full session in the tab's hover, and a debugger or inspector adds it to its title — _Inspector · Session 3_ — and the debugger to its subtitle as well. A workspace, and a notebook on the default kernel, are not bound: they run in whichever session is active, and say which. A notebook can be pinned to one session by picking that session's kernel.
 
 > **Breakpoints follow the editor, not the active session.** Because an editor stays bound to the session that opened it, a breakpoint set in that editor is armed in that session's gem — so it stops the code you are looking at rather than the session that happens to be selected. **Enable All**, **Disable All** and **Remove All Breakpoints** go the other way and sweep _every_ logged-in session, because VS Code keeps a single breakpoint list for the whole window. See [Breakpoints](#breakpoints).
 
@@ -213,7 +232,7 @@ With an active session, execute Smalltalk code from any editor:
 
 By default, **Display It** shows its result as a non-destructive inline overlay — an annotation that is not part of the document, so the file is never modified. Hover the result for **Copy** and **Expand** actions; **Enter** inserts the full result into the document, **Backspace** or **Escape** dismisses it. Set `gemstone.displayItMode` to `"insert"` for the classic behavior of inserting the result as editable text.
 
-Long-running expressions show a progress notification with soft-break and hard-break options. The **GemStone Transcript** output channel captures transcript output from the session.
+Long-running expressions show a progress notification with a Cancel button. One press asks the gem to stop at a safe point; if the run is still going about 1.5 seconds later, Jasper stops waiting and frees the editor, and a notice says the stopped run is still going. Its **Force Stop** ends the run and keeps the session and its uncommitted changes; only code that catches every exception ignores it, and then Jasper offers to log the session out. Throwing a stopped run away runs its `ensure:` blocks, after Cancel or when you close the debugger on it; VS Code stays usable while they run, and one that hangs is handled like any run that ignores the stop: Force Stop, and if that can't end it, Log Out. The **GemStone Transcript** output channel captures transcript output from the session.
 
 ### GemStone Explorer
 
@@ -359,11 +378,109 @@ the thing it was set in goes away:
   swept and the message names the one that failed
 - **Clear All Breakpoints in Method** drops every breakpoint in the method you
   are in
-- **Not honoured: conditions, hit counts and log messages.** VS Code's _Edit
-  Breakpoint_ accepts all three; GemStone breakpoints stop every time the step
-  point is reached, so Jasper warns when you set one rather than quietly ignoring
-  it. Conditional breakpoints are tracked under
-  [#277](https://github.com/GemTalk/Jasper/issues/277)
+- **Conditional breakpoints** — a breakpoint can carry a Smalltalk expression and
+  stop only when it answers `true`. Set one VS Code's way (right-click the gutter
+  → _Add Conditional Breakpoint_, or _Edit Breakpoint_ on an existing one), or
+  Jasper's: **Edit Breakpoint Condition at Cursor** from the editor's right-click
+  menu, the _Add/Edit condition_ link on the step-point hover, or the **Edit
+  Condition…** icon on a row in the **GemStone Breakpoints** view. The condition is written at the end of the
+  line it guards, dimmed, as `Break if each > 900`, so you can read it without
+  going looking for it, and
+  the gutter shows VS Code's own conditional-breakpoint icon. Set
+  `gemstone.breakpoints.showRulesInEditor` to `false` if you would rather not
+  have it there (it covers log messages and triggers too) — the icon, the hover
+  and the Breakpoints view still show it.
+
+  The expression is evaluated **in the suspended frame**, so it can name the
+  method's arguments and temporaries, the block's own variables, `self`, instance
+  and class variables, and anything in your symbol list — `amount > 100`,
+  `each isNil`, `self isReady not`. It must answer `true` or `false`: a condition
+  that answers anything else, or that cannot be evaluated at all, stops at the
+  breakpoint and says why, rather than silently never stopping.
+
+  GemStone has no conditional breakpoints of its own — a method breakpoint always
+  stops the process and tells the client — so Jasper evaluates the condition
+  afterwards and resumes the process when it does not hold. A skipped hit costs
+  three round trips to the stone (two to judge the condition in the suspended
+  frame and read the answer, one to resume), and a fourth when it logs. Over a
+  slower link that grows with the latency, so a condition that skips tens of
+  thousands of hits will be felt. Past a second and a half a cancellable progress
+  notification appears (inside Execute It, Execute It's own notification stands
+  for it), and cancelling stops at whatever hit it has reached; a
+  condition that runs slowly, or never finishes, can be cancelled the same way.
+  Code that ignores the stop is treated as anywhere else in Jasper: after about
+  1.5 seconds Jasper stops waiting and offers **Force Stop**.
+  Your code is never rewritten or recompiled to make any of this work, and nothing
+  is written to the repository. A breakpoint reached while skipping still stops if
+  _it_ has no condition, and an error raised by your code while skipping opens the
+  debugger on the error, not on the breakpoint being skipped past.
+
+  Conditions, logpoints and triggers hold for the **whole run**. Resume and Run
+  to Cursor in the GemStone Debugger pass over the same hits the first stop did,
+  so opening the debugger part way through does not switch them off. Stepping is
+  never filtered: a step stops at the next step point, whatever rule is on it. A
+  `Transcript show:` in the code being skipped is written to the Transcript output
+  and the run carries on
+
+- **Triggered breakpoints — stop here, but only once that has happened.** Tell a
+  breakpoint to stay out of the way until another one has been reached:
+  the **Break Only After…** icon on a row in the **GemStone Breakpoints** view,
+  **Edit Breakpoint Trigger at Cursor** from the editor's right-click menu, or the
+  _Break only after…_ link on the step-point hover. Each offers every other
+  breakpoint in the session. Until the trigger is reached the
+  breakpoint is passed over; afterwards it stops as usual, and its own condition
+  (if it has one) still has to hold. The line says `Break after Account>>deposit: @4`
+  so a breakpoint that is deliberately not stopping cannot be mistaken for a
+  broken one, and the Breakpoints row says it too.
+
+  Arming lasts for **one run**, through any stops in the debugger along the way,
+  and starts over on the next. A trigger that goes on to stop the run arms what
+  waits on it first, so Resume carries on with it armed, and a _logpoint_ makes a
+  good trigger because it arms without stopping. Several breakpoints can wait on
+  the same one. A breakpoint waiting on one that is disabled or removed stays
+  disarmed, and its label says so (`Break after Account>>deposit: @4 (disabled)`).
+  Removing a breakpoint drops its trigger too. The arming costs nothing per hit: it rides along in the same judgement
+  that already handles conditions, so it is a flag flipped in the gem rather than
+  another round trip.
+
+  This is not VS Code's own _Add Triggered Breakpoint_ — that menu item belongs to
+  VS Code's debug UI and records the relationship somewhere no extension can read,
+  and it arms only inside a live debug session, which a Jasper run does not have.
+  It stays in the gutter menu because it is hung off the same contribution that
+  gives Jasper a breakpoint gutter at all; use the two commands above instead. A
+  line just under it in that menu, _⚠ Add Triggered Breakpoint doesn't work in
+  Jasper yet_, says so and points to them.
+
+- **Logpoints — print without stopping, and without editing the method.** Right-click
+  the gutter → _Add Logpoint…_ and type a message. Every time the breakpoint is
+  reached, the message is written to the **GemStone Logpoints** panel in Output
+  and execution carries straight on, even after the debugger has opened on the
+  run. It is the `Transcript show:` you would
+  otherwise add — except there is nothing to compile, nothing to commit, and
+  nothing to remember to take out afterwards, and it works on code you cannot or
+  should not edit.
+
+  `{…}` in the message is an expression, evaluated in the suspended frame with
+  exactly the scope a condition gets: `each={each} running={running}`,
+  `{self orders size} orders for {self label}`. Each placeholder is printed for
+  you, so write `{each}` rather than `{each printString}`; GemStone has no
+  `displayString`, so a String logs with its quotes. However many placeholders a
+  message has, it costs one evaluation.
+
+  Give a logpoint a **condition** as well and it logs only when the condition
+  holds — and still never stops. An ordinary breakpoint on the same step point as
+  a logpoint still stops there. Each line names the method and step point that
+  wrote it (`Account>>deposit: @4`, with `[env 1]` when the method is not in
+  environment 0) and carries a timestamp, so two logpoints in one run stay
+  distinguishable. A message that cannot be evaluated — naming a variable the
+  method does not have, say — is reported once in the log and once as a warning,
+  and the run **carries on**: a typo in a message is not a reason to hijack a run
+  into the debugger. Open the panel from the _Show logpoint output_ link on the
+  hover, or **GemStone: Show Logpoint Output**
+
+- **Not honoured: hit counts.** VS Code's _Edit Breakpoint_ accepts one; GemStone
+  breakpoints stop, or log, every time the step point is reached regardless, so
+  Jasper warns when you set one rather than quietly ignoring it
 - **Avoid VS Code's own "Deactivate Breakpoints"** button (the filled-dot icon in
   the Breakpoints panel header). It greys the breakpoints out in the panel, but
   the VS Code API exposes no way for an extension to observe that state — so
@@ -394,10 +511,16 @@ the thing it was set in goes away:
 #### Breakpoint manager
 
 The **Breakpoints** view in the GemStone sidebar lists what the current session's
-gem actually holds, grouped by class and method with the step point each
-breakpoint resolved to. It shows breakpoints Jasper never set, which are
+gem actually holds, under a heading naming that session — a breakpoint is per-gem
+state, so without it a row is a breakpoint in an unnamed stone, and switching the
+selected session switches the whole list. Beneath the heading they are grouped by
+class and method, with the step point each breakpoint resolved to and what it
+waits for: `if …` for a condition, `logs` for a logpoint, `after …` for a
+triggered breakpoint, all in full in the row's tooltip. It shows breakpoints Jasper never set, which are
 otherwise invisible until execution stops on one. Rows carry an enable checkbox;
-clicking one opens the method with the caret on the step point.
+clicking one opens the method with the caret on the step point. The view reads
+only the selected session's gem — it does not go asking every session you are
+logged in to.
 
 ### SUnit Test Runner
 
@@ -407,7 +530,7 @@ The extension integrates with VS Code's native Test Explorer:
 - Run individual tests or entire test classes
 - Debug a test, or a whole class, under the GemStone debugger — a debug run omits SUnit's exception handler, so a failing test suspends on a live stack instead of being recorded and discarded
 - Pass/fail/error results with failure messages
-- Stop a long-running test: the Testing view's stop button, the ■ that replaces a row's ▶ in the Explorer while it runs, or the Cancel on the progress notification. First press asks the gem to stop at a safe point; a second interrupts it
+- Stop a long-running test: the Testing view's stop button, the ■ that replaces a row's ▶ in the Explorer while it runs, or the Cancel on the progress notification. One press asks the gem to stop at a safe point; a test that keeps going gets the same **Force Stop** notice as Execute It
 - Test items link to method source, and a run/status icon appears in the editor gutter beside an open test class or test method
 - Run from the GemStone Explorer too: a ▶ on a test class row (Classes or Hierarchy pane) or a test method row (Methods pane), each showing the outcome of its last run
 - Clicking a row in the Testing view opens the code without moving the Explorer; **Reveal in GemStone Explorer** — the ⊟ on the row, or its context menu — navigates the panes when you want it
@@ -428,13 +551,15 @@ Jasper registers notebook kernels for `.ipynb` files, in two languages: GemStone
 - **GemStone: Reset Grail Notebook Scope** (command palette) clears the active notebook's globals — the equivalent of restarting a kernel.
 - Without Grail in the stone, running a cell reports "Grail (GemStone-Python) not detected".
 
+In either language, a cell's own stop button stops it, the same way Cancel stops Execute It. The cell then says "Stopped.", and any cells queued after it don't run. A cell that keeps going gets the same **Force Stop** notice as the rest of Jasper, and VS Code stays usable while any cell runs.
+
 ### Class Sync (File Export)
 
-Jasper keeps a local mirror of a session's classes as `.gs` files in Topaz format, so VS Code's search, Go to Definition, and find-in-files have something to work with. Files land in `{workspaceRoot}/.gemstone/{host}/{stone}/{user}/{index}-{dictName}/` by default — a hidden directory, keyed by connection target so it's shared across that target's sessions. Override the layout with the `gemstone.exportPath` template setting (variables: `{workspaceRoot}`, `{session}`, `{host}`, `{stone}`, `{user}`, `{index}`, `{dictName}`).
+Jasper keeps a local mirror of a session's classes as read-only `.gs` files in Topaz format. It lives in Jasper's private storage, not in your open folder, so logging in needs no folder open. Files land in `<mirror folder>/{host}/{stone}/{user}/{index}-{dictName}/`; set `gemstone.mirrorFolder` to put them under a folder of your choice. If a second session with the same login is running, in this window or another, it gets its own `{user}_2` folder rather than sharing one. To search source, use **GemStone Search**, which asks the stone directly.
 
-The mirror syncs **incrementally**: Jasper diffs a server-side manifest of per-class hashes against the last sync and re-fetches only what changed, so login/commit/abort stay fast even on a large schema over a slow connection. It's kept across logout (reconnecting re-syncs the difference) and is updated immediately as you edit, so search reflects a change before you commit. A per-login **Sync classes** toggle (on by default) turns the mirror off for slow/remote connections, where server-side search still works.
+The mirror syncs **incrementally**: Jasper diffs a server-side manifest of per-class hashes against the last sync and re-fetches only what changed, so login/commit/abort stay fast even on a large schema over a slow connection. It's kept across logout (reconnecting re-syncs the difference) and is updated immediately as you edit, so it reflects a change before you commit. A per-login **Sync classes** toggle (on by default) turns the mirror off for slow/remote connections, where server-side search still works.
 
-Exported `.gs` files are **read-only on disk** by default (`chmod 0o444`) — not for editing; disabling `gemstone.classSync.readOnlyMirror` skips the permission changes, roughly halving the filesystem operations per class on slow or network filesystems. Edit methods through the **GemStone Explorer**, which round-trips through the `gemstone://` virtual filesystem and compiles on save. Creating a new `.gs` file under a dictionary directory does still file in a class template; deleting one deletes the class in GemStone.
+Exported `.gs` files are **read-only on disk** by default (`chmod 0o444`) — not for editing; disabling `gemstone.classSync.readOnlyMirror` skips the permission changes, roughly halving the filesystem operations per class on slow or network filesystems. Edit methods through the **GemStone Explorer**, which round-trips through the `gemstone://` virtual filesystem and compiles on save. Creating a new `.gs` file under a dictionary directory files in a class template, and deleting one deletes the class in GemStone, but only when `gemstone.mirrorFolder` is inside an open folder: VS Code reports only the file changes made in its own Explorer.
 
 ## Claude / MCP Integration
 
@@ -487,7 +612,7 @@ The Smalltalk formatter has eleven knobs under `gemstoneSmalltalk.formatter.*` (
 | -------------------------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `gemstone.rootPath`                    | `~/Documents/GemStone` | Root directory for GemStone installations and databases                                                                                                                                            |
 | `gemstone.gciLibraries`                | `{}`                   | Map of GemStone versions to GCI library paths                                                                                                                                                      |
-| `gemstone.exportPath`                  | `""`                   | Root path for class file export (supports `{workspaceRoot}`)                                                                                                                                       |
+| `gemstone.mirrorFolder`                | `""`                   | Folder for the class mirror; empty uses Jasper's private storage                                                                                                                                   |
 | `gemstone.classSync.readOnlyMirror`    | true                   | Write exported `.gs` mirror files as read-only; turn off to speed up syncing on slow or network filesystems                                                                                        |
 | `gemstone.displayItMode`               | `overlay`              | How Display It shows its result: `overlay` (non-destructive annotation) or `insert` (into the document)                                                                                            |
 | `gemstone.maxEnvironment`              | 0                      | Method environments to display in browser                                                                                                                                                          |
@@ -497,8 +622,6 @@ The Smalltalk formatter has eleven knobs under `gemstoneSmalltalk.formatter.*` (
 | `gemstone.sessionMode`                 | `single`               | Concurrent sessions allowed: `single` (default) or `multiple` (beta — reveals the Sessions panel)                                                                                                  |
 | `jasper.mcp.httpPort`                  | 27101                  | Port on 127.0.0.1 where Jasper serves the MCP HTTPS/SSE surface                                                                                                                                    |
 | `jasper.mcp.registerWithClaudeDesktop` | true                   | Auto-register the jasper MCP server in Claude Desktop's global config                                                                                                                              |
-
-> **Tip:** VS Code's Quick Open file search (Cmd+P / Ctrl+P) and the title bar search respect `.gitignore` by default, so exported `.gs` files in gitignored directories won't appear in search results. To include them, set `"search.useIgnoreFiles": false` in your VS Code settings. If there are some ignored things you want to continue to exclude, you can tell VS Code to exclude certain paths with the `files.exclude` setting.
 
 ## Privacy
 
@@ -510,7 +633,7 @@ what is and isn't collected.
 
 The extension communicates with GemStone databases using the GemStone C Interface (GCI) thread-safe library (`libgcits`), loaded at runtime via [koffi](https://koffi.dev/). The library path is resolved in this order:
 
-1. **Configured** per-version in the `gemstone.gciLibraries` setting (Jasper fills this in when you browse to a library; downloaded files are found by step 3 instead)
+1. **Configured** per-version in the `gemstone.gciLibraries` setting (Jasper fills this in when you browse to a library; downloaded files and a suggested library are found by steps 2 and 3 instead). If the saved file is gone or is for another platform, the login stops and asks: use the library Jasper found by the steps below, browse to one, download the files, or open the setting to fix the entry
 2. **Bundled** with the extension, on Windows
 3. **Auto-detected** from a full install of the login's GemStone version (macOS/Linux), then from the files downloaded for that version (the Windows client, or `GemStoneClientLibs`)
 4. **Prompted** — on every platform you are offered the download, or can browse to the library manually

@@ -40,6 +40,8 @@ describe('editor/context menu', () => {
       'gemstone.breakpoints.toggleAtCursor',
       'gemstone.breakpoints.enableAtCursor',
       'gemstone.breakpoints.disableAtCursor',
+      'gemstone.breakpoints.editConditionAtCursor',
+      'gemstone.breakpoints.editTriggerAtCursor',
       'gemstone.breakpoints.clearMethod',
       'gemstone.breakpoints.toggleStepPoints',
       'gemstone.fileInFile',
@@ -104,6 +106,8 @@ describe('editor/context menu', () => {
       'gemstone.breakpoints.toggleAtCursor',
       'gemstone.breakpoints.enableAtCursor',
       'gemstone.breakpoints.disableAtCursor',
+      'gemstone.breakpoints.editConditionAtCursor',
+      'gemstone.breakpoints.editTriggerAtCursor',
       'gemstone.breakpoints.clearMethod',
       'gemstone.breakpoints.toggleStepPoints',
     ];

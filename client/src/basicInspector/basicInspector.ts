@@ -18,10 +18,11 @@ import { SessionPanelTitle } from '../activeSessionDisplay';
 import { EvalMode } from '../evaluateMode';
 import * as crypto from 'crypto';
 import { ActiveSession } from '../sessionManager';
-import * as debug from '../debugQueries';
+import * as debug from '../debugger/debugQueries';
 import * as pins from '../exportSetPins';
 import { executeFetchString } from '../browserQueries';
 import { logError } from '../gciLog';
+import { SESSION_BUSY_MESSAGE } from '../gciLibraryError';
 import { QueryExecutor } from '../queries/types';
 import { readWebviewScript } from '../webviewAssets';
 import {
@@ -544,8 +545,7 @@ export class BasicInspector {
    * a much less helpful message than this one.
    */
   private busyError(): string | null {
-    const { result: inProgress } = this.session.GciTsCallInProgress();
-    return inProgress !== 0 ? 'Session is busy with another operation — try again.' : null;
+    return this.session.isBusy() ? SESSION_BUSY_MESSAGE : null;
   }
 
   private setSlot(msg: {

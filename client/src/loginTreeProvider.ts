@@ -171,7 +171,7 @@ function sessionDescription(session: ActiveSession, mcp: SessionMcpState = 'off'
  * window that owns it, so exactly one row across all windows can be `serving`,
  * and only ever a selected one.
  *
- * - `off`      MCP is disabled, or no folder is open: say nothing.
+ * - `off`      MCP is disabled: say nothing.
  * - `idle`     running somewhere, but this row is not the one being served.
  * - `serving`  this window owns the server and this is its selected session.
  */
@@ -225,7 +225,7 @@ export class GemStoneSessionItem extends vscode.TreeItem {
     this.id = `session-${id}-${mcp}-${sessionContextValue(activeSession, autoCommit)}-${this.description}`;
     const tooltip = new vscode.MarkdownString();
     tooltip.appendMarkdown(
-      `**Session ${id}** — ${loginLabel(activeSession.login)} (${stoneVersion})\n\n`,
+      `**Jasper session ${id}** — ${loginLabel(activeSession.login)} (${stoneVersion})\n\n`,
     );
     if (mcp === 'serving') {
       tooltip.appendMarkdown(

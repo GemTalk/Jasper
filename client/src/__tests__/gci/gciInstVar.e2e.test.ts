@@ -62,8 +62,7 @@ describe('instance-variable refactoring, committing paths (gci e2e)', () => {
   });
 
   afterAll(() => {
-    session?.GciTsLogout();
-    gci?.close();
+    session?.logout();
   });
 
   // The committing paths (migrate instances / delete history) can only be verified end to end

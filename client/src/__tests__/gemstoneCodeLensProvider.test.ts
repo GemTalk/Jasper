@@ -4,10 +4,25 @@ import * as path from 'path';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
-vi.mock('../browserQueries', () => ({
-  sendersOf: vi.fn(() => []),
-  implementorsOf: vi.fn(() => []),
-}));
+const quiet = vi.hoisted(() => ({ on: false }));
+vi.mock('../browserQueries', async (importOriginal) => {
+  const { BrowserQueryError, isBusyRefusal } =
+    await importOriginal<typeof import('../browserQueries')>();
+  return {
+    BrowserQueryError,
+    isBusyRefusal,
+    quietly: <T>(query: () => T): T => {
+      quiet.on = true;
+      try {
+        return query();
+      } finally {
+        quiet.on = false;
+      }
+    },
+    sendersOf: vi.fn(() => []),
+    implementorsOf: vi.fn(() => []),
+  };
+});
 
 import { Uri } from 'vscode';
 import type { TextDocument, CodeLens } from 'vscode';
@@ -15,7 +30,12 @@ import { CODE_LENS_SELECTORS, GemStoneCodeLensProvider } from '../gemstoneCodeLe
 import { SessionManager, ActiveSession } from '../sessionManager';
 import * as queries from '../browserQueries';
 import { SMALLTALK_LANGUAGE } from '../languageIds';
+import { GCI_ERR_OP_IN_PROGRESS } from '../gciConstants';
 import { fakeActiveSession } from './fakeActiveSession';
+
+function busyRefusal(): Error {
+  return new queries.BrowserQueryError('Session is busy', GCI_ERR_OP_IN_PROGRESS);
+}
 
 function createMockSession(): ActiveSession {
   return fakeActiveSession({
@@ -336,6 +356,26 @@ foo
       expect(provider.resolveCodeLens(lens).command?.title).toBe('2 senders');
     });
 
+    // A busy session would otherwise raise the Stop notice for every lens counted.
+    it('counts quietly', () => {
+      const session = createMockSession();
+      sessionManager.getSelectedSession = () => session;
+      const quietly: boolean[] = [];
+      (queries.sendersOf as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        quietly.push(quiet.on);
+        return [{}];
+      });
+      const doc = createMockDocument(`method: MyClass
+foo
+  ^ 42
+%`);
+
+      resolveCount(methodLenses(provider.provideCodeLenses(doc))[0]);
+
+      expect(quietly.length).toBeGreaterThan(0);
+      expect(quietly.every(Boolean)).toBe(true);
+    });
+
     it('returns "No session" when no session is selected', () => {
       const doc = createMockDocument(`method: MyClass
 foo
@@ -479,6 +519,80 @@ foo
       const again = methodLenses(provider.provideCodeLenses(doc));
       expect(provider.resolveCodeLens(again[0]).command?.title).toBe('3 senders');
       expect(queries.sendersOf as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows no count while the session refuses the lookup', () => {
+      const session = createMockSession();
+      sessionManager.getSelectedSession = () => session;
+      (queries.sendersOf as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        throw busyRefusal();
+      });
+      const doc = createMockDocument(`method: MyClass
+foo
+  ^ 42
+%`);
+
+      const lens = resolveCount(methodLenses(provider.provideCodeLenses(doc))[0]);
+
+      expect(lens.command?.title).toBe('senders');
+    });
+
+    it('counts again once a refused lookup can be answered', () => {
+      const session = createMockSession();
+      sessionManager.getSelectedSession = () => session;
+      (queries.sendersOf as ReturnType<typeof vi.fn>)
+        .mockImplementationOnce(() => {
+          throw busyRefusal();
+        })
+        .mockReturnValue([{}, {}]);
+      const doc = createMockDocument(`method: MyClass
+foo
+  ^ 42
+%`);
+      const lens = methodLenses(provider.provideCodeLenses(doc))[0];
+      resolveCount(lens);
+
+      const again = resolveCount(lens);
+
+      expect(again.command?.title).toBe('2 senders');
+    });
+
+    // The change fired after a lookup makes VS Code resolve the lens again; if
+    // that resolve looked up again, a busy session would be asked forever.
+    it('does not look up again on the resolve its own refused lookup triggers', () => {
+      const session = createMockSession();
+      sessionManager.getSelectedSession = () => session;
+      (queries.sendersOf as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        throw busyRefusal();
+      });
+      const doc = createMockDocument(`method: MyClass
+foo
+  ^ 42
+%`);
+
+      resolveCount(methodLenses(provider.provideCodeLenses(doc))[0]);
+      vi.runAllTimers();
+
+      expect(queries.sendersOf).toHaveBeenCalledTimes(1);
+    });
+
+    it('counts a lookup that fails for another reason as none, without asking again', () => {
+      const session = createMockSession();
+      sessionManager.getSelectedSession = () => session;
+      (queries.sendersOf as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        throw new queries.BrowserQueryError('Selector not found');
+      });
+      const doc = createMockDocument(`method: MyClass
+foo
+  ^ 42
+%`);
+      const lens = methodLenses(provider.provideCodeLenses(doc))[0];
+      resolveCount(lens);
+
+      const again = resolveCount(lens);
+
+      expect(again.command?.title).toBe('0 senders');
+      expect(queries.sendersOf).toHaveBeenCalledTimes(1);
     });
 
     it('dispose() cancels a pending count lookup (no blocking GCI after teardown)', () => {

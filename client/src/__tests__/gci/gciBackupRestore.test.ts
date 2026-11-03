@@ -207,7 +207,6 @@ describe('full logical backup + restore round-trip', () => {
         }
       } finally {
         fs.rmSync(backupFile, { force: true });
-        gci.close();
       }
     },
     ROUND_TRIP_TIMEOUT_MS,

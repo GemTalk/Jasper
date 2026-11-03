@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from './sessionManager';
-import { ExportManager } from './exportManager';
+import { ExportManager, isInsideRoot } from './exportManager';
 import { fileInClass } from './topazFileIn';
 import { SystemBrowser } from './systemBrowser';
 import * as queries from './browserQueries';
@@ -206,8 +206,7 @@ export class FileInManager {
     return this.sessionManager.getSessions().find((session) => {
       const sessionRoot = this.exportManager.getSessionRoot(session);
       if (!sessionRoot) return false;
-      const relative = path.relative(sessionRoot, fsPath);
-      return !relative.startsWith('..') && !path.isAbsolute(relative);
+      return isInsideRoot(sessionRoot, fsPath);
     });
   }
 
@@ -225,7 +224,7 @@ export class FileInManager {
         return true;
       }
       // .gs file under session root (read-only but could be dirty if user bypassed)
-      if (sessionRoot && doc.uri.scheme === 'file' && doc.uri.fsPath.startsWith(sessionRoot)) {
+      if (sessionRoot && doc.uri.scheme === 'file' && isInsideRoot(sessionRoot, doc.uri.fsPath)) {
         return true;
       }
       return false;

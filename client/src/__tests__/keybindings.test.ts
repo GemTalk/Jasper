@@ -119,7 +119,10 @@ describe('keybindings', () => {
     expect(expand[0].when).toContain('!suggestWidgetVisible');
   });
 
-  it('should gate editor commands on editorTextFocus and !executing', () => {
+  // Not gated on !gemstone.executing: a key Jasper drops falls through to VS
+  // Code's own binding (ctrl+k d is Compare with Saved), so a second press during
+  // a run reaches the command, which says the session is still running.
+  it('keeps editor commands bound on editorTextFocus, even while a run goes on', () => {
     const editorCommands = [
       'gemstone.displayIt',
       'gemstone.executeIt',
@@ -130,7 +133,7 @@ describe('keybindings', () => {
     expect(matches.length).toBeGreaterThan(0);
     for (const kb of matches) {
       expect(kb.when).toContain('editorTextFocus');
-      expect(kb.when).toContain('!gemstone.executing');
+      expect(kb.when).not.toContain('gemstone.executing');
     }
   });
 

@@ -190,6 +190,19 @@ describe('renderOwnership', () => {
     expect(labels[1]).toBe('Workspace: /Users/me/other');
   });
 
+  it('says the owning window has no folder open, rather than printing a placeholder', () => {
+    const nodes = renderOwnership({
+      kind: 'other',
+      info: {
+        pid: 1234,
+        workspacePath: '(no workspace)',
+        socketPath: '/tmp/sock',
+        claimedAt: '2026-05-23T00:00:00Z',
+      },
+    });
+    expect(String(nodes[1].label)).toBe('Workspace: no folder open');
+  });
+
   it("surfaces the owner's selected session label when present in the sidecar", () => {
     const nodes = renderOwnership({
       kind: 'other',

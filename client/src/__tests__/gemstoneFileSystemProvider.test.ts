@@ -266,6 +266,16 @@ describe('GemStoneFileSystemProvider', () => {
       );
     });
 
+    it('reverses the slash sentinel so a category crumb matches the real category name', () => {
+      // The path segment carries `File I⁄O`; a MethodItem's category says `File I/O`.
+      // Without the reversal the two never compare equal and the crumb lists nothing.
+      const uri = Uri.parse(
+        `gemstone://1/Globals/SmallInteger/instance/${escapeSelectorSlashes('File I/O')}`,
+      );
+
+      expect(parseDirUri(uri)).toMatchObject({ kind: 'category', category: 'File I/O' });
+    });
+
     it('carries the ?dict index into deeper levels for scoped lookups', () => {
       expect(parseDirUri(Uri.parse('gemstone://1/Globals/Array?dict=7'))).toMatchObject({
         kind: 'class',
@@ -360,6 +370,35 @@ describe('GemStoneFileSystemProvider', () => {
       );
       expect(entries).toEqual([[escapeSelectorSlashes('/'), 1]]);
       expect(entries[0][0]).not.toContain('/');
+    });
+
+    it('escapes slashes in method categories so they stay one path segment', () => {
+      vi.mocked(queries.getMethodCategories).mockReturnValueOnce(['File I/O', 'accessing']);
+      const entries = provider.readDirectory(
+        Uri.parse('gemstone://1/Globals/SmallInteger/instance'),
+      );
+
+      expect(entries).toEqual([
+        [escapeSelectorSlashes('File I/O'), 2],
+        ['accessing', 2],
+      ]);
+      expect(entries[0][0]).not.toContain('/');
+    });
+
+    it('lists the methods of a category containing a slash, picked from the side crumb', () => {
+      // The full breadcrumb round trip: the name readDirectory hands VS Code for the
+      // side level is appended to the path, and must drill back into that category.
+      vi.mocked(queries.getMethodCategories).mockReturnValueOnce(['File I/O']);
+      vi.mocked(queries.getMethodList).mockReturnValueOnce([
+        { isMeta: false, category: 'File I/O', selector: 'toServerTextFile:' },
+        { isMeta: false, category: 'accessing', selector: 'at:' },
+      ]);
+      const side = Uri.parse('gemstone://1/Globals/SmallInteger/instance');
+      const [[categoryName]] = provider.readDirectory(side);
+
+      const entries = provider.readDirectory(side.with({ path: `${side.path}/${categoryName}` }));
+
+      expect(entries).toEqual([['toServerTextFile:', 1]]);
     });
 
     it('returns an empty listing when a query throws (no broken breadcrumb)', () => {
@@ -579,6 +618,12 @@ describe('GemStoneFileSystemProvider', () => {
       const uri = Uri.parse('gemstone://1/UserGlobals/new-class?category=Kernel-Numbers');
       const content = new TextDecoder().decode(provider.readFile(uri));
       expect(content).toContain("category: 'Kernel-Numbers'\n  options: #()");
+    });
+
+    it('new-class template pre-fills a selected category containing "%"', () => {
+      const uri = Uri.parse('gemstone://1/UserGlobals/new-class?category=50%25%20off');
+      const content = new TextDecoder().decode(provider.readFile(uri));
+      expect(content).toContain("category: '50% off'\n  options: #()");
     });
 
     it('returns new-method template', () => {
@@ -1520,6 +1565,43 @@ describe('GemStoneFileSystemProvider', () => {
       expect(diags[0].range.start.line).toBe(0);
     });
 
+    // A busy session refuses the save before anything is compiled. Treated as a
+    // compile error, the save "succeeded": VS Code cleared the unsaved-changes
+    // dot over an edit GemStone never received, and Ctrl+S then did nothing.
+    describe('a save refused because the session is busy with a run', () => {
+      const busy = () =>
+        new BrowserQueryError('This session is busy with a run that is still going.', 2203);
+
+      it.each([
+        ['a method', 'gemstone://1/Globals/Array/instance/accessing/at%3A', 'compileMethod'],
+        ['a class definition', 'gemstone://1/Globals/Array/definition', 'compileClassDefinition'],
+      ] as const)('fails the save of %s, so its changes stay unsaved', (_what, path, query) => {
+        vi.mocked(queries[query]).mockImplementationOnce(() => {
+          throw busy();
+        });
+        const uri = Uri.parse(path);
+
+        expect(() =>
+          provider.writeFile(uri, encode('whatever'), { create: false, overwrite: true }),
+        ).toThrow('This session is busy with a run');
+      });
+
+      it('marks nothing as wrong with the code', () => {
+        vi.mocked(queries.compileMethod).mockImplementationOnce(() => {
+          throw busy();
+        });
+        const uri = Uri.parse('gemstone://1/Globals/Array/instance/accessing/at%3A');
+
+        expect(() =>
+          provider.writeFile(uri, encode('at: index\n  ^self basicAt: index'), {
+            create: false,
+            overwrite: true,
+          }),
+        ).toThrow();
+        expect(getDiagCollection().set).not.toHaveBeenCalled();
+      });
+    });
+
     it('clears diagnostics on successful compile', () => {
       const uri = Uri.parse('gemstone://1/Globals/Array/instance/accessing/at%3A');
       provider.writeFile(uri, encode('at: index\n  ^self basicAt: index'), {
@@ -2271,6 +2353,40 @@ describe('parseUri', () => {
     });
   });
 
+  // `%` is a legal binary selector character, and a category is any string. The
+  // path arrives already decoded, so decoding it again threw on a lone '%' and
+  // turned a literal '%41' into 'A'. Round-tripped through toString, as VS Code
+  // hands the URI back.
+  it.each([
+    ['accessing', '%'],
+    ['accessing', '%%'],
+    ['accessing', '%41'],
+    ['accessing', '%/'],
+    ['50% off', 'foo'],
+    ['%41 literal', 'foo'],
+  ])('round-trips category %j with selector %j', (category, selector) => {
+    const uri = Uri.parse(
+      buildMethodUri({ ...method, isMeta: false, category, selector, environmentId: 0 }).toString(),
+    );
+
+    expect(parseUri(uri)).toMatchObject({ kind: 'method', category, selector });
+  });
+
+  it('lists a category containing "%" as a breadcrumb folder', () => {
+    const uri = Uri.parse(
+      buildMethodUri({
+        ...method,
+        isMeta: false,
+        category: '50% off',
+        selector: 'foo',
+        environmentId: 0,
+      }).toString(),
+    );
+    const folder = uri.with({ path: uri.path.slice(0, uri.path.lastIndexOf('/')) });
+
+    expect(parseDirUri(folder)).toMatchObject({ kind: 'category', category: '50% off' });
+  });
+
   it('marks the class side when the method is meta', () => {
     const uri = buildMethodUri({
       ...method,
@@ -2442,6 +2558,20 @@ describe('parseUri', () => {
       category: 'Widgets',
     });
   });
+
+  // The query arrives already decoded, like the path. Decoding it again threw
+  // ("URI malformed") on a category holding a lone '%', and turned a literal
+  // '%41' into 'A'. A class category is free text, so both are legal names.
+  it.each(['50% off', '%41', '%', 'Kernel-Numbers', 'Logical/Bits', 'a=b', 'a+b'])(
+    'reads the new-class category %j as written',
+    (category) => {
+      const uri = Uri.parse(
+        `gemstone://1/UserGlobals/new-class?category=${encodeURIComponent(category)}`,
+      );
+
+      expect(parseUri(uri)).toMatchObject({ kind: 'new-class', category });
+    },
+  );
 
   it('treats a decorated override-diff selector as a read-only diff view', () => {
     const parsed = parseUri(
@@ -2904,5 +3034,11 @@ describe('classCompiledTarget', () => {
 
   it('answers nothing for a URI too short to name a class', () => {
     expect(classCompiledTarget(Uri.parse('gemstone://1/Shared'))).toBeUndefined();
+  });
+
+  it('reads a dictionary name containing "%" as written', () => {
+    const uri = Uri.parse(buildClassDefinitionUri(1, '50%41', 'Shadowed').toString());
+
+    expect(classCompiledTarget(uri)).toMatchObject({ dictName: '50%41', className: 'Shadowed' });
   });
 });

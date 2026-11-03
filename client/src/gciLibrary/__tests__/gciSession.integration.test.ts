@@ -15,13 +15,11 @@ import { NativeSocketLibrary } from '../../sockets/nativeSocketLibrary';
  * runs -- teardown just aborts the single transaction `beforeEach` opened.
  * Do not add a budget here.
  *
- * GciTsLogout frees the session, so calling GciTsSessionIsRemote -- or any
- * GCI function -- on a session that has already been logged out is
- * undefined behavior and is intentionally not exercised here. GciTsNbLogout
- * is skipped for the same reason: the only way to exercise it here is via
- * `withTransientSession`, whose own teardown unconditionally calls
- * GciTsLogout on the session afterward -- a second, undefined-behavior GCI
- * call on a session GciTsNbLogout may have already freed.
+ * A logout frees the session, so calling GciTsSessionIsRemote -- or any GCI
+ * function -- on a session that has already been logged out is undefined
+ * behavior and is intentionally not exercised here. GciTsNbLogout isn't called
+ * directly either: `withTransientSession`'s teardown already logs out with it,
+ * and a second logout would be a call on a freed session.
  */
 describe('GCI session lifecycle (integration)', () => {
   // RT_ERR_NO_PROCESS_TO_CONTINUE in gcierr.ht -- same value in every vendored
@@ -76,30 +74,25 @@ describe('GCI session lifecycle (integration)', () => {
       // eslint-disable-next-line no-restricted-syntax -- the unwrapped baseline is the point of the test; it never logs in, and login is banned separately
       const bare = new GciLibrary(libraryPath, nativeSocketLibrary);
       const wrapped = createSessionGciLibrary(libraryPath, nativeSocketLibrary);
-      try {
-        const names = reachableNames(bare);
-        // Guards the guard: an empty list would make this pass vacuously.
-        expect(names.length).toBeGreaterThan(150);
+      const names = reachableNames(bare);
+      // Guards the guard: an empty list would make this pass vacuously.
+      expect(names.length).toBeGreaterThan(150);
 
-        const lost: string[] = [];
-        for (const name of names) {
-          const want = (bare as unknown as Record<string, unknown>)[name];
-          const got = (wrapped as unknown as Record<string, unknown>)[name];
-          if (typeof got !== typeof want) {
-            lost.push(`${name}: ${typeof want} became ${typeof got}`);
-            continue;
-          }
-          if (typeof want !== 'function') continue;
-          const gotCarried = carriedProperties(got as object);
-          for (const [key, type] of carriedProperties(want)) {
-            if (gotCarried.get(key) !== type) lost.push(`${name}.${String(key)}`);
-          }
+      const lost: string[] = [];
+      for (const name of names) {
+        const want = (bare as unknown as Record<string, unknown>)[name];
+        const got = (wrapped as unknown as Record<string, unknown>)[name];
+        if (typeof got !== typeof want) {
+          lost.push(`${name}: ${typeof want} became ${typeof got}`);
+          continue;
         }
-        expect(lost).toEqual([]);
-      } finally {
-        wrapped.close();
-        bare.close();
+        if (typeof want !== 'function') continue;
+        const gotCarried = carriedProperties(got as object);
+        for (const [key, type] of carriedProperties(want)) {
+          if (gotCarried.get(key) !== type) lost.push(`${name}.${String(key)}`);
+        }
       }
+      expect(lost).toEqual([]);
     });
   });
 

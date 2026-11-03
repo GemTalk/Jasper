@@ -28,9 +28,6 @@ vi.mock('../gciLibrary', () => ({
     GciTsFetchUtf8() {
       return { data: '7', err: { number: 0, message: '' } };
     }
-    GciTsCallInProgress() {
-      return { result: 0, err: { number: 0, message: '' } };
-    }
     GciTsAbort() {
       return ok;
     }
@@ -40,11 +37,12 @@ vi.mock('../gciLibrary', () => ({
     GciTsCommit() {
       return ok;
     }
-    GciTsLogout() {}
+    logout() {
+      return { sessionFreed: true };
+    }
     supportsNonBlockingLogin() {
       return false;
     }
-    close() {}
   },
 }));
 
@@ -56,6 +54,11 @@ vi.mock('../nbRunner', () => ({
     sentTo.push(session);
     return 1n;
   }),
+  whenSessionFree: vi.fn((_session: unknown, start: () => unknown) => start()),
+  forgetSession: vi.fn(),
+  // Logout asks whether a run is on the session; none is, here.
+  isRunning: vi.fn(() => false),
+  stoppedRunHolds: vi.fn(() => false),
 }));
 
 import { window, notebooks, __setConfig, __resetConfig } from '../__mocks__/vscode';
@@ -168,7 +171,7 @@ describe('Switch Session in a notebook, with sessions logged in along the way', 
     const first = login('DataCurator');
     const second = login('SystemUser');
     const third = login('Carl');
-    manager.logout(second.id);
+    await manager.logout(second.id);
 
     const offered = await switchSessionTo(third);
 
@@ -179,7 +182,7 @@ describe('Switch Session in a notebook, with sessions logged in along the way', 
   it('with only one session left, keeps it without asking', async () => {
     const first = login('DataCurator');
     const second = login('SystemUser');
-    manager.logout(second.id);
+    await manager.logout(second.id);
 
     await chooseActiveSession(manager);
 

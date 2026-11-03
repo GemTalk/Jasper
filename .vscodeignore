@@ -86,7 +86,6 @@ client/src/**
 # enhancedInspector/enhancedInspector.ts and basicInspector/basicInspector.ts.)
 !client/src/listFilter.js
 !client/src/methodListView.js
-!client/src/debuggerView.js
 !client/src/configuration/configurationView.js
 !client/src/manager/databasesView.js
 
@@ -110,6 +109,7 @@ client/src/**
 !client/src/refactoring/rowQualifierView.js
 !client/src/undo/undoPlanPanelView.js
 !client/src/omniSearch/omniSearchView.js
+!client/src/debugger/debuggerView.js
 !client/src/mcpView.js
 !client/src/loginEditorView.js
 server/src/**

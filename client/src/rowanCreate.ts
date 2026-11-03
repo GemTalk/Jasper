@@ -65,9 +65,10 @@ function loadSpecSton(projectName: string): string {
   ].join('\n');
 }
 
-// Ensure the project ignores Jasper's local class mirror (.gemstone/) — it's
-// per-user/stone, generated, and can get large. Appends to an existing
-// .gitignore rather than clobbering it.
+// Ensure the project ignores .gemstone/, where Jasper kept its class mirror
+// before it moved out of the workspace — old checkouts still have one, and it
+// is generated and can get large. Appends to an existing .gitignore rather
+// than clobbering it.
 function ensureGitignore(projectDir: string): void {
   const gitignorePath = path.join(projectDir, '.gitignore');
   const entry = '.gemstone/';

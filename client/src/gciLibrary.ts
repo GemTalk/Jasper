@@ -2,7 +2,15 @@ import koffi from 'koffi';
 import * as fs from 'fs';
 import * as path from 'path';
 import { setTimeout as sleep } from 'timers/promises';
-import { GCI_LOGIN_QUIET, OOP_FALSE, OOP_ILLEGAL, OOP_NIL, OOP_TRUE } from './gciConstants';
+import {
+  GCI_ERR_OP_IN_PROGRESS,
+  GCI_LOGIN_QUIET,
+  OOP_FALSE,
+  OOP_ILLEGAL,
+  OOP_NIL,
+  OOP_TRUE,
+  toBigInt,
+} from './gciConstants';
 import { GciLibraryError } from './gciLibraryError';
 import { escapeString } from './queries/util';
 import type { NotPromise } from './syncTypes';
@@ -155,12 +163,6 @@ export interface GciError {
   reason: string;
 }
 
-// koffi returns uint64 as Number when the value fits in Number.MAX_SAFE_INTEGER,
-// and BigInt otherwise. This helper normalizes to always return BigInt.
-function toBigInt(value: number | bigint): bigint {
-  return typeof value === 'bigint' ? value : BigInt(value);
-}
-
 // Forces GCI_LOGIN_QUIET on top of a caller's loginFlags. Jasper never wants
 // libgcits' ` gcits login:` / ` gcits logout:` banner on stdout, so every login
 // wrapper ORs the bit in rather than making all ~6 call sites remember it. This
@@ -216,6 +218,12 @@ type OptionalBinding<N extends GciOptionalFunctionName> = koffi.KoffiFunction & 
  *   {@link resolveSymbol} or `Smalltalk at: #someSymbol`.
  */
 export class GciLibrary {
+  /**
+   * Never unloaded, on purpose. A call can still be running on a koffi worker
+   * thread, or have returned with its callback still queued, and either
+   * crashes the process once the library is gone. Unloading frees nothing
+   * anyway: the extension host exits right after deactivate.
+   */
   private lib: koffi.IKoffiLib;
   private _netldiLib: koffi.IKoffiLib | undefined;
   /**
@@ -944,9 +952,6 @@ export class GciLibrary {
   GciTsLogout(session: unknown): { success: boolean; err: GciError } {
     const err: Record<string, unknown> = {};
     const result = this._GciTsLogout(session, err);
-    // TODO: cache cleanup lives here temporarily; move into a `logout()`
-    // ergonomic method once call sites are migrated off GciTsLogout directly.
-    this.deleteCachedUtf8OopFor(session);
     return {
       success: result !== 0,
       err: err as unknown as GciError,
@@ -1425,6 +1430,45 @@ export class GciLibrary {
     return { result: toBigInt(raw), err: err as unknown as GciError };
   }
 
+  /**
+   * GciTsPerform on a koffi worker thread, for a send whose cost is the
+   * developer's and not ours: a breakpoint condition is their Smalltalk, and one
+   * that loops would otherwise freeze the extension host on the main thread.
+   * Interrupted by a GciTsBreak from the main thread like any running call.
+   * Same contract as {@link GciTsContinueWithAsync}: no blocking fallback.
+   */
+  GciTsPerformAsync(
+    session: unknown,
+    receiver: bigint,
+    selector: bigint,
+    selectorStr: string | null,
+    args: bigint[],
+    flags: number,
+    environmentId: number,
+  ): Promise<{ result: bigint; err: GciError }> {
+    const err: Record<string, unknown> = {};
+    return new Promise((resolve, reject) => {
+      this._GciTsPerform.async(
+        session,
+        receiver,
+        selector,
+        selectorStr,
+        args.length > 0 ? args : null,
+        args.length,
+        flags,
+        environmentId,
+        err,
+        (asyncErr: unknown, raw: number | bigint) => {
+          if (asyncErr) {
+            reject(asyncErr instanceof Error ? asyncErr : new Error(String(asyncErr)));
+            return;
+          }
+          resolve({ result: toBigInt(raw), err: err as unknown as GciError });
+        },
+      );
+    });
+  }
+
   GciTsPerformFetchBytes(
     session: unknown,
     receiver: bigint,
@@ -1692,6 +1736,28 @@ export class GciLibrary {
     const err: Record<string, unknown> = {};
     const result = this._GciTsClearStack(session, gsProcess, err);
     return { success: result !== 0, err: err as unknown as GciError };
+  }
+
+  /**
+   * GciTsClearStack on a koffi worker thread. Clearing runs the process's
+   * `ensure:` blocks inside the call, so on the main thread a slow one freezes
+   * the extension host. Same contract as {@link GciTsContinueWithAsync}: no
+   * blocking fallback.
+   */
+  GciTsClearStackAsync(
+    session: unknown,
+    gsProcess: bigint,
+  ): Promise<{ success: boolean; err: GciError }> {
+    const err: Record<string, unknown> = {};
+    return new Promise((resolve, reject) => {
+      this._GciTsClearStack.async(session, gsProcess, err, (asyncErr: unknown, result: number) => {
+        if (asyncErr) {
+          reject(asyncErr instanceof Error ? asyncErr : new Error(String(asyncErr)));
+          return;
+        }
+        resolve({ success: result !== 0, err: err as unknown as GciError });
+      });
+    });
   }
 
   GciTsGemTrace(session: unknown, enable: number): { previousLevel: number; err: GciError } {
@@ -2126,10 +2192,6 @@ export class GciLibrary {
     return { success: result !== 0, err: err as unknown as GciError };
   }
 
-  close(): void {
-    this.lib.unload();
-  }
-
   // ---------------------------------------------------------------------
   // Session lifecycle
   // ---------------------------------------------------------------------
@@ -2182,17 +2244,31 @@ export class GciLibrary {
   }
 
   /**
-   * Logs out `session`. Failures are logged via `console.warn` rather than
-   * thrown — the session is gone regardless, and a teardown error would
-   * obscure real test failures above it.
+   * Logs out `session` without waiting for the gem, which exits within about a
+   * second, unless it is running code that has resumed a soft break: that goes
+   * on running (see `SessionManager.logout`). Don't use `GciTsLogout` here: it waits, forever for code
+   * that ignores breaks, and freezes VS Code. Failures are logged via
+   * `console.warn` rather than thrown. Every caller is a teardown path, so a
+   * throw would only be swallowed there, taking the error message with it, or,
+   * in a test, obscure the real failure above it. What a refusal means is the
+   * caller's to decide, through the answered `sessionFreed`.
+   *
+   * Clears the session's cached Utf8 class oop only once the session is freed;
+   * a refused logout leaves the session, and so its cache, alive.
    *
    * @param session - The GemStone session to log out.
+   * @returns `sessionFreed`: whether the handle is gone. A failed logout frees
+   *   it too. Only a refusal because a call is still in progress on another
+   *   thread (`GCI_ERR_OP_IN_PROGRESS`) leaves it usable. Other failures count
+   *   as freed, so an unforeseen one costs a live session rather than a call
+   *   on a freed handle.
    */
-  public logout(session: unknown) {
-    const { success, err } = this.GciTsLogout(session);
-    // Warn rather than throw — the session is gone regardless, and a
-    // teardown error would obscure real test failures above it.
-    if (!success) console.warn(`GciTsLogout failed [${err.number}]: ${err.message}`);
+  public logout(session: unknown): { sessionFreed: boolean } {
+    const { success, err } = this.GciTsNbLogout(session);
+    if (!success) console.warn(`GciTsNbLogout failed [${err.number}]: ${err.message}`);
+    const sessionFreed = success || err.number !== GCI_ERR_OP_IN_PROGRESS;
+    if (sessionFreed) this.deleteCachedUtf8OopFor(session);
+    return { sessionFreed };
   }
 
   /**
@@ -3419,8 +3495,31 @@ export class GciLibrary {
    *   fail.
    */
   public executeAndFetchString(session: unknown, code: string): string {
-    return this.executeAndRelease(session, code, (resultOop) =>
-      this.performAndRelease(session, resultOop, 'encodeAsUTF8', (utf8StringOop) =>
+    return this.fetchStringAndRelease(session, this.execute(session, code));
+  }
+
+  /**
+   * Returns `resultOop` as a JS string, decoded as UTF-8, and releases it.
+   *
+   * Sends `encodeAsUTF8` to `resultOop` in Smalltalk first, so any
+   * string-like object, a UTF-16 encoding included, comes back as UTF-8
+   * bytes, then pages those bytes out with `GciTsFetchBytes`. The result
+   * has no size cap.
+   *
+   * Both `resultOop` and its `encodeAsUTF8` result are released once the
+   * bytes are read, even if the caller already held either one exported,
+   * since the PureExportSet doesn't count exports.
+   *
+   * @param session - The GemStone session to operate in.
+   * @param resultOop - The oop to fetch as a string. Released afterwards,
+   *   whether the fetch succeeds or not.
+   * @returns `resultOop`'s contents, decoded as a UTF-8 JS string.
+   * @throws {GciLibraryError} If `resultOop` cannot be sent `encodeAsUTF8`,
+   *   or if the underlying GCI calls fail.
+   */
+  public fetchStringAndRelease(session: unknown, resultOop: bigint): string {
+    return this.releaseAfterUse(session, resultOop, (oop) =>
+      this.performAndRelease(session, oop, 'encodeAsUTF8', (utf8StringOop) =>
         this.fetchUtf8String(session, utf8StringOop, GciLibrary.FETCH_STRING_PAGE_SIZE_BYTES),
       ),
     );

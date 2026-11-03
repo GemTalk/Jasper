@@ -178,3 +178,24 @@ export function sizeInBytesOfServerFile(execute: QueryExecutor, filePath: string
     ),
   );
 }
+
+/**
+ * Counts the objects the session's PureExportSet holds that satisfy a
+ * condition. Something left there stays alive until logout, so a count that
+ * doesn't return to where it started shows a leak.
+ *
+ * @param execute - Query executor used to run the count.
+ * @param condition - Smalltalk one-argument block that answers whether an
+ *   exported object counts, e.g. `[:each | each isKindOf: GsProcess]`.
+ * @returns How many exported objects satisfy the condition.
+ */
+export function countPureExportSetMembersSatisfying(
+  execute: QueryExecutor,
+  condition: string,
+): number {
+  return Number(
+    execute(
+      `((GsBitmap newForHiddenSet: #PureExportSet) asArray select: ${condition}) size printString`,
+    ),
+  );
+}

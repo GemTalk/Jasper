@@ -42,7 +42,8 @@ export const LEGACY_MCP_SERVER_NAME = 'gemstone';
  * every VS Code window, so the path baked into Claude clients' config files
  * stays valid forever — no per-launch registration required.
  *
- * The first Jasper window to activate becomes the listening owner; later
+ * The first Jasper window to activate with a folder open (or, without one, to
+ * log in) becomes the listening owner; later
  * windows detect a live listener and run in passive mode. If the owner exits,
  * the next Jasper to start finds a stale socket file (or no pipe) and claims
  * ownership cleanly.

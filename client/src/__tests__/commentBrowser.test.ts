@@ -409,5 +409,18 @@ describe('CommentBrowser', () => {
     it('does nothing when no panel exists for the session', () => {
       expect(() => CommentBrowser.disposeForSession(99)).not.toThrow();
     });
+
+    it('leaves another session’s panel open', async () => {
+      const em = exportManager as unknown as ExportManager;
+      await CommentBrowser.showOrUpdate(session, 'UserGlobals', 7, 'Account', em);
+      const mine = mockPanel;
+      await CommentBrowser.showOrUpdate(makeSession(2), 'UserGlobals', 7, 'Account', em);
+      const theirs = mockPanel;
+
+      CommentBrowser.disposeForSession(session.id);
+
+      expect(mine.dispose).toHaveBeenCalled();
+      expect(theirs.dispose).not.toHaveBeenCalled();
+    });
   });
 });

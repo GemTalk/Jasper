@@ -29,9 +29,24 @@ That is one line per landing on `main`. Use `--first-parent` rather than filteri
 
 **Check the previous release's section too.** A branch cut before the last `[Unreleased]` → `[X.Y.Z]` rename merges its bullet into that now-released section, so the entry claims to have shipped in a version that never contained it. Move any such entry into the new section.
 
-Open the PR and let it merge through the queue normally. Don't run the release gate by hand: CI runs `lint`, `format:check`, `compile` and the full suite against a live stone on both Linux and Windows, across every GemStone version in `client/.gemstone-integration-releases.json` plus the Node floor, and it runs `npm run package` — a stronger gate than any local run, and the workflow requires it to have passed.
+Open the PR and let it merge through the queue normally. Don't run the release gate by hand: CI runs `lint`, `format:check`, `compile` and the full suite against a live stone on both Linux and Windows, across every GemStone version in `client/.gemstone-integration-releases.json` plus the Node floor, and it runs `npm run package` — a stronger gate than any local run.
 
-## 2. Run the `Release` workflow
+## 2. Wait for Health Check on the merge commit
+
+Merging makes a new commit on `main`, and Health Check runs again on that commit. The PR's green checks were for the PR's own commit, so they don't count. The `Release` workflow's `validate` job requires this new run's `ci-complete` to have passed, and fails at once with `no ci-complete check run found` if you dispatch while the run is still going. That costs nothing but a re-dispatch, but you can avoid it by waiting. The run takes about ten minutes.
+
+To watch it, open **Actions → Health Check** with the branch filter set to `main` (<https://github.com/GemTalk/Jasper/actions/workflows/health-check.yml?query=branch%3Amain>). The top row is the merge commit ("Merge pull request #NNN from …"). A yellow circle means still running, a green ✓ means go, and a red ✗ means fix `main` first. From a terminal:
+
+```sh
+gh run list --repo GemTalk/Jasper --workflow "Health Check" --branch main --limit 1
+gh run watch --repo GemTalk/Jasper <run-id>     # blocks until it finishes
+```
+
+The PR page does not show this run. Its "checks passed" line is for the PR's commit, not the merge commit.
+
+## 3. Run the `Release` workflow
+
+Only once that Health Check run shows a green ✓:
 
 **Actions → Release → Run workflow**, dispatched from `main`, with:
 

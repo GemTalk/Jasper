@@ -1,8 +1,12 @@
 import { describe, expect, it, vi, beforeEach, type TestContext } from 'vitest';
 import { GciLibrary } from '../gciLibrary';
 import { GciTestContext, useIntegrationTest } from './useIntegrationTest';
-import { GciLibraryError } from '../gciLibraryError';
-import { GCI_ERR_BAD_SESSION_ID } from '../gciConstants';
+import { GciLibraryError, SESSION_BUSY_MESSAGE } from '../gciLibraryError';
+import {
+  GCI_ERR_BAD_SESSION_ID,
+  GCI_ERR_OP_IN_PROGRESS,
+  GS_ERR_SESSION_SHUTDOWN,
+} from '../gciConstants';
 import {
   expectUtf8OopToBeCached,
   expectUtf8OopToResolveViaSymbolLookup,
@@ -429,10 +433,8 @@ describe('GciLibrary', () => {
       const firstOperation = slow.run();
 
       try {
-        await expectToBeRejectedWithGciLibraryError(
-          quick.run(),
-          'session has a GciTsNb operation in progress',
-        );
+        // GemStone's "session has a GciTsNb operation in progress", in plain words.
+        await expectToBeRejectedWithGciLibraryError(quick.run(), SESSION_BUSY_MESSAGE);
       } finally {
         await firstOperation;
       }
@@ -581,7 +583,7 @@ describe('GciLibrary', () => {
     });
 
     /**
-     * Mocks GciTsSocket rather than provoking the error for real: GciTsLogout
+     * Mocks GciTsSocket rather than provoking the error for real: a logout
      * frees the session, so calling GciTsSocket on a logged-out session is a
      * use-after-free that can segfault the worker rather than return an error.
      */
@@ -1564,6 +1566,64 @@ describe('GciLibrary', () => {
 
     it('does not include an oop that was never stored', () => {
       expectPureExportSetToIncludeOop(false, gciLibrary.nilOop());
+    });
+  });
+
+  describe('logging out', () => {
+    function simulateLogoutFailure(number: number) {
+      vi.spyOn(gciLibrary, 'GciTsNbLogout').mockReturnValueOnce({
+        success: false,
+        err: {
+          number,
+          message: 'simulated GciTsNbLogout failure',
+          category: 0n,
+          context: 0n,
+          exceptionObj: 0n,
+          args: [],
+          argCount: 0,
+          fatal: 0,
+          reason: '',
+        },
+      });
+      vi.spyOn(console, 'warn').mockImplementationOnce(() => {});
+    }
+
+    // Mocked rather than provoked for real: a refusal needs a call in progress
+    // on another thread, and a failure that frees the session would free the
+    // harness's own session.
+    it('answers that the session is still there when a call in progress refuses the logout', () => {
+      simulateLogoutFailure(GCI_ERR_OP_IN_PROGRESS);
+
+      expect(gciLibrary.logout(session)).toEqual({ sessionFreed: false });
+    });
+
+    it('keeps the cached Utf8 oop when a call in progress refuses the logout', () => {
+      gciLibrary.utf8ClassOop(session);
+      simulateLogoutFailure(GCI_ERR_OP_IN_PROGRESS);
+
+      gciLibrary.logout(session);
+
+      expectUtf8OopToBeCached(session, gciLibrary);
+    });
+
+    it('answers that the session is gone when the logout fails for any other reason', () => {
+      simulateLogoutFailure(GS_ERR_SESSION_SHUTDOWN);
+
+      expect(gciLibrary.logout(session)).toEqual({ sessionFreed: true });
+    });
+
+    it('never waits for the gem: it logs out with the non-blocking call', () => {
+      // Mocked as succeeding, so the harness's own session stays logged in.
+      const nb = vi.spyOn(gciLibrary, 'GciTsNbLogout').mockReturnValueOnce({
+        success: true,
+        err: { number: 0 } as never,
+      });
+      const blocking = vi.spyOn(gciLibrary, 'GciTsLogout');
+
+      gciLibrary.logout(session);
+
+      expect(nb).toHaveBeenCalledWith(session);
+      expect(blocking).not.toHaveBeenCalled();
     });
   });
 

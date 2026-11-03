@@ -6,12 +6,14 @@ import {
   GCI_PERFORM_FLAG_ENABLE_DEBUG,
   GCI_PERFORM_FLAG_SINGLE_STEP,
   GCI_PERFORM_FLAG_INTERPRETED,
+  SOFT_BREAK_ERROR,
+  toBigInt,
 } from './gciConstants';
 import { logError, logInfo } from './gciLog';
 import { autoCommitAfterWrite } from './autoCommit/autoCommitRunner';
 import { routeInspect } from './inspectRouter';
-import { DebuggerPanel } from './debuggerPanel';
-import { clearStack, getObjectPrintString } from './debugQueries';
+import { DebuggerPanel } from './debugger/debuggerPanel';
+import { clearStack, getObjectPrintString } from './debugger/debugQueries';
 import { appendTranscript, appendTranscriptOutput, showTranscript } from './transcriptChannel';
 import {
   startClientForwarderMode,
@@ -19,7 +21,19 @@ import {
   drainTranscript,
   settleNbResult,
 } from './transcriptSink';
-import { pollNbToCompletion, NbCancelledError } from './nbRunner';
+import {
+  abandonedRunHolds,
+  pollNbToCompletion,
+  NbCancelledError,
+  NbSessionBusyError,
+  sayRunInProgress,
+  whenSessionFree,
+} from './nbRunner';
+import {
+  BREAKPOINT_ERROR,
+  CONTINUE_FLAGS,
+  resolveBreakpointStop,
+} from './debugger/conditionalBreakpoints';
 
 const MAX_RESULT_SIZE = 64 * 1024;
 
@@ -65,26 +79,20 @@ const DISPLAY_RESULT_CONTEXT = 'gemstone.displayResultVisible';
 // is always available via the hover and the Expand action).
 const MAX_OVERLAY_PREVIEW = 100;
 
-// GemStone's "a soft break was received" error. A soft break only ever reaches
-// the gem because the user asked to cancel, so it says nothing about the code
-// that was running — see executeWithDebugger, which reports it as a cancellation
-// rather than opening a debugger on it.
-const SOFT_BREAK_ERROR_NUMBER = 6003;
-
 class DebuggableError extends Error {
   constructor(
     message: string,
     public readonly context: bigint,
     public readonly errorNumber: number,
+    /**
+     * The developer cancelled while breakpoint rules were being applied, and
+     * the process is suspended at the hit the skip had reached. A cancel all the
+     * same, which is what `executeWithDebugger` has to report it as.
+     */
+    public readonly cancelled = false,
   ) {
     super(message);
   }
-}
-
-// koffi returns uint64 as Number when the value fits in MAX_SAFE_INTEGER.
-// Normalize to bigint for correct comparison with OOP_NIL etc.
-function toBigInt(value: number | bigint): bigint {
-  return typeof value === 'bigint' ? value : BigInt(value);
 }
 
 export class CodeExecutor {
@@ -156,9 +164,7 @@ export class CodeExecutor {
     if (!session) return;
 
     if (this.executing.has(session.id)) {
-      vscode.window.showWarningMessage(
-        'A GemStone execution is already in progress on this session.',
-      );
+      sayRunInProgress(session);
       return;
     }
 
@@ -180,6 +186,20 @@ export class CodeExecutor {
       return;
     }
 
+    await this.whenFree(session, () =>
+      this.runExecution(session, editor, selection, code, mode, displayResult),
+    );
+  }
+
+  /** Everything in `execute` after the session check, started inside it; see whenFree. */
+  private async runExecution(
+    session: ActiveSession,
+    editor: vscode.TextEditor,
+    selection: vscode.Selection,
+    code: string,
+    mode: 'display' | 'execute' | 'debug',
+    displayResult: boolean,
+  ): Promise<void> {
     const oopClassString = this.resolveUtf8ClassOopUsing(session);
 
     // Dim the selected code while executing
@@ -247,7 +267,7 @@ export class CodeExecutor {
             DebuggerPanel.create(session, e.context, 'Debug It');
           } catch (panelErr: unknown) {
             logError(session.id, panelErr instanceof Error ? panelErr.message : String(panelErr));
-            clearStack(session, e.context);
+            this.releaseProcess(session, e.context);
           }
           return;
         }
@@ -284,11 +304,10 @@ export class CodeExecutor {
       }
     } finally {
       editor.setDecorations(executingDecorationType, []);
-      // End clientForwarder mode; display anything that raced the end. (After
-      // a hard-break cancel the gem may still be settling — the end then
-      // fails quietly, and runs again once the call is collected; see
-      // pollForCompletion.)
-      appendTranscriptOutput(endClientForwarderMode(session));
+      // End clientForwarder mode; display anything that raced the end. A run
+      // still settling holds the session, and the end runs once it is
+      // collected (see pollForCompletion); releaseProcess ends it before clearing.
+      this.endForwarding(session);
       this.setExecuting(session.id, false);
     }
   }
@@ -505,9 +524,11 @@ export class CodeExecutor {
    * Answers whether the code raised, or whether the user cancelled it — and no
    * more than that. Once the process is suspended it belongs to the debugger the
    * user opened on it, so its eventual fate isn't ours to report. A
-   * cancel (a soft or hard break) is reported as `cancelled`, not `raised`, and
-   * never opens a debugger: it was the user's decision, not the code's fault.
-   * Throws when the execution could not be started at all.
+   * cancel (a soft break, the runner giving up waiting, or Cancel while
+   * breakpoint rules are being applied) is reported as `cancelled`, not `raised`, and never opens a
+   * debugger: it was the user's decision, not the code's fault. Throws when the
+   * execution could not be started at all, or stopped with nothing left to
+   * debug (no process, or the session logged out).
    */
   async executeWithDebugger(
     session: ActiveSession,
@@ -517,7 +538,15 @@ export class CodeExecutor {
     if (this.executing.has(session.id)) {
       throw new Error('A GemStone execution is already in progress on this session.');
     }
+    return await whenSessionFree(session, () => this.runWithDebugger(session, code, label));
+  }
 
+  /** Everything in `executeWithDebugger` after the session check; see whenSessionFree. */
+  private async runWithDebugger(
+    session: ActiveSession,
+    code: string,
+    label: string,
+  ): Promise<{ raised: boolean; cancelled?: boolean; message?: string }> {
     const oopClassString = this.resolveUtf8ClassOopUsing(session);
     this.setExecuting(session.id, true);
     appendTranscriptOutput(startClientForwarderMode(session, code));
@@ -539,12 +568,15 @@ export class CodeExecutor {
     } catch (e: unknown) {
       // A cancelled run tells us nothing about the code — it was the user's
       // decision, not the test's fault — so report it as cancelled and never
-      // open a debugger on it. Cancel arrives two ways: a hard break rejects
-      // with NbCancelledError, while a soft break lets the gem raise its "a soft
+      // open a debugger on it. Cancel arrives three ways: a run the runner stopped
+      // waiting for rejects with NbCancelledError; a soft break lets the gem raise its "a soft
       // break was received" error (6003), which surfaces here as a
-      // DebuggableError with a live context like any other break.
+      // DebuggableError with a live context like any other break; and a cancel
+      // while breakpoint rules are being applied stops at the hit it reached.
+      // No debugger will own the suspended process, so it is released here.
       if (e instanceof NbCancelledError) return { raised: false, cancelled: true };
-      if (e instanceof DebuggableError && e.errorNumber === SOFT_BREAK_ERROR_NUMBER) {
+      if (e instanceof DebuggableError && (e.cancelled || e.errorNumber === SOFT_BREAK_ERROR)) {
+        this.releaseProcess(session, e.context);
         return { raised: false, cancelled: true };
       }
 
@@ -557,7 +589,7 @@ export class CodeExecutor {
       }
       throw e instanceof Error ? e : new Error(msg);
     } finally {
-      appendTranscriptOutput(endClientForwarderMode(session));
+      this.endForwarding(session);
       this.setExecuting(session.id, false);
     }
   }
@@ -644,6 +676,24 @@ export class CodeExecutor {
     });
   }
 
+  /** End clientForwarder mode now, unless a stopped run holds the session; see the callers. */
+  private endForwarding(session: ActiveSession): void {
+    if (abandonedRunHolds(session)) return;
+    appendTranscriptOutput(endClientForwarderMode(session));
+  }
+
+  /**
+   * Clear a suspended process no debugger will own, in the background. Ends
+   * clientForwarder mode first: on 3.7.5 a clean-up that writes to the
+   * Transcript while the mode is on stops at that write (measured), and the
+   * clear holds the session past the caller's own end anyway. What the clean-up
+   * wrote is shown once it is done.
+   */
+  private releaseProcess(session: ActiveSession, gsProcess: bigint): void {
+    appendTranscriptOutput(endClientForwarderMode(session));
+    void clearStack(session, gsProcess, () => appendTranscriptOutput(drainTranscript(session)));
+  }
+
   /**
    * Single shared notifier for a debuggable GemStone error. Offers ONE debugger
    * — the GemStone Debugger panel — plus the implicit Cancel/dismiss. Debug
@@ -675,10 +725,10 @@ export class CodeExecutor {
         // If the panel fails to open, nothing owns the suspended process, so
         // release it rather than leaving it stalled on the server.
         logError(session.id, err instanceof Error ? err.message : String(err));
-        clearStack(session, gsProcess);
+        this.releaseProcess(session, gsProcess);
       }
     } else {
-      clearStack(session, gsProcess);
+      this.releaseProcess(session, gsProcess);
     }
   }
 
@@ -707,6 +757,21 @@ export class CodeExecutor {
     return new vscode.Range(pos, lineEnd);
   }
 
+  /**
+   * Run `start` once the session is free ({@link whenSessionFree}), or, while it
+   * still has a run on it — one the user stopped that is still finishing, or one
+   * still going — tell them so and start nothing: until then GemStone refuses
+   * every call on the session, clientForwarder mode's start included.
+   */
+  private async whenFree(session: ActiveSession, start: () => Promise<void>): Promise<void> {
+    try {
+      await whenSessionFree(session, start);
+    } catch (e) {
+      // Already told: the refusal raises its own notice, with a way to stop the run.
+      if (!(e instanceof NbSessionBusyError)) throw e;
+    }
+  }
+
   private pollForCompletion<T>(
     session: ActiveSession,
     onReady: (signal: AbortSignal) => Promise<T>,
@@ -718,8 +783,8 @@ export class CodeExecutor {
     return pollNbToCompletion(session, onReady, {
       title: 'GemStone: Executing…',
       disposableProcess: true,
-      // Every caller runs in clientForwarder mode, and after a hard break the
-      // `finally`'s end is refused; this is where it can succeed.
+      // Every caller runs in clientForwarder mode, and after the runner stops
+      // waiting the `finally`'s end is refused; this is where it can succeed.
       onAbandonedCollected: () => appendTranscriptOutput(endClientForwarderMode(session)),
     });
   }
@@ -736,16 +801,33 @@ export class CodeExecutor {
     // Transcript writes arrive here as forwarder sends (error 2336) while the
     // code is still running: settleNbResult displays each one and resumes the
     // execution, only returning when a real result or error arrives.
+    // Each resume keeps the flags the run started with (less Debug It's single
+    // step): dropping the debug flag would disarm every breakpoint after the
+    // first Transcript write.
+    const onTranscript = (text: string): void => appendTranscriptOutput(text);
     const { result: resultOop, err: resultErr } = await settleNbResult(
       session,
-      (text) => appendTranscriptOutput(text),
+      onTranscript,
       signal,
+      CONTINUE_FLAGS,
     );
     if (resultErr.number !== 0) {
       const msg = resultErr.message || `GemStone error ${resultErr.number}`;
       const context = toBigInt(resultErr.context);
       if (context !== OOP_NIL && context !== 0n) {
         this.validateContextOop(session, context);
+        if (resultErr.number === BREAKPOINT_ERROR) {
+          // A breakpoint may carry a rule that passes this stop. Skipping can
+          // move the run on to another stop, or to an error raised on the way —
+          // so the debugger must open where it ended up, not on the breakpoint
+          // we left.
+          const stop = await resolveBreakpointStop(session, context, msg, {
+            signal,
+            onTranscript,
+          });
+          if (stop.kind === 'completed') return stop.resultOop;
+          throw new DebuggableError(stop.message, stop.context, stop.errorNumber, stop.cancelled);
+        }
         throw new DebuggableError(msg, context, resultErr.number);
       }
       throw new Error(msg);
@@ -766,9 +848,7 @@ export class CodeExecutor {
     if (!session) return;
 
     if (this.executing.has(session.id)) {
-      vscode.window.showWarningMessage(
-        'A GemStone execution is already in progress on this session.',
-      );
+      sayRunInProgress(session);
       return;
     }
 
@@ -799,9 +879,7 @@ export class CodeExecutor {
     if (!session) return;
 
     if (this.executing.has(session.id)) {
-      vscode.window.showWarningMessage(
-        'A GemStone execution is already in progress on this session.',
-      );
+      sayRunInProgress(session);
       return;
     }
 
@@ -813,6 +891,11 @@ export class CodeExecutor {
     code: string,
     label: string,
   ): Promise<void> {
+    await this.whenFree(session, () => this.runInspection(session, code, label));
+  }
+
+  /** Everything in `executeAndInspect` after the session check; see whenFree. */
+  private async runInspection(session: ActiveSession, code: string, label: string): Promise<void> {
     const oopClassString = this.resolveUtf8ClassOopUsing(session);
 
     // Dim the selected code in the active editor while executing
@@ -863,7 +946,7 @@ export class CodeExecutor {
       if (editor) {
         editor.setDecorations(executingDecorationType, []);
       }
-      appendTranscriptOutput(endClientForwarderMode(session));
+      this.endForwarding(session);
       this.setExecuting(session.id, false);
     }
   }

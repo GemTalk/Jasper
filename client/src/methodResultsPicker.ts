@@ -36,6 +36,22 @@ export function describeMethodResult(result: {
   return `${result.className}${result.isMeta ? ' class' : ''} >> #${result.selector}${env}`;
 }
 
+/**
+ * A method as a compact prefix for log lines, `Account>>deposit:`; unlike
+ * `describeMethodResult`, which is spaced for prose. The environment is shown
+ * only when it is not 0.
+ */
+export function methodLabel(method: {
+  className: string;
+  isMeta: boolean;
+  selector: string;
+  environmentId: number;
+}): string {
+  const receiver = `${method.className}${method.isMeta ? ' class' : ''}`;
+  const environment = method.environmentId === 0 ? '' : ` [env ${method.environmentId}]`;
+  return `${receiver}>>${method.selector}${environment}`;
+}
+
 /** Open one found method: through an open System Browser for that session when there is
  *  one, otherwise as a document of its own.
  *

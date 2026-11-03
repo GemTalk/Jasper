@@ -4,7 +4,7 @@ vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
-import * as debug from '../../debugQueries';
+import * as debug from '../../debugger/debugQueries';
 import * as bi from '../../basicInspector/queries/basicInspectorQueries';
 import { isEnhancedInspectorInstalled } from '../enhancedInspectorInstall';
 import { refreshEnhancedInspectorAvailable } from '../enhancedInspectorAvailability';

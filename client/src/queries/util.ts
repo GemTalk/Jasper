@@ -24,7 +24,8 @@ export function isValidSelector(selector: string): boolean {
 // image value may be nil (e.g. an unnamed SymbolDictionary — `SymbolDictionary new name` is nil),
 // go through asString first: `name asString asSymbol == #Lit`, so nil answers #nil instead of a
 // `nil asSymbol` doesNotUnderstand. Never write a plain `= 'literal'` against an image-derived
-// value in a doit; 3.7.x tolerates it, so a reverted idiom only breaks at a 3.6.x client site.
+// value in a doit. It isn't only 3.6.x: a 3.7.2 doit compiles its literals to Unicode7 too and
+// raises the same 2718, so don't count on a 3.7.x stone to tolerate a reverted idiom.
 
 // A Smalltalk expression for the class (or its metaclass) that receives a
 // method-level operation. `dict` (a 1-based SymbolList index, or a name) scopes

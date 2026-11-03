@@ -114,7 +114,7 @@ beforeEach(() => {
 describe('Browse Class from the Inspector or the debugger', () => {
   // Both go through `gemstone.explorer.findClass` — the Inspector's browse
   // (client/src/basicInspector/basicInspector.ts) and the debugger's frame
-  // Browse (client/src/debuggerPanel.ts) — so the controller method they land
+  // Browse (client/src/debugger/debuggerPanel.ts) — so the controller method they land
   // on is where the sidebar switch is missing.
   it('brings the GemStone Explorer up, not just the panes', async () => {
     const ctl = makeController();

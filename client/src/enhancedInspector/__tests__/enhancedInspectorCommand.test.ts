@@ -74,7 +74,7 @@ function systemUserLibrary(systemUserLoginSucceeds = true) {
         ? { session: {}, err: { number: 0 } }
         : { session: null, err: { number: 4051, message: 'bad password' } },
     ),
-    GciTsLogout: vi.fn(),
+    logout: vi.fn(() => ({ sessionFreed: true })),
   };
 }
 

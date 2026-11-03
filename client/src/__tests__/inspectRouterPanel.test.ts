@@ -20,7 +20,7 @@ const session = (enhanced: boolean) =>
     id: 1,
     handle: {},
     enhancedInspectorAvailable: enhanced,
-    gci: { GciTsCallInProgress: () => ({ result: 0 }) },
+    gci: {},
   });
 
 const raisedViewTypes = () =>

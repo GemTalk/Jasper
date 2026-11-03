@@ -5,7 +5,7 @@ import { LoginStorage } from './loginStorage';
 import { LoginTreeProvider } from './loginTreeProvider';
 import { SysadminStorage } from './sysadminStorage';
 import { bundledWindowsClientVersions, bundledGciArchSupported } from './bundledGci';
-import { setLoginPassword, getLoginPassword, deleteLoginPassword } from './loginCredentials';
+import { readLoginPasswords } from './loginCredentials';
 import { loginEditorHtml } from './loginEditorHtml';
 
 /**
@@ -92,23 +92,41 @@ export class LoginEditorPanel {
       version: versions[0] ?? '',
     };
 
-    // If the login has its password in SecretStorage, load it so the user can
-    // view or change it in the editor.
-    if (existingLogin?.password_in_keychain) {
-      const pw = await getLoginPassword(secrets, existingLogin);
-      if (pw !== undefined) {
-        login = { ...login, gs_password: pw };
+    // Saving writes back whatever the form holds, and an empty field clears
+    // its keychain entry. A login not saved yet has an empty label and no entry
+    // of its own; one left under its name by an earlier login would be stale.
+    // So a keychain that can't be read opens the login read-only: its blank
+    // fields, saved, would erase the passwords it still holds.
+    let keychainUnreadable = false;
+    if (existingLogin?.password_in_keychain && existingLogin.label !== '') {
+      try {
+        const stored = await readLoginPasswords(secrets, existingLogin);
+        login = {
+          ...login,
+          gs_password: login.gs_password || stored.gs_password,
+          host_password: login.host_password || stored.host_password,
+        };
+      } catch (e) {
+        // A login with an active session stays read-only for that reason alone,
+        // with no Edit anyway to lift it.
+        keychainUnreadable = !readOnly;
+        vscode.window.showErrorMessage(
+          `Couldn't read the passwords for "${loginLabel(existingLogin)}" from the OS keychain ` +
+            `(${e instanceof Error ? e.message : String(e)}).`,
+        );
       }
     }
+    const viewOnly = readOnly || keychainUnreadable;
 
     if (LoginEditorPanel.currentPanel) {
       LoginEditorPanel.currentPanel.panel.reveal(column);
       LoginEditorPanel.currentPanel.versions = versions;
       LoginEditorPanel.currentPanel.sysadminStorage = sysadminStorage;
-      LoginEditorPanel.currentPanel.readOnly = readOnly;
+      LoginEditorPanel.currentPanel.readOnly = viewOnly;
+      LoginEditorPanel.currentPanel.keychainUnreadable = keychainUnreadable;
       LoginEditorPanel.currentPanel.panel.title = LoginEditorPanel.titleFor(
         existingLogin,
-        readOnly,
+        viewOnly,
       );
       LoginEditorPanel.currentPanel.update(login);
       return;
@@ -116,7 +134,7 @@ export class LoginEditorPanel {
 
     const panel = vscode.window.createWebviewPanel(
       'gemstoneLoginEditor',
-      LoginEditorPanel.titleFor(existingLogin, readOnly),
+      LoginEditorPanel.titleFor(existingLogin, viewOnly),
       column,
       {
         enableScripts: true,
@@ -128,24 +146,24 @@ export class LoginEditorPanel {
     LoginEditorPanel.currentPanel = new LoginEditorPanel(
       panel,
       storage,
-      secrets,
       treeProvider,
       login,
       versions,
-      readOnly,
+      viewOnly,
       sysadminStorage,
+      keychainUnreadable,
     );
   }
 
   private constructor(
     panel: vscode.WebviewPanel,
     private storage: LoginStorage,
-    private secrets: vscode.SecretStorage,
     private treeProvider: LoginTreeProvider,
     private login: GemStoneLogin,
     private versions: string[],
     private readOnly: boolean,
     private sysadminStorage: SysadminStorage | undefined,
+    private keychainUnreadable = false,
   ) {
     this.panel = panel;
     this.update(login);
@@ -168,6 +186,13 @@ export class LoginEditorPanel {
             break;
           case 'requestData':
             this.panel.webview.postMessage(this.loadDataMessage());
+            break;
+          case 'editAnyway':
+            if (!this.keychainUnreadable) break;
+            this.keychainUnreadable = false;
+            this.readOnly = false;
+            this.panel.title = LoginEditorPanel.titleFor(this.login, false);
+            this.update(this.login);
             break;
           case 'checkVersion':
             this.panel.webview.postMessage({
@@ -237,21 +262,6 @@ export class LoginEditorPanel {
       return;
     }
 
-    if (data.password_in_keychain) {
-      // Store the password in SecretStorage and strip it from the settings
-      // object before we persist.
-      if (data.gs_password) {
-        await setLoginPassword(this.secrets, data);
-      }
-      data = { ...data, gs_password: '' };
-    } else {
-      // If SecretStorage was previously enabled and the user unchecked it,
-      // clean up the stored entry so we don't leave stale secrets behind.
-      if (this.login.password_in_keychain) {
-        await deleteLoginPassword(this.secrets, this.login);
-      }
-    }
-
     await this.storage.saveLogin(data, originalLabel);
     this.treeProvider.refresh();
     this.login = data;
@@ -288,6 +298,7 @@ export class LoginEditorPanel {
       data: this.login,
       ...this.versionChoices(),
       readOnly: this.readOnly,
+      keychainUnreadable: this.keychainUnreadable,
     };
   }
 

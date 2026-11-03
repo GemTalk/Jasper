@@ -4,11 +4,13 @@ import { wrapExecuteCode } from './queries/executeCode';
 import { GemStoneNotebookKernel, GEMSTONE_NOTEBOOK_TYPE } from './gemstoneNotebookKernel';
 import { startClientForwarderMode, endClientForwarderMode, settleNbResult } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
-import { runNbCall } from './nbRunner';
+import { NbRunOptions, runNbCall, whenSessionFree } from './nbRunner';
+import { failCell, fetchCellResult } from './notebookCellResult';
 import { autoCommitAfterWrite } from './autoCommit/autoCommitRunner';
 import { OOP_ILLEGAL, OOP_NIL, OOP_CLASS_UTF8 } from './gciConstants';
 import { SMALLTALK_LANGUAGE } from './languageIds';
 import { sessionKernelId } from './sessionKernels';
+import { SESSION_BUSY_MESSAGE } from './gciLibraryError';
 
 // GemStone Smalltalk as a Jupyter kernel — see gemstoneNotebookKernel.ts for
 // the Jupyter integration mechanics. Each cell is an independent doit (the
@@ -30,17 +32,27 @@ export const SMALLTALK_CONTROLLER_LABEL = 'GemStone Smalltalk';
 // offered no breakpoint gutter (see client/src/languageIds.ts).
 export const SMALLTALK_LANGUAGE_ID = SMALLTALK_LANGUAGE;
 
-const MAX_CELL_RESULT = 256 * 1024;
-
 // Cells run on the NON-BLOCKING execute path in clientForwarder mode, so
 // `Transcript show:` output streams to the GemStone Transcript channel while
 // the cell runs (and a long cell doesn't freeze the extension host).
-export async function evalSmalltalk(session: ActiveSession, source: string): Promise<string> {
-  const { result: inProgress } = session.GciTsCallInProgress();
-  if (inProgress !== 0) {
-    throw new Error(
-      'Session is busy with another operation. Please wait or use a different session.',
-    );
+export async function evalSmalltalk(
+  session: ActiveSession,
+  source: string,
+  onStart?: NbRunOptions['onStart'],
+): Promise<string> {
+  // Before any GCI call: a stopped call still on the session would make GemStone
+  // refuse clientForwarder mode's start, and while a worker still owns the
+  // session a call from here could kill the process.
+  return await whenSessionFree(session, () => runCell(session, source, onStart));
+}
+
+async function runCell(
+  session: ActiveSession,
+  source: string,
+  onStart: NbRunOptions['onStart'],
+): Promise<string> {
+  if (session.isBusy()) {
+    throw new Error(SESSION_BUSY_MESSAGE);
   }
 
   const code = wrapExecuteCode(source);
@@ -82,30 +94,23 @@ export async function evalSmalltalk(session: ActiveSession, source: string): Pro
           // semaphore, and there is no notebook debugger to hand it to, so
           // leaving it suspended leaks both (#646). Execute It makes the same
           // call after the user declines its Debug prompt.
-          // koffi hands a uint64 back as a number whenever it fits, so
-          // normalize before comparing against the bigint OOP constants.
-          const context = BigInt(err.context);
-          if (context !== OOP_NIL && context !== 0n) {
-            session.GciTsClearStack(context);
-          }
-          throw new Error(err.message || `GCI error ${err.number}`);
+          return await failCell(session, err);
         }
         return result;
       },
       {
         title: 'GemStone: Running cell…',
         disposableProcess: true,
-        // The `finally`'s end is refused while a hard-broken cell is being
-        // collected; this is where it can succeed.
+        disposableResult: true,
+        onStart,
+        // The `finally`'s end is refused while a cell the runner stopped waiting
+        // for is being collected; this is where it can succeed.
         onAbandonedCollected: () => appendTranscriptOutput(endClientForwarderMode(session)),
       },
     );
 
     // wrapExecuteCode printStrings server-side, so the result IS a string.
-    const { data, err: fetchErr } = session.GciTsFetchUtf8(resultOop, MAX_CELL_RESULT);
-    if (fetchErr.number !== 0) {
-      throw new Error(fetchErr.message || `GCI error ${fetchErr.number}`);
-    }
+    const data = fetchCellResult(session, resultOop);
     // A cell is a doit like any other, so it commits on an auto-commit session (issue #254)
     // -- the same reading as Do It in the editor. Only on success: a cell that raised has
     // nothing finished to commit.
@@ -163,7 +168,7 @@ export function smalltalkSessionKernel(
     label: SMALLTALK_CONTROLLER_LABEL,
     description: `Always runs Smalltalk in Session ${sessionId}`,
     supportedLanguages: [SMALLTALK_LANGUAGE_ID],
-    evaluate: (session, source) => evalSmalltalk(session, source),
+    evaluate: (session, source, _scopeId, onStart) => evalSmalltalk(session, source, onStart),
     sessionId,
   });
 }
@@ -177,7 +182,7 @@ export class SmalltalkNotebookController extends GemStoneNotebookKernel {
       label: SMALLTALK_CONTROLLER_LABEL,
       description: 'Run Smalltalk in the active GemStone session',
       supportedLanguages: [SMALLTALK_LANGUAGE_ID],
-      evaluate: (session, source) => evalSmalltalk(session, source),
+      evaluate: (session, source, _scopeId, onStart) => evalSmalltalk(session, source, onStart),
     });
     // Offer this kernel first for Smalltalk notebooks, including ones that
     // hot-exit restored before the extension activated.

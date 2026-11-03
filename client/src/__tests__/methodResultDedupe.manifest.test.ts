@@ -38,7 +38,7 @@ describe('folding scan results is done in exactly one place', () => {
   // deliberate, and explained at each call site.
   const DELIBERATE_SINGLE_ROW_PER_SELECTOR = [
     'omniSearch/omniSearchCommand.ts',
-    'functionBreakpoints.ts',
+    'debugger/functionBreakpoints.ts',
   ];
 
   it('has no dedup key that leaves the environment out', () => {

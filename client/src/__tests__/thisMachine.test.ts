@@ -64,5 +64,18 @@ describe('isThisMachine', () => {
     it('does not count it before any WSL probe has run', () => {
       expect(isThisMachine(wslIp)).toBe(false);
     });
+
+    // A stone names its machine by the distro's hostname, which wsl.conf can set apart from Windows'.
+    it("counts the WSL distro's hostname", () => {
+      vi.mocked(getWslNetworkInfoCached).mockReturnValue({
+        hostname: 'Dev-Distro',
+      } as WslNetworkInfo);
+      try {
+        expect(isThisMachine('dev-distro')).toBe(true);
+        expect(isThisMachine('thor')).toBe(false);
+      } finally {
+        vi.mocked(getWslNetworkInfoCached).mockReturnValue(undefined);
+      }
+    });
   });
 });

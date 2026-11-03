@@ -2,7 +2,7 @@
   "name": "gemstone-ide",
   "displayName": "Jasper: A GemStone Smalltalk IDE",
   "description": "GemStone/S IDE for Visual Studio Code",
-  "version": "1.14.0",
+  "version": "1.17.0",
   "publisher": "gemtalksystems",
   "license": "MIT",
   "author": "James Foster",
@@ -282,6 +282,11 @@
       {
         "title": "GemStone",
         "properties": {
+          "gemstone.breakpoints.showRulesInEditor": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Write what a breakpoint does beyond stopping \u2014 its condition, its log message, and the breakpoint that has to be reached before it stops \u2014 at the end of its line in GemStone method source, as a dimmed annotation (never as text in the method). Turn it off if a permanently visible label is distracting: the gutter still shows VS Code's conditional-breakpoint and logpoint icons, hovering the step point still reports all three in full, and the **GemStone Breakpoints** view still shows them on the row."
+          },
           "gemstone.stepPoints.display": {
             "type": "string",
             "enum": [
@@ -352,10 +357,16 @@
             "default": "single",
             "description": "Number of concurrent GemStone sessions allowed. 'single' (default) keeps one session at a time for a clearer mental model — the connected login shows an inline Logout action and the Sessions panel is hidden. 'multiple' (beta) re-enables concurrent sessions and the Sessions panel."
           },
+          "gemstone.mirrorFolder": {
+            "type": "string",
+            "default": "",
+            "scope": "machine",
+            "markdownDescription": "Folder for Jasper's read-only copy of each stone's classes as `.gs` files. Jasper adds a folder per host, stone and user below it, and keeps it across logout so a reconnect only fetches what changed. Leave empty to use Jasper's private storage. A path starting with `~`, or a relative one, is read from your home directory; the open workspace folder is not used."
+          },
           "gemstone.exportPath": {
             "type": "string",
             "default": "",
-            "description": "Root path for the local class mirror (read-only .gs files used by Find in Files / Go to Definition). Variables: {workspaceRoot}, {session}, {host}, {stone}, {user}, {index}, {dictName}. Defaults to {workspaceRoot}/.gemstone/{host}/{stone}/{user}/{index}-{dictName} — keyed by connection target so it is shared across that target's sessions and kept (and re-synced incrementally) across logout."
+            "markdownDeprecationMessage": "No longer used. Set `#gemstone.mirrorFolder#` to choose where the class mirror goes."
           },
           "gemstone.classSync.readOnlyMirror": {
             "type": "boolean",
@@ -388,7 +399,8 @@
           "gemstone.logins": {
             "type": "array",
             "default": [],
-            "description": "GemStone/S 64 Bit login parameters",
+            "scope": "application",
+            "markdownDescription": "The GemStone logins listed in **Logins & Sessions**, which adds, edits and deletes them. They are kept only in your user `settings.json`; a list in a folder's `.vscode/settings.json` is ignored.\n\nTo use them on another machine, open your user `settings.json` with the link below, copy the `\"gemstone.logins\"` entry, and paste it into the same file on the other machine. Or turn on VS Code's Settings Sync, which copies it for you. Passwords kept in the OS keychain are not copied: Jasper asks for them at the first login there.\n\n▶ [Open your user settings.json](command:workbench.action.openSettingsJson)",
             "items": {
               "type": "object",
               "properties": {
@@ -426,7 +438,7 @@
                 },
                 "sync_classes": {
                   "type": "boolean",
-                  "description": "Sync this connection's classes to the local .gemstone mirror (read-only .gs files for Find in Files / Go to Definition). Defaults to true; turn off for slow/remote connections."
+                  "description": "Keep a read-only copy of this connection's classes as .gs files in the class mirror (see gemstone.mirrorFolder). Defaults to true; turn off for slow/remote connections."
                 }
               }
             }
@@ -689,7 +701,7 @@
     "viewsWelcome": [
       {
         "view": "gemstoneLogins",
-        "contents": "Add a login to connect to a stone.\n[Add a Login](command:gemstone.addLogin)\nNo database yet? [Create one](command:gemstone.newDatabase)."
+        "contents": "Add a login to connect to a stone. A stone on another machine needs no database locally.\n[Add a Login](command:gemstone.addLogin)\nRunning GemStone on this machine? [Create a database](command:gemstone.newDatabase) first."
       },
       {
         "view": "gemstoneDatabases",
@@ -706,7 +718,7 @@
       {
         "id": "gemstoneGettingStarted",
         "title": "Get Started with GemStone",
-        "description": "Download GemStone, create a database, connect, and explore Smalltalk expressions in Jasper.",
+        "description": "Widen the window to see each step's details. Download GemStone, create a database, connect, and explore Smalltalk expressions in Jasper.",
         "steps": [
           {
             "id": "setup",
@@ -1328,6 +1340,41 @@
         "icon": "$(debug-breakpoint-unsupported)"
       },
       {
+        "command": "gemstone.breakpoints.editConditionAtCursor",
+        "title": "Edit Breakpoint Condition at Cursor",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint-conditional)"
+      },
+      {
+        "command": "gemstone.breakpoints.editCondition",
+        "title": "Edit Condition\u2026",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint-conditional)"
+      },
+      {
+        "command": "gemstone.breakpoints.editTriggerAtCursor",
+        "title": "Edit Breakpoint Trigger at Cursor",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint-unverified)"
+      },
+      {
+        "command": "gemstone.breakpoints.editTrigger",
+        "title": "Break Only After\u2026",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint-unverified)"
+      },
+      {
+        "command": "gemstone.breakpoints.triggeredNotSupported",
+        "title": "\u26a0 Add Triggered Breakpoint doesn't work in Jasper yet",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.breakpoints.showLogpointOutput",
+        "title": "Show Logpoint Output",
+        "category": "GemStone",
+        "icon": "$(output)"
+      },
+      {
         "command": "gemstone.breakpoints.enableAll",
         "title": "Enable All Breakpoints",
         "category": "GemStone",
@@ -1405,6 +1452,16 @@
       {
         "command": "gemstone.breakpoints.clearAtStepPoint",
         "title": "Clear Breakpoint at Step Point",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.breakpoints.editConditionAtStepPoint",
+        "title": "Edit Breakpoint Condition at Step Point",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.breakpoints.editTriggerAtStepPoint",
+        "title": "Edit Breakpoint Trigger at Step Point",
         "category": "GemStone"
       },
       {
@@ -2074,7 +2131,7 @@
       },
       {
         "command": "gemstone.newDatabase",
-        "title": "New Database...",
+        "title": "New Database on This Machine...",
         "category": "GemStone",
         "icon": "$(add)"
       },
@@ -2225,6 +2282,13 @@
           "group": "gemstone@0"
         }
       ],
+      "editor/lineNumber/context": [
+        {
+          "command": "gemstone.breakpoints.triggeredNotSupported",
+          "when": "resourceLangId == gemstone-method",
+          "group": "gemstoneBreakpoints@1"
+        }
+      ],
       "commandPalette": [
         {
           "command": "gemstone.breakpoints.toggleAtStepPoint",
@@ -2240,6 +2304,26 @@
         },
         {
           "command": "gemstone.breakpoints.clearAtStepPoint",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.editConditionAtStepPoint",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.editTriggerAtStepPoint",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.editCondition",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.editTrigger",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.triggeredNotSupported",
           "when": "false"
         },
         {
@@ -2816,22 +2900,32 @@
       "view/item/context": [
         {
           "command": "gemstone.breakpoints.reveal",
-          "when": "view == gemstoneBreakpoints && viewItem == gemstoneBreakpoint",
+          "when": "view == gemstoneBreakpoints && viewItem =~ /^gemstoneBreakpoint(Owned)?$/",
           "group": "inline@0"
         },
         {
-          "command": "gemstone.breakpoints.remove",
-          "when": "view == gemstoneBreakpoints && viewItem =~ /^gemstoneBreakpoint(Doit)?$/",
+          "command": "gemstone.breakpoints.editCondition",
+          "when": "view == gemstoneBreakpoints && viewItem =~ /^gemstoneBreakpoint(Owned)?$/",
           "group": "inline@1"
         },
         {
+          "command": "gemstone.breakpoints.editTrigger",
+          "when": "view == gemstoneBreakpoints && viewItem == gemstoneBreakpointOwned",
+          "group": "inline@2"
+        },
+        {
+          "command": "gemstone.breakpoints.remove",
+          "when": "view == gemstoneBreakpoints && viewItem =~ /^gemstoneBreakpoint(Owned|Doit)?$/",
+          "group": "inline@3"
+        },
+        {
           "command": "gemstone.breakpoints.enable",
-          "when": "view == gemstoneBreakpoints && viewItem =~ /^gemstoneBreakpoint(Doit)?$/",
+          "when": "view == gemstoneBreakpoints && viewItem =~ /^gemstoneBreakpoint(Owned|Doit)?$/",
           "group": "1_state@0"
         },
         {
           "command": "gemstone.breakpoints.disable",
-          "when": "view == gemstoneBreakpoints && viewItem =~ /^gemstoneBreakpoint(Doit)?$/",
+          "when": "view == gemstoneBreakpoints && viewItem =~ /^gemstoneBreakpoint(Owned|Doit)?$/",
           "group": "1_state@1"
         },
         {
@@ -3519,14 +3613,24 @@
           "group": "3_gemstoneBreakpoints@2"
         },
         {
-          "command": "gemstone.breakpoints.clearMethod",
+          "command": "gemstone.breakpoints.editConditionAtCursor",
           "when": "editorTextFocus && resourceLangId == gemstone-method",
           "group": "3_gemstoneBreakpoints@3"
         },
         {
-          "command": "gemstone.breakpoints.toggleStepPoints",
+          "command": "gemstone.breakpoints.editTriggerAtCursor",
           "when": "editorTextFocus && resourceLangId == gemstone-method",
           "group": "3_gemstoneBreakpoints@4"
+        },
+        {
+          "command": "gemstone.breakpoints.clearMethod",
+          "when": "editorTextFocus && resourceLangId == gemstone-method",
+          "group": "3_gemstoneBreakpoints@5"
+        },
+        {
+          "command": "gemstone.breakpoints.toggleStepPoints",
+          "when": "editorTextFocus && resourceLangId == gemstone-method",
+          "group": "3_gemstoneBreakpoints@6"
         },
         {
           "command": "gemstone.fileInFile",
@@ -3590,7 +3694,7 @@
         "command": "gemstone.displayIt",
         "key": "ctrl+k d",
         "mac": "cmd+k d",
-        "when": "editorTextFocus && gemstone.hasActiveSession && !gemstone.executing"
+        "when": "editorTextFocus && gemstone.hasActiveSession"
       },
       {
         "command": "gemstone.dismissDisplayResult",
@@ -3617,19 +3721,19 @@
         "command": "gemstone.executeIt",
         "key": "ctrl+k e",
         "mac": "cmd+k e",
-        "when": "editorTextFocus && gemstone.hasActiveSession && !gemstone.executing"
+        "when": "editorTextFocus && gemstone.hasActiveSession"
       },
       {
         "command": "gemstone.debugIt",
         "key": "ctrl+k r",
         "mac": "cmd+k r",
-        "when": "editorTextFocus && gemstone.hasActiveSession && !gemstone.executing"
+        "when": "editorTextFocus && gemstone.hasActiveSession"
       },
       {
         "command": "gemstone.inspectIt",
         "key": "ctrl+k i",
         "mac": "cmd+k i",
-        "when": "editorTextFocus && gemstone.hasActiveSession && !gemstone.executing"
+        "when": "editorTextFocus && gemstone.hasActiveSession"
       },
       {
         "command": "gemstone.openBrowser",
@@ -3751,28 +3855,28 @@
   "devDependencies": {
     "@eslint-community/eslint-plugin-eslint-comments": "^4.8.1",
     "@eslint/js": "^10.0.1",
-    "@playwright/test": "^1.64.0",
+    "@playwright/test": "^1.64.1",
     "@types/node": "~22.15",
     "@typescript/native": "npm:typescript@^7.0.2",
-    "@vitest/eslint-plugin": "^1.6.27",
+    "@vitest/eslint-plugin": "^1.6.28",
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^4.0.0",
     "cross-env": "^10.1.0",
     "esbuild": "^0.28.2",
-    "eslint": "^10.12.0",
+    "eslint": "^10.13.0",
     "eslint-config-flat-gitignore": "^2.4.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.13.0",
     "jsdom": "^29.1.1",
-    "lefthook": "^2.2.1",
+    "lefthook": "^2.2.2",
     "lockfile-lint": "^5.1.0",
-    "ovsx": "^1.2.0",
+    "ovsx": "^1.3.0",
     "playwright-bdd": "^9.2.1",
-    "prettier": "^3.9.9",
+    "prettier": "^3.9.10",
     "semver": "^7.8.5",
     "tsx": "^4.23.15",
     "typescript": "npm:@typescript/typescript6@^6.0.2",
-    "typescript-eslint": "^8.71.1",
+    "typescript-eslint": "^8.72.1",
     "vscode-oniguruma": "^2.0.1",
     "vscode-textmate": "^9.3.2"
   },
@@ -3782,7 +3886,7 @@
     "koffi": "^2.16.3"
   },
   "overrides": {
-    "fast-uri": "^3.1.8",
+    "fast-uri": "^3.1.9",
     "js-yaml": "^4.3.2"
   },
   "allowScripts": {

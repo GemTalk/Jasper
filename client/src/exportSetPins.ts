@@ -22,7 +22,7 @@
  * bookkeeping is per session, since an OOP means nothing across sessions.
  */
 import { ActiveSession } from './sessionManager';
-import { saveObjs, releaseObjs } from './debugQueries';
+import { saveObjs, releaseObjs } from './debugger/debugQueries';
 
 /** sessionId → (oop → how many holders are keeping it pinned). */
 const pinsBySession = new Map<number, Map<bigint, number>>();

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { ActiveSession, SessionManager } from './sessionManager';
 import * as queries from './browserQueries';
 import { BrowserQueryError } from './browserQueries';
+import { GCI_ERR_OP_IN_PROGRESS } from './gciConstants';
 import { ExportManager } from './exportManager';
 import { logInfo } from './gciLog';
 import { runWithAutoCommitDeferredSync } from './autoCommit/autoCommitRunner';
@@ -105,7 +106,10 @@ export type ParsedUri =
 
 export function parseUri(uri: vscode.Uri): ParsedUri {
   const sessionId = parseInt(uri.authority, 10);
-  const parts = uri.path.split('/').map(decodeURIComponent);
+  // `uri.path` is already percent-decoded. Decoding a segment again would throw
+  // ("URI malformed") on a selector or category containing '%' — `%` is a legal
+  // binary selector — and silently turn a literal `%41` into `A`.
+  const parts = uri.path.split('/');
   // parts[0] is '' (leading /)
 
   // Parse optional ?env=N from query string
@@ -117,8 +121,13 @@ export function parseUri(uri: vscode.Uri): ParsedUri {
   const dictIndex = dictMatch ? parseInt(dictMatch[1], 10) : undefined;
 
   if (parts.length === 3 && parts[2] === 'new-class') {
+    // `uri.query` is already percent-decoded too, for the same reason `uri.path`
+    // is — so the category is read as written, not decoded a second time.
+    // (A category containing '&' is still cut short here, and can inject a
+    // dict=/env= parameter; that needs a sentinel on both sides, see
+    // https://github.com/GemTalk/Jasper/issues/744.)
     const catMatch = uri.query?.match(/category=([^&]+)/);
-    const category = catMatch ? decodeURIComponent(catMatch[1]) : undefined;
+    const category = catMatch ? catMatch[1] : undefined;
     return { kind: 'new-class', sessionId, dictName: parts[1], category };
   }
   // 4-segment `/dict/Class/definition`, or 5-segment `/dict/Class/definition/Class`
@@ -230,7 +239,7 @@ const SIDE_SEGMENTS = ['instance', 'class'];
 export function classCompiledTarget(
   uri: vscode.Uri,
 ): { sessionId: number; dictName: string; className: string; dictIndex?: number } | undefined {
-  const parts = uri.path.split('/').map(decodeURIComponent);
+  const parts = uri.path.split('/');
   if (parts.length < 3) return undefined;
   let dictIndex: number | undefined;
   try {
@@ -251,7 +260,7 @@ export function parseDirUri(uri: vscode.Uri): DirLevel | null {
   if (uri.scheme !== 'gemstone') return null;
   const sessionId = parseInt(uri.authority, 10);
   if (Number.isNaN(sessionId)) return null;
-  const parts = uri.path.split('/').map(decodeURIComponent);
+  const parts = uri.path.split('/');
   // parts[0] is '' (leading /). A bare authority or a lone '/' is the root.
   const dictMatch = uri.query?.match(/(?:^|&)dict=(\d+)(?:&|$)/);
   const dictIndex = dictMatch ? parseInt(dictMatch[1], 10) : undefined;
@@ -283,7 +292,10 @@ export function parseDirUri(uri: vscode.Uri): DirLevel | null {
       dictName: parts[1],
       className: parts[2],
       isMeta: parts[3] === 'class',
-      category: parts[4],
+      // The segment carries the slash sentinel, as parseUri's does: reverse it so
+      // the category reads as GemStone names it (`File I/O`, not `File I⁄O`) and
+      // compares equal to the one on a MethodItem.
+      category: unescapeSelectorSlashes(parts[4]),
       dictIndex,
     };
   }
@@ -455,9 +467,10 @@ function assertIsValidUriPath(parameterName: string, value: string) {
 /**
  * Close every open editor tab backed by a gemstone:// document for `sessionId`
  * — class definitions, class comments, method source, and override-diff views.
- * Used when a browser (or its session) goes away so its companion editors don't
- * linger against a closed session. A dirty tab still prompts to save (VS Code's
- * default for tabGroups.close).
+ * Used when a browser goes away, so its companion editors don't linger, and when
+ * a tab asks for a session that no longer exists (see `getSession`). A logout
+ * leaves its tabs to the stale-tab reaper. A dirty tab still prompts to save
+ * (VS Code's default for tabGroups.close).
  */
 export async function closeGemstoneTabsForSession(sessionId: number): Promise<void> {
   const authority = String(sessionId);
@@ -565,11 +578,12 @@ export function installStaleGemstoneTabReaper(sessionManager: SessionManager): v
     // dead tab the moment the user touches the tab bar.
     vscode.window.tabGroups.onDidChangeTabs(() => reap()),
   ];
-  // Session lifecycle: a logout — or the session dying (e.g. the host going
-  // unresponsive) — fires NO tab event, so without this a now-dead session's
-  // gemstone:// tabs would linger unservable. Reaping here removes them as soon
-  // as the session leaves the manager. onDidRemoveSession catches *any* session
-  // leaving (including a non-selected one, which onDidChangeSelection misses).
+  // Session lifecycle: a logout — the Logout command, stopping the session's
+  // stone, a logical restore, any other — fires NO tab event, so without this a
+  // logged-out session's gemstone:// tabs would linger unservable. Reaping here
+  // removes them as soon as the session leaves the manager. onDidRemoveSession
+  // catches *any* session leaving (including a non-selected one, which
+  // onDidChangeSelection misses).
   if (sessionManager?.onDidChangeSelection) {
     subscriptions.push(sessionManager.onDidChangeSelection(() => reap()));
   }
@@ -783,9 +797,12 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
             ['definition', File],
           ];
         case 'side':
+          // Escaped like the selectors below: VS Code appends the name it is given
+          // to the path, so a raw '/' in a category would open a folder one level
+          // too deep instead of that category.
           return queries
             .getMethodCategories(session, dir.className, dir.isMeta, dir.dictIndex ?? dir.dictName)
-            .map((c): [string, vscode.FileType] => [c, Directory]);
+            .map((c): [string, vscode.FileType] => [escapeSelectorSlashes(c), Directory]);
         case 'category':
           return queries
             .getMethodList(session, dir.className)
@@ -919,6 +936,12 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
       this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri }]);
       logInfo(`[FS] writeFile → success (${parsed.kind})`);
     } catch (e: unknown) {
+      // A busy session refused the save: nothing was written and nothing is wrong
+      // with the code, so the save fails, leaving the editor's changes unsaved.
+      if (e instanceof BrowserQueryError && e.gciErrorNumber === GCI_ERR_OP_IN_PROGRESS) {
+        logInfo(`[FS] writeFile → refused, session busy`);
+        throw e;
+      }
       if (e instanceof BrowserQueryError) {
         logInfo(`[FS] writeFile → compile error: ${e.message}`);
         // Parse line number from GCI error message (e.g. "... (line 3, ...")

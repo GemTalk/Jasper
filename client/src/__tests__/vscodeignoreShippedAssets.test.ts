@@ -67,7 +67,7 @@ describe('runtime-injected webview assets are shipped in the .vsix', () => {
   it('finds the known runtime-injected assets (guards against a broken scan)', () => {
     expect(referenced).toContain('listFilter.js');
     expect(referenced).toContain('methodListView.js');
-    expect(referenced).toContain('debuggerView.js');
+    expect(referenced).toContain('debugger/debuggerView.js');
     expect(referenced).toContain('refactoring/renameMethodPanelView.js');
     expect(referenced).toContain('webview/millerColumns.js');
     expect(referenced).toContain('webview/evaluatePane.js');

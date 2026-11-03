@@ -40,9 +40,9 @@ describe('reading a webview script from disk', () => {
   });
 
   it('resolves a script kept at the top of the tree without an empty path segment', () => {
-    readWebviewScript('debuggerView.js');
+    readWebviewScript('listFilter.js');
 
-    expect(pathRead()).toBe(path.join(moduleDir, '..', 'src', 'debuggerView.js'));
+    expect(pathRead()).toBe(path.join(moduleDir, '..', 'src', 'listFilter.js'));
   });
 
   it('lets a missing script surface as the underlying read failure', () => {

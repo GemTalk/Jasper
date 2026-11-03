@@ -16,9 +16,9 @@ import { addDictionary } from '../addDictionary';
 import { removeDictionary } from '../removeDictionary';
 import { moveDictionaryUp } from '../moveDictionaryUp';
 import { moveDictionaryDown } from '../moveDictionaryDown';
-import { setBreakAtStepPoint } from '../setBreakAtStepPoint';
-import { clearBreakAtStepPoint } from '../clearBreakAtStepPoint';
-import { clearAllBreaks } from '../clearAllBreaks';
+import { setBreakAtStepPoint } from '../../debugger/queries/setBreakAtStepPoint';
+import { clearBreakAtStepPoint } from '../../debugger/queries/clearBreakAtStepPoint';
+import { clearAllBreaks } from '../../debugger/queries/clearAllBreaks';
 
 describe('compileMethod', () => {
   it('uses Behavior>>compileMethod:dictionaries:category:environmentId:', () => {

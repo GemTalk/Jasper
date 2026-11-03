@@ -2,7 +2,16 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
+const quiet = vi.hoisted(() => ({ on: false }));
 vi.mock('../browserQueries', () => ({
+  quietly: <T>(query: () => T): T => {
+    quiet.on = true;
+    try {
+      return query();
+    } finally {
+      quiet.on = false;
+    }
+  },
   getAllClassNames: vi.fn(() => []),
   getInstVarNames: vi.fn(() => []),
   getAllSelectors: vi.fn(() => []),
@@ -131,6 +140,27 @@ describe('GemStoneCompletionProvider', () => {
       expect(result).toHaveLength(1);
       expect(result[0].kind).toBe(CompletionItemKind.Class);
     });
+
+    // No selection or removal event between the two requests, so only the cache key
+    // keeps the first session's list from being served to the second.
+    it('serves each session its own class list, even with no event between them', () => {
+      mockGetAllClassNames.mockImplementation((s) => [
+        { dictIndex: 1, dictName: 'Globals', className: s.id === 1 ? 'Array' : 'Bag' },
+      ]);
+      const sessions = makeSessions(true, 1);
+      const provider = new GemStoneCompletionProvider(sessions.manager);
+      const labels = () =>
+        provider.provideCompletionItems(makeDocument('file:///test.tpz')).map((i) => i.label);
+
+      const first = labels();
+      vi.mocked(sessions.manager.getSelectedSession).mockReturnValue(
+        sessions.manager.getSession(2),
+      );
+      const second = labels();
+
+      expect(first).toEqual(['Array']);
+      expect(second).toEqual(['Bag']);
+    });
   });
 
   describe('instance variable completions', () => {
@@ -186,6 +216,27 @@ describe('GemStoneCompletionProvider', () => {
       expect(methodItems).toHaveLength(0);
       expect(mockGetAllSelectors).not.toHaveBeenCalled();
     });
+  });
+
+  // A busy session would otherwise raise the Stop notice as the user types.
+  it('asks the stone quietly, for classes, inst vars and selectors', () => {
+    const quietly: boolean[] = [];
+    const record =
+      <T>(answer: T) =>
+      () => {
+        quietly.push(quiet.on);
+        return answer;
+      };
+    mockGetAllClassNames.mockImplementation(record([]));
+    mockGetInstVarNames.mockImplementation(record([]));
+    mockGetAllSelectors.mockImplementation(record([]));
+
+    new GemStoneCompletionProvider(makeSessionManager(true)).provideCompletionItems(
+      makeDocument('gemstone://1/Globals/Array/instance/accessing/size'),
+    );
+
+    expect(quietly).toHaveLength(3);
+    expect(quietly.every(Boolean)).toBe(true);
   });
 
   describe('caching', () => {

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { SessionManager } from './sessionManager';
-import { evalPythonInScope, resetPythonScope } from './pythonQueries';
+import { evalPythonInScopeNb, resetPythonScope } from './pythonQueries';
 import { logError } from './gciLog';
 import { GemStoneNotebookKernel } from './gemstoneNotebookKernel';
 import { sessionKernelId } from './sessionKernels';
@@ -27,7 +27,8 @@ export function grailSessionKernel(
     label: GRAIL_CONTROLLER_LABEL,
     description: `Always runs Python in Session ${sessionId}`,
     supportedLanguages: ['python'],
-    evaluate: (session, source, scopeId) => evalPythonInScope(session, source, scopeId),
+    evaluate: (session, source, scopeId, onStart) =>
+      evalPythonInScopeNb(session, source, scopeId, onStart),
     sessionId,
   });
 }
@@ -41,7 +42,8 @@ export class GrailNotebookController extends GemStoneNotebookKernel {
       label: GRAIL_CONTROLLER_LABEL,
       description: 'Run Python in GemStone via Grail',
       supportedLanguages: ['python'],
-      evaluate: (session, source, scopeId) => evalPythonInScope(session, source, scopeId),
+      evaluate: (session, source, scopeId, onStart) =>
+        evalPythonInScopeNb(session, source, scopeId, onStart),
     });
 
     this.resetCommand = vscode.commands.registerCommand(GRAIL_RESET_SCOPE_COMMAND, () =>

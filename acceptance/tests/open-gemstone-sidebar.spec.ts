@@ -16,8 +16,12 @@ test.describe('opening the GemStone sidebar', () => {
     await window.getByRole('tab', { name: /GemStone/ }).click();
 
     const sidebar = window.locator('.sidebar');
-    await expect(sidebar.getByText('Versions', { exact: true })).toBeVisible();
     await expect(sidebar.getByText('Databases', { exact: true })).toBeVisible();
+    // A section's title-bar buttons only show while the pointer is over it.
+    await sidebar.getByRole('heading', { name: 'Databases' }).hover();
+    await expect(
+      sidebar.getByRole('button', { name: 'Manage Databases & Versions' }),
+    ).toBeVisible();
     await expect(sidebar.getByText('Logins & Sessions', { exact: true })).toBeVisible();
   });
 });

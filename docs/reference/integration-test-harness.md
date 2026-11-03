@@ -59,7 +59,7 @@ Declaring `allowedCommits` (see the options table above) opens that many levels 
 
 - **The setup banner**: if no stone is reachable, `beforeAll` fails with a banner pointing at `npm run test:server:start`, prepended to the underlying login/library-load error.
 - **`sessionCleanupFailed` poisoning the file**: if `afterEach` cleanup fails — including the commit-guard-still-armed check — every remaining test in that file fails fast in `beforeEach` rather than running against a session in an unknown state. Look at the _first_ failure in the file; it's the real one.
-- **Session/oop identity**: `session` and any oop values are koffi pointer wrappers with no enumerable properties. `toEqual` treats any two of them as equal regardless of the underlying native pointer — compare with `toBe` when the assertion is about _which_ session or oop a call received.
+- **Session/oop identity**: `session` and any oop values are koffi pointer wrappers with no enumerable properties. `toEqual` treats any two of them as equal regardless of the underlying native pointer — compare with `toBe` when the assertion is about _which_ session or oop a call received, or wrap the argument in `sameObject(...)` (`client/src/__tests__/support/sameObject.ts`) inside `toHaveBeenCalledWith`.
 
 ## Running it
 

@@ -39,8 +39,8 @@ export interface McpPanelDeps {
   stop: () => Promise<void>;
   /** Ask the window that holds the server to release it, then claim it here. */
   requestRelease: () => Promise<void>;
-  /** Focus the VS Code window whose workspace is at this path. */
-  revealOwner: (workspacePath: string) => Promise<void>;
+  /** Let the user switch to the VS Code window that holds the server. */
+  revealOwner: () => Promise<void>;
 }
 
 type Inbound =
@@ -49,7 +49,7 @@ type Inbound =
   | { command: 'claim' }
   | { command: 'stop' }
   | { command: 'requestRelease' }
-  | { command: 'revealOwner'; workspacePath: string }
+  | { command: 'revealOwner' }
   | { command: 'copyText'; text: string };
 
 export class McpPanel {
@@ -123,7 +123,7 @@ export class McpPanel {
         this.post();
         return;
       case 'revealOwner':
-        await this.deps.revealOwner(msg.workspacePath);
+        await this.deps.revealOwner();
         return;
       case 'copyText':
         await vscode.env.clipboard.writeText(msg.text);

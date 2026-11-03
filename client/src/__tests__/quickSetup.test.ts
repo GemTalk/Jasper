@@ -97,6 +97,7 @@ function makeDeps(overrides?: Partial<QuickSetupDeps>): QuickSetupDeps {
       refreshProcesses: vi.fn(),
     } as unknown as ProcessManager,
     loginStorage: {
+      getLogins: vi.fn(() => []),
       saveLogin: vi.fn(async () => {}),
       setGciLibraryPath: vi.fn(async () => {}),
     } as unknown as LoginStorage,
@@ -435,8 +436,31 @@ describe('runQuickSetup', () => {
         gs_user: 'DataCurator',
         gs_password: 'swordfish',
         netldi: 'gs64ldi',
+        password_in_keychain: true,
       }),
     );
+  });
+
+  it('leaves a login that already reaches the new stone as it is', async () => {
+    const version = makeVersion({ extracted: true });
+    mockShowQuickPick.mockResolvedValue({ label: '3.7.4', version });
+    const existing = {
+      gem_host: 'localhost',
+      stone: 'gs64stone',
+      gs_user: 'DataCurator',
+      netldi: 'gs64ldi',
+    };
+    const deps = makeDeps({
+      loginStorage: {
+        getLogins: vi.fn(() => [existing]),
+        saveLogin: vi.fn(async () => {}),
+        setGciLibraryPath: vi.fn(async () => {}),
+      } as unknown as LoginStorage,
+    });
+
+    await runQuickSetup(deps);
+
+    expect(deps.loginStorage.saveLogin).not.toHaveBeenCalled();
   });
 
   it('sets GCI library path on non-Windows platforms', async () => {

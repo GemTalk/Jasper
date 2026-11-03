@@ -7,7 +7,7 @@ import {
 } from './gemstoneFileSystemProvider';
 import { debugTestMethodCode } from './queries/debugTestMethod';
 import { logInfo } from './gciLog';
-import { NbCancelledError } from './nbRunner';
+import { NbCancelledError, NbSessionBusyError, whenSessionFree } from './nbRunner';
 import { ActiveSession, SessionManager } from './sessionManager';
 import * as sunit from './sunitQueries';
 
@@ -59,9 +59,6 @@ async function setTestRunningContext(running: boolean): Promise<void> {
   await vscode.commands.executeCommand('setContext', 'gemstone.testRunning', running);
 }
 
-/** How long to wait for a soft break to land before escalating to a hard one. */
-const HARD_BREAK_AFTER_MS = 1500;
-
 /**
  * How a test was launched. Everything above the innermost "execute one test"
  * step is shared between the two — discovery, id parsing, reporting, and the
@@ -88,7 +85,7 @@ export interface SunitDebugExecutor {
 export interface SunitDebugOutcome {
   /** True when the test raised and the suspended process went to a debugger. */
   raised: boolean;
-  /** True when the user cancelled the run (a soft or hard break). Distinct from
+  /** True when the user cancelled the run. Distinct from
    *  `raised`: a cancel is the user's decision, not a test outcome, so the caller
    *  leaves no verdict rather than blaming the test. */
   cancelled?: boolean;
@@ -148,6 +145,14 @@ function resultKey(dictName: string, className: string, selector?: string): stri
  * icon always belongs on the first line. */
 function topOfDocument(): vscode.Range {
   return new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 0));
+}
+
+/** VS Code shows a message wrapped, and offers to peek it beside the code, only
+ * when the message has a location; without one it is a single clipped line. */
+function messageAt(item: vscode.TestItem, text: string): vscode.TestMessage {
+  const message = new vscode.TestMessage(text);
+  if (item.uri && item.range) message.location = new vscode.Location(item.uri, item.range.start);
+  return message;
 }
 
 /**
@@ -341,14 +346,15 @@ export class SunitTestController implements vscode.Disposable {
   }
 
   /**
-   * Breaks the run currently executing in the stone — soft on the first call,
-   * hard on a second, the same escalation the progress notification's Cancel
-   * does. Set while a run is in flight and cleared when it settles.
+   * Stops the run currently executing in the stone, the way the progress
+   * notification's Cancel does. Set while a run is in flight and cleared when it
+   * settles.
    */
   private activeCancel: (() => void) | undefined;
-  /** True once a stop was asked for, until the next run starts. Lets a run that
-   *  ends in a Break error be reported as stopped rather than as a test error. */
-  private cancelRequested = false;
+  /** How many runs are in flight, so the row ■ stays while any of them is. */
+  private activeRuns = 0;
+  /** Each run in flight's way to skip the rest of its queue; see cancelActiveRun. */
+  private readonly queueStops = new Set<() => void>();
 
   /** True when a run is in flight and can be stopped. */
   get isRunning(): boolean {
@@ -366,17 +372,11 @@ export class SunitTestController implements vscode.Disposable {
       return false;
     }
     logInfo('SUnit: stop requested — sending a soft break.');
-    this.cancelRequested = true;
     cancel();
-    // A soft break is the right first move — it lets the gem stop at a safe point
-    // and leaves the session healthy. But a test spinning in a tight loop never
-    // reaches one, and making the user press stop a second time to find that out
-    // is a poor trade. Escalate on their behalf, unless the run settled first.
-    setTimeout(() => {
-      if (this.activeCancel !== cancel) return;
-      logInfo('SUnit: the run is still going — escalating to a hard break.');
-      cancel();
-    }, HARD_BREAK_AFTER_MS);
+    // A stop is of the run, not only of the test in flight. The Testing view's own
+    // Stop cancels the run's token as well; a row's ■ only comes here, and without
+    // this the rest of the queue would run on, or be refused one by one.
+    this.queueStops.forEach((stop) => stop());
     return true;
   }
 
@@ -809,6 +809,16 @@ export class SunitTestController implements vscode.Disposable {
 
     const queue = this.getTestsToRun(request);
     const run = this.controller.createTestRun(request, runLabel(queue));
+    // Once for the whole queue, and before any row is touched: a run refused
+    // here must leave alone the rows of a stopped run that is still finishing,
+    // and say so once, not once per test.
+    try {
+      await whenSessionFree(session, () => undefined);
+    } catch (e) {
+      run.end();
+      if (!this.wasRefused(e)) throw e;
+      return;
+    }
     // The Testing view's stop button. It could do nothing before: the run held the
     // extension host inside a synchronous GCI call, so this event could not even
     // be delivered until the run had already finished.
@@ -817,11 +827,17 @@ export class SunitTestController implements vscode.Disposable {
     // gives no way to replace it, but an extension may contribute inline actions —
     // so the stop appears BESIDE the run icon, on class and method rows alike, and
     // only while there is a run to stop.
+    let queueStopped = false;
+    const stopQueue = (): void => {
+      queueStopped = true;
+    };
+    this.queueStops.add(stopQueue);
+    this.activeRuns += 1;
     await setTestRunningContext(true);
 
     try {
       for (const item of queue) {
-        if (token.isCancellationRequested) {
+        if (token.isCancellationRequested || queueStopped) {
           run.skipped(item);
           continue;
         }
@@ -836,7 +852,11 @@ export class SunitTestController implements vscode.Disposable {
       }
     } finally {
       stopped.dispose();
-      await setTestRunningContext(false);
+      this.queueStops.delete(stopQueue);
+      // Not simply false: a run refused while a stopped one is still finishing
+      // ends first, and must not take the stopped run's ■ with it.
+      this.activeRuns -= 1;
+      await setTestRunningContext(this.activeRuns > 0);
       run.end();
       this.flushResultChanges();
     }
@@ -876,8 +896,9 @@ export class SunitTestController implements vscode.Disposable {
     }
 
     try {
-      const result = await this.whileCancellable((onStart) =>
-        sunit.runTestMethodNb(session, className, selector, dictName, onStart),
+      const result = await this.whileCancellable(
+        (onStart) => sunit.runTestMethodNb(session, className, selector, dictName, onStart),
+        (r) => r.status === 'error' && r.message.startsWith('Break: '),
       );
       this.reportResult(run, item, result);
     } catch (e: unknown) {
@@ -887,36 +908,68 @@ export class SunitTestController implements vscode.Disposable {
         this.reportSkipped(run, item);
         return;
       }
+      if (this.wasRefused(e)) {
+        this.reportSkipped(run, item);
+        return;
+      }
       const msg = e instanceof Error ? e.message : String(e);
       this.reportError(run, item, `Execution error: ${msg}`);
     }
   }
 
   /**
-   * Whether a failed run failed because it was stopped. A hard break rejects with
-   * NbCancelledError, but a soft break usually lets the gem raise a Break error
-   * instead, which arrives as an ordinary failure — indistinguishable from a real
-   * one except that we asked for it.
+   * Whether a failed run failed because it was stopped. A run the runner stopped
+   * waiting for rejects with NbCancelledError. One that answered the soft break
+   * raises a Break instead: a class
+   * run's SUnit does not catch it, so the run fails like any other, while a single
+   * test's runner catches it and answers it as the test's error. Either is
+   * indistinguishable from a real one except that a stop was asked for, so
+   * whileCancellable rethrows both as NbCancelledError too.
    */
   private wasStopped(e: unknown): boolean {
-    return e instanceof NbCancelledError || this.cancelRequested;
+    return e instanceof NbCancelledError;
+  }
+
+  /**
+   * Whether a run never started because the session still had another on it,
+   * telling the user so. It has no outcome — calling it an error would blame the
+   * test — so it leaves no verdict, as a stopped run does.
+   */
+  private wasRefused(e: unknown): boolean {
+    // Already told: the refusal raises its own notice, with a way to stop the run.
+    return e instanceof NbSessionBusyError;
   }
 
   /**
    * Run one interruptible stone call, holding onto its canceller for as long as
-   * it is in flight. Only one runs at a time — the session is single-threaded,
-   * and a second would be refused as "session is busy" anyway.
+   * it is in flight. Only one runs at a time on a session: a second is refused
+   * with NbSessionBusyError, before it hands out a canceller of its own.
+   *
+   * `isBreak` picks out an answer that is the stop itself, for a call that
+   * answers a soft break rather than failing with it. Either counts as stopped
+   * only when a stop was asked for — by this view, or by the progress
+   * notification's Cancel, which this view never hears about — so a test that
+   * raises a Break of its own keeps its verdict.
    */
   private async whileCancellable<T>(
-    call: (onStart: (cancel: () => void) => void) => Promise<T>,
+    call: (onStart: (cancel: () => void, stopRequested: () => boolean) => void) => Promise<T>,
+    isBreak: (value: T) => boolean = () => false,
   ): Promise<T> {
-    this.cancelRequested = false;
+    let mine: (() => void) | undefined;
+    let stopRequested = (): boolean => false;
     try {
-      return await call((cancel) => {
+      const value = await call((cancel, requested) => {
+        mine = cancel;
+        stopRequested = requested;
         this.activeCancel = cancel;
       });
+      if (stopRequested() && isBreak(value)) throw new NbCancelledError();
+      return value;
+    } catch (e) {
+      if (stopRequested() && !(e instanceof NbCancelledError)) throw new NbCancelledError();
+      throw e;
     } finally {
-      this.activeCancel = undefined;
+      if (mine && this.activeCancel === mine) this.activeCancel = undefined;
     }
   }
 
@@ -941,7 +994,7 @@ export class SunitTestController implements vscode.Disposable {
       );
 
       if (outcome.cancelled) {
-        // The user cancelled the debug run (a soft or hard break). That was
+        // The user cancelled the debug run. That was
         // their decision, not a test outcome — leave no verdict, exactly as a
         // stopped ordinary run does (see runSingleTest / wasStopped).
         this.reportSkipped(run, item);
@@ -960,6 +1013,10 @@ export class SunitTestController implements vscode.Disposable {
       this.reportError(run, item, outcome.message ?? 'Test raised an exception.');
       return 'raised';
     } catch (e: unknown) {
+      if (this.wasRefused(e)) {
+        this.reportSkipped(run, item);
+        return 'cancelled';
+      }
       const msg = e instanceof Error ? e.message : String(e);
       this.reportError(run, item, `Execution error: ${msg}`);
       return 'raised';
@@ -1038,6 +1095,12 @@ export class SunitTestController implements vscode.Disposable {
     } catch (e: unknown) {
       if (this.wasStopped(e)) {
         // See runSingleTest: an interrupted run leaves no verdict behind.
+        classItem.children.forEach((child) => this.reportSkipped(run, child));
+        this.deleteResult(dictName, className);
+        this.flushResultChanges();
+        return;
+      }
+      if (this.wasRefused(e)) {
         classItem.children.forEach((child) => this.reportSkipped(run, child));
         this.deleteResult(dictName, className);
         this.flushResultChanges();
@@ -1148,10 +1211,10 @@ export class SunitTestController implements vscode.Disposable {
         run.passed(item, result.durationMs);
         break;
       case 'failed':
-        run.failed(item, new vscode.TestMessage(result.message), result.durationMs);
+        run.failed(item, messageAt(item, result.message), result.durationMs);
         break;
       case 'error':
-        run.errored(item, new vscode.TestMessage(result.message), result.durationMs);
+        run.errored(item, messageAt(item, result.message), result.durationMs);
         break;
     }
     this.reportOutcome(item, {
@@ -1169,7 +1232,7 @@ export class SunitTestController implements vscode.Disposable {
   }
 
   private reportError(run: vscode.TestRun, item: vscode.TestItem, message: string): void {
-    run.errored(item, new vscode.TestMessage(message));
+    run.errored(item, messageAt(item, message));
     this.reportOutcome(item, { outcome: 'error', message });
   }
 

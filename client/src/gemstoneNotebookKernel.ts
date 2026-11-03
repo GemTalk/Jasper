@@ -4,6 +4,7 @@ import { logError } from './gciLog';
 import { drainTranscript } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
 import { describeSession, onDidChangeActiveSession } from './activeSessionDisplay';
+import { NbCancelledError, NbRunOptions } from './nbRunner';
 
 // Shared base for GemStone-backed notebook kernels. VS Code's built-in ipynb
 // support owns the `jupyter-notebook` notebook type (Microsoft's Jupyter
@@ -26,10 +27,15 @@ export interface NotebookKernelSpec {
    * Evaluate one cell's source on the session and return the result string.
    * scopeId identifies the notebook (its URI) for kernels that keep
    * per-notebook state on the GemStone side; stateless kernels ignore it.
-   * May be async (the Smalltalk kernel runs cells non-blocking so Transcript
-   * output streams live while the cell executes).
+   * Runs non-blocking, handing `onStart` the run's canceller, so the cell's own
+   * stop button stops it as every other stop control does.
    */
-  evaluate: (session: ActiveSession, source: string, scopeId: string) => string | Promise<string>;
+  evaluate: (
+    session: ActiveSession,
+    source: string,
+    scopeId: string,
+    onStart: NbRunOptions['onStart'],
+  ) => string | Promise<string>;
   /**
    * Run every cell in this one session instead of the active one. In
    * multiple-session mode Jasper makes one such kernel per logged-in session
@@ -188,24 +194,47 @@ export class GemStoneNotebookKernel {
     }, 0);
   }
 
-  // Cells run sequentially: each shares the single GemStone session, and the
-  // GCI execute call is blocking, so there is no parallelism to exploit.
+  // Cells run one after another: they share one session, which runs one call at
+  // a time. A stopped cell stops the cells queued after it too, as in Jupyter.
   private async executeCells(cells: vscode.NotebookCell[]): Promise<void> {
     for (const cell of cells) {
-      await this.executeCell(cell);
+      if ((await this.executeCell(cell)) === 'stopped') return;
     }
   }
 
-  private async executeCell(cell: vscode.NotebookCell): Promise<void> {
+  /** Answers 'stopped' when the user stopped the cell. */
+  private async executeCell(cell: vscode.NotebookCell): Promise<'ran' | 'stopped'> {
     const execution = this.controller.createNotebookCellExecution(cell);
     execution.executionOrder = ++this.executionOrder;
     execution.start(Date.now());
+    // As Jupyter does: the last run's output would otherwise sit there while this
+    // one runs, and a "Stopped." from it reads as this run's outcome.
+    await execution.clearOutput();
+    const outcome = await this.runCell(cell, execution);
+    if (outcome === 'stopped') {
+      await execution.replaceOutput([
+        new vscode.NotebookCellOutput([
+          vscode.NotebookCellOutputItem.text('Stopped.', 'text/plain'),
+        ]),
+      ]);
+      // Neither success nor failure: the cell has no outcome of its own.
+      execution.end(undefined, Date.now());
+    }
+    return outcome;
+  }
+
+  private async runCell(
+    cell: vscode.NotebookCell,
+    execution: vscode.NotebookCellExecution,
+  ): Promise<'ran' | 'stopped'> {
+    const { token } = execution;
+    if (token.isCancellationRequested) return 'stopped';
 
     const source = cell.document.getText();
     if (!source.trim()) {
       await execution.replaceOutput([]);
       execution.end(true, Date.now());
-      return;
+      return 'ran';
     }
 
     const session =
@@ -219,25 +248,38 @@ export class GemStoneNotebookKernel {
           ? 'No GemStone session is active. Log in from the GemStone Logins view, then re-run the cell.'
           : `Session ${this.sessionId} has logged out. Pick another kernel, then re-run the cell.`,
       );
-      return;
+      return 'ran';
     }
 
+    let cancel: (() => void) | undefined;
+    let stopRequested = (): boolean => false;
+    const onStop = token.onCancellationRequested(() => cancel?.());
     let result: NotebookCellResult;
     try {
       const scopeId = cell.notebook.uri.toString();
-      result = classifyCellResult(await this.evaluate(session, source, scopeId));
+      result = classifyCellResult(
+        await this.evaluate(session, source, scopeId, (c, requested) => {
+          cancel = c;
+          stopRequested = requested;
+          if (token.isCancellationRequested) c();
+        }),
+      );
     } catch (e: unknown) {
+      if (e instanceof NbCancelledError || stopRequested()) return 'stopped';
       const msg = e instanceof Error ? e.message : String(e);
       logError(session.id, `Notebook cell failed: ${msg}`);
       await this.endWithError(execution, msg);
-      return;
+      return 'ran';
     } finally {
-      // Show Transcript output the cell buffered server-side (kernels running
-      // on the blocking path — e.g. Grail Python — can't stream it live; for
-      // the live Smalltalk path this is an empty no-op drain).
+      onStop.dispose();
+      // Show Transcript output the cell buffered server-side: Grail Python
+      // cells don't stream it live. For Smalltalk cells this drains nothing.
       appendTranscriptOutput(drainTranscript(session));
     }
 
+    // The cell's error guard turns the gem's answer to a stop into an ordinary
+    // error result.
+    if (stopRequested()) return 'stopped';
     if (result.success) {
       await execution.replaceOutput([
         new vscode.NotebookCellOutput([
@@ -248,6 +290,7 @@ export class GemStoneNotebookKernel {
     } else {
       await this.endWithError(execution, result.message);
     }
+    return 'ran';
   }
 
   protected async endWithError(
@@ -256,6 +299,8 @@ export class GemStoneNotebookKernel {
   ): Promise<void> {
     const error = new Error(message);
     error.name = 'GemStoneError';
+    // The JavaScript stack says nothing about the GemStone error.
+    error.stack = undefined;
     await execution.replaceOutput([
       new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.error(error)]),
     ]);

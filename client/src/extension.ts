@@ -9,7 +9,8 @@ import {
   TransportKind,
 } from 'vscode-languageclient/node';
 import { LoginStorage } from './loginStorage';
-import { getLoginPassword, deleteLoginPassword } from './loginCredentials';
+import { getLoginPasswords } from './loginCredentials';
+import { offerToMovePlainTextPasswords } from './plainTextPasswordOffer';
 import { runStopStone } from './stopStoneManager';
 import { LoginTreeProvider, GemStoneLoginItem, GemStoneSessionItem } from './loginTreeProvider';
 import { registerTransactionStatusBar } from './transactionStatusBar';
@@ -28,6 +29,7 @@ import {
   DEFAULT_GS_PW,
   GemStoneLogin,
   buildDataCuratorLogin,
+  duplicateOf,
   loginLabel,
   loginNetldiTarget,
   loginTargetKey,
@@ -78,7 +80,26 @@ import {
   updateGitRepo,
   normalizeGitUrl,
 } from './rowanLoad';
-import { NbCancelledError } from './nbRunner';
+import {
+  cancelRunOn,
+  clearHolds,
+  NbCancelledError,
+  setRunInProgressHandler,
+  setStillRunningHandler,
+  setStoppedRunCollectedHandler,
+  stoppedRunHolds,
+} from './nbRunner';
+import { GCI_ERR_OP_IN_PROGRESS } from './gciConstants';
+import { forceStop, loginSerialOf, rearmAfterForceStop } from './forceStop';
+import {
+  signalableGems,
+  killStoneSession,
+  listStoneSessions,
+  stopStoneSession,
+} from './stoneSessions/stoneSessions';
+import { StoneSessions } from './stoneSessions/stoneSessionsView';
+import { isThisMachine } from './thisMachine';
+import { showRunInProgress, showStillRunning } from './stillRunningNotice';
 import { RowanRepoRegistry } from './rowanRepos';
 import {
   RowanTreeProvider,
@@ -99,11 +120,6 @@ import { RowanDecorationProvider } from './rowanDecorations';
 import { ActiveEditorDecorationProvider } from './activeEditorDecoration';
 import { findMethodInClass } from './commands/findMethodInClass';
 import { loadClassPickItems } from './commands/classPicker';
-import { GlobalsBrowser } from './globalsBrowser';
-import { CommentBrowser } from './commentBrowser';
-import { EnhancedInspector } from './enhancedInspector/enhancedInspector';
-import { BasicInspector } from './basicInspector/basicInspector';
-import { forgetSession as forgetSessionPins } from './exportSetPins';
 import { revealInspect } from './inspectRouter';
 import {
   maybeOfferServerSupport,
@@ -128,14 +144,14 @@ import {
   TOGGLE_AUTO_COMMIT_COMMAND,
 } from './autoCommit/autoCommitUi';
 import { registerStashRelease } from './undo/releaseStash';
+import { registerSessionTeardown } from './sessionTeardown';
 import { supportsEnhancedInspector } from './enhancedInspector/enhancedInspectorInstall';
-import { DebuggerPanel } from './debuggerPanel';
+import { DebuggerPanel } from './debugger/debuggerPanel';
 import { InlineValuesCodeLensProvider } from './inlineValuesCodeLens';
 import {
   GemStoneFileSystemProvider,
   MethodCompiledEvent,
   ClassDefinitionCompiledEvent,
-  closeGemstoneTabsForSession,
   installStaleGemstoneTabReaper,
   parseMethodUri,
   classCompiledTarget,
@@ -163,7 +179,7 @@ import {
 import { SessionEditorDecorationProvider } from './sessionEditorDecoration';
 import { registerStartHere, StartHereStatusBar, resetStartHere } from './startHere';
 import { openTutorialNotebook, registerTutorialContext } from './tutorialNotebook';
-import { GemStoneDebugSession } from './gemstoneDebugSession';
+import { GemStoneDebugSession } from './debugger/gemstoneDebugSession';
 import { registerGemStoneExplorer } from './gemstoneExplorer';
 import { registerMethodHistoryDiff } from './methodHistory/methodHistoryDiff';
 import { renameTemporaryCommand } from './refactoring/renameTemporaryCommand';
@@ -180,19 +196,27 @@ import { GemStoneWorkspaceSymbolProvider } from './gemstoneSymbolProvider';
 import { GemStoneDefinitionProvider } from './gemstoneDefinitionProvider';
 import { GemStoneHoverProvider } from './gemstoneHoverProvider';
 import { GemStoneCompletionProvider } from './gemstoneCompletionProvider';
-import { BreakpointManager } from './breakpointManager';
-import { StepPointModel } from './stepPointModel';
-import { StepPointHintsProvider } from './stepPointHints';
-import { StepPointHoverProvider } from './stepPointHover';
-import { BreakpointTreeProvider, BreakpointNode, revealBreakpoint } from './breakpointTreeProvider';
+import { BreakpointManager } from './debugger/breakpointManager';
+import { setBreakpointRuleSource } from './debugger/conditionalBreakpoints';
+import { StepPointModel } from './debugger/stepPointModel';
+import { StepPointHintsProvider } from './debugger/stepPointHints';
+import { StepPointHoverProvider } from './debugger/stepPointHover';
+import {
+  BreakpointTreeProvider,
+  BreakpointNode,
+  editBreakpointCondition,
+  editBreakpointTrigger,
+  revealBreakpoint,
+} from './debugger/breakpointTreeProvider';
 import { SunitTestController } from './sunitTestController';
 import { GrailNotebookController, grailSessionKernel } from './grailNotebookController';
 import { SmalltalkNotebookController, smalltalkSessionKernel } from './smalltalkNotebookController';
-import { registerNotebookBreakpointHint } from './notebookBreakpointHint';
+import { registerNotebookBreakpointHint } from './debugger/notebookBreakpointHint';
 import { SessionKernels } from './sessionKernels';
 import { ExportManager } from './exportManager';
 import { FileInManager } from './fileInManager';
 import { showTranscript, getTranscriptChannel } from './transcriptChannel';
+import { getLogpointChannel, showLogpointChannel } from './debugger/logpointChannel';
 import { getGciLog, logError, logWarning } from './gciLog';
 import { commitFailureMessage, isCommitConflict } from './commitFailure';
 import { CODE_LENS_SELECTORS, GemStoneCodeLensProvider } from './gemstoneCodeLensProvider';
@@ -219,6 +243,7 @@ import {
   bringUpDatabase,
   takeDownDatabase,
   clearSessionsForStop,
+  goAheadWithStop,
   ServerTarget,
 } from './manager/databaseLifecycle';
 import {
@@ -238,7 +263,6 @@ import { McpSocketServer, writeClaudeDesktopMcpConfig } from './mcpSocketServer'
 import { writeClaudeCodeUserMcpConfig } from './claudeCodeUserMcpConfig';
 import { buildRefreshPromptDeps, promptClaudeCodeRefresh } from './claudeCodeRefreshPrompt';
 import { McpOwnership, McpServerTreeDeps, resolveOwnership } from './mcpServerTreeProvider';
-import { NO_WORKSPACE_RECORDED } from './mcpOwnerSidecar';
 import { mcpReport } from './mcpWindowStatus';
 import { defaultReleaseRequestPath } from './mcpReleaseRequest';
 import { McpOwnershipController } from './mcpOwnership';
@@ -259,6 +283,8 @@ import {
   invalidateWslCache,
   getWslNetworkInfoCached,
   refreshWslNetworkInfo,
+  wslExec,
+  wslExecSync,
 } from './wslBridge';
 import { isWslInstalledAsync } from './wslInstall';
 import { recheckWsl } from './wslRecheck';
@@ -318,7 +344,8 @@ async function logJasperError(message: string, scope: string, error: unknown) {
  * shown: a session outside a transaction can still hold uncommitted work (see
  * `canCommit`), so the warning still fires, and what is dropped is "Commit &
  * Logout", which there could only fail. `undefined` keeps the button, on
- * `canCommit`'s terms.
+ * `canCommit`'s terms. `runIgnoresStop` drops it too: a run that ignored every
+ * stop holds the session, so neither the check nor a commit can reach it.
  */
 export async function confirmLogoutWithUncommittedChanges(
   sessionId: number,
@@ -326,10 +353,11 @@ export async function confirmLogoutWithUncommittedChanges(
   needsCommit: boolean | undefined,
   commit: (id: number) => { success: boolean; err: { number: number; message: string } },
   inTransaction?: boolean,
+  runIgnoresStop = false,
 ): Promise<'proceed' | 'cancel'> {
   if (needsCommit === false) return 'proceed';
 
-  const commitIsPossible = canCommit(inTransaction);
+  const commitIsPossible = !runIgnoresStop && canCommit(inTransaction);
   const title =
     needsCommit === true
       ? `Session ${sessionId} has uncommitted changes.`
@@ -340,9 +368,11 @@ export async function confirmLogoutWithUncommittedChanges(
       : 'Its commit state could not be checked; logging out may discard uncommitted work.';
   // Outside a transaction the work cannot be saved at all, so say that rather
   // than "commit first" over a button the dialog is not offering.
-  const detail = commitIsPossible
-    ? `${stake} Commit first to keep your work.`
-    : `${stake} This session is not in a transaction, so the changes cannot be committed — begin a transaction before making them, or let them go.`;
+  const detail = runIgnoresStop
+    ? 'Its run ignored every stop and still holds the session, so its changes cannot be checked or committed. Logging out discards any uncommitted work.'
+    : commitIsPossible
+      ? `${stake} Commit first to keep your work.`
+      : `${stake} This session is not in a transaction, so the changes cannot be committed — begin a transaction before making them, or let them go.`;
   const choice = await vscode.window.showWarningMessage(
     title,
     { modal: true, detail },
@@ -374,6 +404,42 @@ export async function confirmLogoutWithUncommittedChanges(
   }
 
   return choice === 'Logout Anyway' ? 'proceed' : 'cancel';
+}
+
+export const STOP_AND_LOG_OUT = 'Stop and Log Out';
+
+/**
+ * Ask what logging `session` out needs asked, stopping its run only once the
+ * user has said to: Cancel at either question leaves the session as it was,
+ * except that a run already stopped stays stopped. The run is stopped before the
+ * uncommitted-changes question, which it would otherwise block.
+ */
+export async function decideLogout(
+  session: ActiveSession,
+  manager: Pick<SessionManager, 'hasRun' | 'stopRun'> & {
+    commit: Parameters<typeof confirmLogoutWithUncommittedChanges>[3];
+  },
+  needsCommit: (session: ActiveSession) => boolean | undefined,
+): Promise<{ logOut: boolean; runIgnoresStop: boolean }> {
+  const label = loginLabel(session.login);
+  if (manager.hasRun(session.id)) {
+    const choice = await vscode.window.showWarningMessage(
+      `A run is still going on session ${session.id} — ${label}. Stop it and log out?`,
+      { modal: true },
+      STOP_AND_LOG_OUT,
+    );
+    if (choice !== STOP_AND_LOG_OUT) return { logOut: false, runIgnoresStop: false };
+  }
+  const runIgnoresStop = await manager.stopRun(session.id);
+  const decision = await confirmLogoutWithUncommittedChanges(
+    session.id,
+    label,
+    runIgnoresStop ? undefined : needsCommit(session),
+    (id) => manager.commit(id),
+    session.inTransaction,
+    runIgnoresStop,
+  );
+  return { logOut: decision === 'proceed', runIgnoresStop };
 }
 
 /** The button on a refused-commit toast; also what the choice is compared against. */
@@ -680,8 +746,8 @@ async function loadRowanFromDirectory(
 
   // Runs over the non-blocking execute: big projects load for minutes, and the
   // nb runner keeps the extension responsive and shows a cancellable progress
-  // notification. Cancelling hard-breaks the gem, and the query aborts its own
-  // transaction on error, so nothing partial is committed.
+  // notification. The load commits only at its end, so a cancelled load commits
+  // nothing, though what it loaded so far stays uncommitted in the session.
   let result;
   try {
     result = await queries.loadRowanProjectNb(session, spec.path, dir, `Loading ${spec.name}…`);
@@ -797,6 +863,7 @@ export function activate(context: vscode.ExtensionContext) {
     getGciLog(),
     getTranscriptChannel(),
     getSysadminChannel(),
+    getLogpointChannel(),
   );
 
   const finishTelemetry = startActivationTelemetry(context);
@@ -889,11 +956,51 @@ export function activate(context: vscode.ExtensionContext) {
   client.start();
 
   // ── Login Management ─────────────────────────────────────
-  const storage = new LoginStorage();
+  const storage = new LoginStorage(context.secrets);
   const sysadminStorage = new SysadminStorage();
   // SessionManager is created early so the Logins panel can mark the connected
   // login row (and swap its inline Login action for Logout) in single-session mode.
   sessionManager = new SessionManager();
+  // Every stone's session list, shown in the Databases & Versions panel.
+  const stoneSessions = new StoneSessions({
+    read: (through) => listStoneSessions(transientLoginOn(through)),
+    signalableGems: (sessions) =>
+      signalableGems(sessions, (command, timeout) => wslExecSync(command, undefined, { timeout })),
+    isThisMachine,
+    stuck: stoppedRunHolds,
+    loginSerialOf,
+    transientLogin: (through) => transientLoginOn(through),
+    stop: stopStoneSession,
+    kill: (target, login) => killStoneSession(target, login, (command) => wslExec(command)),
+    logout: (id) => sessionManager.logout(id, true),
+  });
+  function transientLoginOn(through: ActiveSession) {
+    return () => sessionManager.loginTransient(through.login, through);
+  }
+  setStillRunningHandler((session) => {
+    // The session's row in the panel gains its flag.
+    DatabasesPanel.refreshIfOpen();
+    void showStillRunning(session, {
+      isRegistered: (id) => sessionManager.getSession(id) !== undefined,
+      cleaningUp: clearHolds,
+      forceStop: (s) =>
+        forceStop(s, { loginTransient: (from) => sessionManager.loginTransient(from.login, from) }),
+      // Force Stop has just failed: the logout need not try it again.
+      logout: (id) => sessionManager.logout(id, true),
+      showInSessions: (s) => DatabasesPanel.showStoneSession(databasesPanelDeps(), s.id),
+    });
+  });
+  setRunInProgressHandler((session) => {
+    void showRunInProgress(session, {
+      isRegistered: (id) => sessionManager.getSession(id) !== undefined,
+      stop: cancelRunOn,
+    });
+  });
+  setStoppedRunCollectedHandler((session) => {
+    rearmAfterForceStop(session);
+    // The session's row in the panel loses its flag.
+    DatabasesPanel.refreshIfOpen();
+  });
 
   // De-duplicates connect clicks: the blocking GciTsLogin freezes the extension
   // host while it runs, so extra clicks during a slow login queue up and replay
@@ -910,10 +1017,15 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Answers "is this window serving MCP, and for which session" for the session
   // rows. Assigned by the MCP block later in activate(); until then — and for
-  // the whole run when `jasper.mcp.enabled` is off or no folder is open — it
-  // returns undefined and the rows show no MCP state at all.
+  // the whole run when `jasper.mcp.enabled` is off — it returns undefined and
+  // the rows show no MCP state at all.
   let mcpOwnership: () => McpOwnership | undefined = () => undefined;
   const treeProvider = new LoginTreeProvider(storage, sessionManager, () => mcpOwnership());
+  // The acceptance harness seeds a plain-text login into most runs, and this
+  // toast would sit over every one of them.
+  if (!process.env.GEMSTONE_SUPPRESS_PASSWORD_OFFER) {
+    void offerToMovePlainTextPasswords(storage, context.globalState);
+  }
 
   // MCP is a property of this window, so its readout goes on the Databases
   // section header — of which there is exactly one — and the detail goes in the
@@ -932,33 +1044,18 @@ export function activate(context: vscode.ExtensionContext) {
   // explain why nothing is going to happen rather than failing silently.
   const mcpUnavailable = async () => {
     vscode.window.showWarningMessage(
-      'MCP is not running in this window. Set jasper.mcp.enabled to true and open a folder, ' +
-        'then reload the window.',
+      'MCP is not running in this window. Set jasper.mcp.enabled to true, then reload the window.',
     );
   };
   let mcpClaim: () => Promise<void> = mcpUnavailable;
   let mcpStop: () => Promise<void> = mcpUnavailable;
   let mcpRequestRelease: () => Promise<void> = mcpUnavailable;
 
-  /**
-   * Focus the VS Code window that owns the MCP server. Opening a folder that is
-   * already open focuses that window rather than opening a second one, which is
-   * the only handle an extension has on another window. It is a best effort: an
-   * owner with no folder recorded, or a multi-root workspace (whose sidecar
-   * records only the first folder), cannot be reached this way and says so
-   * instead of opening something the user did not ask for.
-   */
-  const revealMcpOwner = async (workspacePath: string) => {
-    if (!workspacePath || workspacePath === NO_WORKSPACE_RECORDED) {
-      vscode.window.showWarningMessage(
-        'The window serving MCP did not record a workspace folder, so Jasper cannot open it. ' +
-          'Look for another VS Code window with Jasper active and stop MCP there.',
-      );
-      return;
-    }
-    await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(workspacePath), {
-      forceNewWindow: false,
-    });
+  // Extensions cannot focus another window, so this opens VS Code's own window
+  // list; the MCP surfaces say which entry to pick (see ownerLookFor). Unlike
+  // reopening the owner's folder, it reaches multi-root and folderless windows.
+  const revealMcpOwner = async () => {
+    await vscode.commands.executeCommand('workbench.action.switchWindow');
   };
 
   context.subscriptions.push(
@@ -1014,7 +1111,18 @@ export function activate(context: vscode.ExtensionContext) {
   // ── Session Management ───────────────────────────────────
   // Active sessions are shown as children of their login in the Logins &
   // Sessions tree (treeProvider above); there is no separate Sessions view.
-  exportManager = new ExportManager();
+  exportManager = new ExportManager({
+    defaultMirrorDir: path.join(context.globalStorageUri.fsPath, 'mirror'),
+    memento: context.globalState,
+  });
+  context.subscriptions.push(
+    sessionManager.onDidRemoveSession((id) => exportManager.releaseSession(id)),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('gemstone.mirrorFolder')) {
+        void exportManager.mirrorFolderChanged(sessionManager.getSessions());
+      }
+    }),
+  );
   // Create the Class Sync channel now so it joins the others in the dropdown.
   const classSyncChannel = exportManager.ensureLogChannel();
   if (classSyncChannel) context.subscriptions.push(classSyncChannel);
@@ -1165,9 +1273,16 @@ export function activate(context: vscode.ExtensionContext) {
   const stepPointModel = new StepPointModel(sessionManager);
   const breakpointManager = new BreakpointManager(sessionManager, stepPointModel);
   breakpointManager.register(context);
+  // Every run that meets a breakpoint consults these rules: Execute It's, and
+  // the debugger's Resume.
+  setBreakpointRuleSource(breakpointManager);
 
   const stepPointHints = new StepPointHintsProvider(stepPointModel);
   stepPointHints.register(context);
+
+  context.subscriptions.push(
+    registerSessionTeardown(sessionManager, breakpointManager, stepPointHints),
+  );
 
   // A GemStone breakpoint lives in the gem, so it dies with the session. VS Code
   // persists its breakpoint list across restarts regardless, so anything it just
@@ -1198,7 +1313,7 @@ export function activate(context: vscode.ExtensionContext) {
 
           const uri = event.uri;
           if (uri.scheme === 'gemstone') {
-            const parts = uri.path.split('/').map(decodeURIComponent);
+            const parts = uri.path.split('/');
             // parts: ['', dictName, className, side, category, selector] for a method.
             // A class comment is recognised by isClassCommentUri instead — it has two
             // path shapes, and that predicate lives beside the builder that emits them.
@@ -1218,10 +1333,11 @@ export function activate(context: vscode.ExtensionContext) {
               // carry no real class name, so skip those — the class-definition
               // event below handles class creation).
               if (className !== 'new-class') {
-                // parts[5] is the selector when the URI names a method; forwarding it
-                // lets the explorer refresh only that method's history panel instead
-                // of every panel open for the class.
-                explorer.onMethodCompiled(sessionId, className, parts[5]);
+                // The selector, when the URI names a method, lets the explorer refresh
+                // only that method's history panel instead of every panel open for the
+                // class. parseMethodUri, not parts[5]: the raw segment still carries the
+                // slash escape, so a `/` method's panel would never match.
+                explorer.onMethodCompiled(sessionId, className, parseMethodUri(uri)?.selector);
               }
             }
           }
@@ -1314,7 +1430,7 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     gemstoneFs.onClassDefinitionCompiled((e) => {
       // parts: ['', dictName, className, 'definition', …]
-      const parts = e.uri.path.split('/').map(decodeURIComponent);
+      const parts = e.uri.path.split('/');
       if (parts.length >= 3) sunitTestController.invalidateForClass(parts[1], parts[2]);
     }),
   );
@@ -2223,18 +2339,22 @@ export function activate(context: vscode.ExtensionContext) {
         'Delete',
       );
       if (confirmed === 'Delete') {
-        if (item.login.password_in_keychain) {
-          await deleteLoginPassword(context.secrets, item.login);
-        }
         await storage.deleteLogin(loginLabel(item.login));
         treeProvider.refresh();
       }
     }),
 
-    vscode.commands.registerCommand('gemstone.duplicateLogin', (item: GemStoneLoginItem) => {
-      const copy = { ...item.login, label: '' };
-      // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
-      LoginEditorPanel.show(storage, context.secrets, treeProvider, copy, sysadminStorage);
+    vscode.commands.registerCommand('gemstone.duplicateLogin', async (item: GemStoneLoginItem) => {
+      const stored = item.login.password_in_keychain
+        ? await getLoginPasswords(context.secrets, item.login, 'The copy opens without them.')
+        : undefined;
+      await LoginEditorPanel.show(
+        storage,
+        context.secrets,
+        treeProvider,
+        duplicateOf(item.login, stored),
+        sysadminStorage,
+      );
     }),
 
     vscode.commands.registerCommand('gemstone.openWalkthrough', () => {
@@ -2375,21 +2495,16 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand(
       'gemstone.login',
       withLoginGuard(loginGuard, async (item: GemStoneLoginItem) => {
-        if (!vscode.workspace.workspaceFolders?.length) {
-          vscode.window.showErrorMessage(
-            'Please open a folder in the workspace before logging in to GemStone.',
-          );
-          return;
-        }
-
         // Run after the event is sent, so a throw in the UI wiring can't count
         // an attempt whose session is already open as failed.
         let afterReported: (() => void) | undefined;
         await reportingLoginAttempt(item.login, () =>
           attemptLogin(item.login, {
-            keychainPassword: (login) => getLoginPassword(context.secrets, login),
+            keychainPasswords: (login) =>
+              getLoginPasswords(context.secrets, login, "You'll be asked for them."),
             getGciLibraryPath: (version) => storage.getGciLibraryPath(version),
             setGciLibraryPath: (version, gciPath) => storage.setGciLibraryPath(version, gciPath),
+            removeGciLibraryPath: (version) => storage.removeGciLibraryPath(version),
             getGemstonePath: (version) => sysadminStorage.getGemstonePath(version),
             getClientGciPath: (version) => sysadminStorage.getClientGciPath(version),
             getRootPath: () => sysadminStorage.getRootPath(),
@@ -2747,37 +2862,25 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.window.showInformationMessage('No GemStone session to log out of.');
           return;
         }
-        const decision = await confirmLogoutWithUncommittedChanges(
-          session.id,
-          loginLabel(session.login),
-          queries.sessionNeedsCommit(session),
-          (id) => sessionManager.commit(id),
-          session.inTransaction,
+        const { logOut, runIgnoresStop } = await decideLogout(session, sessionManager, (s) =>
+          queries.sessionNeedsCommit(s),
         );
-        if (decision === 'cancel') return;
+        if (!logOut) return;
+        // The session's views close only once it is gone: GemStone can refuse
+        // the logout, and the session then stays open with its views intact.
+        try {
+          // A second click, or a stale tree item, finds the work already done.
+          if (!(await sessionManager.logout(session.id, runIgnoresStop))) return;
+        } catch (e) {
+          vscode.window.showErrorMessage(e instanceof Error ? e.message : String(e));
+          return;
+        }
+        // Its panels, breakpoints and gemstone:// tabs go on the session's
+        // removal: see registerSessionTeardown and the stale-tab reaper.
         // Keep the class mirror on disk: it's keyed by connection target and is
         // re-synced incrementally on the next login, which is far cheaper than
         // rebuilding it from scratch (especially for large, remote images).
-        SystemBrowser.disposeForSession(session.id);
-        GlobalsBrowser.disposeForSession(session.id);
-        CommentBrowser.disposeForSession(session.id);
-        // Close any lingering class-definition / method-source editor tabs for this
-        // session (e.g. opened via go-to-definition without a browser). Browser-owned
-        // tabs are already closed when the browser is disposed above.
-        void closeGemstoneTabsForSession(session.id);
-        EnhancedInspector.disposeForSession(session.id);
-        BasicInspector.disposeForSession(session.id);
-        // Dispose before logout so each panel's dispose() can still release its
-        // suspended GsProcess against a live handle.
-        DebuggerPanel.disposeForSession(session.id);
-        sessionManager.logout(session.id);
-        // Every panel that held an export-set pin released it in its dispose()
-        // above; drop the registry's bookkeeping for the session anyway, since
-        // its export set went with it.
-        forgetSessionPins(session.id);
         treeProvider.refresh();
-        breakpointManager.clearAllForSession(session.id);
-        stepPointHints.refresh();
         vscode.window.showInformationMessage(`Session ${session.id}: Logged out.`);
       },
     ),
@@ -2794,7 +2897,7 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.window.showInformationMessage(`Session ${session.id} is active and responsive.`);
         } else {
           vscode.window.showErrorMessage(
-            `Session ${session.id}: Ping failed — ${err.message || `error ${err.number}`}`,
+            `Session ${session.id}: Ping failed — ${explainGciError(err) || `error ${err.number}`}`,
           );
         }
       } catch (e: unknown) {
@@ -3012,8 +3115,8 @@ export function activate(context: vscode.ExtensionContext) {
       },
     ),
 
-    // The ■ that replaces a row's ▶ while its test is running. Soft break first,
-    // hard break if pressed again — the same escalation the progress toast offers.
+    // The ■ that replaces a row's ▶ while its test is running. Stops the run the
+    // way the progress toast's Cancel does.
     vscode.commands.registerCommand('gemstone.explorer.stopTest', () => {
       if (!sunitTestController.cancelActiveRun()) {
         void vscode.window.showInformationMessage('No GemStone test run to stop.');
@@ -3189,15 +3292,28 @@ export function activate(context: vscode.ExtensionContext) {
 
         let results: queries.MethodSearchResult[];
         try {
-          results = await vscode.window.withProgress(
-            {
-              location: vscode.ProgressLocation.Notification,
-              title: `Searching methods for "${args.term}"...`,
-              cancellable: false,
-            },
-            () => Promise.resolve(queries.searchMethodSource(session, args.term, true)),
+          const search = queries.searchMethodSourceAsync(
+            session,
+            args.term,
+            true,
+            'substring',
+            `GemStone: Searching methods for "${args.term}"…`,
           );
+          // From the start: the notification only shows once a search runs past ~2s.
+          vscode.window.setStatusBarMessage(
+            `$(loading~spin) Searching methods for "${args.term}"…`,
+            search,
+          );
+          results = await search;
         } catch (e: unknown) {
+          if (e instanceof NbCancelledError) return;
+          // The busy notice has already said what holds the session.
+          if (
+            e instanceof queries.BrowserQueryError &&
+            e.gciErrorNumber === GCI_ERR_OP_IN_PROGRESS
+          ) {
+            return;
+          }
           const msg = e instanceof Error ? e.message : String(e);
           vscode.window.showErrorMessage(`Search failed: ${msg}`);
           return;
@@ -3362,6 +3478,31 @@ export function activate(context: vscode.ExtensionContext) {
       if (editor) breakpointManager.clearMethodBreakpoints(editor);
     }),
 
+    vscode.commands.registerCommand('gemstone.breakpoints.showLogpointOutput', () =>
+      showLogpointChannel(),
+    ),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.editConditionAtCursor', () => {
+      const editor = vscode.window.activeTextEditor;
+      if (editor) void breakpointManager.editConditionAtCursor(editor);
+    }),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.editTriggerAtCursor', () => {
+      const editor = vscode.window.activeTextEditor;
+      if (editor) void breakpointManager.editTriggerAtCursor(editor);
+    }),
+
+    // A line in the gutter menu, under VS Code's own Add Triggered Breakpoint,
+    // which no extension can change or hide: it says that item does nothing here.
+    vscode.commands.registerCommand('gemstone.breakpoints.triggeredNotSupported', () => {
+      vscode.window.showInformationMessage(
+        "VS Code's Add Triggered Breakpoint, and Wait for Breakpoint in Edit Breakpoint, " +
+          "don't work in Jasper yet: the breakpoint stops every time. To make a " +
+          'breakpoint wait for another one, use the Break Only After… icon on its row in the GemStone ' +
+          "Breakpoints view, or Edit Breakpoint Trigger at Cursor in the editor's right-click menu.",
+      );
+    }),
+
     // The step-point commands take their target from the click that fired them —
     // an inlay hint number or a hover link — rather than from the caret, so they
     // act on the step point the developer actually pointed at.
@@ -3389,6 +3530,18 @@ export function activate(context: vscode.ExtensionContext) {
         breakpointManager.clearAtStepPoint(vscode.Uri.parse(arg.uri), arg.stepPoint),
     ),
 
+    vscode.commands.registerCommand(
+      'gemstone.breakpoints.editConditionAtStepPoint',
+      (arg: { uri: string; stepPoint: number }) =>
+        breakpointManager.editConditionAtStepPoint(vscode.Uri.parse(arg.uri), arg.stepPoint),
+    ),
+
+    vscode.commands.registerCommand(
+      'gemstone.breakpoints.editTriggerAtStepPoint',
+      (arg: { uri: string; stepPoint: number }) =>
+        breakpointManager.editTriggerAtStepPoint(vscode.Uri.parse(arg.uri), arg.stepPoint),
+    ),
+
     vscode.commands.registerCommand('gemstone.breakpoints.enableAll', () =>
       breakpointManager.setAllEnabled(true),
     ),
@@ -3408,7 +3561,15 @@ export function activate(context: vscode.ExtensionContext) {
     ),
 
     vscode.commands.registerCommand('gemstone.breakpoints.reveal', (node?: BreakpointNode) =>
-      revealBreakpoint(sessionManager, node),
+      revealBreakpoint(sessionManager, breakpointManager, node),
+    ),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.editCondition', (node?: BreakpointNode) =>
+      editBreakpointCondition(sessionManager, breakpointManager, node),
+    ),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.editTrigger', (node?: BreakpointNode) =>
+      editBreakpointTrigger(sessionManager, breakpointManager, node),
     ),
 
     vscode.commands.registerCommand('gemstone.breakpoints.remove', (node?: BreakpointNode) => {
@@ -3564,20 +3725,16 @@ export function activate(context: vscode.ExtensionContext) {
   //
   // Claude Code:    user-scope `mcpServers.jasper` in `~/.claude.json`.
   // Claude Desktop: `mcpServers.jasper` in `claude_desktop_config.json`.
-  const workspaceRoots = vscode.workspace.workspaceFolders;
   const mcpEnabled = readMcpSetting<boolean>('enabled', true);
   // Gates the MCP commands that would fail — Claim, Stop, the copy pair, the
-  // cert install and the inspector. False when the setting is off and when no
-  // folder is open, which are exactly the cases where none of them is
-  // registered. Show MCP Server is deliberately not gated on it: with MCP off,
-  // that tab is the thing that says so.
-  void vscode.commands.executeCommand(
-    'setContext',
-    'jasper.mcpAvailable',
-    mcpEnabled && !!workspaceRoots && workspaceRoots.length > 0,
-  );
-  if (mcpEnabled && workspaceRoots && workspaceRoots.length > 0) {
-    const workspacePath = workspaceRoots[0].uri.fsPath;
+  // cert install and the inspector — which are registered only when the
+  // setting is on. Show MCP Server is deliberately not gated on it: with MCP
+  // off, that tab is the thing that says so.
+  void vscode.commands.executeCommand('setContext', 'jasper.mcpAvailable', mcpEnabled);
+  if (mcpEnabled) {
+    // Only labels this window for the others; without a folder the sidecar
+    // records NO_WORKSPACE_RECORDED.
+    const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     const mcpSocketServer = new McpSocketServer({
       getSession: () => sessionManager.getSelectedSession(),
       onTransactionStateMayHaveMoved: (id) => sessionManager.refreshTransactionState(id),
@@ -3680,11 +3837,11 @@ export function activate(context: vscode.ExtensionContext) {
     // MCP socket regardless of whether it has a session yet. Claude Code's
     // MCP client fails the proxy on a short timeout, so the socket needs to
     // be live by the time Claude Code spawns the proxy on the same window
-    // reload — deferring until first login lost that race. Tradeoff: if you
-    // open a non-GemStone workspace first, that window will own the socket
-    // and serve "no session selected" until you log in there or hand off
-    // ownership (disable Jasper in that workspace; click "Claim MCP Server"
-    // in the workspace you actually want).
+    // reload — deferring until first login lost that race. A window with no
+    // folder open does wait for a login (see claimAtStartup): it is most often a
+    // throwaway window. Tradeoff: if a non-GemStone project opens first, it owns
+    // the socket and serves "no session selected" until you log in there or hand
+    // it off (Ask It to Release from the window you want, or Stop MCP there).
     // Bringing up the HTTPS/SSE listener, which rides along with socket
     // ownership. Kept here rather than in the controller because it owns the
     // TLS cert this extension also offers to install.
@@ -3733,6 +3890,7 @@ export function activate(context: vscode.ExtensionContext) {
       startHttps: startMcpHttps,
       stopHttps: stopMcpHttps,
       ownership: () => resolveOwnership(mcpDeps),
+      hasFolder: () => !!vscode.workspace.workspaceFolders?.length,
       selectedSessionLabel: () => {
         const session = sessionManager.getSelectedSession();
         return session ? `session ${session.id} (${loginLabel(session.login)})` : undefined;
@@ -3770,13 +3928,13 @@ export function activate(context: vscode.ExtensionContext) {
     // session rows (none of which claim to serve MCP) and a re-claim attempt
     // for the case where a prior owner released ownership while we were idle.
     context.subscriptions.push(
-      sessionManager.onDidChangeSelection(() => {
+      sessionManager.onDidChangeSelection((id) => {
         mcpSocketServer.refreshSidecar();
         refreshMcpSurfaces();
-        void mcpController.tryClaim();
+        void mcpController.claimOnSessionChange(id !== null);
       }),
     );
-    void mcpController.tryClaim();
+    void mcpController.claimAtStartup();
 
     context.subscriptions.push(
       vscode.commands.registerCommand('jasper.claimMcpServer', () => mcpController.claim()),
@@ -4379,21 +4537,19 @@ export function activate(context: vscode.ExtensionContext) {
    * alone. It could be a topaz session with uncommitted work, or a gem of
    * another checkout's stone; killing it on a guess is not Jasper's call.
    *
-   * Returns the holders still attached — empty when the database is clear.
+   * Returns the holders still attached — empty when the database is clear,
+   * undefined when Jasper could not tell.
    */
-  async function clearSessionsBeforeStop(db: GemStoneDatabase): Promise<ExtentHolder[]> {
-    // Under a progress notification: probing the extents shells out to lsof and
-    // ps, and on a database with sessions to log out this takes long enough
+  async function clearSessionsBeforeStop(
+    db: GemStoneDatabase,
+  ): Promise<ExtentHolder[] | undefined> {
+    // Under a progress notification: probing the extents shells out twice, and
+    // on a database with sessions to log out this takes long enough
     // that a silent pause reads as a click that did nothing.
     //
     // The probing and the wait around it are awaited, not blocking, so the
-    // editor stays usable for the part that can run to ten seconds. The one
-    // exception is the logout itself: `GciTsLogout` is a synchronous FFI call
-    // on the extension host, once per session on this database. Against a
-    // healthy stone that is milliseconds; against an unresponsive one it
-    // blocks, and there is no non-blocking logout in the GciTs API to use
-    // instead. Moving it off the main thread is a session-lifecycle change
-    // well beyond this path, so it is left as it is and named here.
+    // editor stays usable for the part that can run to ten seconds; the logouts
+    // don't wait for their gems either.
     return await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
@@ -4403,15 +4559,17 @@ export function activate(context: vscode.ExtensionContext) {
     );
   }
 
-  async function clearSessions(db: GemStoneDatabase): Promise<ExtentHolder[]> {
+  async function clearSessions(db: GemStoneDatabase): Promise<ExtentHolder[] | undefined> {
     return await clearSessionsForStop(
       {
         reapSessions: () => reapSessionsOf(db),
         // The stone's own processes are filtered out: a running stone and its
         // housekeeping gems hold its extents by definition, and reporting those
         // would put a question on every stop of a perfectly healthy database.
-        attachedHolders: async () =>
-          sessionHolders(await processManager.findExtentHolders(db), db.config.stoneName),
+        attachedHolders: async () => {
+          const holders = await processManager.findExtentHolders(db);
+          return holders && sessionHolders(holders, db.config.stoneName);
+        },
         wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
         now: () => Date.now(),
       },
@@ -4450,6 +4608,26 @@ export function activate(context: vscode.ExtensionContext) {
     return choice === 'Stop Anyway';
   }
 
+  /** Ask before stopping a database when Jasper could not check what is
+   *  attached to it. Returns true to go ahead. */
+  async function confirmStopUnchecked(db: GemStoneDatabase): Promise<boolean> {
+    const choice = await vscode.window.showWarningMessage(
+      `Jasper could not check whether anything is still attached to "${db.config.stoneName}". ` +
+        `If a session's gem is still attached when the stone stops, it can keep the extent ` +
+        `open and block the next start.`,
+      { modal: true },
+      'Stop Anyway',
+    );
+    return choice === 'Stop Anyway';
+  }
+
+  function stopQuestions(db: GemStoneDatabase) {
+    return {
+      holders: (attached: ExtentHolder[]) => confirmStopWithHolders(db, attached),
+      unchecked: () => confirmStopUnchecked(db),
+    };
+  }
+
   const SHOW_IN_TERMINAL = 'Show In Terminal';
 
   /**
@@ -4482,13 +4660,21 @@ export function activate(context: vscode.ExtensionContext) {
    * `SessionManager.logout` already tolerates a handle whose gem is gone, so
    * this is safe whichever order the two actually die in.
    */
-  function reapSessionsOf(db: GemStoneDatabase): number {
+  async function reapSessionsOf(db: GemStoneDatabase): Promise<number> {
     const doomed = sessionsOnDatabase(
       db,
       sessionManager.getSessions(),
       sysadminStorage.getDatabases(),
     );
-    for (const session of doomed) sessionManager.logout(session.id);
+    // Together, not one after another: a refused logout waits for its call to
+    // stop, and the stone's stop should not wait for each of those in turn.
+    const outcomes = await sessionManager.logoutAll(doomed.map((s) => s.id));
+    for (const outcome of outcomes) {
+      if (outcome.status === 'rejected') {
+        const e: unknown = outcome.reason;
+        void vscode.window.showErrorMessage(e instanceof Error ? e.message : String(e));
+      }
+    }
     if (doomed.length > 0) treeProvider.refresh();
     return doomed.length;
   }
@@ -4601,6 +4787,7 @@ export function activate(context: vscode.ExtensionContext) {
       saveLogin: (login: GemStoneLogin) => storage.saveLogin(login),
       refreshAdminViews,
       sessionManager,
+      stoneSessions,
       onAdminChange: [
         databaseProvider.onDidChangeTreeData,
         processWatcher.onDidChange,
@@ -4854,8 +5041,7 @@ export function activate(context: vscode.ExtensionContext) {
       // Before either server goes: get Jasper's own sessions out and confirm
       // their gems have exited, so nothing is left holding the extents when the
       // stone stops.
-      const holders = await clearSessionsBeforeStop(db);
-      if (holders.length > 0 && !(await confirmStopWithHolders(db, holders))) return;
+      if (!(await goAheadWithStop(await clearSessionsBeforeStop(db), stopQuestions(db)))) return;
       await takeDownDatabase(db, databaseLifecycleDeps(), { sessionsCleared: true });
       refreshAdminViews();
     }),
@@ -4874,7 +5060,7 @@ export function activate(context: vscode.ExtensionContext) {
         // notification would clip it to its first line — and a terminal on
         // those PIDs is the next thing the user wants either way.
         if (isExtentLocked(msg)) {
-          const holders = await processManager.findExtentHolders(node.db);
+          const holders = (await processManager.findExtentHolders(node.db)) ?? [];
           const pick = await vscode.window.showErrorMessage(
             msg,
             { modal: true },
@@ -4906,7 +5092,7 @@ export function activate(context: vscode.ExtensionContext) {
         // carries no such promise, so the `in` guard reads as "not cleared".
         if (!('sessionsCleared' in node && node.sessionsCleared)) {
           const attached = await clearSessionsBeforeStop(db);
-          if (attached.length > 0 && !(await confirmStopWithHolders(db, attached))) return;
+          if (!(await goAheadWithStop(attached, stopQuestions(db)))) return;
         }
 
         // Only DataCurator is guaranteed to have shutdown permission, and stopstone
@@ -4929,7 +5115,15 @@ export function activate(context: vscode.ExtensionContext) {
             if (!adminLogin) return undefined;
             if (adminLogin.gs_password) return adminLogin.gs_password;
             if (adminLogin.password_in_keychain) {
-              return (await getLoginPassword(context.secrets, adminLogin)) || undefined;
+              return (
+                (
+                  await getLoginPasswords(
+                    context.secrets,
+                    adminLogin,
+                    "You'll be asked for DataCurator's password.",
+                  )
+                ).gs_password || undefined
+              );
             }
             return undefined;
           },
@@ -4965,7 +5159,7 @@ export function activate(context: vscode.ExtensionContext) {
             // to exit, and one that outlives it holds the extent open against the
             // next start. The user has chosen Force Stop by this point, so there
             // is no cancel left to undo.
-            reapSessionsOf(db);
+            await reapSessionsOf(db);
             const result = await processManager.forceKillStone(db);
             if (!result.killed) vscode.window.showErrorMessage(result.reason);
             return result.killed;
@@ -4975,7 +5169,7 @@ export function activate(context: vscode.ExtensionContext) {
         // A graceful stopstone ends the gems on the server side, but says nothing
         // to this side — so the sessions have to be cleared here too, or the views
         // go on listing sessions whose stone is gone.
-        if (outcome === 'stopped' || outcome === 'killed') reapSessionsOf(db);
+        if (outcome === 'stopped' || outcome === 'killed') await reapSessionsOf(db);
 
         if (outcome === 'stopped') {
           vscode.window.showInformationMessage(`Stone "${stoneName}" stopped.`);
@@ -5361,10 +5555,10 @@ export function activate(context: vscode.ExtensionContext) {
             return serverBackupFilePaths(execute, backupFolderInServer(execute));
           },
           closeCurrentSession: async () => {
-            sessionManager.logout(sessionId);
+            await sessionManager.logout(sessionId);
           },
           stopStone: async () => {
-            // GciTsLogout returns before the stone finishes deregistering our gem,
+            // The logout returns before the stone finishes deregistering our gem,
             // so stopstone (which logs in itself to request shutdown) can still see
             // our just-closed session and refuse with "Other users logged in" (exit
             // 13). Retry briefly to ride out that deregistration lag; a genuine

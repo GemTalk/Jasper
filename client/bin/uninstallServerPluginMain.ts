@@ -96,7 +96,6 @@ async function main() {
   } finally {
     sys?.logout();
     if (baseHandle) gci.logout(baseHandle);
-    gci.close();
   }
 }
 

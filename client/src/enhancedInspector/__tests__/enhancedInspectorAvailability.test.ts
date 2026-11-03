@@ -14,7 +14,6 @@ import { sessionOn } from '../../__tests__/fakeActiveSession';
 function createMockGci(executeFetchData = '') {
   return {
     executeAndFetchString: vi.fn((_session: unknown, _code: string) => executeFetchData),
-    GciTsCallInProgress: vi.fn(() => ({ result: 0 })),
   };
 }
 

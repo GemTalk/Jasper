@@ -393,10 +393,74 @@ describe('SystemBrowser', () => {
   });
 
   describe('disposeForSession', () => {
+    // As VS Code does: the first dispose of a panel runs its onDidDispose
+    // listeners, and any later one does nothing.
+    const showClosable = (s: ActiveSession) => {
+      SystemBrowser.show(s, exportManager);
+      const panel = mockPanel;
+      const onDispose = panel.onDidDispose.mock.calls[0][0] as () => void;
+      let closed = false;
+      panel.dispose.mockImplementation(() => {
+        if (closed) return;
+        closed = true;
+        onDispose();
+      });
+      return { isClosed: () => closed };
+    };
+
     it('disposes all panels for the given session', () => {
       SystemBrowser.show(session, exportManager);
       SystemBrowser.disposeForSession(session.id);
       expect(mockPanel.dispose).toHaveBeenCalled();
+    });
+
+    it('closes every browser the session has open, and leaves another session’s', () => {
+      const mine = [showClosable(session), showClosable(session)];
+      const theirs = showClosable(makeSession(2, 'other'));
+
+      SystemBrowser.disposeForSession(session.id);
+
+      expect(mine.map((b) => b.isClosed())).toEqual([true, true]);
+      expect(theirs.isClosed()).toBe(false);
+      expect(vi.mocked(GlobalsBrowser.disposeForSession).mock.calls).toEqual([[session.id]]);
+      expect(vi.mocked(CommentBrowser.disposeForSession).mock.calls).toEqual([[session.id]]);
+    });
+
+    it('leaves nothing of the session behind to close or navigate', () => {
+      showClosable(session);
+      showClosable(session);
+
+      SystemBrowser.disposeForSession(session.id);
+
+      expect(
+        SystemBrowser.navigateTo(session.id, {
+          className: 'Array',
+          selector: 'size',
+          isMeta: false,
+        } as Parameters<typeof SystemBrowser.navigateTo>[1]),
+      ).toBe(false);
+      expect(() => SystemBrowser.disposeForSession(session.id)).not.toThrow();
+    });
+
+    // It runs once the session is logged out, so closing must not call it.
+    it('closes without calling the session', () => {
+      const called: string[] = [];
+      const loggedOut = new Proxy(session, {
+        get(target, prop, receiver) {
+          if (typeof prop === 'string' && /^(Gci|execute|logout)/.test(prop)) called.push(prop);
+          return Reflect.get(target, prop, receiver);
+        },
+      });
+      showClosable(loggedOut);
+      vi.clearAllMocks();
+
+      SystemBrowser.disposeForSession(session.id);
+
+      expect(called).toEqual([]);
+      const queriesRun = Object.entries(queries).filter(
+        ([, query]) => vi.isMockFunction(query) && query.mock.calls.length > 0,
+      );
+      expect(queriesRun).toEqual([]);
     });
 
     it('does nothing for unknown session', () => {

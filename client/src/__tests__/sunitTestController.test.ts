@@ -1,6 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
+// Call-through, so a test can make the session look busy.
+vi.mock('../nbRunner', async (orig) => {
+  const actual = await orig<typeof import('../nbRunner')>();
+  return { ...actual, whenSessionFree: vi.fn(actual.whenSessionFree) };
+});
+
+// Call-through, so a test can make a test item's URI unbuildable.
+vi.mock('../gemstoneFileSystemProvider', async (orig) => {
+  const actual = await orig<typeof import('../gemstoneFileSystemProvider')>();
+  return { ...actual, buildMethodUri: vi.fn(actual.buildMethodUri) };
+});
 
 vi.mock('../sunitQueries', () => ({
   discoverTestClasses: vi.fn(() => [
@@ -66,7 +77,7 @@ vi.mock('../sunitQueries', () => ({
 
 import { tests, window, commands, TestRunProfileKind } from '../__mocks__/vscode';
 import { buildClassDefinitionUri, buildMethodUri } from '../gemstoneFileSystemProvider';
-import { NbCancelledError } from '../nbRunner';
+import { NbCancelledError, NbSessionBusyError, whenSessionFree } from '../nbRunner';
 import { SunitTestController, SunitDebugOutcome } from '../sunitTestController';
 import { SessionManager } from '../sessionManager';
 import * as sunit from '../sunitQueries';
@@ -587,6 +598,132 @@ describe('SunitTestController', () => {
     });
   });
 
+  describe('where a failure message points', () => {
+    const lastRun = () => createdController().createTestRun.mock.results.at(-1)?.value;
+
+    function expectAtTestItem(call: unknown[]) {
+      const [item, message] = call as [
+        { uri: unknown },
+        { location?: { uri: unknown; range: { start: { line: number } } } },
+      ];
+      expect(message.location?.uri).toBe(item.uri);
+      expect(message.location?.range.start.line).toBe(0);
+    }
+
+    it('points a failed test in a class run at its method', async () => {
+      vi.mocked(sunit.runTestClassNb).mockResolvedValueOnce([
+        {
+          className: 'MyTestCase',
+          selector: 'testAdd',
+          status: 'passed',
+          message: '',
+          durationMs: 1,
+        },
+        {
+          className: 'MyTestCase',
+          selector: 'testRemove',
+          status: 'failed',
+          message: 'Expected true',
+          durationMs: 1,
+        },
+      ]);
+      const ctrl = new SunitTestController(makeSessionManager(true));
+
+      await ctrl.runClassByName('UserGlobals', 'MyTestCase');
+
+      const run = lastRun();
+      expect(run.failed).toHaveBeenCalledOnce();
+      expectAtTestItem(run.failed.mock.calls[0]);
+      ctrl.dispose();
+    });
+
+    it('points an errored single test at its method', async () => {
+      vi.mocked(sunit.runTestMethodNb).mockResolvedValueOnce({
+        className: 'MyTestCase',
+        selector: 'testAdd',
+        status: 'error',
+        message: 'ZeroDivide: divide by zero',
+        durationMs: 1,
+      });
+      const ctrl = new SunitTestController(makeSessionManager(true));
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+
+      const run = lastRun();
+      expect(run.errored).toHaveBeenCalledOnce();
+      expectAtTestItem(run.errored.mock.calls[0]);
+      ctrl.dispose();
+    });
+
+    it('points a test whose run could not complete at its method', async () => {
+      vi.mocked(sunit.runTestMethodNb).mockRejectedValueOnce(new Error('lost connection'));
+      const ctrl = new SunitTestController(makeSessionManager(true));
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+
+      const run = lastRun();
+      expect(run.errored).toHaveBeenCalledOnce();
+      expectAtTestItem(run.errored.mock.calls[0]);
+      ctrl.dispose();
+    });
+
+    it('points each error from a broken class run at its own test', async () => {
+      vi.mocked(sunit.runTestClassNb).mockRejectedValueOnce(new Error('lost connection'));
+      const ctrl = new SunitTestController(makeSessionManager(true));
+
+      await ctrl.runClassByName('UserGlobals', 'MyTestCase');
+
+      const run = lastRun();
+      expect(run.errored.mock.calls.map(([item]: [{ id: string }]) => item.id)).toEqual([
+        'sunit/1/UserGlobals/MyTestCase',
+        'sunit/1/UserGlobals/MyTestCase/testAdd',
+        'sunit/1/UserGlobals/MyTestCase/testRemove',
+      ]);
+      for (const call of run.errored.mock.calls) expectAtTestItem(call);
+      ctrl.dispose();
+    });
+
+    it('points a test that raised under the debugger at its method', async () => {
+      const debugExecutor = {
+        executeWithDebugger: vi.fn(async () => ({ raised: true, message: 'boom' })),
+      };
+      const ctrl = new SunitTestController(makeSessionManager(true), debugExecutor);
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd'], 'debug');
+
+      const run = lastRun();
+      expect(run.errored).toHaveBeenCalledOnce();
+      expect(run.errored.mock.calls[0][0].id).toBe('sunit/1/UserGlobals/MyTestCase/testAdd');
+      expectAtTestItem(run.errored.mock.calls[0]);
+      ctrl.dispose();
+    });
+
+    it('gives no location to a test with no code to point at', async () => {
+      const unbuildable = () => {
+        throw new Error('name cannot be a URI');
+      };
+      vi.mocked(buildMethodUri)
+        .mockImplementationOnce(unbuildable)
+        .mockImplementationOnce(unbuildable);
+      vi.mocked(sunit.runTestMethodNb).mockResolvedValueOnce({
+        className: 'MyTestCase',
+        selector: 'testAdd',
+        status: 'failed',
+        message: 'Expected true',
+        durationMs: 1,
+      });
+      const ctrl = new SunitTestController(makeSessionManager(true));
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+
+      const [item, message] = lastRun().failed.mock.calls[0];
+      expect(item.uri).toBeUndefined();
+      expect(message.location).toBeUndefined();
+      expect(message.message).toBe('Expected true');
+      ctrl.dispose();
+    });
+  });
+
   describe('result store', () => {
     // The tree rows, the code lenses and the Test Explorer all read the same
     // store, so what it holds after a run is what the user sees everywhere.
@@ -892,6 +1029,21 @@ describe('SunitTestController', () => {
       ctrl.dispose();
     });
 
+    it('reports a debug run refused because the session is busy as not run', async () => {
+      const debugExecutor = makeDebugExecutor();
+      debugExecutor.executeWithDebugger.mockRejectedValueOnce(
+        new NbSessionBusyError('Another run is still in progress on this session.'),
+      );
+      const ctrl = new SunitTestController(makeSessionManager(true), debugExecutor);
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd'], 'debug');
+
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toBeUndefined();
+      // The refusal raises its own notice, from the runner.
+      expect(window.showWarningMessage).not.toHaveBeenCalled();
+      ctrl.dispose();
+    });
+
     it('runs the test through the debug executor, not the ordinary run query', async () => {
       const debugExecutor = makeDebugExecutor();
       const ctrl = new SunitTestController(makeSessionManager(true), debugExecutor);
@@ -956,7 +1108,7 @@ describe('SunitTestController', () => {
     });
 
     it('reports a cancelled debug run as skipped, not as a test error', async () => {
-      // Cancelling a debug run (a soft or hard break) is the user's decision,
+      // Cancelling a debug run is the user's decision,
       // not a test failure — it must leave no verdict, like a stopped run,
       // rather than storing an error and blaming the test.
       const debugExecutor = makeDebugExecutor({ raised: false, cancelled: true });
@@ -1153,10 +1305,19 @@ describe('SunitTestController', () => {
       const ctrl = new SunitTestController(makeSessionManager(true));
       const during: boolean[] = [];
       vi.mocked(sunit.runTestMethodNb).mockImplementationOnce(
-        (_s, _c, _sel, _d, onStart?: (cancel: () => void) => void) => {
-          onStart?.(() => {
-            cancelled = true;
-          });
+        (
+          _s,
+          _c,
+          _sel,
+          _d,
+          onStart?: (cancel: () => void, stopRequested: () => boolean) => void,
+        ) => {
+          onStart?.(
+            () => {
+              cancelled = true;
+            },
+            () => cancelled,
+          );
           during.push(ctrl.cancelActiveRun());
           return Promise.resolve({
             className: 'MyTestCase',
@@ -1183,10 +1344,13 @@ describe('SunitTestController', () => {
       let broke = false;
       let release: (() => void) | undefined;
       vi.mocked(sunit.runTestClassNb).mockImplementationOnce(
-        (_s, _c, _d, onStart?: (cancel: () => void) => void) => {
-          onStart?.(() => {
-            broke = true;
-          });
+        (_s, _c, _d, onStart?: (cancel: () => void, stopRequested: () => boolean) => void) => {
+          onStart?.(
+            () => {
+              broke = true;
+            },
+            () => broke,
+          );
           return new Promise((resolve) => {
             release = () => resolve([]);
           });
@@ -1222,6 +1386,159 @@ describe('SunitTestController', () => {
       ctrl.dispose();
     });
 
+    /** The last value set for the context key that shows the rows' ■. */
+    const testRunningContext = (): unknown =>
+      vi
+        .mocked(commands.executeCommand)
+        .mock.calls.filter((c) => c[0] === 'setContext' && c[1] === 'gemstone.testRunning')
+        .at(-1)?.[2];
+
+    /**
+     * A run whose answer arrives when `finish` is called. Its `stopRequested` turns
+     * true once it is stopped, as the runner's does — through this view's stop or
+     * the progress notification's Cancel, which `stopFromNotification` stands for.
+     */
+    function heldRun<T>() {
+      let stopped = false;
+      let finish: ((answer: T) => void) | undefined;
+      let fail: ((e: Error) => void) | undefined;
+      const impl = (...args: unknown[]): Promise<T> => {
+        const onStart = args[args.length - 1] as
+          ((cancel: () => void, stopRequested: () => boolean) => void) | undefined;
+        onStart?.(
+          () => {
+            stopped = true;
+          },
+          () => stopped,
+        );
+        return new Promise<T>((resolve, reject) => {
+          finish = resolve;
+          fail = reject;
+        });
+      };
+      return {
+        impl,
+        finish: (answer: T) => finish!(answer),
+        fail: (e: Error) => fail!(e),
+        stopFromNotification: () => {
+          stopped = true;
+        },
+      };
+    }
+
+    const BREAK_ANSWER = {
+      className: 'MyTestCase',
+      selector: 'testAdd',
+      status: 'error' as const,
+      message: 'Break: a Break occurred (error 6003)',
+      durationMs: 5,
+    };
+
+    it('keeps a stopped run stoppable when a run started meanwhile is refused', async () => {
+      // A soft break the test handles leaves the gem in its tearDown, still
+      // running; the run started meanwhile is refused, and must not take the
+      // stopped run's stop state, or its row ■, with it.
+      const held = heldRun<typeof BREAK_ANSWER>();
+      vi.mocked(sunit.runTestMethodNb)
+        .mockImplementationOnce(held.impl)
+        .mockRejectedValueOnce(new NbSessionBusyError());
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const stopped = ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+      await vi.waitFor(() => expect(ctrl.isRunning).toBe(true));
+      ctrl.cancelActiveRun();
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testRemove']);
+
+      expect(ctrl.isRunning).toBe(true);
+      expect(ctrl.cancelActiveRun()).toBe(true);
+      expect(testRunningContext()).toBe(true);
+      held.finish(BREAK_ANSWER);
+      await stopped;
+      expect(testRunningContext()).toBe(false);
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toBeUndefined();
+      ctrl.dispose();
+    });
+
+    it("leaves a stopped test's row alone when the same test is run again while it finishes", async () => {
+      // Its tearDown is still running: re-running it is refused before any row is
+      // marked, so the row keeps its running state and its ■.
+      const held = heldRun<typeof BREAK_ANSWER>();
+      vi.mocked(sunit.runTestMethodNb).mockImplementationOnce(held.impl);
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const stopped = ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+      await vi.waitFor(() => expect(ctrl.isRunning).toBe(true));
+      ctrl.cancelActiveRun();
+      vi.mocked(whenSessionFree).mockImplementationOnce(() => {
+        throw new NbSessionBusyError();
+      });
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toMatchObject({
+        outcome: 'running',
+      });
+      expect(sunit.runTestMethodNb).toHaveBeenCalledTimes(1);
+      held.finish(BREAK_ANSWER);
+      await stopped;
+      ctrl.dispose();
+    });
+
+    it("skips the rest of a run's tests once one of them is stopped", async () => {
+      // A row's ■ reaches only the test in flight; the rest of the run must not go
+      // on without it, or be refused one by one while that test's gem finishes.
+      const held = heldRun<typeof BREAK_ANSWER>();
+      vi.mocked(sunit.runTestMethodNb).mockImplementationOnce(held.impl);
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const running = ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd', 'testRemove']);
+      await vi.waitFor(() => expect(ctrl.isRunning).toBe(true));
+
+      ctrl.cancelActiveRun();
+      held.finish(BREAK_ANSWER);
+      await running;
+
+      expect(sunit.runTestMethodNb).toHaveBeenCalledTimes(1);
+      ctrl.dispose();
+    });
+
+    it('refuses a run of several tests once, adding no warning of its own', async () => {
+      vi.mocked(whenSessionFree).mockImplementationOnce(() => {
+        throw new NbSessionBusyError('Another run is still in progress on this session.');
+      });
+      const ctrl = new SunitTestController(makeSessionManager(true));
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd', 'testRemove']);
+
+      expect(window.showWarningMessage).not.toHaveBeenCalled();
+      expect(sunit.runTestMethodNb).not.toHaveBeenCalled();
+      ctrl.dispose();
+    });
+
+    it('reports a run refused because the session is busy as not run', async () => {
+      // It never started: calling that the test erroring would blame the test.
+      vi.mocked(sunit.runTestMethodNb).mockRejectedValueOnce(
+        new NbSessionBusyError('Another run is still in progress on this session.'),
+      );
+      const ctrl = new SunitTestController(makeSessionManager(true));
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toBeUndefined();
+      // The refusal raises its own notice, from the runner.
+      expect(window.showWarningMessage).not.toHaveBeenCalled();
+      ctrl.dispose();
+    });
+
+    it('leaves the telling to the Force Stop notice when a stopped run holds the session', async () => {
+      vi.mocked(sunit.runTestMethodNb).mockRejectedValueOnce(new NbSessionBusyError());
+      const ctrl = new SunitTestController(makeSessionManager(true));
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toBeUndefined();
+      expect(window.showWarningMessage).not.toHaveBeenCalled();
+      ctrl.dispose();
+    });
+
     it('leaves no verdict on a test whose run was stopped', async () => {
       // Reporting "error" would blame the test for the user's decision to stop.
       vi.mocked(sunit.runTestMethodNb).mockRejectedValueOnce(
@@ -1231,6 +1548,87 @@ describe('SunitTestController', () => {
 
       await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
 
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toBeUndefined();
+      ctrl.dispose();
+    });
+
+    it('leaves no verdict on a stopped test that answers the break as its error', async () => {
+      // A soft break the test's own runner catches comes back as the test's error,
+      // not as a failed run.
+      const held = heldRun<typeof BREAK_ANSWER>();
+      vi.mocked(sunit.runTestMethodNb).mockImplementationOnce(held.impl);
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const running = ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+      await vi.waitFor(() => expect(ctrl.isRunning).toBe(true));
+
+      ctrl.cancelActiveRun();
+      held.finish(BREAK_ANSWER);
+      await running;
+
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toBeUndefined();
+      ctrl.dispose();
+    });
+
+    it("leaves no verdict on a test stopped from the progress notification's Cancel", async () => {
+      // That Cancel breaks the gem without this view hearing of it; the runner's
+      // stopRequested is how it knows.
+      const held = heldRun<typeof BREAK_ANSWER>();
+      vi.mocked(sunit.runTestMethodNb).mockImplementationOnce(held.impl);
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const running = ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+      await vi.waitFor(() => expect(ctrl.isRunning).toBe(true));
+
+      held.stopFromNotification();
+      held.finish(BREAK_ANSWER);
+      await running;
+
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toBeUndefined();
+      ctrl.dispose();
+    });
+
+    it('keeps the error verdict of a test that raises a Break of its own', async () => {
+      vi.mocked(sunit.runTestMethodNb).mockResolvedValueOnce(BREAK_ANSWER);
+      const ctrl = new SunitTestController(makeSessionManager(true));
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toMatchObject({
+        outcome: 'error',
+      });
+      ctrl.dispose();
+    });
+
+    it('keeps a real failure that comes back after a stop', async () => {
+      // The test failed on its own before the break landed: that is its outcome.
+      const held = heldRun<sunit.TestRunResult>();
+      vi.mocked(sunit.runTestMethodNb).mockImplementationOnce(held.impl);
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const running = ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+      await vi.waitFor(() => expect(ctrl.isRunning).toBe(true));
+
+      ctrl.cancelActiveRun();
+      held.finish({ ...BREAK_ANSWER, status: 'failed', message: 'TestFailure: Assertion failed' });
+      await running;
+
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toMatchObject({
+        outcome: 'failed',
+      });
+      ctrl.dispose();
+    });
+
+    it("leaves no verdict on a class run stopped from the progress notification's Cancel", async () => {
+      // A class run's SUnit does not catch the Break, so the run fails outright.
+      const held = heldRun<sunit.TestRunResult[]>();
+      vi.mocked(sunit.runTestClassNb).mockImplementationOnce(held.impl);
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const running = ctrl.runClassByName('UserGlobals', 'MyTestCase');
+      await vi.waitFor(() => expect(ctrl.isRunning).toBe(true));
+
+      held.stopFromNotification();
+      held.fail(new Error('a Break occurred (error 6003), A soft break was received.'));
+      await running;
+
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase')).toBeUndefined();
       expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toBeUndefined();
       ctrl.dispose();
     });

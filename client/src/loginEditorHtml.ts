@@ -172,7 +172,15 @@ export function loginEditorHtml(nonce: string): string {
   </div>
 
   <div id="readOnlyBanner" class="banner">
-    This login has an active session, so its configuration is read-only. Log out to edit it.
+    <span id="activeSessionNote">
+      This login has an active session, so its configuration is read-only. Log out to edit it.
+    </span>
+    <span id="keychainUnreadableNote">
+      The OS keychain couldn't be read, so this login is read-only: saving it now would erase the
+      passwords kept there. Close it and open it again to retry, or edit it anyway and type the
+      passwords again.
+      <button id="editAnywayBtn" class="secondary" type="button">Edit anyway</button>
+    </span>
   </div>
 
   <div class="field-group">
@@ -206,11 +214,7 @@ export function loginEditorHtml(nonce: string): string {
 
     <label for="gs_password">GemStone Password</label>
     <input type="password" id="gs_password">
-    <div class="checkbox-row">
-      <input type="checkbox" id="password_in_keychain">
-      <label for="password_in_keychain" class="inline-label">Store password in OS keychain</label>
-    </div>
-    <div class="field-help">The password for the GemStone user. Leave it blank to be prompted on each login, or check the box above to store it securely in your OS keychain.</div>
+    <div class="field-help">The password for the GemStone user.</div>
   </div>
 
   <div class="field-group">
@@ -224,10 +228,18 @@ export function loginEditorHtml(nonce: string): string {
 
   <div class="field-group">
     <div class="checkbox-row">
-      <input type="checkbox" id="sync_classes" checked>
-      <label for="sync_classes" class="inline-label">Sync classes to local files (Find in Files, Go to Definition)</label>
+      <input type="checkbox" id="password_in_keychain">
+      <label for="password_in_keychain" class="inline-label">Keep saved passwords in the OS keychain</label>
     </div>
-    <div class="field-help">Keeps a read-only .gemstone mirror in sync on login/commit. Turn off for slow or remote connections where the initial sync isn't worth it — server-side search still works.</div>
+    <div class="hint">For both passwords above. A password you fill in is kept in your OS keychain when this is checked, or as plain text in your VS Code settings when it isn't. A password left blank is never saved: Jasper asks for it when you log in, if it is needed.</div>
+  </div>
+
+  <div class="field-group">
+    <div class="checkbox-row">
+      <input type="checkbox" id="sync_classes" checked>
+      <label for="sync_classes" class="inline-label">Keep a local copy of this login's classes as files</label>
+    </div>
+    <div class="field-help">Keeps a read-only copy of this login's classes as .gs files, in sync on login and commit. Turn off for slow or remote connections where the initial sync isn't worth it — GemStone Search still works.</div>
   </div>
 
   <div class="button-row">

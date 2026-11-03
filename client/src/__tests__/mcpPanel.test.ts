@@ -172,13 +172,13 @@ describe('what the tab asks the host to do', () => {
     expect(posted(panel)).toHaveLength(1);
   });
 
-  it('passes the workspace through when opening the owning window', async () => {
+  it('switches to the owning window', async () => {
     const d = deps();
     McpPanel.show(d);
 
-    await send(lastPanel(), { command: 'revealOwner', workspacePath: '/their/workspace' });
+    await send(lastPanel(), { command: 'revealOwner' });
 
-    expect(d.revealOwner).toHaveBeenCalledWith('/their/workspace');
+    expect(d.revealOwner).toHaveBeenCalledWith();
   });
 
   it('copies text without redrawing, since nothing changed', async () => {

@@ -32,6 +32,7 @@
 import { ActiveSession } from '../sessionManager';
 import { executeFetchString, checkRefactoringSupportAvailable } from '../browserQueries';
 import { messageOf, safeAbort, yieldToEventLoop } from '../serverPlugin/installHelpers';
+import { explainGciError } from '../gciLibraryError';
 
 export interface RefactoringUninstallResult {
   /** True only when the removal ran, the commit succeeded, and the end-state
@@ -122,7 +123,7 @@ export async function uninstallRefactoringSupport(
       success: false,
       committed: false,
       verified: false,
-      message: `Commit failed: ${err.message || `GCI error ${err.number}`}`,
+      message: `Commit failed: ${explainGciError(err) || `GCI error ${err.number}`}`,
     };
   }
 

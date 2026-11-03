@@ -19,6 +19,7 @@ import {
 } from './queries/runTestClass';
 import { runFailingTests as sharedRunFailingTests } from './queries/runFailingTests';
 import { describeTestFailure as sharedDescribeTestFailure } from './queries/describeTestFailure';
+import type { NbRunOptions } from './nbRunner';
 
 // Re-export types from the shared layer.
 export type { TestClassInfo } from './queries/discoverTestClasses';
@@ -55,13 +56,13 @@ export function runTestClass(session: ActiveSession, className: string, dictName
  * and the blocking call freezes the extension host for its whole duration —
  * which is why nothing, not even VS Code's own stop button, could interrupt a
  * run. These poll instead, so the UI stays live and `onStart`'s canceller can
- * break the gem (soft first, hard on a second call).
+ * stop the gem (see NbRunOptions.onStart).
  */
 export function runTestClassNb(
   session: ActiveSession,
   className: string,
   dictName?: string,
-  onStart?: (cancel: () => void) => void,
+  onStart?: NbRunOptions['onStart'],
 ) {
   return executeFetchStringNb(
     session,
@@ -78,7 +79,7 @@ export function runTestMethodNb(
   className: string,
   selector: string,
   dictName?: string,
-  onStart?: (cancel: () => void) => void,
+  onStart?: NbRunOptions['onStart'],
 ) {
   return executeFetchStringNb(
     session,

@@ -24,8 +24,7 @@ interface McpReportLike {
     pid: number;
     claimedAt: string;
     selectedSession?: string;
-    canReveal: boolean;
-    revealBlockedReason?: string;
+    lookFor: string;
   };
 }
 
@@ -86,7 +85,7 @@ const elsewhere: McpReportLike = {
     pid: 4242,
     claimedAt: '2026-01-01T00:00:00.000Z',
     selectedSession: 'bar (id 3)',
-    canReveal: true,
+    lookFor: 'the window whose title includes "their-project"',
   },
 };
 
@@ -95,9 +94,6 @@ const elsewhereMultiRoot: McpReportLike = {
   owner: {
     ...elsewhere.owner!,
     workspaceFile: '/their/proj.code-workspace',
-    canReveal: false,
-    revealBlockedReason:
-      'That window has a multi-root workspace open, and the path above is only its first folder.',
   },
 };
 
@@ -171,7 +167,7 @@ describe('the MCP Server tab', () => {
     expect(root.textContent).toContain('every tool call');
   });
 
-  it('names the owning window and offers to open it', () => {
+  it('names the owning window and offers to switch to it', () => {
     // The whole point of the tab: the socket is held until its owner lets go,
     // so a passive window has to be able to say where to go and take you there.
     view().render(root, elsewhere, '10:00:00', vscode);
@@ -179,8 +175,17 @@ describe('the MCP Server tab', () => {
     expect(root.textContent).toContain('/somewhere/else');
     expect(root.textContent).toContain('pid 4242');
     expect(root.textContent).toContain('bar (id 3)');
-    click('Open Owning Window');
-    expect(posted).toEqual([{ command: 'revealOwner', workspacePath: '/somewhere/else' }]);
+    click('Switch to Owning Window…');
+    expect(posted).toEqual([{ command: 'revealOwner' }]);
+  });
+
+  it('shows what to pick in the window list, not only on hover', () => {
+    // Once the list opens it covers the tab, so the answer has to be on screen first.
+    view().render(root, elsewhere, '10:00:00', vscode);
+    const dt = Array.from(root.querySelectorAll('dt')).find((d) => d.textContent === 'Look for');
+    expect(dt?.nextElementSibling?.textContent).toContain(
+      'the window whose title includes "their-project"',
+    );
   });
 
   it('names the owning window the way its title bar does', () => {
@@ -195,37 +200,35 @@ describe('the MCP Server tab', () => {
     expect(root.textContent).toContain(new Date('2026-01-01T00:00:00.000Z').toLocaleString());
   });
 
-  it('withholds the jump when it would open a duplicate window, and says why', () => {
-    // Opening a multi-root owner's first folder gives a new single-folder
-    // window — which looks like the switch worked. Worse than no button.
+  it('offers the switch for a multi-root owner too', () => {
+    // The window list reaches any window, so no owner shape withholds it.
     view().render(root, elsewhereMultiRoot, '10:00:00', vscode);
 
-    expect(buttons()).not.toContain('Open Owning Window');
-    expect(root.textContent).toContain('multi-root workspace open');
+    expect(buttons()).toContain('Switch to Owning Window…');
     expect(root.textContent).toContain('/their/proj.code-workspace');
   });
 
-  it('leaves the path unclickable when the jump is withheld', () => {
-    view().render(root, elsewhereMultiRoot, '10:00:00', vscode);
+  it('shows the workspace path as plain text', () => {
+    // A link-styled path would promise to open a folder, which is not how the
+    // switch works.
+    view().render(root, elsewhere, '10:00:00', vscode);
 
     const dt = Array.from(root.querySelectorAll('dt')).find((d) => d.textContent === 'Workspace');
     expect(dt?.nextElementSibling?.querySelector('button')).toBeNull();
   });
 
-  it('still offers the handover when the jump is withheld', () => {
-    // Ask It to Release needs no navigation, so it is the way out of every
-    // case the jump cannot serve.
-    view().render(root, elsewhereMultiRoot, '10:00:00', vscode);
-    expect(buttons()).toContain('Ask It to Release');
-  });
+  it('says the owning window has no folder open, rather than printing a placeholder', () => {
+    view().render(
+      root,
+      { ...elsewhere, owner: { ...elsewhere.owner!, workspacePath: '(no workspace)' } },
+      '10:00:00',
+      vscode,
+    );
 
-  it('opens the owning window from the workspace path itself', () => {
-    // The path is link-styled, so it has to navigate. It used to copy instead,
-    // which beside an Open Owning Window button read as a dead link.
-    view().render(root, elsewhere, '10:00:00', vscode);
-
-    click('/somewhere/else');
-    expect(posted).toEqual([{ command: 'revealOwner', workspacePath: '/somewhere/else' }]);
+    const dt = Array.from(root.querySelectorAll('dt')).find((d) => d.textContent === 'Workspace');
+    expect(dt?.nextElementSibling?.textContent).toContain('No folder open');
+    expect(root.textContent).not.toContain('(no workspace)');
+    expect(buttons()).toContain('Switch to Owning Window…');
   });
 
   it('leads with Ask It to Release while another window holds the server', () => {
@@ -237,7 +240,7 @@ describe('the MCP Server tab', () => {
     expect(buttons()).toEqual([
       'Claim MCP Server',
       'Ask It to Release',
-      'Open Owning Window',
+      'Switch to Owning Window…',
       'Refresh',
     ]);
     click('Ask It to Release');

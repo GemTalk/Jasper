@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const configValues: Record<string, unknown> = {};
 
@@ -18,7 +18,13 @@ vi.mock('vscode', () => ({
     };
     dispose = vi.fn();
   },
-  window: { showQuickPick: vi.fn(), showInformationMessage: vi.fn() },
+  window: {
+    showQuickPick: vi.fn(),
+    showInformationMessage: vi.fn(),
+    showWarningMessage: vi.fn(),
+    withProgress: vi.fn(async (_opts: unknown, task: () => Promise<unknown>) => await task()),
+  },
+  ProgressLocation: { Notification: 15 },
   workspace: {
     getConfiguration: vi.fn(() => ({
       get: vi.fn((key: string, defaultValue?: unknown) => configValues[key] ?? defaultValue),
@@ -42,6 +48,9 @@ function stoneAnswer(..._args: unknown[]): string {
   if (code.includes('System transactionMode asString,')) return transactionStateAnswer;
   const switchTo = /System transactionMode: #(\w+)\./.exec(code);
   if (switchTo) return switchAnswer ?? switchTo[1];
+  // Force Stop's arming, answering the session's number on the stone and its
+  // login's serial number.
+  if (code.includes('enableSignaledGemStoneSessionError')) return '42 7';
   return 'installed';
 }
 // Restored in beforeEach: a test that swaps the implementation must not leave
@@ -54,7 +63,7 @@ const gciTsFetchSize = vi.fn((..._args: unknown[]) => ({
   result: pingErrNumber ? -1n : 0n,
   err: { number: pingErrNumber, message: pingErrNumber ? 'boom' : '' },
 }));
-const gciTsLogout = vi.fn((..._args: unknown[]) => undefined);
+const gciLogout = vi.fn((..._args: unknown[]) => ({ sessionFreed: true }));
 // login() aborts once after setup to drop the session-method-policy's spurious
 // write; capture those calls so tests can assert on them.
 const gciTsBegin = vi.fn((..._args: unknown[]) => ({
@@ -108,8 +117,8 @@ vi.mock('../gciLibrary', () => ({
     executeAndFetchString(...args: unknown[]) {
       return executeAndFetchStringMock(...(args as []));
     }
-    GciTsCallInProgress() {
-      return { result: 0, err: { number: 0, message: '' } };
+    GciTsNbExecute() {
+      return { success: true, err: { number: 0, message: '' } };
     }
     GciTsAbort(...args: unknown[]) {
       return gciTsAbort(...(args as []));
@@ -120,8 +129,8 @@ vi.mock('../gciLibrary', () => ({
     GciTsCommit(...args: unknown[]) {
       return gciTsCommit(...(args as []));
     }
-    GciTsLogout(...args: unknown[]) {
-      return gciTsLogout(...(args as []));
+    logout(...args: unknown[]) {
+      return gciLogout(...(args as []));
     }
     supportsNonBlockingLogin() {
       return supportsNb;
@@ -132,7 +141,6 @@ vi.mock('../gciLibrary', () => ({
     GciTsNbLoginFinished(...args: unknown[]) {
       return gciTsNbLoginFinished(...(args as []));
     }
-    close() {}
   },
 }));
 
@@ -141,34 +149,40 @@ vi.mock('../gciLog', () => ({
   logError: vi.fn(),
 }));
 
+vi.mock('../nbRunner', async (orig) => {
+  const runner = await orig<typeof import('../nbRunner')>();
+  return {
+    ...runner,
+    stopCallsOn: vi.fn(async () => {}),
+    isRunning: vi.fn(runner.isRunning),
+    stoppedRunHolds: vi.fn(runner.stoppedRunHolds),
+  };
+});
+
 import * as vscode from 'vscode';
 import { SessionManager, evaluateLoginPolicy } from '../sessionManager';
-import { DEFAULT_LOGIN } from '../loginTypes';
+import { DEFAULT_LOGIN, loginLabel } from '../loginTypes';
 import { GciLibraryError } from '../gciLibraryError';
+import { isRunning, stopCallsOn, stoppedRunHolds } from '../nbRunner';
+import { FORCE_STOP_WAIT_MS } from '../forceStop';
+import { startNonBlockingCall } from './fakeActiveSession';
 
 describe('evaluateLoginPolicy', () => {
   it('allows the first login regardless of mode', () => {
-    expect(evaluateLoginPolicy('single', 0, '')).toBeNull();
-    expect(evaluateLoginPolicy('multiple', 0, '{session}')).toBeNull();
+    expect(evaluateLoginPolicy('single', 0)).toBeNull();
+    expect(evaluateLoginPolicy('multiple', 0)).toBeNull();
   });
 
   it('blocks a second login in single mode', () => {
-    expect(evaluateLoginPolicy('single', 1, '{session}')).toMatch(/Only one GemStone session/);
+    expect(evaluateLoginPolicy('single', 1)).toMatch(/Only one GemStone session/);
   });
 
   it('treats an unrecognized/unset mode as single', () => {
-    expect(evaluateLoginPolicy('', 1, '{session}')).toMatch(/Only one GemStone session/);
+    expect(evaluateLoginPolicy('', 1)).toMatch(/Only one GemStone session/);
   });
 
-  it('allows concurrent sessions in multiple mode with a {session} export path', () => {
-    expect(evaluateLoginPolicy('multiple', 1, '{workspaceRoot}/gemstone/{session}')).toBeNull();
-    expect(evaluateLoginPolicy('multiple', 1, '')).toBeNull();
-  });
-
-  it('blocks a second session in multiple mode when export path lacks {session}', () => {
-    expect(evaluateLoginPolicy('multiple', 1, '{workspaceRoot}/gemstone/{dictName}')).toMatch(
-      /does not include \{session\}/,
-    );
+  it('allows concurrent sessions in multiple mode', () => {
+    expect(evaluateLoginPolicy('multiple', 1)).toBeNull();
   });
 });
 
@@ -413,6 +427,16 @@ describe('SessionManager', () => {
 
       expect(seen).toEqual([]);
     });
+
+    it('leaves the state as it is while a call is still running', () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+      startNonBlockingCall(session);
+      executeAndFetchStringMock.mockClear();
+
+      manager.refreshTransactionState(session.id);
+
+      expect(executeAndFetchStringMock).not.toHaveBeenCalled();
+    });
   });
 
   it('still completes login when the post-login abort throws', () => {
@@ -432,33 +456,25 @@ describe('SessionManager', () => {
     );
   });
 
-  it('allows multiple sessions in multiple mode with default export path (includes {session})', () => {
+  it('allows multiple sessions in multiple mode', () => {
     configValues['sessionMode'] = 'multiple';
     manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
     const session2 = manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
     expect(session2.id).toBe(2);
   });
 
-  it('allows multiple sessions in multiple mode when custom export path includes {session}', () => {
-    configValues['sessionMode'] = 'multiple';
-    configValues['exportPath'] = '{workspaceRoot}/gemstone/{session}/{dictName}';
-    manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
-    const session2 = manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
-    expect(session2.id).toBe(2);
-  });
-
-  it('rejects a second login in multiple mode when custom export path lacks {session}', () => {
+  // Each session gets its own mirror folder now, so the retired setting no longer gates logins.
+  it('ignores a retired exportPath without {session} in multiple mode', () => {
     configValues['sessionMode'] = 'multiple';
     configValues['exportPath'] = '{workspaceRoot}/gemstone/{dictName}';
     manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
-    expect(() => manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib')).toThrow(
-      'does not include {session}',
-    );
+    const session2 = manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
+    expect(session2.id).toBe(2);
   });
 
-  it('allows login again after logging out', () => {
+  it('allows login again after logging out', async () => {
     const session = manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
-    manager.logout(session.id);
+    await manager.logout(session.id);
     const session2 = manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
     expect(session2.id).toBe(2);
   });
@@ -473,11 +489,11 @@ describe('SessionManager', () => {
       );
     };
 
-    it('makes the remaining session current when the last one standing is unambiguous', () => {
+    it('makes the remaining session current when the last one standing is unambiguous', async () => {
       const [first, second] = loginN(2);
       manager.selectSession(first.id);
 
-      manager.logout(first.id);
+      await manager.logout(first.id);
 
       expect(manager.getSelectedSession()?.id).toBe(second.id);
     });
@@ -486,11 +502,11 @@ describe('SessionManager', () => {
     // and "the next one along" give different answers here, which is what makes
     // this the case worth having. Leaving nothing current would mean every "act
     // in the current session" command had nothing to act in.
-    it('promotes the session worked in before, not the next one along', () => {
+    it('promotes the session worked in before, not the next one along', async () => {
       const [first, second, third] = loginN(3);
       manager.selectSession(second.id);
 
-      manager.logout(second.id);
+      await manager.logout(second.id);
 
       expect(manager.getSelectedSession()?.id).toBe(first.id);
       expect(manager.getSelectedSession()?.id).not.toBe(third.id);
@@ -500,12 +516,12 @@ describe('SessionManager', () => {
     // out. "Oldest still logged in" hands the window to session 1 — a stone the
     // user last touched hours ago; the session they were actually cycling
     // through is 2.
-    it('promotes the most recently worked in session, not the oldest', () => {
+    it('promotes the most recently worked in session, not the oldest', async () => {
       const [first, second, third] = loginN(3);
       manager.selectSession(second.id);
       manager.selectSession(third.id);
 
-      manager.logout(third.id);
+      await manager.logout(third.id);
 
       expect(manager.getSelectedSession()?.id).toBe(second.id);
       expect(manager.getSelectedSession()?.id).not.toBe(first.id);
@@ -513,16 +529,16 @@ describe('SessionManager', () => {
 
     // Logging out the promoted session falls back another step rather than
     // stopping at the one just handed over.
-    it('walks further back when the promoted session is logged out in turn', () => {
+    it('walks further back when the promoted session is logged out in turn', async () => {
       const [first, second, third, fourth] = loginN(4);
       manager.selectSession(third.id);
       manager.selectSession(second.id);
       manager.selectSession(fourth.id);
 
-      manager.logout(fourth.id);
+      await manager.logout(fourth.id);
       expect(manager.getSelectedSession()?.id).toBe(second.id);
 
-      manager.logout(second.id);
+      await manager.logout(second.id);
 
       expect(manager.getSelectedSession()?.id).toBe(third.id);
       expect(manager.getSelectedSession()?.id).not.toBe(first.id);
@@ -533,14 +549,14 @@ describe('SessionManager', () => {
     // is the one worked in before the current one, and it is logged out in the
     // background first — so promoting it would hand the window a dead handle: a
     // GCI call that fails quietly, then `Session not found`.
-    it('skips a remembered session that has since been logged out', () => {
+    it('skips a remembered session that has since been logged out', async () => {
       const [first, second, third, fourth] = loginN(4);
       manager.selectSession(third.id);
       manager.selectSession(second.id);
       manager.selectSession(fourth.id);
 
-      manager.logout(second.id);
-      manager.logout(fourth.id);
+      await manager.logout(second.id);
+      await manager.logout(fourth.id);
 
       expect(manager.getSelectedSession()?.id).toBe(third.id);
       expect(manager.getSelectedSession()?.id).not.toBe(first.id);
@@ -548,16 +564,16 @@ describe('SessionManager', () => {
 
     // Nothing was ever switched between — login makes a session current only
     // when it is the first one — so there is no "before this" to go back to.
-    it('falls back to the oldest when no session was ever switched to', () => {
+    it('falls back to the oldest when no session was ever switched to', async () => {
       const [first, second] = loginN(3);
-      manager.logout(first.id);
+      await manager.logout(first.id);
 
       expect(manager.getSelectedSession()?.id).toBe(second.id);
     });
 
-    it('leaves nothing current when the last session goes', () => {
+    it('leaves nothing current when the last session goes', async () => {
       const [only] = loginN(1);
-      manager.logout(only.id);
+      await manager.logout(only.id);
 
       expect(manager.getSelectedSession()).toBeUndefined();
     });
@@ -576,11 +592,11 @@ describe('SessionManager', () => {
 
     // The window has just changed which stone Display It / Execute It / a
     // notebook cell will run in, and none of those asks first.
-    it('says which session it promoted', () => {
+    it('says which session it promoted', async () => {
       const [first, second] = loginN(2);
       manager.selectSession(second.id);
 
-      manager.logout(second.id);
+      await manager.logout(second.id);
 
       expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
         expect.stringContaining(`Session ${first.id}`),
@@ -590,36 +606,36 @@ describe('SessionManager', () => {
       );
     });
 
-    it('says nothing when the session logged out was not the current one', () => {
+    it('says nothing when the session logged out was not the current one', async () => {
       const [first, second] = loginN(3);
       manager.selectSession(first.id);
 
-      manager.logout(second.id);
+      await manager.logout(second.id);
 
       expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
     });
 
-    it('turns hasActiveSession off when the last session goes', () => {
+    it('turns hasActiveSession off when the last session goes', async () => {
       const [only] = loginN(1);
-      manager.logout(only.id);
+      await manager.logout(only.id);
 
       expect(contextCalls().at(-1)?.[2]).toBe(false);
     });
 
-    it('leaves hasActiveSession on when a session remains to be promoted', () => {
+    it('leaves hasActiveSession on when a session remains to be promoted', async () => {
       const [first] = loginN(3);
       manager.selectSession(first.id);
 
-      manager.logout(first.id);
+      await manager.logout(first.id);
 
       expect(contextCalls().at(-1)?.[2]).toBe(true);
     });
 
-    it('keeps the current session when a background session is logged out', () => {
+    it('keeps the current session when a background session is logged out', async () => {
       const [first, second] = loginN(3);
       manager.selectSession(first.id);
 
-      manager.logout(second.id);
+      await manager.logout(second.id);
 
       expect(manager.getSelectedSession()?.id).toBe(first.id);
     });
@@ -629,11 +645,11 @@ describe('SessionManager', () => {
     // current one must not move the selection at all, whatever the promotion rule
     // is, so the case is pinned with the newest session going and the MIDDLE one
     // current, which is where a promotion that fired by mistake would land on 1.
-    it('leaves the current session alone when the newest is logged out from under it', () => {
+    it('leaves the current session alone when the newest is logged out from under it', async () => {
       const [first, second, third] = loginN(3);
       manager.selectSession(second.id);
 
-      manager.logout(third.id);
+      await manager.logout(third.id);
 
       expect(manager.getSelectedSession()?.id).toBe(second.id);
       expect(manager.getSelectedSession()?.id).not.toBe(first.id);
@@ -644,18 +660,18 @@ describe('SessionManager', () => {
     // logged in" is answered from the manager's own session map, not by asking
     // the stone — a liveness ping (GciTsFetchSize, what `ping()` uses) would put
     // a network round trip per candidate in the middle of a logout, on the path
-    // that Display It and a notebook cell are waiting on. The logout's own
-    // GciTsLogout is the one call that has to happen.
-    it('promotes without a round trip to any gem', () => {
+    // that Display It and a notebook cell are waiting on. The logout itself is
+    // the one call that has to happen.
+    it('promotes without a round trip to any gem', async () => {
       const [, second, third] = loginN(3);
       manager.selectSession(second.id);
       manager.selectSession(third.id);
       vi.clearAllMocks();
 
-      manager.logout(third.id);
+      await manager.logout(third.id);
 
       expect(manager.getSelectedSession()?.id).toBe(second.id);
-      expect(gciTsLogout).toHaveBeenCalledTimes(1);
+      expect(gciLogout).toHaveBeenCalledTimes(1);
       expect(gciTsFetchSize).not.toHaveBeenCalled();
       expect(executeAndFetchStringMock).not.toHaveBeenCalled();
       expect(gciTsAbort).not.toHaveBeenCalled();
@@ -663,13 +679,13 @@ describe('SessionManager', () => {
 
     // The same for the fallback arm, which walks every remaining session to find
     // the lowest id — reading ids off the map, not asking any of them anything.
-    it('falls back to the oldest without a round trip to any gem', () => {
+    it('falls back to the oldest without a round trip to any gem', async () => {
       const [first] = loginN(3);
       vi.clearAllMocks();
 
-      manager.logout(first.id);
+      await manager.logout(first.id);
 
-      expect(gciTsLogout).toHaveBeenCalledTimes(1);
+      expect(gciLogout).toHaveBeenCalledTimes(1);
       expect(gciTsFetchSize).not.toHaveBeenCalled();
       expect(executeAndFetchStringMock).not.toHaveBeenCalled();
     });
@@ -683,7 +699,7 @@ describe('SessionManager', () => {
     const rememberedOrder = (m: SessionManager) =>
       (m as unknown as { selectionOrder: number[] }).selectionOrder;
 
-    it('discards a logged-out session from the remembered order instead of stepping over it', () => {
+    it('discards a logged-out session from the remembered order instead of stepping over it', async () => {
       const [first, second, third] = loginN(3);
       manager.selectSession(first.id);
       manager.selectSession(second.id);
@@ -692,25 +708,685 @@ describe('SessionManager', () => {
       const sessions = (manager as unknown as { sessions: Map<number, unknown> }).sessions;
       sessions.delete(second.id);
 
-      manager.logout(third.id);
+      await manager.logout(third.id);
 
       expect(manager.getSelectedSession()?.id).toBe(first.id);
       expect(rememberedOrder(manager)).toEqual([first.id]);
     });
   });
 
+  // GemStone refuses a logout while a worker thread owns the session. Dropping
+  // the session anyway would leave its gem running with nothing to reach it.
+  /** Whether the code the gem was asked to run includes `fragment`. */
+  const ran = (fragment: string): boolean =>
+    executeAndFetchStringMock.mock.calls.some((args) => String(args[1]).includes(fragment));
+
+  describe('a logout refused while a call runs', () => {
+    const refused = { sessionFreed: false };
+    const freed = { sessionFreed: true };
+
+    it('ends the gem from a second login, stops the calls, and logs out', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
+      gciLogout.mockReturnValueOnce(refused);
+
+      await manager.logout(session.id);
+
+      expect(ran('descriptionOfSessionSerialNum: 7')).toBe(true);
+      expect(vi.mocked(stopCallsOn).mock.calls[0][0]).toBe(session);
+      expect(manager.getSession(session.id)).toBeUndefined();
+    });
+
+    it('keeps the session when the logout is refused again, saying how to end it', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
+      // The session's logout, the second login's, and the session's again.
+      gciLogout
+        .mockReturnValueOnce(refused)
+        .mockReturnValueOnce(freed)
+        .mockReturnValueOnce(refused);
+      const removed = vi.fn();
+      manager.onDidRemoveSession(removed);
+
+      const logout = manager.logout(session.id);
+
+      await expect(logout).rejects.toThrow(/The session is still open\..*System stopSession: 42/);
+      expect(manager.getSession(session.id)).toBe(session);
+      expect(manager.getSelectedSession()).toBe(session);
+      expect(removed).not.toHaveBeenCalled();
+    });
+
+    it('lets a second logout of the session join the first', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
+      gciLogout.mockReturnValueOnce(refused);
+      const removed = vi.fn();
+      manager.onDidRemoveSession(removed);
+
+      const first = manager.logout(session.id);
+      const second = manager.logout(session.id);
+
+      expect(await first).toBe(true);
+      expect(await second).toBe(false);
+      expect(stopCallsOn).toHaveBeenCalledTimes(1);
+      expect(removed).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports that a session already logged out needed no logout', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Gone' }, '/mock/lib');
+      await manager.logout(session.id);
+
+      const again = await manager.logout(session.id);
+
+      expect(again).toBe(false);
+    });
+
+    it('fails a joined logout when the logout it joined fails', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
+      gciLogout
+        .mockReturnValueOnce(refused)
+        .mockReturnValueOnce(freed)
+        .mockReturnValueOnce(refused);
+
+      const first = manager.logout(session.id);
+      const second = manager.logout(session.id);
+
+      await expect(first).rejects.toThrow('The session is still open.');
+      await expect(second).rejects.toThrow('The session is still open.');
+    });
+
+    it('does not stop calls on a session that logs out at once', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Idle' }, '/mock/lib');
+
+      await manager.logout(session.id);
+
+      expect(stopCallsOn).not.toHaveBeenCalled();
+      expect(vscode.window.withProgress).not.toHaveBeenCalled();
+      expect(ran('System sendSignal:')).toBe(false);
+    });
+  });
+
+  // A gem whose run has resumed a soft break keeps running after its logout, so
+  // the run is stopped first: with the stop, then Force Stop, then on the server.
+  describe('a logout with a run still on the session', () => {
+    afterEach(() => {
+      vi.mocked(isRunning).mockReset();
+      vi.mocked(stoppedRunHolds).mockReset();
+      vi.useRealTimers();
+    });
+
+    /** A session with a run on it that `holds` answers for, once stopped. */
+    function busySession(holds: () => boolean) {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
+      vi.mocked(isRunning).mockReturnValue(true);
+      vi.mocked(stoppedRunHolds).mockImplementation(holds);
+      return session;
+    }
+
+    /** Log out, letting Force Stop's wait run out. */
+    async function logOutPastForceStop(id: number): Promise<void> {
+      vi.useFakeTimers();
+      const logout = manager.logout(id);
+      await vi.advanceTimersByTimeAsync(FORCE_STOP_WAIT_MS + 500);
+      await logout;
+    }
+
+    it('stops the run first, showing progress that names the session', async () => {
+      const session = busySession(() => false);
+      let progressShownWhileStopping = false;
+      vi.mocked(stopCallsOn).mockImplementationOnce(async () => {
+        progressShownWhileStopping = vi.mocked(vscode.window.withProgress).mock.calls.length === 1;
+        expect(gciLogout).not.toHaveBeenCalled();
+      });
+
+      await manager.logout(session.id);
+
+      expect(progressShownWhileStopping).toBe(true);
+      expect(vi.mocked(vscode.window.withProgress).mock.calls[0][0].title).toContain(
+        loginLabel(session.login),
+      );
+      expect(ran('System sendSignal:')).toBe(false);
+      expect(manager.getSession(session.id)).toBeUndefined();
+    });
+
+    it('force-stops a run that ignores the stop, then logs out', async () => {
+      // Held when stopped, and when Force Stop looks; free once signalled.
+      let looks = 0;
+      const session = busySession(() => ++looks <= 2);
+
+      await manager.logout(session.id);
+
+      expect(ran('System sendSignal: 1 to: 42')).toBe(true);
+      expect(ran('System stopSession:')).toBe(false);
+      expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+      expect(manager.getSession(session.id)).toBeUndefined();
+    });
+
+    it('ends a run that ignores Force Stop too, once logged out', async () => {
+      const session = busySession(() => true);
+
+      await logOutPastForceStop(session.id);
+
+      expect(ran('System sendSignal: 1 to: 42')).toBe(true);
+      expect(ran('descriptionOfSessionSerialNum: 7')).toBe(true);
+      expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+      expect(manager.getSession(session.id)).toBeUndefined();
+    });
+
+    it('says what is left running, and how to end it, when the user may not end it', async () => {
+      const session = busySession(() => true);
+      executeAndFetchStringMock.mockImplementation((...args: unknown[]) => {
+        if (String(args[1]).includes('System stopSession:')) {
+          throw GciLibraryError.fromGciError({ number: 2151, message: 'no privilege' });
+        }
+        return stoneAnswer(...args);
+      });
+
+      await logOutPastForceStop(session.id);
+
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /^Session \d+ is logged out, but its run .* still running on the server\. .*SessionAccess and SystemControl privileges.*System stopSession: 42$/,
+        ),
+      );
+      expect(manager.getSession(session.id)).toBeUndefined();
+    });
+
+    it('says what is left running when only a second logout got through', async () => {
+      const session = busySession(() => true);
+      executeAndFetchStringMock.mockImplementation((...args: unknown[]) => {
+        if (String(args[1]).includes('System stopSession:')) {
+          throw GciLibraryError.fromGciError({ number: 2151, message: 'no privilege' });
+        }
+        return stoneAnswer(...args);
+      });
+      // Force Stop's own login, then the session's refused logout; every later one
+      // goes through, the session's second logout included.
+      gciLogout.mockReturnValueOnce({ sessionFreed: true }).mockReturnValueOnce({
+        sessionFreed: false,
+      });
+
+      await logOutPastForceStop(session.id);
+
+      expect(gciLogout.mock.calls.length).toBeGreaterThanOrEqual(3);
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+        expect.stringMatching(/still running on the server\..*System stopSession: 42$/),
+      );
+      expect(manager.getSession(session.id)).toBeUndefined();
+    });
+
+    it('says what is left running when ending it fails for another reason', async () => {
+      const session = busySession(() => true);
+      executeAndFetchStringMock.mockImplementation((...args: unknown[]) => {
+        if (String(args[1]).includes('System stopSession:')) throw new Error('connection lost');
+        return stoneAnswer(...args);
+      });
+
+      await logOutPastForceStop(session.id);
+
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+        expect.stringMatching(/could not be ended \(connection lost\)\..*System stopSession: 42$/),
+      );
+    });
+
+    it('still logs out, and ends the run on the server, when Force Stop cannot be sent', async () => {
+      const session = busySession(() => true);
+      executeAndFetchStringMock.mockImplementation((...args: unknown[]) => {
+        if (String(args[1]).includes('System sendSignal:')) throw new Error('login refused');
+        return stoneAnswer(...args);
+      });
+
+      await manager.logout(session.id);
+
+      expect(ran('descriptionOfSessionSerialNum: 7')).toBe(true);
+      expect(manager.getSession(session.id)).toBeUndefined();
+    });
+  });
+
+  // The Log Out command stops the run before checking for uncommitted changes,
+  // which the run would otherwise block; the logout then must not stop it again.
+  describe('stopping the run before the logout', () => {
+    afterEach(() => {
+      vi.mocked(isRunning).mockReset();
+      vi.mocked(stoppedRunHolds).mockReset();
+      vi.useRealTimers();
+    });
+
+    const signals = (): number =>
+      executeAndFetchStringMock.mock.calls.filter((args) =>
+        String(args[1]).includes('System sendSignal:'),
+      ).length;
+
+    it('does nothing for an idle session', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Idle' }, '/mock/lib');
+
+      expect(await manager.stopRun(session.id)).toBe(false);
+      expect(stopCallsOn).not.toHaveBeenCalled();
+    });
+
+    it('answers false once Force Stop has freed the session', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
+      // Held when asked, when stopped, and when Force Stop looks; free once signalled.
+      let looks = 0;
+      vi.mocked(stoppedRunHolds).mockImplementation(() => ++looks <= 3);
+
+      expect(await manager.stopRun(session.id)).toBe(false);
+      expect(signals()).toBe(1);
+    });
+
+    it('does not stop again a run the Log Out command found ignoring every stop', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
+      vi.mocked(stoppedRunHolds).mockReturnValue(true);
+      vi.useFakeTimers();
+      const stopping = manager.stopRun(session.id);
+      await vi.advanceTimersByTimeAsync(FORCE_STOP_WAIT_MS + 500);
+      expect(await stopping).toBe(true);
+      vi.useRealTimers();
+
+      await manager.logout(session.id, true);
+
+      expect(signals()).toBe(1);
+      expect(ran('descriptionOfSessionSerialNum: 7')).toBe(true);
+      expect(manager.getSession(session.id)).toBeUndefined();
+    });
+
+    it('does not end a run that has ended by itself since', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
+      vi.mocked(stoppedRunHolds).mockReturnValue(true);
+      vi.useFakeTimers();
+      const stopping = manager.stopRun(session.id);
+      await vi.advanceTimersByTimeAsync(FORCE_STOP_WAIT_MS + 500);
+      await stopping;
+      vi.useRealTimers();
+      vi.mocked(stoppedRunHolds).mockReturnValue(false);
+      vi.mocked(isRunning).mockReturnValue(false);
+
+      await manager.logout(session.id, true);
+
+      expect(ran('System stopSession:')).toBe(false);
+      expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+    });
+
+    // The user cancelled at the uncommitted-changes question, then the run ended
+    // and another one started.
+    it('stops a later run again after a logout that was not carried out', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
+      vi.mocked(stoppedRunHolds).mockReturnValue(true);
+      vi.useFakeTimers();
+      const stopping = manager.stopRun(session.id);
+      await vi.advanceTimersByTimeAsync(FORCE_STOP_WAIT_MS + 500);
+      expect(await stopping).toBe(true);
+      vi.useRealTimers();
+      vi.mocked(stoppedRunHolds).mockReturnValue(false);
+      vi.mocked(isRunning).mockReturnValue(true);
+      vi.mocked(stopCallsOn).mockClear();
+
+      await manager.logout(session.id);
+
+      expect(stopCallsOn).toHaveBeenCalledWith(session);
+      expect(ran('System stopSession:')).toBe(false);
+      expect(manager.getSession(session.id)).toBeUndefined();
+    });
+  });
+
+  describe('closing the window with a run still on a session', () => {
+    afterEach(() => {
+      vi.mocked(isRunning).mockReset();
+      vi.mocked(stoppedRunHolds).mockReset();
+    });
+
+    it('signals the run, logs out, and ends the gem, without waiting', () => {
+      manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
+      vi.mocked(stoppedRunHolds).mockReturnValue(true);
+
+      manager.dispose();
+
+      expect(ran('System sendSignal: 1 to: 42')).toBe(true);
+      expect(ran('descriptionOfSessionSerialNum: 7')).toBe(true);
+    });
+
+    it('touches nothing else for an idle session', () => {
+      manager.login({ ...DEFAULT_LOGIN, label: 'Idle' }, '/mock/lib');
+      vi.mocked(stoppedRunHolds).mockReturnValue(false);
+      vi.mocked(isRunning).mockReturnValue(false);
+
+      manager.dispose();
+
+      expect(ran('System sendSignal:')).toBe(false);
+      expect(ran('System stopSession:')).toBe(false);
+    });
+  });
+
+  // Stopping a stone logs out every session on it at once. Logged out one by
+  // one, the first to go could make current another that is leaving too.
+  describe('logging several sessions out together', () => {
+    // Refuse `times` logouts of the session from the `index`th login (0-based),
+    // matched by its handle rather than by call order, which other logouts in
+    // the same run can interleave with.
+    const refuseLogoutOf = (index: number, times: number) => {
+      const handle = gciTsLogin.mock.results[index].value.session;
+      let left = times;
+      gciLogout.mockImplementation((h: unknown) => ({
+        sessionFreed: !(h === handle && left-- > 0),
+      }));
+    };
+    afterEach(() => gciLogout.mockImplementation(() => ({ sessionFreed: true })));
+    const notices = () =>
+      vi
+        .mocked(vscode.window.showInformationMessage)
+        .mock.calls.map(([m]) => m)
+        .filter((m) => m.includes('is now the current session'));
+    const loginN = (n: number) => {
+      configValues['sessionMode'] = 'multiple';
+      return Array.from({ length: n }, (_, i) =>
+        manager.login({ ...DEFAULT_LOGIN, label: `Session ${i + 1}` }, '/mock/lib'),
+      );
+    };
+    // Worked in 3, then 2, then 1: 1 is current and 2 is next in line.
+    const threeWorkedIn = () => {
+      const [a, b, c] = loginN(3);
+      manager.selectSession(c.id);
+      manager.selectSession(b.id);
+      manager.selectSession(a.id);
+      vi.mocked(vscode.window.showInformationMessage).mockClear();
+      return [a, b, c];
+    };
+
+    it('makes current only the session that stays, once', async () => {
+      const [a, b, c] = threeWorkedIn();
+      const madeCurrent: (number | null)[] = [];
+      manager.onDidChangeSelection((id) => madeCurrent.push(id));
+
+      await manager.logoutAll([a.id, b.id]);
+
+      expect(madeCurrent).toEqual([c.id]);
+      expect(notices()).toEqual([expect.stringContaining(`Session ${c.id} —`)]);
+    });
+
+    it('does not make a leaving session current while its logout waits on a run', async () => {
+      const [a, b, c] = threeWorkedIn();
+      // b is refused once, and waits for its run to stop.
+      refuseLogoutOf(1, 1);
+      let currentWhileWaiting: number | undefined;
+      vi.mocked(stopCallsOn).mockImplementationOnce(async () => {
+        currentWhileWaiting = manager.getSelectedSession()?.id;
+      });
+
+      await manager.logoutAll([a.id, b.id]);
+
+      expect(currentWhileWaiting).toBe(c.id);
+      expect(manager.getSession(b.id)).toBeUndefined();
+    });
+
+    // A command run meanwhile must not find the window claiming a current session
+    // it no longer has.
+    it('says there is no current session while only leaving sessions remain', async () => {
+      const [a, b] = loginN(2);
+      manager.selectSession(a.id);
+      vi.mocked(vscode.commands.executeCommand).mockClear();
+      const madeCurrent: (number | null)[] = [];
+      manager.onDidChangeSelection((id) => madeCurrent.push(id));
+      // b is refused once, and waits for its run to stop.
+      refuseLogoutOf(1, 1);
+      let whileWaiting: { current: unknown; announced: (number | null)[]; context: unknown[] } = {
+        current: 'unread',
+        announced: [],
+        context: [],
+      };
+      vi.mocked(stopCallsOn).mockImplementationOnce(async () => {
+        whileWaiting = {
+          current: manager.getSelectedSession(),
+          announced: [...madeCurrent],
+          context: vi.mocked(vscode.commands.executeCommand).mock.calls.slice(),
+        };
+      });
+
+      await manager.logoutAll([a.id, b.id]);
+
+      expect(whileWaiting.current).toBeUndefined();
+      expect(whileWaiting.announced).toEqual([null]);
+      expect(whileWaiting.context).toContainEqual([
+        'setContext',
+        'gemstone.hasActiveSession',
+        false,
+      ]);
+    });
+
+    it('makes a leaving session current when its logout is refused and nothing else stays', async () => {
+      const [a, b] = loginN(2);
+      manager.selectSession(a.id);
+      vi.mocked(vscode.window.showInformationMessage).mockClear();
+      // b is refused every time, so it stays.
+      refuseLogoutOf(1, Infinity);
+
+      const outcomes = await manager.logoutAll([a.id, b.id]);
+
+      expect(outcomes.map((o) => o.status)).toEqual(['fulfilled', 'rejected']);
+      expect(manager.getSelectedSession()?.id).toBe(b.id);
+      expect(notices()).toEqual([expect.stringContaining(`Session ${b.id} —`)]);
+    });
+
+    it('leaves nothing current, said once, when every session goes', async () => {
+      const [a, b] = loginN(2);
+      manager.selectSession(a.id);
+      vi.mocked(vscode.commands.executeCommand).mockClear();
+      const madeCurrent: (number | null)[] = [];
+      manager.onDidChangeSelection((id) => madeCurrent.push(id));
+
+      await manager.logoutAll([a.id, b.id]);
+
+      expect(manager.getSelectedSession()).toBeUndefined();
+      expect(madeCurrent).toEqual([null]);
+      expect(
+        vi
+          .mocked(vscode.commands.executeCommand)
+          .mock.calls.filter(
+            ([cmd, key]) => cmd === 'setContext' && key === 'gemstone.hasActiveSession',
+          ),
+      ).toEqual([['setContext', 'gemstone.hasActiveSession', false]]);
+    });
+
+    it('leaves the current session alone when it is not one of them', async () => {
+      const [a, b, c] = threeWorkedIn();
+      manager.selectSession(c.id);
+      vi.mocked(vscode.window.showInformationMessage).mockClear();
+
+      await manager.logoutAll([a.id, b.id]);
+
+      expect(manager.getSelectedSession()?.id).toBe(c.id);
+      expect(notices()).toEqual([]);
+    });
+
+    it('makes the session that stays current, not one a refused logout kept', async () => {
+      const [a, b, c] = threeWorkedIn();
+      refuseLogoutOf(1, Infinity);
+
+      const outcomes = await manager.logoutAll([a.id, b.id]);
+
+      expect(outcomes.map((o) => o.status)).toEqual(['fulfilled', 'rejected']);
+      expect(manager.getSession(b.id)).toBe(b);
+      expect(manager.getSelectedSession()?.id).toBe(c.id);
+      expect(notices()).toEqual([expect.stringContaining(`Session ${c.id} —`)]);
+    });
+
+    // A session still marked as leaving could never be made current again.
+    it('lets a session its logout kept be made current by a later logout', async () => {
+      const [a, b, c] = threeWorkedIn();
+      refuseLogoutOf(1, Infinity);
+      await manager.logoutAll([a.id, b.id]);
+
+      await manager.logout(c.id);
+
+      expect(manager.getSelectedSession()?.id).toBe(b.id);
+    });
+
+    it('answers false for a session that is already gone, and changes nothing else', async () => {
+      const [a, b] = loginN(2);
+      manager.selectSession(a.id);
+      await manager.logout(b.id);
+      vi.mocked(vscode.window.showInformationMessage).mockClear();
+      const madeCurrent: (number | null)[] = [];
+      manager.onDidChangeSelection((id) => madeCurrent.push(id));
+
+      const outcomes = await manager.logoutAll([b.id, 999]);
+
+      expect(outcomes).toEqual([
+        { status: 'fulfilled', value: false },
+        { status: 'fulfilled', value: false },
+      ]);
+      expect(manager.getSelectedSession()?.id).toBe(a.id);
+      expect(madeCurrent).toEqual([]);
+      expect(notices()).toEqual([]);
+    });
+
+    it('does nothing for no sessions', async () => {
+      const [a] = loginN(1);
+      manager.selectSession(a.id);
+      vi.mocked(vscode.commands.executeCommand).mockClear();
+      const madeCurrent: (number | null)[] = [];
+      manager.onDidChangeSelection((id) => madeCurrent.push(id));
+
+      expect(await manager.logoutAll([])).toEqual([]);
+
+      expect(madeCurrent).toEqual([]);
+      expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
+    });
+
+    it('announces the removal of each of them, and of no other', async () => {
+      const [a, b] = threeWorkedIn();
+      const removed: number[] = [];
+      manager.onDidRemoveSession((id) => removed.push(id));
+
+      await manager.logoutAll([a.id, b.id]);
+
+      expect(removed).toEqual([a.id, b.id]);
+    });
+
+    // Two stones stopped one after the other: the second group finishing must
+    // not free the first group's sessions to be made current.
+    it('keeps an earlier group’s sessions out of reach while a later group finishes', async () => {
+      const [s1, s2, s3, s4] = loginN(4);
+      for (const s of [s4, s3, s2, s1]) manager.selectSession(s.id);
+      const madeCurrent: (number | null)[] = [];
+      manager.onDidChangeSelection((id) => madeCurrent.push(id));
+      // s2 is refused once, so the first group stays open until its run stops.
+      refuseLogoutOf(1, 1);
+      let releaseRun!: () => void;
+      vi.mocked(stopCallsOn).mockImplementationOnce(
+        () => new Promise<void>((resolve) => (releaseRun = resolve)),
+      );
+
+      const first = manager.logoutAll([s1.id, s2.id]);
+      await vi.waitFor(() => expect(stopCallsOn).toHaveBeenCalled());
+      await manager.logoutAll([s3.id]);
+      // The last session that stays goes too, while s2 is still leaving.
+      await manager.logout(s4.id);
+      releaseRun();
+      await first;
+
+      expect(madeCurrent).not.toContain(s2.id);
+      expect(madeCurrent.at(-1)).toBeNull();
+      expect(manager.getSessions()).toEqual([]);
+    });
+
+    // The window has no current session while only leaving ones remain, so a
+    // login made then is the only session that stays.
+    describe('a login made while they are leaving', () => {
+      // a and b are leaving, b waiting on its run; `refusals` decides whether
+      // b's retry is refused too. Logs c in while b waits.
+      const loginWhileLeaving = async (refusals: number) => {
+        const [a, b] = loginN(2);
+        manager.selectSession(a.id);
+        refuseLogoutOf(1, refusals);
+        let c: ReturnType<typeof manager.login> | undefined;
+        let currentAfterLogin: number | undefined;
+        vi.mocked(stopCallsOn).mockImplementationOnce(async () => {
+          c = manager.login({ ...DEFAULT_LOGIN, label: 'Fresh' }, '/mock/lib');
+          currentAfterLogin = manager.getSelectedSession()?.id;
+        });
+        vi.mocked(vscode.window.showInformationMessage).mockClear();
+        const outcomes = await manager.logoutAll([a.id, b.id]);
+        return { a, b, c: c!, currentAfterLogin, outcomes };
+      };
+
+      it('is made current at once', async () => {
+        const { c, currentAfterLogin } = await loginWhileLeaving(1);
+
+        expect(currentAfterLogin).toBe(c.id);
+        expect(manager.getSelectedSession()?.id).toBe(c.id);
+      });
+
+      it('stays current when a leaving session’s logout is refused', async () => {
+        const { b, c, outcomes } = await loginWhileLeaving(Infinity);
+
+        expect(outcomes.map((o) => o.status)).toEqual(['fulfilled', 'rejected']);
+        expect(manager.getSession(b.id)).toBe(b);
+        expect(manager.getSelectedSession()?.id).toBe(c.id);
+        expect(notices()).toEqual([]);
+      });
+
+      it('hands the window to the session a refused logout kept, once it goes', async () => {
+        const { b, c } = await loginWhileLeaving(Infinity);
+
+        await manager.logout(c.id);
+
+        expect(manager.getSelectedSession()?.id).toBe(b.id);
+      });
+    });
+
+    it('leaves the current session current when another login arrives', () => {
+      const [a] = loginN(1);
+
+      manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
+
+      expect(manager.getSelectedSession()?.id).toBe(a.id);
+    });
+
+    // Sessions never switched between leave no order to go by, only their ids.
+    it('falls back past a leaving session to the lowest one that stays', async () => {
+      const [a, b, c] = loginN(3);
+      expect(manager.getSelectedSession()?.id).toBe(a.id);
+
+      await manager.logoutAll([a.id, b.id]);
+
+      expect(manager.getSelectedSession()?.id).toBe(c.id);
+    });
+  });
+
+  // Everything that tears a session down on its removal — its panels, its
+  // breakpoints, its tabs — counts on these two facts to never wait on the gem.
+  describe('announcing a removal', () => {
+    it('comes only once the session is out of the manager and logged out', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Gone' }, '/mock/lib');
+      let seen: { registered: unknown; call: string } | undefined;
+      manager.onDidRemoveSession((id) => {
+        let call: string;
+        try {
+          session.GciTsAbort();
+          call = 'reached GemStone';
+        } catch (e) {
+          call = e instanceof Error ? e.message : String(e);
+        }
+        seen = { registered: manager.getSession(id), call };
+      });
+      gciTsAbort.mockClear();
+
+      await manager.logout(session.id);
+
+      expect(seen).toEqual({ registered: undefined, call: 'The GemStone session is logged out.' });
+      expect(gciTsAbort).not.toHaveBeenCalled();
+    });
+  });
+
   // The property the palette's Commit and Abort are built on: they read the
   // current session directly, with no picker behind them, because a window with
   // any session logged in always HAS a current one. That is held up by two
-  // separate branches in two files (login auto-selects the first; logout
-  // promotes a surviving session), so pin the property itself — a later
+  // separate branches in two files (login makes itself current when none is;
+  // logout promotes a surviving session), so pin the property itself — a later
   // "deselect", or a crash-cleanup path that drops a session without re-electing
   // one, would put a QuickPick back in the middle of a Commit.
   describe('a window with sessions always has a current one', () => {
     const invariantHolds = () =>
       manager.getSessions().length === 0 || manager.getSelectedSession() !== undefined;
 
-    it('holds through every order of logging three sessions out', () => {
+    it('holds through every order of logging three sessions out', async () => {
       configValues['sessionMode'] = 'multiple';
       // Each permutation of the logout order, over a fresh set of logins.
       const orders = [
@@ -727,7 +1403,7 @@ describe('SessionManager', () => {
         );
         expect(invariantHolds(), 'after logging in').toBe(true);
         for (const which of order) {
-          manager.logout(ids[which]);
+          await manager.logout(ids[which]);
           expect(invariantHolds(), `after logging out ${ids[which]} of ${ids}`).toBe(true);
         }
         expect(manager.getSessions()).toHaveLength(0);
@@ -739,7 +1415,7 @@ describe('SessionManager', () => {
     // remembered selection order is exercised with its entries removed in every
     // order, which is the way "promote the most recently worked in" could reach
     // a session that is no longer logged in.
-    it('holds through every logout order when each session is worked in first', () => {
+    it('holds through every logout order when each session is worked in first', async () => {
       configValues['sessionMode'] = 'multiple';
       const orders = [
         [0, 1, 2],
@@ -755,7 +1431,7 @@ describe('SessionManager', () => {
         );
         for (const which of order) {
           manager.selectSession(ids[which]);
-          manager.logout(ids[which]);
+          await manager.logout(ids[which]);
           expect(invariantHolds(), `after logging out ${ids[which]} of ${ids}`).toBe(true);
           const current = manager.getSelectedSession();
           expect(current === undefined || manager.getSession(current.id) !== undefined).toBe(true);
@@ -763,17 +1439,17 @@ describe('SessionManager', () => {
       }
     });
 
-    it('holds when a session is logged out and another logged in again', () => {
+    it('holds when a session is logged out and another logged in again', async () => {
       configValues['sessionMode'] = 'multiple';
       const first = manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
       const second = manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
-      manager.logout(first.id);
+      await manager.logout(first.id);
       expect(invariantHolds()).toBe(true);
 
       manager.login({ ...DEFAULT_LOGIN, label: 'Third' }, '/mock/lib');
       expect(invariantHolds()).toBe(true);
 
-      manager.logout(second.id);
+      await manager.logout(second.id);
       expect(invariantHolds()).toBe(true);
     });
   });

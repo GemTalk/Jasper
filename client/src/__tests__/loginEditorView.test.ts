@@ -218,3 +218,33 @@ describe('the GemStone Version field', () => {
     expect(visible).not.toMatch(/GCI|client librar|DLL/i);
   });
 });
+
+describe('the read-only banner', () => {
+  const banner = (id: string) => document.getElementById(id)!;
+
+  it('says the login has an active session when it does', () => {
+    send({ command: 'loadData', data: login, versions: [], readOnly: true });
+
+    expect(banner('activeSessionNote').hidden).toBe(false);
+    expect(banner('keychainUnreadableNote').hidden).toBe(true);
+  });
+
+  it("says the keychain couldn't be read when that is why", () => {
+    send({
+      command: 'loadData',
+      data: login,
+      versions: [],
+      readOnly: true,
+      keychainUnreadable: true,
+    });
+
+    expect(banner('activeSessionNote').hidden).toBe(true);
+    expect(banner('keychainUnreadableNote').hidden).toBe(false);
+  });
+
+  it('asks the host to unlock the form when Edit anyway is clicked', () => {
+    (document.getElementById('editAnywayBtn') as HTMLButtonElement).click();
+
+    expect(posted).toContainEqual({ command: 'editAnyway' });
+  });
+});
