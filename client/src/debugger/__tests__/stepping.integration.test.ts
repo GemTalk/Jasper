@@ -27,6 +27,7 @@ import {
   setStillRunningHandler,
 } from '../../nbRunner';
 import { testActiveSession } from '../../__tests__/testActiveSession';
+import { countPureExportSetMembersSatisfying } from '../../__tests__/support/gemstone';
 
 const GCI_ERR_STEP_POINT = 6002; // "Single-step breakpoint encountered" — a successful step
 const OOP_FORTY_TWO = 338n; // SmallInteger 42: (42 << 3) | 2
@@ -327,6 +328,40 @@ cls compileMethod: 'outer ^ self inner' dictionaries: System myUserProfile symbo
       await within(untilSessionFree(), 20_000, 'the gem stopping the cancelled evaluation');
 
       await expect(evaluateInFrameNb(session(), gsProcess, '3 + 4', 1)).resolves.toBe('7');
+    } finally {
+      await within(untilSessionFree(), 20_000, 'the session coming free').catch(() => {});
+      await clearStack(session(), gsProcess);
+    }
+  }, 30_000);
+
+  it('leaves nothing of an evaluation in a frame that the user cancels behind in the session', async () => {
+    const { gsProcess } = haltedInLongLoop();
+    const processesAndBreaks = (): number =>
+      countPureExportSetMembersSatisfying(
+        (code) => session().executeAndFetchString(code),
+        '[:each | (each isKindOf: GsProcess) or: [each isKindOf: Break]]',
+      );
+    const before = processesAndBreaks();
+    let cancel: (() => void) | undefined;
+    const evaluation = evaluateInFrameNb(session(), gsProcess, '[true] whileTrue. 1', 1, {
+      suppressNotification: true,
+      onStart: (c) => {
+        cancel = c;
+      },
+    });
+    evaluation.catch(() => {});
+    try {
+      await vi.waitFor(() => expect(cancel).toBeDefined());
+
+      cancel!();
+      await within(
+        evaluation.catch(() => {}),
+        10_000,
+        'the cancelled evaluation settling',
+      );
+      await within(untilSessionFree(), 20_000, 'the cancelled evaluation being cleared');
+
+      expect(processesAndBreaks()).toBe(before);
     } finally {
       await within(untilSessionFree(), 20_000, 'the session coming free').catch(() => {});
       await clearStack(session(), gsProcess);
