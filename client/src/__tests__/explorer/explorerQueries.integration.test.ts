@@ -99,6 +99,58 @@ describe('explorer queries (integration)', () => {
     });
   });
 
+  describe('classRowContents', () => {
+    const defineParentAndChild = (): void => {
+      q.compileClassDefinition(
+        session(),
+        `Object subclass: '${WIDGET}' instVarNames: #(alpha beta) classVars: #(Shared) ` +
+          `classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals`,
+      );
+      q.compileClassDefinition(
+        session(),
+        `${WIDGET} subclass: '${GADGET}' instVarNames: #() classVars: #() ` +
+          `classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals`,
+      );
+    };
+
+    it('answers what the separate variable and hierarchy queries answer', async () => {
+      defineParentAndChild();
+
+      const parent = await q.classRowContents(session(), WIDGET, userIndex());
+      const child = await q.classRowContents(session(), GADGET, userIndex());
+
+      expect(parent).toEqual({
+        instVarNames: q.getDefinedInstVarNames(session(), WIDGET, userIndex()),
+        classVarNames: q.getDefinedClassVarNames(session(), WIDGET, userIndex()),
+        ivarsCanMoveDown: true,
+      });
+      expect(child).toEqual({ instVarNames: [], classVarNames: [], ivarsCanMoveDown: false });
+    });
+
+    it('answers no subclasses for a class that declares no instance variables', async () => {
+      q.compileClassDefinition(
+        session(),
+        `Object subclass: '${WIDGET}' instVarNames: #() classVars: #() ` +
+          `classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals`,
+      );
+      q.compileClassDefinition(
+        session(),
+        `${WIDGET} subclass: '${GADGET}' instVarNames: #() classVars: #() ` +
+          `classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals`,
+      );
+
+      const contents = await q.classRowContents(session(), WIDGET, userIndex());
+
+      expect(contents.ivarsCanMoveDown).toBe(false);
+    });
+
+    it('answers nothing for a class the dictionary does not bind', async () => {
+      const contents = await q.classRowContents(session(), 'JasperItNoSuchClass', userIndex());
+
+      expect(contents).toEqual({ instVarNames: [], classVarNames: [], ivarsCanMoveDown: false });
+    });
+  });
+
   describe('getGrailStubReflection', () => {
     const GRAILC = 'JasperItGrailTarget';
     // A throwaway class with two instVars: `balance` has both an accessor and a
