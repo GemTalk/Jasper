@@ -3,7 +3,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', () => ({
   canClassBeWritten: vi.fn(() => true),
-  getDefinedClassVarNames: vi.fn(() => ['Registry']),
+  classRowContents: vi.fn(),
+  isBusyRefusal: vi.fn(() => false),
   methodsAccessingClassVar: vi.fn(() => []),
   deleteClassVariable: vi.fn(() => 'ok'),
   getClassesWithCategory: vi.fn(() => []),
@@ -72,14 +73,18 @@ const warn = window.showWarningMessage as ReturnType<typeof vi.fn>;
 const info = window.showInformationMessage as ReturnType<typeof vi.fn>;
 const error = window.showErrorMessage as ReturnType<typeof vi.fn>;
 const writable = queries.canClassBeWritten as ReturnType<typeof vi.fn>;
-const declared = queries.getDefinedClassVarNames as ReturnType<typeof vi.fn>;
+const declared = queries.classRowContents as ReturnType<typeof vi.fn>;
 const accessors = queries.methodsAccessingClassVar as ReturnType<typeof vi.fn>;
 const remove = queries.deleteClassVariable as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
   writable.mockReturnValue(true);
-  declared.mockReturnValue(['Registry']);
+  declared.mockResolvedValue({
+    instVarNames: [],
+    classVarNames: ['Registry'],
+    ivarsCanMoveDown: false,
+  });
   accessors.mockReturnValue([]);
   remove.mockReturnValue('ok');
 });
@@ -225,7 +230,11 @@ describe('ExplorerController.removeClassVar — guards and failures', () => {
   });
 
   it('refuses a variable the class inherits rather than declares', async () => {
-    declared.mockReturnValue(['SomethingElse']);
+    declared.mockResolvedValue({
+      instVarNames: [],
+      classVarNames: ['SomethingElse'],
+      ivarsCanMoveDown: false,
+    });
     const { ctl } = makeController();
 
     await ctl.removeClassVar(varRow);

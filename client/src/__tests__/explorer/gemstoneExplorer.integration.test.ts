@@ -17,7 +17,7 @@ import { testActiveSession } from '../testActiveSession';
  * own transient session, so the fixture classes and the run never reach the
  * harness session, and logging out discards them.
  */
-describe('Explorer queries refused while a run holds the session (integration)', () => {
+describe("the Classes pane's lookups (integration)", () => {
   let gci: GciLibrary;
   let handle: unknown;
 
@@ -91,46 +91,40 @@ describe('Explorer queries refused while a run holds the session (integration)',
     return ctl;
   }
 
-  it("shows a class's instance variables once the run that refused them ends", async () => {
+  it("shows a class row's contents once the run that refused them ends", async () => {
     const transient = transientSession();
     defineFixture(transient);
     const ctl = controllerOn(transient);
     const run = runFor(transient, 1);
-    expect(ctl.definedIvarNames(PARENT)).toEqual([]);
+    expect((await ctl.classRow(PARENT)).instVarNames).toEqual([]);
     await run;
 
-    const names = ctl.definedIvarNames(PARENT);
+    const row = await ctl.classRow(PARENT);
 
-    expect(names).toEqual(['vsCodeIvar']);
+    expect(row).toEqual({
+      instVarNames: ['vsCodeIvar'],
+      classVarNames: ['VsCodeClassVar'],
+      ivarsCanMoveDown: true,
+    });
   });
 
-  it("shows a class's class variables once the run that refused them ends", async () => {
+  it('loads a class row without a call that blocks until GemStone answers', async () => {
     const transient = transientSession();
+    onTestFinished(() => {
+      transient.logout();
+    });
     defineFixture(transient);
     const ctl = controllerOn(transient);
-    const run = runFor(transient, 1);
-    expect(ctl.definedClassVarNames(PARENT)).toEqual([]);
-    await run;
+    const blocking = vi.spyOn(transient, 'executeAndFetchString');
+    const nonBlocking = vi.spyOn(transient, 'GciTsNbExecute');
 
-    const names = ctl.definedClassVarNames(PARENT);
+    await ctl.classRow(PARENT);
 
-    expect(names).toEqual(['VsCodeClassVar']);
+    expect(nonBlocking).toHaveBeenCalledTimes(1);
+    expect(blocking).not.toHaveBeenCalled();
   });
 
-  it("sees a class's subclasses once the run that refused them ends", async () => {
-    const transient = transientSession();
-    defineFixture(transient);
-    const ctl = controllerOn(transient);
-    const run = runFor(transient, 1);
-    expect(ctl.classHasSubclasses(PARENT)).toBe(false);
-    await run;
-
-    const hasSubclasses = ctl.classHasSubclasses(PARENT);
-
-    expect(hasSubclasses).toBe(true);
-  });
-
-  it('remembers a lookup that failed for a reason other than a busy session', () => {
+  it('remembers a class row that failed for a reason other than a busy session', async () => {
     const transient = transientSession();
     onTestFinished(() => {
       transient.logout();
@@ -139,11 +133,11 @@ describe('Explorer queries refused while a run holds the session (integration)',
     const ctl = controllerOn(transient);
     const dictIndex = ctl.state.dictIndex;
     ctl.state.dictIndex = 9999;
-    expect(ctl.definedIvarNames(PARENT)).toEqual([]);
+    expect((await ctl.classRow(PARENT)).instVarNames).toEqual([]);
     ctl.state.dictIndex = dictIndex;
 
-    const names = ctl.definedIvarNames(PARENT);
+    const row = await ctl.classRow(PARENT);
 
-    expect(names).toEqual([]);
+    expect(row.instVarNames).toEqual([]);
   });
 });
