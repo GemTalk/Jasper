@@ -108,6 +108,19 @@ describe("the Classes pane's lookups (integration)", () => {
     });
   });
 
+  it('loads the rows of classes expanded at the same time', async () => {
+    const transient = transientSession();
+    onTestFinished(() => {
+      transient.logout();
+    });
+    defineFixture(transient);
+    const ctl = controllerOn(transient);
+
+    const [, parent] = await Promise.all([ctl.classRow(CHILD), ctl.classRow(PARENT)]);
+
+    expect(parent.instVarNames).toEqual(['vsCodeIvar']);
+  });
+
   it('loads a class row without a call that blocks until GemStone answers', async () => {
     const transient = transientSession();
     onTestFinished(() => {

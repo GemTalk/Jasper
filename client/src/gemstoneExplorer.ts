@@ -1128,6 +1128,11 @@ export class ExplorerController {
   // class row and its two side rows ask at once, and must share one query. A fetch
   // started before the class list reloaded fills nothing, since clearing drops it.
   private readonly classRows = new Map<string, Promise<queries.ClassRowContents>>();
+  // Counts how often classRows was cleared, so a fetch still queued from before skips its
+  // query instead of making the fresh rows wait behind an answer nobody keeps.
+  private classRowsCleared = 0;
+  // Settles once the last read queued by inReadOrder has; never rejects.
+  private readsTail: Promise<void> = Promise.resolve();
   // Same, for locally-defined CLASS variables.
   private definedClassVarCounts = new Map<string, number>();
   // className → {current,total} position in its class history, for classes with
@@ -1826,7 +1831,7 @@ export class ExplorerController {
     this.classCategoryEntries = [];
     this.definedIvarCounts = new Map();
     this.classVersions = new Map();
-    this.classRows.clear();
+    this.forgetClassRows();
     this.definedClassVarCounts = new Map();
     this.envLines = [];
     this.hierChain = [];
@@ -2775,7 +2780,7 @@ export class ExplorerController {
   // just render flat and untagged.
   private loadClassRowMetadata(): void {
     const session = this.session();
-    this.classRows.clear();
+    this.forgetClassRows();
     if (!session || this.state.dictIndex === undefined) {
       this.definedIvarCounts = new Map();
       this.definedClassVarCounts = new Map();
@@ -2861,15 +2866,46 @@ export class ExplorerController {
     session: ActiveSession,
     className: string,
   ): Promise<queries.ClassRowContents> {
+    const dictIndex = this.state.dictIndex;
+    const cleared = this.classRowsCleared;
     try {
-      return await queries.classRowContents(session, className, this.state.dictIndex);
+      return await this.inReadOrder(() =>
+        cleared === this.classRowsCleared
+          ? queries.classRowContents(session, className, dictIndex)
+          : Promise.resolve(EMPTY_CLASS_ROW),
+      );
     } catch (e) {
-      // If the class list reloaded meanwhile, this may drop a newer fetch for the same
-      // class; that costs one extra query, never a wrong row.
-      if (queries.isBusyRefusal(e) || e instanceof NbCancelledError) {
+      if (
+        (queries.isBusyRefusal(e) || e instanceof NbCancelledError) &&
+        cleared === this.classRowsCleared
+      ) {
         this.classRows.delete(className);
       }
       return EMPTY_CLASS_ROW;
+    }
+  }
+
+  private forgetClassRows(): void {
+    this.classRows.clear();
+    this.classRowsCleared++;
+  }
+
+  /**
+   * Runs `read` once every read queued before it has settled. The non-blocking
+   * executor refuses a query while another holds the session, so rows VS Code
+   * expands together (re-expanding the ones it remembers after a reload) would
+   * refuse each other, each with the busy notice. These are reads, so running
+   * them one at a time is all they need.
+   */
+  private async inReadOrder<T>(read: () => Promise<T>): Promise<T> {
+    const previous = this.readsTail;
+    let settled!: () => void;
+    this.readsTail = new Promise<void>((resolve) => (settled = resolve));
+    try {
+      await previous;
+      return await read();
+    } finally {
+      settled();
     }
   }
 

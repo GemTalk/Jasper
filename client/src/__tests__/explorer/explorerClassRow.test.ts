@@ -78,6 +78,7 @@ describe('what an expanded class row shows', () => {
     vi.mocked(queries.classRowContents).mockReturnValueOnce(stale.promise).mockResolvedValue(ROW);
     const ctl = makeController();
     const early = ctl.classRow(CLASS);
+    await new Promise((resolve) => setTimeout(resolve, 0));
     ctl.selectDict({ dictName: 'UserGlobals', dictIndex: 1 });
     stale.resolve({ instVarNames: ['old'], classVarNames: [], ivarsCanMoveDown: false });
     await early;
@@ -85,6 +86,49 @@ describe('what an expanded class row shows', () => {
     const row = await ctl.classRow(CLASS);
 
     expect(row).toEqual(ROW);
+  });
+
+  it("asks for another class's row only once the one before it answers", async () => {
+    const first = deferred<typeof ROW>();
+    vi.mocked(queries.classRowContents).mockReturnValueOnce(first.promise).mockResolvedValue(ROW);
+    const ctl = makeController();
+    const rows = [ctl.classRow('Foo'), ctl.classRow('Bar')];
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(queries.classRowContents).toHaveBeenCalledTimes(1);
+
+    first.resolve(ROW);
+    await Promise.all(rows);
+
+    expect(queries.classRowContents).toHaveBeenCalledTimes(2);
+  });
+
+  it('skips a row still waiting its turn when the class list reloads', async () => {
+    const first = deferred<typeof ROW>();
+    vi.mocked(queries.classRowContents).mockReturnValueOnce(first.promise).mockResolvedValue(ROW);
+    const ctl = makeController();
+    const before = [ctl.classRow('Foo'), ctl.classRow('Bar')];
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    ctl.selectDict({ dictName: 'UserGlobals', dictIndex: 1 });
+    first.resolve(ROW);
+    await Promise.all(before);
+
+    await ctl.classRow('Bar');
+
+    expect(vi.mocked(queries.classRowContents).mock.calls.map((call) => call[1])).toEqual([
+      'Foo',
+      'Bar',
+    ]);
+  });
+
+  it("answers the next class's row even when the one before it failed", async () => {
+    vi.mocked(queries.classRowContents)
+      .mockRejectedValueOnce(new Error('compile error'))
+      .mockResolvedValue(ROW);
+    const ctl = makeController();
+
+    const [, bar] = await Promise.all([ctl.classRow('Foo'), ctl.classRow('Bar')]);
+
+    expect(bar).toEqual(ROW);
   });
 
   it.each([
