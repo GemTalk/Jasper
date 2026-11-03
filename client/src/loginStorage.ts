@@ -22,6 +22,8 @@ function errorText(e: unknown): string {
 /**
  * The setting is application-scoped, so VS Code ignores a list in a folder's
  * settings; reading only the user's value keeps the list shown the one written.
+ * Correct only while package.json keeps that scope, which loginStorage.test.ts
+ * checks.
  */
 function userLogins(): GemStoneLogin[] {
   const config = vscode.workspace.getConfiguration('gemstone');

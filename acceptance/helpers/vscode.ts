@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { MARKS, FRAME_SEPARATOR } from './marks';
-import { readContainerStone } from './containerStone';
+import { ContainerStone, readContainerStone } from './containerStone';
 
 /** Repo root — the extension-development path VS Code loads Jasper from. */
 const repoRoot = path.resolve(__dirname, '..', '..');
@@ -106,6 +106,35 @@ export interface VSCodeSession {
   restart(): Promise<Page>;
 }
 
+/**
+ * Logins are application-scoped, so a stone's login goes in user settings and
+ * the rest in the folder's.
+ */
+function containerStoneSettings(stone: ContainerStone | undefined): {
+  workspace: Record<string, unknown>;
+  user: Record<string, unknown>;
+} {
+  if (!stone) return { workspace: {}, user: {} };
+  return {
+    workspace: {
+      'gemstone.rootPath': stone.globalDir,
+      'gemstone.gciLibraries': { [stone.version]: stone.gciLibraryPath },
+    },
+    user: {
+      'gemstone.logins': [
+        {
+          version: stone.version,
+          gem_host: stone.host,
+          stone: stone.stone,
+          gs_user: stone.user,
+          gs_password: stone.password,
+          netldi: stone.netldi,
+        },
+      ],
+    },
+  };
+}
+
 export const test = base.extend<{
   workspaceSettings: Record<string, unknown>;
   workspaceFixture: string;
@@ -147,32 +176,12 @@ export const test = base.extend<{
     const gemstoneRoot = path.join(profile, 'gemstone-root');
     fs.mkdirSync(gemstoneRoot, { recursive: true });
 
-    // In the container a stone is already up, so seed the login it expects (in
-    // user settings, below) and point at its install — a scenario can then log in as a user would, with
+    // In the container a stone is already up, so seed the login it expects and
+    // point at its install — a scenario can then log in as a user would, with
     // no per-scenario configuration. On a host run there is no such stone and
     // the isolation below stands: an empty root, so the Databases view and the
     // Databases & Versions panel never surface your own GemStone installs.
-    const containerStone = readContainerStone();
-    const stoneSettings = containerStone
-      ? {
-          'gemstone.rootPath': containerStone.globalDir,
-          'gemstone.gciLibraries': { [containerStone.version]: containerStone.gciLibraryPath },
-        }
-      : {};
-    const stoneLogins = containerStone
-      ? {
-          'gemstone.logins': [
-            {
-              version: containerStone.version,
-              gem_host: containerStone.host,
-              stone: containerStone.stone,
-              gs_user: containerStone.user,
-              gs_password: containerStone.password,
-              netldi: containerStone.netldi,
-            },
-          ],
-        }
-      : {};
+    const stoneSettings = containerStoneSettings(readContainerStone());
 
     const settings = {
       'gemstone.rootPath': gemstoneRoot,
@@ -188,7 +197,7 @@ export const test = base.extend<{
       'editor.inlineSuggest.enabled': false,
       'github.copilot.enable': { '*': false },
       'github.copilot.nextEditSuggestions.enabled': false,
-      ...stoneSettings,
+      ...stoneSettings.workspace,
       ...workspaceSettings,
     };
     // VS Code renders modal dialogs as native OS windows by default, which are
@@ -200,7 +209,11 @@ export const test = base.extend<{
     const userSettingsPath = path.join(userSettingsDir, 'settings.json');
     fs.writeFileSync(
       userSettingsPath,
-      JSON.stringify({ 'window.dialogStyle': 'custom', ...stoneLogins, ...userSettings }, null, 2),
+      JSON.stringify(
+        { 'window.dialogStyle': 'custom', ...stoneSettings.user, ...userSettings },
+        null,
+        2,
+      ),
     );
 
     const dotVscode = path.join(workspace, '.vscode');

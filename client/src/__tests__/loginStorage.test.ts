@@ -25,6 +25,22 @@ function makeLogin(overrides: Partial<GemStoneLogin> = {}): GemStoneLogin {
   return { ...login, label: loginLabel(login) };
 }
 
+const pkg = JSON.parse(
+  fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'package.json'), 'utf-8'),
+);
+
+// LoginStorage reads only the user's list, which is right only while VS Code
+// ignores a folder's list too.
+describe('the gemstone.logins setting', () => {
+  it('is application-scoped, so VS Code reads it only from user settings', () => {
+    const settings = [pkg.contributes.configuration]
+      .flat()
+      .map((c: { properties: Record<string, { scope?: string }> }) => c.properties);
+    const logins = settings.find((p) => p['gemstone.logins'])?.['gemstone.logins'];
+    expect(logins?.scope).toBe('application');
+  });
+});
+
 const GS_KEY = 'jasper-gemstone-login:DataCurator@localhost/gs64stone';
 const HOST_KEY = `${GS_KEY}#host`;
 
@@ -69,17 +85,6 @@ describe('LoginStorage', () => {
 
     it('is not listed', () => {
       expect(storage.getLogins()).toEqual([mine]);
-    });
-
-    it('is ignored by VS Code too, which reads an application-scoped setting only from user settings', () => {
-      const pkg = JSON.parse(
-        fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'package.json'), 'utf-8'),
-      );
-      const settings = [pkg.contributes.configuration]
-        .flat()
-        .map((c: { properties: Record<string, { scope?: string }> }) => c.properties);
-      const logins = settings.find((p) => p['gemstone.logins'])?.['gemstone.logins'];
-      expect(logins?.scope).toBe('application');
     });
 
     it('does not hide a login just added', async () => {
