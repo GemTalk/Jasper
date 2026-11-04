@@ -5,7 +5,7 @@ import { GciLibrary } from '../../gciLibrary';
 import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../../gciConstants';
 import { runNbCall } from '../../nbRunner';
 import * as queries from '../../browserQueries';
-import { ExplorerController } from '../../gemstoneExplorer';
+import { ClassItem, ExplorerController } from '../../gemstoneExplorer';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 import { useIntegrationTest } from '../useIntegrationTest';
 import { testActiveSession } from '../testActiveSession';
@@ -135,6 +135,32 @@ describe("the Classes pane's lookups (integration)", () => {
 
     expect(nonBlocking).toHaveBeenCalledTimes(1);
     expect(blocking).not.toHaveBeenCalled();
+  });
+
+  it('keeps the selected class when a click is refused during a run', () => {
+    const transient = transientSession();
+    defineFixture(transient);
+    const ctl = controllerOn(transient);
+    ctl.selectClass(new ClassItem(PARENT), false);
+    void runFor(transient, 1);
+
+    ctl.selectClassFromTree(new ClassItem(CHILD));
+
+    expect(ctl.state.className).toBe(PARENT);
+  });
+
+  it('selects a class clicked again once the run that refused it ends', async () => {
+    const transient = transientSession();
+    defineFixture(transient);
+    const ctl = controllerOn(transient);
+    ctl.selectClass(new ClassItem(PARENT), false);
+    const run = runFor(transient, 1);
+    ctl.selectClassFromTree(new ClassItem(CHILD));
+    await run;
+
+    ctl.selectClassFromTree(new ClassItem(CHILD));
+
+    expect(ctl.state.className).toBe(CHILD);
   });
 
   it('remembers a class row that failed for a reason other than a busy session', async () => {
