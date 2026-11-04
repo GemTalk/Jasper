@@ -167,6 +167,8 @@ vi.mock('../../browserQueries', () => ({
   clearBreakAtStepPoint: vi.fn(() => 'ok'),
 }));
 
+vi.mock('../../autoCommit/autoCommitRunner', () => ({ autoCommitAfterWrite: vi.fn() }));
+
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -210,6 +212,7 @@ import { fakeActiveSession } from '../../__tests__/fakeActiveSession';
 import { resumeOnWorker } from '../conditionalBreakpoints';
 import { buildMethodUri, parseUri } from '../../gemstoneFileSystemProvider';
 import { NbCancelledError, stoppedRunHolds } from '../../nbRunner';
+import { autoCommitAfterWrite } from '../../autoCommit/autoCommitRunner';
 
 const GS_PROCESS = 0x123n;
 const ERROR_MSG = 'a UndefinedObject does not understand #foo';
@@ -983,6 +986,46 @@ describe('DebuggerPanel', () => {
     sendReady(panel);
 
     expect(initPayload(panel).errorMessage).toBe(ERROR_MSG);
+  });
+
+  /**
+   * Work the debugger does is work the session did, so auto-commit (issue #254) has to see it:
+   * a halted Do It resumed to the end, and an expression evaluated in a frame.
+   */
+  describe('auto-commit', () => {
+    function openPanel() {
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+      const panel = lastPanel();
+      sendReady(panel);
+      return panel;
+    }
+
+    it('commits when a halted run is resumed to completion', async () => {
+      vi.mocked(resumeOnWorker).mockResolvedValueOnce({ completed: true, resultOop: 0x55n });
+      const panel = openPanel();
+      sendMessage(panel, { command: 'resume' });
+      await tick();
+
+      expect(autoCommitAfterWrite).toHaveBeenCalledWith(session, 'run finished in the Debugger');
+    });
+
+    it('commits nothing when a resume stops at the next halt', async () => {
+      vi.mocked(resumeOnWorker).mockResolvedValueOnce({ completed: false, errorMessage: 'next' });
+      const panel = openPanel();
+      sendMessage(panel, { command: 'resume' });
+      await tick();
+
+      expect(autoCommitAfterWrite).not.toHaveBeenCalled();
+    });
+
+    it('commits after an expression evaluated in a frame', async () => {
+      vi.mocked(debug.evaluateInFrameNb).mockResolvedValueOnce('1764');
+      const panel = openPanel();
+      sendMessage(panel, { command: 'evalInFrame', level: 3, expr: '42 * 42', mode: 'execute' });
+      await tick();
+
+      expect(autoCommitAfterWrite).toHaveBeenCalledWith(session, 'Debugger evaluate');
+    });
   });
 
   describe('copy / context menu', () => {

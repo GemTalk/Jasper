@@ -145,6 +145,7 @@ import {
   autoCommitTransactionSettled,
   reportAutoCommitFailure,
   setAutoCommitAbortHandler,
+  recoverAutoCommit,
   toggleAutoCommit,
   TOGGLE_AUTO_COMMIT_COMMAND,
 } from './autoCommit/autoCommitUi';
@@ -2647,21 +2648,23 @@ export function activate(context: vscode.ExtensionContext) {
     // selected session. Takes the row's session when it has one: the state is per session,
     // so the switch has to be able to say which one it flipped.
     //
-    // FOUR command ids for one action, which needs saying: a contributed menu entry's icon
+    // THREE command ids for one action, which needs saying: a contributed menu entry's icon
     // is fixed text in the manifest, so a single command could offer the click but could
-    // never show the state. `turnOn` / `turnOff` / `recover` differ only in the icon and
+    // never show the state. `turnOn` / `turnOff` differ from `toggle` only in the icon and
     // title the manifest gives them, and each is gated on the row's `contextValue`, so
-    // exactly one is ever on the row. They all land here. (The same bargain the
-    // `undoLast`/`revertLast` pair strikes, for the same reason.)
+    // exactly one button is ever on the row. (The same bargain the `undoLast`/`revertLast`
+    // pair strikes, for the same reason.) A failed row's button is `recover` instead.
     ...[
       TOGGLE_AUTO_COMMIT_COMMAND,
       'gemstone.autoCommit.turnOn',
       'gemstone.autoCommit.turnOff',
-      'gemstone.autoCommit.recover',
     ].map((id) =>
       vscode.commands.registerCommand(id, (item?: GemStoneSessionItem) =>
         toggleAutoCommit(sessionManager, item?.activeSession),
       ),
+    ),
+    vscode.commands.registerCommand('gemstone.autoCommit.recover', (item?: GemStoneSessionItem) =>
+      recoverAutoCommit(sessionManager, item?.activeSession),
     ),
 
     vscode.commands.registerCommand('gemstone.openBrowser', async (item?: GemStoneSessionItem) => {

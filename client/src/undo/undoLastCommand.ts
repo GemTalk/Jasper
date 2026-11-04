@@ -66,7 +66,7 @@ export async function undoLastCommand(sessions: SessionManager): Promise<void> {
   // time -- and it is only correct as a whole. So on an auto-commit session it commits ONCE,
   // when the reversal has finished, and a reversal that fails part-way commits nothing:
   // the transaction is left as it stands, for the user to abort or finish by hand.
-  await runWithAutoCommitDeferred(session, () => reverseTopEntry(sessions, session));
+  await runWithAutoCommitDeferred(session, 'undo', () => reverseTopEntry(sessions, session));
 }
 
 async function reverseTopEntry(sessions: SessionManager, session: ActiveSession): Promise<void> {

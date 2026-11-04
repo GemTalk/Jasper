@@ -76,11 +76,11 @@ function reportFailure(session: ActiveSession, reason: string): void {
  * the stone refused the commit or the call itself threw — a dead session throws rather
  * than answering, and both mean the same thing to the user: the work is not saved.
  */
-function commitNow(session: ActiveSession): AutoCommitOutcome {
+function commitNow(session: ActiveSession, what: string): AutoCommitOutcome {
   try {
     const { success, err } = session.GciTsCommit();
     if (success) {
-      logInfo(`[autoCommit] session ${session.id}: committed`);
+      logInfo(`[autoCommit] session ${session.id}: committed (${what})`);
       return 'committed';
     }
     reportFailure(session, err.message || `error ${err.number}`);
@@ -97,15 +97,15 @@ function commitNow(session: ActiveSession): AutoCommitOutcome {
  * nothing.
  *
  * Cheap on the overwhelmingly common path: a session that never armed auto-commit costs
- * one map lookup and no round trip.
+ * one map lookup and no round trip. `what` names the action in the commit's log line.
  */
-export function autoCommitAfterWrite(session: ActiveSession): AutoCommitOutcome {
+export function autoCommitAfterWrite(session: ActiveSession, what: string): AutoCommitOutcome {
   if (!isAutoCommitArmed(session.id)) return 'skipped';
   if (isAutoCommitSuspended(session.id)) {
     markAutoCommitPending(session.id);
     return 'deferred';
   }
-  return commitNow(session);
+  return commitNow(session, what);
 }
 
 /**
@@ -116,7 +116,7 @@ export function autoCommitAfterWrite(session: ActiveSession): AutoCommitOutcome 
  * the way out would leave that abort rewinding to a repository that already held the
  * half-applied change.
  */
-function settleDeferred(session: ActiveSession, succeeded: boolean): void {
+function settleDeferred(session: ActiveSession, succeeded: boolean, what: string): void {
   // False for an inner level, and also for a session that was FORGOTTEN mid-region — a
   // logout clears its suspension along with everything else, and a commit on a session
   // that has gone is the last thing this should attempt.
@@ -125,7 +125,7 @@ function settleDeferred(session: ActiveSession, succeeded: boolean): void {
   clearAutoCommitPending(session.id);
   if (!owed) return;
   if (succeeded && isAutoCommitArmed(session.id)) {
-    commitNow(session);
+    commitNow(session, what);
     return;
   }
   if (!succeeded) {
@@ -144,10 +144,12 @@ function settleDeferred(session: ActiveSession, succeeded: boolean): void {
  * nothing and leaves the transaction exactly as the operation left it, which is what the
  * caller's own abort-based rollback needs to still work.
  *
- * Nests: an inner region just borrows the outer one's commit.
+ * Nests: an inner region just borrows the outer one's commit, which is logged under the
+ * outer region's `what`.
  */
 export async function runWithAutoCommitDeferred<T>(
   session: ActiveSession,
+  what: string,
   run: () => T | Promise<T>,
 ): Promise<T> {
   if (getAutoCommitStatus(session.id) !== 'on') return await run();
@@ -159,7 +161,7 @@ export async function runWithAutoCommitDeferred<T>(
     succeeded = true;
     return answer;
   } finally {
-    settleDeferred(session, succeeded);
+    settleDeferred(session, succeeded, what);
   }
 }
 
@@ -170,7 +172,11 @@ export async function runWithAutoCommitDeferred<T>(
  * loop, and awaiting the async form around it would let the commit land a tick after the
  * caller had already reported the result. The two nest in either order.
  */
-export function runWithAutoCommitDeferredSync<T>(session: ActiveSession, run: () => T): T {
+export function runWithAutoCommitDeferredSync<T>(
+  session: ActiveSession,
+  what: string,
+  run: () => T,
+): T {
   if (getAutoCommitStatus(session.id) !== 'on') return run();
 
   suspendAutoCommit(session.id);
@@ -180,6 +186,6 @@ export function runWithAutoCommitDeferredSync<T>(session: ActiveSession, run: ()
     succeeded = true;
     return answer;
   } finally {
-    settleDeferred(session, succeeded);
+    settleDeferred(session, succeeded, what);
   }
 }

@@ -114,7 +114,7 @@ async function runCell(
     // A cell is a doit like any other, so it commits on an auto-commit session (issue #254)
     // -- the same reading as Do It in the editor. Only on success: a cell that raised has
     // nothing finished to commit.
-    autoCommitAfterWrite(session);
+    autoCommitAfterWrite(session, 'notebook cell');
     return data;
   } finally {
     appendTranscriptOutput(endClientForwarderMode(session));

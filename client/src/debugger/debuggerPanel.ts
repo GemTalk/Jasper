@@ -25,6 +25,7 @@ import { buildMethodUri } from '../gemstoneFileSystemProvider';
 import { NbCancelledError, NbRunOptions, stoppedRunHolds } from '../nbRunner';
 import { SESSION_SIGNAL_ERROR } from '../forceStop';
 import { resumeOnWorker } from './conditionalBreakpoints';
+import { autoCommitAfterWrite } from '../autoCommit/autoCommitRunner';
 import { extensionPathFrom } from '../extensionPath';
 import { readWebviewScript } from '../webviewAssets';
 import {
@@ -2842,6 +2843,7 @@ export class DebuggerPanel {
       this.nbBusy = false;
       this.setCancellable(false);
     }
+    if (!isError) autoCommitAfterWrite(this.session, 'Debugger evaluate');
     if (this.disposed) return;
     // Execute It is run-for-effect: printing the answer is exactly what it is asking not to do, but
     // silence would read as "nothing happened", so it acknowledges instead. An ERROR is still shown
@@ -2860,6 +2862,7 @@ export class DebuggerPanel {
     }
     try {
       const oop = debug.evaluateInFrameToOop(this.session, this.gsProcess, expr, serverLevel);
+      autoCommitAfterWrite(this.session, 'Debugger evaluate');
       const inspector = routeInspect(this.session, BigInt(oop), expr);
       this.openedInspectors.add(inspector);
       if (!this.disposed) {
@@ -2957,6 +2960,7 @@ export class DebuggerPanel {
         debug.setFrameTemp(this.session, this.gsProcess, serverLevel, index, valueOop);
       }
       this.undoDirty.add(this.undoKey(serverLevel, kind, index));
+      autoCommitAfterWrite(this.session, 'Debugger variable edit');
       this.invalidateVariablesCache(); // the slot points at a new object — re-fetch
       this.postVariables(serverLevel);
       // The slot now points at a new object — refresh the inline overlay so its
@@ -3088,6 +3092,7 @@ export class DebuggerPanel {
         debug.setFrameTemp(this.session, this.gsProcess, serverLevel, index, originalOop);
       }
       this.undoDirty.delete(key);
+      autoCommitAfterWrite(this.session, 'Debugger variable revert');
       this.invalidateVariablesCache(); // slot restored to its original object
       this.postVariables(serverLevel);
       // Keep the inline overlay in step with the reverted value.
@@ -3468,6 +3473,9 @@ export class DebuggerPanel {
     // Show Transcript output the completing run buffered (harmlessly empty if
     // an onComplete callback drains again).
     appendTranscriptOutput(drainTranscript(this.session));
+    // The run finished, so what it changed is finished work, the same as a Do It that never
+    // halted (issue #254).
+    autoCommitAfterWrite(this.session, 'run finished in the Debugger');
     if (result.resultOop != null) this.onComplete?.(result.resultOop);
     this.panel.dispose();
   }

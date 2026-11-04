@@ -4,7 +4,10 @@ vi.mock('vscode', () => ({
   window: { createOutputChannel: () => ({ appendLine: () => {} }) },
 }));
 
+vi.mock('../../gciLog', () => ({ logInfo: vi.fn(), logWarning: vi.fn() }));
+
 import { ActiveSession } from '../../sessionManager';
+import { logInfo } from '../../gciLog';
 import { fakeActiveSession } from '../../__tests__/fakeActiveSession';
 import {
   _resetAutoCommitStateForTests,
@@ -37,11 +40,28 @@ beforeEach(() => {
   setAutoCommitFailureHandler(undefined);
 });
 
+describe('the commit log line', () => {
+  it('names what was committed', () => {
+    registerSessionAutoCommit(1, true);
+    autoCommitAfterWrite(makeSession(), 'method compile');
+    expect(logInfo).toHaveBeenLastCalledWith('[autoCommit] session 1: committed (method compile)');
+  });
+
+  it("names a deferred region's commit after the outermost region", async () => {
+    registerSessionAutoCommit(1, true);
+    const session = makeSession();
+    await runWithAutoCommitDeferred(session, 'file-in', () =>
+      runWithAutoCommitDeferredSync(session, 'save', () => autoCommitAfterWrite(session, 'x')),
+    );
+    expect(logInfo).toHaveBeenLastCalledWith('[autoCommit] session 1: committed (file-in)');
+  });
+});
+
 describe('autoCommitAfterWrite', () => {
   it('does nothing at all on a session that never armed it', () => {
     const commit = vi.fn(() => OK);
     const session = makeSession(1, commit);
-    expect(autoCommitAfterWrite(session)).toBe('skipped');
+    expect(autoCommitAfterWrite(session, 'test write')).toBe('skipped');
     expect(commit).not.toHaveBeenCalled();
   });
 
@@ -49,7 +69,7 @@ describe('autoCommitAfterWrite', () => {
     const commit = vi.fn(() => OK);
     const session = makeSession(1, commit);
     registerSessionAutoCommit(1, true);
-    expect(autoCommitAfterWrite(session)).toBe('committed');
+    expect(autoCommitAfterWrite(session, 'test write')).toBe('committed');
     expect(commit).toHaveBeenCalledTimes(1);
   });
 
@@ -58,11 +78,11 @@ describe('autoCommitAfterWrite', () => {
     const session = makeSession(1, commit);
     registerSessionAutoCommit(1, true);
 
-    expect(autoCommitAfterWrite(session)).toBe('failed');
+    expect(autoCommitAfterWrite(session, 'test write')).toBe('failed');
     expect(getAutoCommitStatus(1)).toBe('failed');
     // The second write must not try again: the conflict is still there, and a prompt per
     // keystroke is how the message gets buried.
-    expect(autoCommitAfterWrite(session)).toBe('skipped');
+    expect(autoCommitAfterWrite(session, 'test write')).toBe('skipped');
     expect(commit).toHaveBeenCalledTimes(1);
   });
 
@@ -75,7 +95,7 @@ describe('autoCommitAfterWrite', () => {
     );
     registerSessionAutoCommit(1, true);
 
-    autoCommitAfterWrite(session);
+    autoCommitAfterWrite(session, 'test write');
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler.mock.calls[0][1]).toBe('commit failed - conflicts');
   });
@@ -88,7 +108,7 @@ describe('autoCommitAfterWrite', () => {
       }),
     );
     registerSessionAutoCommit(1, true);
-    expect(autoCommitAfterWrite(session)).toBe('failed');
+    expect(autoCommitAfterWrite(session, 'test write')).toBe('failed');
     expect(getAutoCommitStatus(1)).toBe('failed');
   });
 
@@ -98,8 +118,8 @@ describe('autoCommitAfterWrite', () => {
     registerSessionAutoCommit(1, true);
     registerSessionAutoCommit(2, false);
 
-    autoCommitAfterWrite(makeSession(1, one));
-    autoCommitAfterWrite(makeSession(2, two));
+    autoCommitAfterWrite(makeSession(1, one), 'test write');
+    autoCommitAfterWrite(makeSession(2, two), 'test write');
     expect(one).toHaveBeenCalledTimes(1);
     expect(two).not.toHaveBeenCalled();
   });
@@ -111,10 +131,10 @@ describe('runWithAutoCommitDeferred', () => {
     const session = makeSession(1, commit);
     registerSessionAutoCommit(1, true);
 
-    await runWithAutoCommitDeferred(session, async () => {
-      expect(autoCommitAfterWrite(session)).toBe('deferred');
-      expect(autoCommitAfterWrite(session)).toBe('deferred');
-      expect(autoCommitAfterWrite(session)).toBe('deferred');
+    await runWithAutoCommitDeferred(session, 'test op', async () => {
+      expect(autoCommitAfterWrite(session, 'test write')).toBe('deferred');
+      expect(autoCommitAfterWrite(session, 'test write')).toBe('deferred');
+      expect(autoCommitAfterWrite(session, 'test write')).toBe('deferred');
       expect(commit).not.toHaveBeenCalled();
     });
 
@@ -127,8 +147,8 @@ describe('runWithAutoCommitDeferred', () => {
     registerSessionAutoCommit(1, true);
 
     await expect(
-      runWithAutoCommitDeferred(session, () => {
-        autoCommitAfterWrite(session);
+      runWithAutoCommitDeferred(session, 'test op', () => {
+        autoCommitAfterWrite(session, 'test write');
         throw new Error('the engine stopped at the first failure');
       }),
     ).rejects.toThrow('the engine stopped at the first failure');
@@ -141,7 +161,7 @@ describe('runWithAutoCommitDeferred', () => {
     const session = makeSession(1, commit);
     registerSessionAutoCommit(1, true);
 
-    await runWithAutoCommitDeferred(session, () => 'nothing to do');
+    await runWithAutoCommitDeferred(session, 'test op', () => 'nothing to do');
     expect(commit).not.toHaveBeenCalled();
   });
 
@@ -150,12 +170,12 @@ describe('runWithAutoCommitDeferred', () => {
     const session = makeSession(1, commit);
     registerSessionAutoCommit(1, true);
 
-    await runWithAutoCommitDeferred(session, async () => {
-      await runWithAutoCommitDeferred(session, () => {
-        autoCommitAfterWrite(session);
+    await runWithAutoCommitDeferred(session, 'test op', async () => {
+      await runWithAutoCommitDeferred(session, 'test op', () => {
+        autoCommitAfterWrite(session, 'test write');
       });
       expect(commit).not.toHaveBeenCalled();
-      autoCommitAfterWrite(session);
+      autoCommitAfterWrite(session, 'test write');
     });
 
     expect(commit).toHaveBeenCalledTimes(1);
@@ -167,13 +187,13 @@ describe('runWithAutoCommitDeferred', () => {
     registerSessionAutoCommit(1, true);
 
     await expect(
-      runWithAutoCommitDeferred(session, () => {
+      runWithAutoCommitDeferred(session, 'test op', () => {
         throw new Error('boom');
       }),
     ).rejects.toThrow('boom');
 
     // The next ordinary write commits immediately — the suspension did not leak.
-    expect(autoCommitAfterWrite(session)).toBe('committed');
+    expect(autoCommitAfterWrite(session, 'test write')).toBe('committed');
   });
 
   it('does not commit when the failure prompt turned auto-commit off mid-region', async () => {
@@ -181,8 +201,8 @@ describe('runWithAutoCommitDeferred', () => {
     const session = makeSession(1, commit);
     registerSessionAutoCommit(1, true);
 
-    await runWithAutoCommitDeferred(session, () => {
-      autoCommitAfterWrite(session);
+    await runWithAutoCommitDeferred(session, 'test op', () => {
+      autoCommitAfterWrite(session, 'test write');
       setAutoCommitStatus(1, 'off');
     });
 
@@ -192,7 +212,7 @@ describe('runWithAutoCommitDeferred', () => {
   it('runs the operation untouched on a session with auto-commit off', async () => {
     const commit = vi.fn(() => OK);
     const session = makeSession(1, commit);
-    const answer = await runWithAutoCommitDeferred(session, () => 42);
+    const answer = await runWithAutoCommitDeferred(session, 'test op', () => 42);
     expect(answer).toBe(42);
     expect(commit).not.toHaveBeenCalled();
   });
@@ -204,9 +224,9 @@ describe('runWithAutoCommitDeferredSync', () => {
     const session = makeSession(1, commit);
     registerSessionAutoCommit(1, true);
 
-    const answer = runWithAutoCommitDeferredSync(session, () => {
-      autoCommitAfterWrite(session);
-      autoCommitAfterWrite(session);
+    const answer = runWithAutoCommitDeferredSync(session, 'test op', () => {
+      autoCommitAfterWrite(session, 'test write');
+      autoCommitAfterWrite(session, 'test write');
       return 'filed in';
     });
 
@@ -220,8 +240,8 @@ describe('runWithAutoCommitDeferredSync', () => {
     registerSessionAutoCommit(1, true);
 
     expect(() =>
-      runWithAutoCommitDeferredSync(session, () => {
-        autoCommitAfterWrite(session);
+      runWithAutoCommitDeferredSync(session, 'test op', () => {
+        autoCommitAfterWrite(session, 'test write');
         throw new Error('unreadable file');
       }),
     ).toThrow('unreadable file');
@@ -233,8 +253,10 @@ describe('runWithAutoCommitDeferredSync', () => {
     const session = makeSession(1, commit);
     registerSessionAutoCommit(1, true);
 
-    await runWithAutoCommitDeferred(session, () => {
-      runWithAutoCommitDeferredSync(session, () => autoCommitAfterWrite(session));
+    await runWithAutoCommitDeferred(session, 'test op', () => {
+      runWithAutoCommitDeferredSync(session, 'test op', () =>
+        autoCommitAfterWrite(session, 'test write'),
+      );
       expect(commit).not.toHaveBeenCalled();
     });
     expect(commit).toHaveBeenCalledTimes(1);

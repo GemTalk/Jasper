@@ -411,7 +411,7 @@ export function registerMcpTools(
           // The code ran, so whatever it changed is the session's work -- same reading as
           // Do It in the editor (issue #254). Only reached on success: a doit that threw
           // has nothing finished to commit.
-          autoCommitAfterWrite(session);
+          autoCommitAfterWrite(session, 'MCP execute_code');
           return answer;
         } finally {
           showBufferedTranscript(session);

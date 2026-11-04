@@ -640,10 +640,10 @@
    * How a session row shows auto-commit (issue #254) — the words beside the session id, and
    * the button that flips it.
    *
-   * ONE command, whose icon this picks at render time. The Logins & Sessions tree needs three
-   * command ids for the same button because a contributed menu entry's icon is fixed text in
-   * the manifest; a webview has no such problem, so the state-reading `toggle` is all this
-   * needs. The wording and the glyphs match the tree deliberately: a session is a session,
+   * The state-reading `toggle`, whose icon this picks at render time, or `recover` on a failed
+   * row. The Logins & Sessions tree needs separate on/off command ids for the same button
+   * because a contributed menu entry's icon is fixed text in the manifest; a webview has no
+   * such problem. The wording and the glyphs match the tree deliberately: a session is a session,
    * and the two places must not describe the same state differently.
    */
   const AUTO_COMMIT_FACE = {
@@ -661,7 +661,8 @@
       tone: 'err',
       title:
         'Auto-commit tried to commit and could not — almost always a conflict with another ' +
-        'session. Your changes are NOT in the repository. Click for the ways out.',
+        'session. Your changes are NOT in the repository. Click to resolve it: abort and ' +
+        'discard your changes, show what conflicted, or turn auto-commit off.',
     },
     off: {
       icon: 'syncIgnored',
@@ -730,7 +731,9 @@
       act('gemstone.sessionAbort', 'Abort', 'discard', 'Abort this session') +
       // With Commit and Abort, because it is the same subject: this session's transaction.
       act(
-        'gemstone.autoCommit.toggle',
+        session.autoCommit === 'failed'
+          ? 'gemstone.autoCommit.recover'
+          : 'gemstone.autoCommit.toggle',
         'Auto-Commit',
         autoCommitFace(session).icon,
         autoCommitFace(session).title,

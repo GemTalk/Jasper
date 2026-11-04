@@ -1076,27 +1076,31 @@ describe('session actions', () => {
 
   // Auto-commit (issue #254) is per session, so the row that names a session is where it
   // belongs — and it must read the same here as in the Logins & Sessions tree, or the two
-  // places describe the same state differently. One command with a state-picked glyph, not
-  // the tree's three: a webview chooses its own icon at render time.
+  // places describe the same state differently. The toggle with a state-picked glyph, not the
+  // tree's on/off pair (a webview chooses its own icon at render time), and on a failed row the
+  // button that resolves the failure, so the button never turns auto-commit off unasked.
   it.each([
-    ['off', 'auto-commit off', 'codicon-sync-ignored', null],
-    ['on', 'auto-commit ON', 'codicon-sync', 'ac-warn'],
-    ['failed', 'auto-commit FAILED', 'codicon-error', 'ac-err'],
-  ] as const)('says the auto-commit state and wears its glyph: %s', (status, word, glyph, tone) => {
-    mountSession(false, { autoCommit: status });
-    const row = root.querySelector('.db-session')!;
+    ['off', 'auto-commit off', 'codicon-sync-ignored', null, 'toggle'],
+    ['on', 'auto-commit ON', 'codicon-sync', 'ac-warn', 'toggle'],
+    ['failed', 'auto-commit FAILED', 'codicon-error', 'ac-err', 'recover'],
+  ] as const)(
+    'says the auto-commit state and wears its glyph: %s',
+    (status, word, glyph, tone, cmd) => {
+      mountSession(false, { autoCommit: status });
+      const row = root.querySelector('.db-session')!;
 
-    const label = row.querySelector('.session-autocommit')!;
-    expect(label.textContent).toBe(word);
-    // Tinted only for the two states worth catching without reading — so "off" carries no
-    // tone class at all, and the other two carry exactly one.
-    expect(Array.from(label.classList).filter((c) => c.startsWith('ac-'))).toEqual(
-      tone ? [tone] : [],
-    );
+      const label = row.querySelector('.session-autocommit')!;
+      expect(label.textContent).toBe(word);
+      // Tinted only for the two states worth catching without reading — so "off" carries no
+      // tone class at all, and the other two carry exactly one.
+      expect(Array.from(label.classList).filter((c) => c.startsWith('ac-'))).toEqual(
+        tone ? [tone] : [],
+      );
 
-    const button = row.querySelector('[data-cmd="gemstone.autoCommit.toggle"]')!;
-    expect(button.querySelector(`.${glyph}`)).not.toBeNull();
-  });
+      const button = row.querySelector(`[data-cmd="gemstone.autoCommit.${cmd}"]`)!;
+      expect(button.querySelector(`.${glyph}`)).not.toBeNull();
+    },
+  );
 
   it('flips auto-commit for the session the row names', () => {
     mountSession(false, { autoCommit: 'on' });

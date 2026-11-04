@@ -79,52 +79,83 @@ async function armAutoCommit(session: ActiveSession): Promise<boolean> {
 
   setAutoCommitStatus(session.id, 'on');
   logInfo(`[autoCommit] session ${session.id}: armed`);
-  void (async () => {
-    const choice = await vscode.window.showInformationMessage(
-      `Auto-commit is ON for session ${session.id}. Every change is committed as it is made, ` +
-        'and Abort will no longer take one back.',
-      MAKE_DEFAULT,
-    );
-    if (choice !== MAKE_DEFAULT) return;
-    await vscode.workspace
-      .getConfiguration('gemstone')
-      .update(AUTO_COMMIT_DEFAULT_SETTING, true, vscode.ConfigurationTarget.Global);
-  })();
+  void announceAutoCommit(
+    `Auto-commit is ON for session ${session.id}. Every change is committed as it is made, ` +
+      'and Abort will no longer take one back.',
+    true,
+  );
   return true;
 }
 
 /** Turn auto-commit off. Whatever is uncommitted stays uncommitted, as it would have. */
 function disarmAutoCommit(session: ActiveSession): void {
+  const wasFailed = getAutoCommitStatus(session.id) === 'failed';
   setAutoCommitStatus(session.id, 'off');
   logInfo(`[autoCommit] session ${session.id}: turned off`);
-  void vscode.window.showInformationMessage(
-    `Auto-commit is OFF for session ${session.id}. Changes now stay in the transaction until ` +
-      'you commit.',
-  );
+  // Turning it off does not clear the conflict: GemStone refuses to commit that transaction
+  // until it is aborted, so a user who expects to commit by hand next needs telling.
+  const after = wasFailed
+    ? 'The transaction still conflicts with another session, so a commit will be refused ' +
+      'until you abort, which discards those changes.'
+    : 'Changes now stay in the transaction until you commit.';
+  void announceAutoCommit(`Auto-commit is OFF for session ${session.id}. ${after}`, false);
 }
 
 /**
- * The one command behind the session row's context menu and the palette entry.
- * From the `failed` state it opens the recovery choices instead of flipping, because
- * "off" is only one of three things the user might want there and the other two are the
- * ones that save their work.
+ * The notice after turning auto-commit on or off. It offers to make that the default for
+ * new sessions only when the default says otherwise, since otherwise the button does nothing.
+ */
+async function announceAutoCommit(message: string, on: boolean): Promise<void> {
+  if (autoCommitDefaultForNewSessions() === on) {
+    await vscode.window.showInformationMessage(message);
+    return;
+  }
+  const choice = await vscode.window.showInformationMessage(message, MAKE_DEFAULT);
+  if (choice !== MAKE_DEFAULT) return;
+  await vscode.workspace
+    .getConfiguration('gemstone')
+    .update(AUTO_COMMIT_DEFAULT_SETTING, on, vscode.ConfigurationTarget.Global);
+}
+
+function targetSession(
+  sessionManager: SessionManager,
+  session: ActiveSession | undefined,
+): ActiveSession | undefined {
+  const target = session ?? sessionManager.getSelectedSession();
+  if (!target) void vscode.window.showWarningMessage('Select a GemStone session first.');
+  return target;
+}
+
+/**
+ * The command behind the session row's context menu, its on/off button and the palette entry.
+ * From `failed` it turns auto-commit off, as its name says; the ways to resolve the failure are
+ * the separate {@link recoverAutoCommit}, so a "toggle" never answers with a prompt whose own
+ * choices include the toggle the user just asked for.
  */
 export async function toggleAutoCommit(
   sessionManager: SessionManager,
   session?: ActiveSession,
 ): Promise<void> {
-  const target = session ?? sessionManager.getSelectedSession();
-  if (!target) {
-    void vscode.window.showWarningMessage('Select a GemStone session first.');
+  const target = targetSession(sessionManager, session);
+  if (!target) return;
+  if (getAutoCommitStatus(target.id) === 'off') await armAutoCommit(target);
+  else disarmAutoCommit(target);
+}
+
+/** The failed row's error button: the ways to resolve the failure. */
+export async function recoverAutoCommit(
+  sessionManager: SessionManager,
+  session?: ActiveSession,
+): Promise<void> {
+  const target = targetSession(sessionManager, session);
+  if (!target) return;
+  if (getAutoCommitStatus(target.id) !== 'failed') {
+    void vscode.window.showInformationMessage(
+      `Auto-commit has not failed for session ${target.id}; there is nothing to resolve.`,
+    );
     return;
   }
-  const status = getAutoCommitStatus(target.id);
-  if (status === 'failed') {
-    await offerAutoCommitRecovery(target, undefined, abortHandler);
-    return;
-  }
-  if (status === 'on') disarmAutoCommit(target);
-  else await armAutoCommit(target);
+  await offerAutoCommitRecovery(target, undefined, abortHandler);
 }
 
 // ── Failure and recovery ───────────────────────────────────────────────────
@@ -170,7 +201,7 @@ function showConflicts(session: ActiveSession): void {
 }
 
 /**
- * Offer the ways out of a failed auto-commit. Also reached by clicking the red indicator,
+ * Offer the ways to resolve a failed auto-commit. Also reached by clicking the row's error button,
  * so a user who dismissed the toast can still get here.
  */
 export async function offerAutoCommitRecovery(

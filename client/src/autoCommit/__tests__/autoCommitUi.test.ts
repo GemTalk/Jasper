@@ -26,6 +26,7 @@ import {
   autoCommitDefaultForNewSessions,
   autoCommitTransactionSettled,
   offerAutoCommitRecovery,
+  recoverAutoCommit,
   toggleAutoCommit,
 } from '../autoCommitUi';
 import { __resetConfig, __setConfig } from '../../__mocks__/vscode';
@@ -209,16 +210,38 @@ describe('recovering from a failed commit', () => {
     expect(getAutoCommitStatus(1)).toBe('failed');
   });
 
-  it('opens the recovery choices, rather than flipping, when the red indicator is clicked', async () => {
+  it("opens the recovery choices when the failed row's error button is clicked", async () => {
     const session = makeSession();
     registerSessionAutoCommit(1, true);
     setAutoCommitStatus(1, 'failed');
     warn.mockResolvedValue(undefined);
 
-    await toggleAutoCommit(managerFor(session));
+    await recoverAutoCommit(managerFor(session));
 
     expect(warn.mock.calls[0][0]).toMatch(/could not commit/);
     expect(getAutoCommitStatus(1)).toBe('failed');
+  });
+
+  it('has nothing to resolve on a session whose auto-commit has not failed', async () => {
+    const session = makeSession();
+    registerSessionAutoCommit(1, true);
+
+    await recoverAutoCommit(managerFor(session));
+
+    expect(warn).not.toHaveBeenCalled();
+    expect(getAutoCommitStatus(1)).toBe('on');
+  });
+
+  it('turns a failed session off when toggled, rather than prompting with Turn Off', async () => {
+    const session = makeSession();
+    registerSessionAutoCommit(1, true);
+    setAutoCommitStatus(1, 'failed');
+
+    await toggleAutoCommit(managerFor(session));
+
+    expect(warn).not.toHaveBeenCalled();
+    expect(getAutoCommitStatus(1)).toBe('off');
+    expect(inform.mock.calls.at(-1)?.[0]).toMatch(/still conflicts .* until you abort/);
   });
 });
 
@@ -269,6 +292,27 @@ describe('the default for new sessions', () => {
     // back a fresh configuration object per call, so the spy a test holds is never the one
     // the code used.
     expect(autoCommitDefaultForNewSessions()).toBe(true);
+  });
+
+  it('is offered from the turn-off notice too, and set back to off', async () => {
+    __setConfig('gemstone', AUTO_COMMIT_DEFAULT_SETTING, true);
+    registerSessionAutoCommit(1, true);
+    inform.mockResolvedValue('Make This the Default');
+
+    await toggleAutoCommit(managerFor(makeSession()));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(inform).toHaveBeenCalledWith(expect.stringMatching(/OFF/), 'Make This the Default');
+    expect(autoCommitDefaultForNewSessions()).toBe(false);
+  });
+
+  it('is not offered when the default already matches', async () => {
+    registerSessionAutoCommit(1, true);
+
+    await toggleAutoCommit(managerFor(makeSession()));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(inform).toHaveBeenCalledWith(expect.stringMatching(/OFF/));
   });
 
   it('is left alone when the notice is dismissed', async () => {

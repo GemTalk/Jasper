@@ -654,15 +654,15 @@ describe('GemStoneFileSystemProvider', () => {
       const writeThrough = () => {
         const session = makeSession();
         vi.mocked(queries.compileMethod).mockImplementation(() => {
-          autoCommitAfterWrite(session);
+          autoCommitAfterWrite(session, 'test write');
           return 'Compiled: Array >> at:';
         });
         vi.mocked(queries.compileClassDefinition).mockImplementation(() => {
-          autoCommitAfterWrite(session);
+          autoCommitAfterWrite(session, 'test write');
           return 'Array';
         });
         vi.mocked(queries.recategorizeClass).mockImplementation(() => {
-          autoCommitAfterWrite(session);
+          autoCommitAfterWrite(session, 'test write');
           return 'Recategorized: Array';
         });
       };

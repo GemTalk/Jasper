@@ -83,7 +83,8 @@ export function autoCommitRowTooltip(status: AutoCommitStatus): string {
     return (
       'Auto-commit tried to commit and could not — almost always a conflict with another ' +
       'session. Your changes are NOT in the repository, and it has stopped trying. ' +
-      'Right-click for the ways out: abort, see the conflicts, or turn it off.'
+      'To resolve it, click the ⊗ on this row: abort and discard your changes, show what ' +
+      'conflicted, or turn auto-commit off.'
     );
   }
   return 'Auto-commit is off: changes stay in this session’s transaction until you commit.';

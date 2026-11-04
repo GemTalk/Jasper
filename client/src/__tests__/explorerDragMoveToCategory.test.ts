@@ -239,7 +239,7 @@ describe('ExplorerController.dragMoveToCategory', () => {
 describe('dragMoveToCategory and auto-commit', () => {
   const writeThrough = () =>
     vi.mocked(queries.recategorizeMethod).mockImplementation(() => {
-      autoCommitAfterWrite(armableSession);
+      autoCommitAfterWrite(armableSession, 'test write');
       return 'ok';
     });
 
@@ -263,7 +263,7 @@ describe('dragMoveToCategory and auto-commit', () => {
     vi.mocked(queries.recategorizeMethod).mockImplementation(() => {
       if (first) {
         first = false;
-        autoCommitAfterWrite(armableSession);
+        autoCommitAfterWrite(armableSession, 'test write');
         return 'ok';
       }
       throw new Error('classErrMethCatNotFound');

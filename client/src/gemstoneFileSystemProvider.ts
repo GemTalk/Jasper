@@ -912,7 +912,7 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
       // commit between them would put a class in the repository filed under the category
       // it is being moved out of. Deferring also means a save that throws part-way commits
       // nothing, so the compile error the user is about to see is the whole story.
-      runWithAutoCommitDeferredSync(session, () => {
+      runWithAutoCommitDeferredSync(session, 'save', () => {
         switch (parsed.kind) {
           case 'method':
             this.compileMethod(uri, parsed, source, session);

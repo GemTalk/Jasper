@@ -708,11 +708,11 @@ name
     resetAutoCommit();
     const session = createMockSession();
     vi.mocked(queries.compileMethod).mockImplementation(() => {
-      autoCommitAfterWrite(session);
+      autoCommitAfterWrite(session, 'test write');
       return 1000n as never;
     });
     vi.mocked(queries.compileClassDefinition).mockImplementation(() => {
-      autoCommitAfterWrite(session);
+      autoCommitAfterWrite(session, 'test write');
       return 'Account';
     });
   });
@@ -747,7 +747,7 @@ name
     vi.mocked(queries.compileMethod).mockImplementation(() => {
       if (first) {
         first = false;
-        autoCommitAfterWrite(session);
+        autoCommitAfterWrite(session, 'test write');
         return 1000n as never;
       }
       throw new BrowserQueryError('does not compile (line 3)');

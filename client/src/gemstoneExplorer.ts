@@ -7178,7 +7178,7 @@ export class ExplorerController {
     // One user action, one commit on an auto-commit session (issue #254) -- the same grouping
     // the undo recording above uses, because a subtree half in the repository is not what the
     // user asked to remove.
-    await runWithAutoCommitDeferred(session, () => {
+    await runWithAutoCommitDeferred(session, 'class remove', () => {
       for (const t of targets) {
         try {
           const result = queries.deleteClass(session, t.dictIndex, t.className);
@@ -8078,7 +8078,7 @@ export class ExplorerController {
     const failures: string[] = [];
     // One drag, one commit on an auto-commit session (issue #254) -- matching the undo
     // recording, which is one entry for the drop.
-    await runWithAutoCommitDeferred(session, () => {
+    await runWithAutoCommitDeferred(session, 'method drag', () => {
       for (const p of toMove) {
         try {
           // recategorizeClass reports a soft failure by RETURNING it ('Class not found:
@@ -8169,7 +8169,7 @@ export class ExplorerController {
     try {
       // One drag, one commit on an auto-commit session (issue #254) -- the same grouping as
       // the single undo entry recorded above.
-      await runWithAutoCommitDeferred(session, () => {
+      await runWithAutoCommitDeferred(session, 'method drag', () => {
         for (const p of toMove) {
           queries.recategorizeMethod(
             session,
@@ -8271,7 +8271,7 @@ export class ExplorerController {
     let reveal: { selector: string; isMeta: boolean } | undefined;
     // A mixed selection is two engine calls, and the user made one gesture, so on an
     // auto-commit session the pair commits once (issue #254).
-    await runWithAutoCommitDeferred(session, async () => {
+    await runWithAutoCommitDeferred(session, 'method drag', async () => {
       for (const isMeta of [false, true]) {
         const group = payloads.filter((p) => p.isMeta === isMeta);
         if (group.length === 0) continue;
@@ -8316,7 +8316,7 @@ export class ExplorerController {
     if (toCopy.length === 0) return;
     try {
       // One drag, one commit on an auto-commit session (issue #254).
-      await runWithAutoCommitDeferred(session, () => {
+      await runWithAutoCommitDeferred(session, 'method copy', () => {
         for (const p of toCopy) {
           queries.copyMethodToClass(
             session,

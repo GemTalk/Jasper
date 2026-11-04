@@ -467,9 +467,9 @@ describe('undoLastCommand and auto-commit', () => {
     pushUndoEntry(methodEdit('Save Account>>#balance'));
     // Stand in for the reverser's writes: several, all inside the deferred region.
     vi.mocked(reverseMethodEdit).mockImplementation(async () => {
-      autoCommitAfterWrite(session);
-      autoCommitAfterWrite(session);
-      autoCommitAfterWrite(session);
+      autoCommitAfterWrite(session, 'test write');
+      autoCommitAfterWrite(session, 'test write');
+      autoCommitAfterWrite(session, 'test write');
       return true;
     });
 
@@ -482,7 +482,7 @@ describe('undoLastCommand and auto-commit', () => {
     registerSessionAutoCommit(session.id, true);
     pushUndoEntry(methodEdit('Save Account>>#balance'));
     vi.mocked(reverseMethodEdit).mockImplementation(async () => {
-      autoCommitAfterWrite(session);
+      autoCommitAfterWrite(session, 'test write');
       throw new Error('the recompile failed');
     });
 

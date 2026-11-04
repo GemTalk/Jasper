@@ -967,7 +967,7 @@
       },
       {
         "command": "gemstone.autoCommit.recover",
-        "title": "Auto-Commit Failed — Show the Ways Out",
+        "title": "Auto-Commit Failed — Resolve It: Abort, Show Conflicts, or Turn Off",
         "category": "GemStone",
         "icon": "$(error)"
       },

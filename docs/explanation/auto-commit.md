@@ -25,13 +25,15 @@ handler, installed by the extension at activation.
 
 ## Where it fires — and the one place it deliberately does not
 
-Five hooks, chosen to be the places an operation *finishes*:
+Seven hooks, chosen to be the places an operation *finishes*:
 
 | Hook | Covers |
 | --- | --- |
 | the `writing` wrapper in `browserQueries`' write-path section | method compiles, class edits, comments, categories, dictionary edits, breakpoints — everything the Explorer, the browsers, the editors and the MCP tools reach the stone through |
 | `codeExecutor` after a completed execution | Do It, Display It, Inspect It |
 | `smalltalkNotebookController` / MCP `execute_code` | a doit by another route |
+| the GemStone Debugger | a run that halted and was then resumed or stepped to the end; an expression evaluated in a frame; a variable edited or reverted |
+| the basic Inspector | an expression in its evaluation pane; a slot edited or reverted |
 | `notifyRefactoringApplied` | all fifteen refactorings |
 | `runWithAutoCommitDeferred` closing | a file-in, an editor save, an undo, and the Explorer's multi-row actions — removing a class subtree, a drag that moves or copies several methods, a drag that refiles several classes |
 
@@ -88,7 +90,7 @@ will reach for Abort and find nothing to abort. Hence:
   row's icon is never coloured — it says which session is selected, and a tinted triangle read as
   noise;
 - **a button on the row** whose icon is the state — `$(sync-ignored)` off, `$(sync)` on, `$(error)`
-  failed — and whose click is the switch;
+  failed — whose click is the switch, or on a failed row opens the ways to resolve it;
 - **the same words and button on the session row in the Databases panel**, the words coloured amber
   on and red failed, which mirrors the
   tree's session actions on purpose: a session is a session, and someone who found this in one place
@@ -134,7 +136,9 @@ A commit that fails is nearly always a conflict with another session, and the ne
 the same conflict. Retrying per keystroke would fail every time and bury the message, so auto-commit
 stops — but it does **not** fall back to `off`, which would say the user turned it off. `failed` is a
 third state: armed, and not committing. The row gets its red `!` badge, and the prompt offers the three
-things that are actually useful — abort, read the conflict report, or turn it off. A manual commit or
+things that are actually useful — abort, read the conflict report, or turn it off. The row's error
+button brings that prompt back; **Toggle Auto-Commit** (palette or right-click) simply turns it off,
+as its name says, and its notice warns that the transaction still conflicts until it is aborted. A manual commit or
 abort that lands settles the transaction, as does a Begin or a transaction-mode switch (both replace
 the session's view), and auto-commit resumes on its own.
 

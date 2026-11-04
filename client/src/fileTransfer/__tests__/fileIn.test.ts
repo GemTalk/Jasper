@@ -522,7 +522,7 @@ describe('the File In command', () => {
   describe('and auto-commit', () => {
     beforeEach(() => {
       vi.mocked(queries.compileMethod).mockImplementation(() => {
-        autoCommitAfterWrite(SESSION);
+        autoCommitAfterWrite(SESSION, 'test write');
         return 'Compiled';
       });
     });

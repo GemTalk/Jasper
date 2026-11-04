@@ -2518,21 +2518,25 @@ export function methodsAccessingClassVar(
  * repository. Inside a deferred region (`runWithAutoCommitDeferred`) the commit is owed
  * rather than run — see `autoCommit/autoCommitRunner.ts`.
  */
-function writing<T>(session: ActiveSession, run: () => T): T {
+function writing<T>(session: ActiveSession, what: string, run: () => T): T {
   const answer = run();
-  autoCommitAfterWrite(session);
+  autoCommitAfterWrite(session, what);
   return answer;
 }
 
 /** {@link writing} for a mutation that resolves rather than returns. */
-async function writingAsync<T>(session: ActiveSession, run: () => Promise<T>): Promise<T> {
+async function writingAsync<T>(
+  session: ActiveSession,
+  what: string,
+  run: () => Promise<T>,
+): Promise<T> {
   const answer = await run();
-  autoCommitAfterWrite(session);
+  autoCommitAfterWrite(session, what);
   return answer;
 }
 
 export function compileClassDefinition(session: ActiveSession, source: string): string {
-  return writing(session, () =>
+  return writing(session, 'class definition', () =>
     sharedCompileClassDefinition(defaultQueryExecutorUsing(session), source),
   );
 }
@@ -2546,7 +2550,7 @@ export function compileMethod(
   environmentId: number = 0,
   dict?: number | string,
 ): string {
-  return writing(session, () =>
+  return writing(session, 'method compile', () =>
     sharedCompileMethod(
       defaultQueryExecutorUsing(session),
       className,
@@ -2565,7 +2569,7 @@ export function setClassComment(
   comment: string,
   dict?: number | string,
 ): string {
-  return writing(session, () =>
+  return writing(session, 'class comment', () =>
     sharedSetClassComment(defaultQueryExecutorUsing(session), className, comment, dict),
   );
 }
@@ -2576,7 +2580,7 @@ export function recategorizeClass(
   newCategory: string,
   dict?: number | string,
 ): string {
-  return writing(session, () =>
+  return writing(session, 'class category', () =>
     sharedRecategorizeClass(defaultQueryExecutorUsing(session), className, newCategory, dict),
   );
 }
@@ -2590,7 +2594,7 @@ export function copyMethodToClass(
   environmentId: number = 0,
   dict?: number | string,
 ): string {
-  return writing(session, () =>
+  return writing(session, 'method copy', () =>
     sharedCopyMethodToClass(
       defaultQueryExecutorUsing(session),
       sourceClass,
@@ -2610,7 +2614,7 @@ export function deleteMethod(
   selector: string,
   dict?: number | string,
 ): string {
-  return writing(session, () =>
+  return writing(session, 'method delete', () =>
     sharedDeleteMethod(defaultQueryExecutorUsing(session), className, isMeta, selector, dict),
   );
 }
@@ -2623,7 +2627,7 @@ export function recategorizeMethod(
   newCategory: string,
   dict?: number | string,
 ): string {
-  return writing(session, () =>
+  return writing(session, 'method category', () =>
     sharedRecategorizeMethod(
       defaultQueryExecutorUsing(session),
       className,
@@ -2642,7 +2646,7 @@ export function removeMethodCategory(
   category: string,
   dict?: number | string,
 ): string {
-  return writing(session, () =>
+  return writing(session, 'method category remove', () =>
     sharedRemoveMethodCategory(
       defaultQueryExecutorUsing(session),
       className,
@@ -2661,7 +2665,7 @@ export function renameCategory(
   newCategory: string,
   dict?: number | string,
 ): string {
-  return writing(session, () =>
+  return writing(session, 'method category rename', () =>
     sharedRenameCategory(
       defaultQueryExecutorUsing(session),
       className,
@@ -2683,7 +2687,7 @@ export function removeCategory(
   // alone, which is what every caller that does not browse higher environments wants.
   maxEnv = 0,
 ): string {
-  return writing(session, () =>
+  return writing(session, 'class category remove', () =>
     sharedRemoveCategory(
       defaultQueryExecutorUsing(session),
       className,
@@ -2700,7 +2704,7 @@ export function deleteClass(
   dict: number | string,
   className: string,
 ): string {
-  return writing(session, () =>
+  return writing(session, 'class delete', () =>
     sharedDeleteClass(defaultQueryExecutorUsing(session), dict, className),
   );
 }
@@ -2711,17 +2715,21 @@ export function moveClass(
   destDictIndex: number,
   className: string,
 ): string {
-  return writing(session, () =>
+  return writing(session, 'class move', () =>
     sharedMoveClass(defaultQueryExecutorUsing(session), srcDictIndex, destDictIndex, className),
   );
 }
 
 export function addDictionary(session: ActiveSession, dictName: string): string {
-  return writing(session, () => sharedAddDictionary(defaultQueryExecutorUsing(session), dictName));
+  return writing(session, 'dictionary add', () =>
+    sharedAddDictionary(defaultQueryExecutorUsing(session), dictName),
+  );
 }
 
 export function removeDictionary(session: ActiveSession, dict: number | string): string {
-  return writing(session, () => sharedRemoveDictionary(defaultQueryExecutorUsing(session), dict));
+  return writing(session, 'dictionary remove', () =>
+    sharedRemoveDictionary(defaultQueryExecutorUsing(session), dict),
+  );
 }
 
 export function renameDictionary(
@@ -2729,7 +2737,7 @@ export function renameDictionary(
   dict: number | string,
   newName: string,
 ): string {
-  return writing(session, () =>
+  return writing(session, 'dictionary rename', () =>
     sharedRenameDictionary(defaultQueryExecutorUsing(session), dict, newName),
   );
 }
@@ -2740,19 +2748,19 @@ export function renameClassCategory(
   oldPath: string,
   newPath: string,
 ): string {
-  return writing(session, () =>
+  return writing(session, 'class category rename', () =>
     sharedRenameClassCategory(defaultQueryExecutorUsing(session), dict, oldPath, newPath),
   );
 }
 
 export function moveDictionaryUp(session: ActiveSession, dictIndex: number): string {
-  return writing(session, () =>
+  return writing(session, 'dictionary move', () =>
     sharedMoveDictionaryUp(defaultQueryExecutorUsing(session), dictIndex),
   );
 }
 
 export function moveDictionaryDown(session: ActiveSession, dictIndex: number): string {
-  return writing(session, () =>
+  return writing(session, 'dictionary move', () =>
     sharedMoveDictionaryDown(defaultQueryExecutorUsing(session), dictIndex),
   );
 }
@@ -2766,7 +2774,7 @@ export function setBreakAtStepPoint(
   environmentId: number = 0,
   dict?: number | string,
 ): string {
-  return writing(session, () =>
+  return writing(session, 'breakpoint', () =>
     sharedSetBreakAtStepPoint(
       defaultQueryExecutorUsing(session),
       className,
@@ -2788,7 +2796,7 @@ export function clearBreakAtStepPoint(
   environmentId: number = 0,
   dict?: number | string,
 ): string {
-  return writing(session, () =>
+  return writing(session, 'breakpoint', () =>
     sharedClearBreakAtStepPoint(
       defaultQueryExecutorUsing(session),
       className,
@@ -2809,7 +2817,7 @@ export function clearAllBreaks(
   environmentId: number = 0,
   dict?: number | string,
 ): string {
-  return writing(session, () =>
+  return writing(session, 'breakpoints', () =>
     sharedClearAllBreaks(
       defaultQueryExecutorUsing(session),
       className,
@@ -2900,7 +2908,9 @@ export function applyUndoRefactoring(
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Undoing the refactoring…');
-  return writingAsync(session, () => sharedApplyUndoRefactoring(exec, token, deselectedIds));
+  return writingAsync(session, 'refactoring undo', () =>
+    sharedApplyUndoRefactoring(exec, token, deselectedIds),
+  );
 }
 
 export function clearUndoRefactoringPreview(session: ActiveSession, token: string): string {
@@ -2984,7 +2994,7 @@ export function disableBreakAtStepPoint(
   environmentId: number = 0,
   dict?: number | string,
 ): string {
-  return writing(session, () =>
+  return writing(session, 'breakpoint', () =>
     sharedDisableBreakAtStepPoint(
       defaultQueryExecutorUsing(session),
       className,
@@ -3002,15 +3012,21 @@ export function getAllBreakpoints(session: ActiveSession) {
 }
 
 export function enableAllBreakpoints(session: ActiveSession): string {
-  return writing(session, () => sharedEnableAllBreakpoints(defaultQueryExecutorUsing(session)));
+  return writing(session, 'breakpoints', () =>
+    sharedEnableAllBreakpoints(defaultQueryExecutorUsing(session)),
+  );
 }
 
 export function disableAllBreakpoints(session: ActiveSession): string {
-  return writing(session, () => sharedDisableAllBreakpoints(defaultQueryExecutorUsing(session)));
+  return writing(session, 'breakpoints', () =>
+    sharedDisableAllBreakpoints(defaultQueryExecutorUsing(session)),
+  );
 }
 
 export function removeAllBreakpoints(session: ActiveSession): string {
-  return writing(session, () => sharedRemoveAllBreakpoints(defaultQueryExecutorUsing(session)));
+  return writing(session, 'breakpoints', () =>
+    sharedRemoveAllBreakpoints(defaultQueryExecutorUsing(session)),
+  );
 }
 
 export function hasBreakpoints(session: ActiveSession): boolean {
@@ -3023,7 +3039,7 @@ export function breakpointByOop(
   op: 'setBreakAtStepPoint:' | 'disableBreakAtStepPoint:' | 'clearBreakAtStepPoint:',
   stepPoint: number,
 ): string {
-  return writing(session, () =>
+  return writing(session, 'breakpoint', () =>
     sharedBreakpointByOop(defaultQueryExecutorUsing(session), methodOop, op, stepPoint),
   );
 }

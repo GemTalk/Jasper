@@ -152,7 +152,9 @@ export function fileInFile(
   filePath: string,
   seen: Set<string> = new Set(),
 ): FileInOutcome {
-  return runWithAutoCommitDeferredSync(session, () => fileInOneFile(session, filePath, seen));
+  return runWithAutoCommitDeferredSync(session, 'file-in', () =>
+    fileInOneFile(session, filePath, seen),
+  );
 }
 
 function fileInOneFile(session: ActiveSession, filePath: string, seen: Set<string>): FileInOutcome {

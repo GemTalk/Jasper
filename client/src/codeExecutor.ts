@@ -240,9 +240,9 @@ export class CodeExecutor {
 
       // The code ran to completion, so whatever it created or changed is real work the
       // session did on the server -- exactly what auto-commit is for (issue #254). Debug It
-      // is left out: it stops on its first statement by design, and the execution is still
-      // in flight in the debugger, so there is nothing finished to commit.
-      if (mode !== 'debug') autoCommitAfterWrite(session);
+      // is left out: it stops on its first statement by design, and the debugger commits
+      // when that run finishes.
+      if (mode !== 'debug') autoCommitAfterWrite(session, 'Do It');
 
       this.diagnostics.delete(editor.document.uri);
 

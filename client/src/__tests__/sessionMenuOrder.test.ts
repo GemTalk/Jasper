@@ -173,9 +173,8 @@ describe('session row inline button order', () => {
   });
 
   it('offers the auto-commit toggle beside it, on every row whatever its state', () => {
-    // The right-click entry is the state-independent way in: it reads the state itself and
-    // does the right thing, including opening the recovery choices rather than flipping
-    // when the last commit failed.
+    // The right-click entry is the state-independent way in: it reads the state itself, and on
+    // a failed row turns auto-commit off (the row's error button is the way to resolve it).
     for (const row of [TRANSACTIONLESS_ROW, AUTO_COMMIT_ON_ROW, AUTO_COMMIT_FAILED_ROW]) {
       const toggle = itemContext.find(
         (m) => m.command === 'gemstone.autoCommit.toggle' && applies(m.when ?? '', row),
