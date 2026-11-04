@@ -5,7 +5,11 @@ import { COMMIT_GUARD_REASON, useIntegrationTest } from '../../__tests__/useInte
 import { requireParsedStoneNrs, resolveTestConnection } from '../../__tests__/testConnection';
 import { gemNrsFor, stoneNrsFor } from '../../loginTypes';
 import { requireGciCapability } from './requireGciCapability';
-import { reportRefusedLogin, reportSession } from '../../__tests__/sessionGateClient';
+import {
+  reportRefusedLogin,
+  reportSession,
+  reportSessionClosed,
+} from '../../__tests__/sessionGateClient';
 
 /**
  * The raw GCI login entry points (GciTsLogin, GciTsLogin_, GciTsNbLogin,
@@ -62,18 +66,23 @@ describe('GCI login (integration)', () => {
         `gciLogin.integration.test: GemStone reports commits were already disabled on this fresh session, so the "no commits allowed" guard is not this file's doing. Usual causes: this user's UserProfile has "disableCommits" set, or the stone is mid-restore. Check the stone and the credentials in .env.test (or .env.test.local).`,
       );
     }
-    reportSession(
-      gci.executeAndFetchInteger(
-        result.session,
-        '(System descriptionOfSession: System session) at: 9',
-      ),
+    const serial = gci.executeAndFetchInteger(
+      result.session,
+      '(System descriptionOfSession: System session) at: 9',
     );
+    serials.set(result.session, serial);
+    reportSession(serial);
     return result;
   }
+
+  // Each live session's login serial, for telling the session gate it logged out.
+  const serials = new Map<unknown, bigint>();
 
   function expectLiveSessionThenLogout(session: unknown) {
     expect(session).not.toBeNull();
     expect(gci.GciTsLogout(session).success).toBe(true);
+    const serial = serials.get(session);
+    if (serial !== undefined) reportSessionClosed(serial);
   }
 
   // Same 25ms cadence as sessionManager. The signal is the test's own, so a

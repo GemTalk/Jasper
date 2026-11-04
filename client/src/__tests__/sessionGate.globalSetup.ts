@@ -1,7 +1,7 @@
 // PROTOTYPE: a counter of the test stone's sessions, shared by every test file.
 //
 // A file asks for the sessions it will use before logging in, and waits, first
-// come first served, until they are free. A topaz session watches which user
+// come first served, until they are free. A GCI session of its own watches which user
 // sessions are on the stone, so the counter also sees gems still leaving and
 // sessions from outside the run. A session counts toward a running file only
 // once that file has reported its login serial; every other session on the
@@ -9,11 +9,12 @@
 // worker made it, or the run, when it was too short for the watcher to see.
 // So does a file that has more sessions logged in at once than it booked.
 // The bookkeeping is in sessionGateLedger.ts; this is its sockets and watcher.
-import { spawn, type ChildProcess } from 'node:child_process';
 import { writeFileSync, rmSync } from 'node:fs';
 import { createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
+import { GciLibrary } from '../gciLibrary';
+import { createNativeSocketLibrary } from '../sockets/factory';
 import { SessionLedger } from './sessionGateLedger';
 
 const LICENSE_LIMIT = 10;
@@ -75,7 +76,7 @@ export default async function setup(project: TestProject) {
         } else if (msg.op === 'closed') {
           ledger.closed(socket, String(msg.serial));
         } else if (msg.op === 'refused') {
-          ledger.refused();
+          ledger.refused(socket);
         } else if (msg.op === 'check') {
           // A login made just before the check only shows in the next sample.
           afterNextSample.push(() =>
@@ -103,27 +104,22 @@ export default async function setup(project: TestProject) {
   rmSync(socketPath, { force: true });
   await new Promise<void>((resolve) => server.listen(socketPath, resolve));
 
-  let watcherSerial: number | undefined;
-  const watcher = startWatcher(
-    env,
-    (serial) => (watcherSerial = serial),
-    (sessions) => {
-      const leftOver = ledger.sample(sessions);
-      if (leftOver && leftOver.size > 0) {
-        console.warn(
-          `session gate: ${leftOver.size} session(s) were already on the test stone before the run started, and take slots for the whole run: ${[...leftOver].map(([serial, pid]) => `login serial ${serial} (client process ${pid})`).join(', ')}. Usually these are gems left behind by a test run that was killed; end them to free their slots.`,
-        );
-      }
-      tryGrant();
-      for (const done of afterNextSample.splice(0)) done();
-    },
-  );
+  const watcher = startWatcher(env, (sessions) => {
+    const leftOver = ledger.sample(sessions);
+    if (leftOver && leftOver.size > 0) {
+      console.warn(
+        `session gate: ${leftOver.size} session(s) were already on the test stone before the run started, and take slots for the whole run: ${[...leftOver].map(([serial, pid]) => `login serial ${serial} (client process ${pid})`).join(', ')}. Usually these are gems left behind by a test run that was killed; end them to free their slots.`,
+      );
+    }
+    tryGrant();
+    for (const done of afterNextSample.splice(0)) done();
+  });
 
   project.provide('sessionGateSocket', socketPath);
 
   return async () => {
-    watcher.kill();
-    const endSerial = await freshLoginSerial(env);
+    watcher.stop();
+    const endSerial = watcher.freshLoginSerial();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     const waits = ledger.grants.map((g) => g.waitMs).sort((a, b) => a - b);
     const total = waits.reduce((a, b) => a + b, 0);
@@ -136,6 +132,7 @@ export default async function setup(project: TestProject) {
       maxWaitMs: waits.at(-1) ?? 0,
       peakCommitted: ledger.peakCommitted,
       peakLive: ledger.peakLive,
+      watcherLookMs: percentiles(watcher.lookMs),
       overBudget: Object.fromEntries(ledger.overBudget()),
       grantsDetail: ledger.grants,
     };
@@ -143,9 +140,9 @@ export default async function setup(project: TestProject) {
       writeFileSync(process.env.SESSION_GATE_STATS, JSON.stringify(summary, null, 2));
     }
     console.log(
-      `session gate: ${summary.grants} grants, ${summary.waited} waited, total ${total} ms, p50 ${summary.p50WaitMs} ms, p90 ${summary.p90WaitMs} ms, max ${summary.maxWaitMs} ms, peak committed ${summary.peakCommitted}/${CAPACITY}, peak live ${summary.peakLive}`,
+      `session gate: ${summary.grants} grants, ${summary.waited} waited, total ${total} ms, p50 ${summary.p50WaitMs} ms, p90 ${summary.p90WaitMs} ms, max ${summary.maxWaitMs} ms, peak committed ${summary.peakCommitted}/${CAPACITY}, peak live ${summary.peakLive}; ${watcher.lookMs.length} looks at the stone, p50 ${summary.watcherLookMs.p50} ms, p99 ${summary.watcherLookMs.p99} ms, max ${summary.watcherLookMs.max} ms`,
     );
-    const missed = ledger.loginsNeverSeen(watcherSerial, endSerial);
+    const missed = ledger.loginsNeverSeen(watcher.serial, endSerial);
     if (missed.length > 0) {
       throw new Error(
         `session gate: ${missed.length} login(s) came and went between two looks at the stone, and no file reported them: ${missed.map((m) => `login serial ${m.serial}, while ${m.running.join(', ') || 'no file'} ran`).join('; ')}. A test, or app code it called, logged in without reporting it (see reportLogin in sessionGateClient.ts). A login from outside the run during it shows up here too.`,
@@ -162,89 +159,99 @@ export default async function setup(project: TestProject) {
   };
 }
 
+function percentiles(ms: number[]): { p50: number; p99: number; max: number } {
+  const sorted = [...ms].sort((a, b) => a - b);
+  const at = (q: number) => Math.round((sorted[Math.floor(sorted.length * q)] ?? 0) * 10) / 10;
+  return { p50: at(0.5), p99: at(0.99), max: Math.round((sorted.at(-1) ?? 0) * 10) / 10 };
+}
+
 const OWN_SERIAL = '((System descriptionOfSession: System session) at: 9) printString';
 
-/** Logs in with topaz, runs `code`, and hands each line it logs to `onLine`. */
-function runTopaz(
-  env: Record<string, string>,
-  code: string,
-  onLine: (line: string) => void,
-): ChildProcess {
-  const gemstone = dirname(env.VITE_GEMSTONE_GLOBAL_DIR);
-  const child = spawn(join(gemstone, 'bin', 'topaz'), ['-q'], {
-    env: { ...process.env, GEMSTONE: gemstone, GEMSTONE_GLOBAL_DIR: env.VITE_GEMSTONE_GLOBAL_DIR },
-    stdio: ['pipe', 'pipe', 'inherit'],
-  });
-  child.stdin
-    .end(`set gemstone ${env.VITE_GEMSTONE_STONE_NRS} user ${env.VITE_GEMSTONE_USER} pass ${env.VITE_GEMSTONE_PASSWORD} gemnetid ${env.VITE_GEMSTONE_GEM_NRS}
-login
-run
-${code}
-%
-logout
-exit
-`);
-  let buffer = '';
-  child.stdout.on('data', (chunk) => {
-    buffer += chunk.toString();
-    let nl;
-    while ((nl = buffer.indexOf('\n')) >= 0) {
-      onLine(buffer.slice(0, nl).trim());
-      buffer = buffer.slice(nl + 1);
-    }
-  });
-  return child;
-}
+// Each user session on the stone but this one, as "<login serial>:<GCI client
+// process id> ...": fields 9 and 21 of `System descriptionOfSession:`. Aborts
+// first, so the watcher never holds an old view of the repository. Only the
+// lookup is guarded, for a session that ends mid-look. One logging in or out
+// may have no user profile yet, or serial 0; it still takes a slot, so it
+// counts once it has a serial to be told apart by. The literals are
+// `asString` because GciLibrary sends code as Unicode, which a String refuses
+// to be compared with.
+const LIVE_SESSIONS = `| ws mine system |
+System abortTransaction.
+mine := System session. ws := WriteStream on: String new.
+system := #('GcUser' 'SymbolUser') collect: [:u | u asString].
+System currentSessions do: [:s | | d |
+  d := s = mine ifFalse: [[System descriptionOfSession: s] on: Error do: [:e | nil]].
+  (d notNil and: [((d at: 9) ifNil: [0]) > 0 and: [
+      (d at: 1) isNil or: [(system includes: (d at: 1) userId asString) not]]])
+    ifTrue: [ws print: (d at: 9); nextPut: $:; print: (d at: 21); space]].
+ws contents`;
 
-/** The serial of a login made now: higher than every login before it. */
-function freshLoginSerial(env: Record<string, string>): Promise<number> {
-  return new Promise((resolve, reject) => {
-    let serial: number | undefined;
-    runTopaz(env, `GsFile gciLogClient: 'SERIAL ', ${OWN_SERIAL}`, (line) => {
-      if (line.startsWith('SERIAL ')) serial = Number(line.slice('SERIAL '.length));
-    }).on('close', () =>
-      serial === undefined
-        ? reject(new Error('session gate: topaz gave no login serial'))
-        : resolve(serial),
-    );
-  });
-}
+const LOOK_EVERY_MS = 50;
+
+type Watcher = {
+  /** The watcher's own login serial: lower than every test login's. */
+  serial: number;
+  stop: () => void;
+  /** The serial of a login made now: higher than every login before it. */
+  freshLoginSerial: () => number;
+  /** How long each look at the stone took, in ms: it blocks vitest's main process. */
+  lookMs: number[];
+};
 
 /**
- * Runs a topaz session that first reports its own login serial, then every
- * 50 ms each user session on the stone: its login serial and the process id of
- * its GCI client (fields 9 and 21 of `System descriptionOfSession:`).
+ * Logs in a GCI session of the gate's own, through the same GCI library the
+ * tests use, and every 50 ms hands `onSample` the user sessions on the stone.
+ * GCI rather than topaz: Windows has only the GCI library, with the stone in WSL.
  */
 function startWatcher(
   env: Record<string, string>,
-  onOwnSerial: (serial: number) => void,
   onSample: (sessions: Map<string, number>) => void,
-): ChildProcess {
-  return runTopaz(
-    env,
-    `| mine |
-mine := System session.
-GsFile gciLogClient: 'MINE ', ${OWN_SERIAL}.
-[true] whileTrue: [ | ws |
-  ws := WriteStream on: String new.
-  ws nextPutAll: 'LIVE'.
-  System currentSessions do: [:s |
-    s ~= mine ifTrue: [
-      [ | d | d := System descriptionOfSession: s.
-        (#('GcUser' 'SymbolUser') includes: (d at: 1) userId)
-          ifFalse: [ws space; print: (d at: 9); nextPut: $:; print: (d at: 21)] ]
-        on: Error do: [:e | ]]].
-  GsFile gciLogClient: ws contents.
-  (Delay forMilliseconds: 50) wait]`,
-    (line) => {
-      if (line.startsWith('MINE ')) onOwnSerial(Number(line.slice('MINE '.length)));
-      if (!line.startsWith('LIVE')) return;
-      // Each entry is <login serial>:<GCI client process id>.
-      const pairs = line
-        .split(/\s+/)
-        .slice(1)
-        .map((entry) => entry.split(':'));
-      onSample(new Map(pairs.map(([serial, pid]) => [serial, Number(pid)])));
+): Watcher {
+  // The GCI reads GEMSTONE_GLOBAL_DIR; as useIntegrationTest does, from the VITE_ copy.
+  process.env.GEMSTONE_GLOBAL_DIR = env.VITE_GEMSTONE_GLOBAL_DIR;
+  const gci = new GciLibrary(env.VITE_GEMSTONE_GCI_LIBRARY_PATH, createNativeSocketLibrary());
+  const login = () =>
+    gci.login(
+      env.VITE_GEMSTONE_STONE_NRS,
+      env.VITE_GEMSTONE_GEM_NRS,
+      env.VITE_GEMSTONE_USER,
+      env.VITE_GEMSTONE_PASSWORD,
+    );
+  const session = login();
+  const serial = Number(gci.executeAndFetchString(session, OWN_SERIAL));
+  const lookMs: number[] = [];
+  let timer: NodeJS.Timeout | undefined;
+  let stopped = false;
+
+  const look = () => {
+    if (stopped) return;
+    const started = performance.now();
+    const listed = gci.executeAndFetchString(session, LIVE_SESSIONS);
+    lookMs.push(performance.now() - started);
+    const pairs = listed
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((entry) => entry.split(':'));
+    onSample(new Map(pairs.map(([s, pid]) => [s, Number(pid)])));
+    timer = setTimeout(look, LOOK_EVERY_MS);
+  };
+  look();
+
+  return {
+    serial,
+    lookMs,
+    stop: () => {
+      stopped = true;
+      clearTimeout(timer);
+      gci.logout(session);
     },
-  );
+    freshLoginSerial: () => {
+      const fresh = login();
+      try {
+        return Number(gci.executeAndFetchString(fresh, OWN_SERIAL));
+      } finally {
+        gci.logout(fresh);
+      }
+    },
+  };
 }

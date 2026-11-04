@@ -1,5 +1,5 @@
 // The session gate's bookkeeping (see sessionGate.globalSetup.ts), kept apart
-// from its sockets and its topaz watcher so it can be tested without a stone.
+// from its sockets and its watcher session so it can be tested without a stone.
 // `K` identifies a file's booking: a socket in the gate, anything in a test.
 
 /** How long after its login a refusal's report can arrive (see loginsNeverSeen). */
@@ -29,8 +29,10 @@ export class SessionLedger<K> {
   private readonly sightings = new Map<string, Sighting>();
   // Login serial -> when a file reported it.
   private readonly reported = new Map<string, number>();
-  // When files reported logins the stone refused, each of which used up a serial.
-  private readonly refusals: number[] = [];
+  // Logins files reported the stone refused, each of which used up a serial,
+  // and may have been seen on the stone, with no user yet, before it was refused.
+  private readonly refusals: { at: number; pid: number | undefined; used: boolean }[] = [];
+  private readonly excused = new Set<string>();
   private readonly blamed = new Set<string>();
   private readonly workerPids = new Set<number>();
   private readonly overBudgetFiles = new Map<string, { booked: number; seen: number }>();
@@ -108,9 +110,21 @@ export class SessionLedger<K> {
     this.holders.get(key)?.closed.add(serial);
   }
 
-  /** A file's login was refused, using up a login serial with no session to show for it. */
-  refused(): void {
-    this.refusals.push(this.clock());
+  /** `key`'s file had a login refused, using up a login serial with no session to show for it. */
+  refused(key: K): void {
+    this.refusals.push({ at: this.clock(), pid: this.holders.get(key)?.pid, used: false });
+  }
+
+  /** Spends an unused refusal by worker `pid` near `at`, if there is one. */
+  private refusalNear(at: number, pid?: number): boolean {
+    const r = this.refusals.find(
+      (x) =>
+        !x.used &&
+        (pid === undefined || x.pid === pid) &&
+        Math.abs(x.at - at) <= REFUSAL_REPORT_SLACK_MS,
+    );
+    if (r) r.used = true;
+    return r !== undefined;
   }
 
   /**
@@ -119,6 +133,9 @@ export class SessionLedger<K> {
    * Answers the sessions that were there before, on the first look only.
    */
   sample(sessions: Map<string, number>): Map<string, number> | undefined {
+    // A session part way into its login can show serial 0, which would read as
+    // the start of the run's serials.
+    sessions = new Map([...sessions].filter(([serial]) => Number(serial) > 0));
     const serials = new Set(sessions.keys());
     let leftOver: Map<string, number> | undefined;
     if (!this.before) {
@@ -187,14 +204,24 @@ export class SessionLedger<K> {
     return this.overBudgetFiles;
   }
 
-  /** Sessions `key`'s worker logged in during its booking that no file reported, each answered once. */
+  /**
+   * Sessions `key`'s worker logged in during its booking that no file reported,
+   * each answered once. One its file reported refused near when it was seen is
+   * a refused login, not an unreported one.
+   */
   unreportedFrom(key: K): { serial: string; firstSeen: number }[] {
     const h = this.holders.get(key);
     if (!h) return [];
     const found: { serial: string; firstSeen: number }[] = [];
     for (const [serial, s] of this.sightings) {
       if (s.pid !== h.pid || s.firstSeen < h.grantedAt) continue;
-      if (this.reported.has(serial) || this.blamed.has(serial)) continue;
+      if (this.reported.has(serial) || this.blamed.has(serial) || this.excused.has(serial))
+        continue;
+      // A login seen on the stone before the stone refused it.
+      if (this.refusalNear(s.firstSeen, h.pid)) {
+        this.excused.add(serial);
+        continue;
+      }
       this.blamed.add(serial);
       found.push({ serial, firstSeen: s.firstSeen });
     }
@@ -206,7 +233,10 @@ export class SessionLedger<K> {
     return [...this.sightings]
       .filter(
         ([serial, s]) =>
-          this.workerPids.has(s.pid) && !this.reported.has(serial) && !this.blamed.has(serial),
+          this.workerPids.has(s.pid) &&
+          !this.reported.has(serial) &&
+          !this.blamed.has(serial) &&
+          !this.excused.has(serial),
       )
       .map(([serial, s]) => ({ serial, pid: s.pid }));
   }
@@ -216,7 +246,8 @@ export class SessionLedger<K> {
    * the gate knows of that it never saw nor was told about is a login too short
    * for the watcher's look. `firstSerial` and `endSerial` bound the run's logins.
    * Answers each with the files that held bookings in the time it can have
-   * happened. Each reported refusal accounts for one such serial.
+   * happened. Each reported refusal not already matched to a session the
+   * watcher saw accounts for one such serial.
    */
   loginsNeverSeen(
     firstSerial: number | undefined,
@@ -246,13 +277,17 @@ export class SessionLedger<K> {
     // stone answers, which can be after the next login was already seen.
     const distance = (m: { from: number; to: number }, at: number) =>
       at < m.from ? m.from - at : at > m.to ? at - m.to : 0;
-    for (const at of this.refusals) {
+    for (const refusal of this.refusals) {
+      if (refusal.used) continue;
       let best = -1;
       for (let i = 0; i < missed.length; i++) {
-        if (best < 0 || distance(missed[i], at) < distance(missed[best], at)) best = i;
+        if (best < 0 || distance(missed[i], refusal.at) < distance(missed[best], refusal.at))
+          best = i;
       }
-      if (best >= 0 && distance(missed[best], at) <= REFUSAL_REPORT_SLACK_MS)
+      if (best >= 0 && distance(missed[best], refusal.at) <= REFUSAL_REPORT_SLACK_MS) {
+        refusal.used = true;
         missed.splice(best, 1);
+      }
     }
     return missed.map(({ serial, running }) => ({ serial, running }));
   }

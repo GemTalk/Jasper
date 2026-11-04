@@ -181,7 +181,44 @@ describe('the session gate ledger', () => {
     });
   });
 
+  describe('a refused login', () => {
+    it('seen on the stone before it was refused is not an unreported login', () => {
+      book('a', 1, 100);
+      ledger.sample(stone(['11', 100]));
+      ledger.refused('a');
+      expect(ledger.unreportedFrom('a')).toEqual([]);
+      expect(ledger.stray()).toEqual([]);
+    });
+
+    it("excuses only one session, and only its own worker's", () => {
+      book('a', 2, 100);
+      book('b', 2, 200);
+      ledger.sample(stone(['11', 100], ['12', 100], ['13', 200]));
+      ledger.refused('a');
+      expect(ledger.unreportedFrom('a').map((u) => u.serial)).toEqual(['12']);
+      expect(ledger.unreportedFrom('b').map((u) => u.serial)).toEqual(['13']);
+    });
+
+    it('once matched to a session, no longer excuses a gap', () => {
+      book('a', 1, 100);
+      ledger.opened('a', '10');
+      ledger.sample(stone(['10', 100], ['11', 100]));
+      ledger.refused('a');
+      ledger.unreportedFrom('a');
+      now += 100;
+      ledger.opened('a', '13');
+      expect(ledger.loginsNeverSeen(9, 14).map((m) => m.serial)).toEqual([12]);
+    });
+  });
+
   describe('logins too short for the watcher to see', () => {
+    it('ignore a session the watcher saw with no serial yet', () => {
+      book('a', 1);
+      ledger.opened('a', '11');
+      ledger.sample(stone(['0', 100], ['11', 100]));
+      expect(ledger.loginsNeverSeen(10, 12)).toEqual([]);
+    });
+
     it('are found as gaps in the login serials, with the files running then', () => {
       book('a', 2);
       ledger.opened('a', '11');
@@ -194,14 +231,14 @@ describe('the session gate ledger', () => {
       book('a', 2);
       ledger.opened('a', '11');
       now += 100;
-      ledger.refused();
+      ledger.refused('a');
       ledger.opened('a', '14');
       expect(ledger.loginsNeverSeen(10, 15).map((m) => m.serial)).toEqual([13]);
     });
 
     it('are not excused by a refusal long before them', () => {
       book('a', 2);
-      ledger.refused();
+      ledger.refused('a');
       now += REFUSAL_REPORT_SLACK_MS + 1_000;
       ledger.opened('a', '11');
       now += 100;

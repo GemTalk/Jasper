@@ -19,7 +19,7 @@ const BUDGETS: Record<string, number> = {
   'src/__tests__/clearStoppedRun.integration.test.ts': 3,
   'src/__tests__/conditionalBreakpointStop.integration.test.ts': 3,
   'src/stoneSessions/__tests__/stoneSessions.integration.test.ts': 3,
-  'src/__tests__/browserQueries.integration.test.ts': 2,
+  'src/__tests__/browserQueries.integration.test.ts': 3,
   'src/__tests__/activeSession.integration.test.ts': 4,
   'src/__tests__/useIntegrationTest.integration.test.ts': 2,
   'src/__tests__/explorer/gemstoneExplorer.integration.test.ts': 2,
