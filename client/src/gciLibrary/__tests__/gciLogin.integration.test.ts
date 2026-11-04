@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { GciLibrary } from '../../gciLibrary';
 import { COMMIT_GUARD_REASON, useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { requireParsedStoneNrs, resolveTestConnection } from '../../__tests__/testConnection';
+import { retryNbLoginWhileStoneFull } from '../../__tests__/stoneFullRetry';
 import { gemNrsFor, stoneNrsFor } from '../../loginTypes';
 import { requireGciCapability } from './requireGciCapability';
 
@@ -14,8 +15,10 @@ import { requireGciCapability } from './requireGciCapability';
  * plumbing. Each entry point is called from one wrapper below, which carries
  * the scoped harness-session lint disable and arms whatever session it gets
  * back. The credentials come from `resolveTestConnection`.
- * `useIntegrationTest` is here only for its `gciLibrary` and its
- * GEMSTONE_GLOBAL_DIR handling -- the harness's own session is never used.
+ * `useIntegrationTest` is here only for its `gciLibrary`, its
+ * GEMSTONE_GLOBAL_DIR handling and its wait for a full stone at login -- the
+ * harness's own session is never used. The non-blocking logins wait for one
+ * through `retryNbLoginWhileStoneFull`.
  */
 describe('GCI login (integration)', () => {
   // gcierr.ht -- same values in every vendored release from 3.6.2 through 3.7.5.
@@ -118,36 +121,40 @@ describe('GCI login (integration)', () => {
   }
 
   async function gciTsNbLogin(signal: AbortSignal, { password = gsPassword } = {}) {
-    // eslint-disable-next-line no-restricted-syntax -- this file's subject; the one GciTsNbLogin call site, armed by finishNbLogin
-    const { session } = gci.GciTsNbLogin(
-      stoneNrs,
-      null,
-      null,
-      false,
-      gemNrs,
-      gsUser,
-      password,
-      0,
-      0,
-    );
-    return await finishNbLogin(session, signal);
+    return await retryNbLoginWhileStoneFull(async () => {
+      // eslint-disable-next-line no-restricted-syntax -- this file's subject; the one GciTsNbLogin call site, armed by finishNbLogin
+      const { session } = gci.GciTsNbLogin(
+        stoneNrs,
+        null,
+        null,
+        false,
+        gemNrs,
+        gsUser,
+        password,
+        0,
+        0,
+      );
+      return await finishNbLogin(session, signal);
+    }, signal);
   }
 
   async function gciTsNbLogin_(signal: AbortSignal) {
-    // eslint-disable-next-line no-restricted-syntax -- this file's subject; the one GciTsNbLogin_ call site, armed by finishNbLogin
-    const { session } = gci.GciTsNbLogin_(
-      stoneNrs,
-      null,
-      null,
-      false,
-      gemNrs,
-      gsUser,
-      gsPassword,
-      netldiName,
-      0,
-      0,
-    );
-    return await finishNbLogin(session, signal);
+    return await retryNbLoginWhileStoneFull(async () => {
+      // eslint-disable-next-line no-restricted-syntax -- this file's subject; the one GciTsNbLogin_ call site, armed by finishNbLogin
+      const { session } = gci.GciTsNbLogin_(
+        stoneNrs,
+        null,
+        null,
+        false,
+        gemNrs,
+        gsUser,
+        gsPassword,
+        netldiName,
+        0,
+        0,
+      );
+      return await finishNbLogin(session, signal);
+    }, signal);
   }
 
   describe('successful login', () => {

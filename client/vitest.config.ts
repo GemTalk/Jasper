@@ -1,10 +1,10 @@
 import { defineConfig } from 'vitest/config';
 import { BaseSequencer } from 'vitest/node';
 
-// Both projects shuffle test order (sequence.shuffle) to surface hidden
+// Every project shuffles test order (sequence.shuffle) to surface hidden
 // order-dependencies. To keep a shuffled failure reproducible, we pick ONE seed
-// here — in the main config, before any worker spawns — and pin it into both
-// projects so every worker shuffles identically. The seed is printed on each
+// here — in the main config, before any worker spawns — and pin it into every
+// project so every worker shuffles identically. The seed is printed on each
 // run; re-run with `VITEST_SEED=<seed>` (e.g. in CI) to replay that exact order.
 const shuffleSeed = process.env.VITEST_SEED ? Number(process.env.VITEST_SEED) : Date.now();
 console.log(
@@ -43,11 +43,42 @@ class SeededSequencer extends BaseSequencer {
   }
 }
 
-// Two projects so the VS Code Testing panel discovers both tiers from a single
+// Integration tests that each hold several sessions on the stone at once, or leave
+// stopped gems behind that take seconds to leave. Run together, they fill the
+// test stone's 10 Community-license sessions, so they get a project of their own
+// that runs them one file at a time, alongside the parallel 'default' project.
+const ONE_AT_A_TIME = [
+  'src/__tests__/activeSession.integration.test.ts',
+  'src/__tests__/clearStoppedRun.integration.test.ts',
+  'src/__tests__/conditionalBreakpointStop.integration.test.ts',
+  'src/__tests__/forceStop.integration.test.ts',
+  'src/__tests__/forceStopLogout.integration.test.ts',
+  'src/__tests__/forceStopSurfaces.integration.test.ts',
+  'src/__tests__/transcriptSink.integration.test.ts',
+  'src/stoneSessions/__tests__/stoneSessions.integration.test.ts',
+];
+
+const defaultSetup = {
+  globalSetup: ['src/__tests__/gciTraceLogs.globalSetup.ts'],
+  setupFiles: [
+    'src/__tests__/vitest.windowSetup.cjs',
+    'src/__tests__/vitest.uriSetup.ts',
+    'src/__tests__/vitest.customErrorMatchers.ts',
+    'src/__tests__/vitest.telemetrySetup.ts',
+  ],
+  sequence: {
+    shuffle: true,
+    seed: shuffleSeed,
+  },
+};
+
+// Three projects so the VS Code Testing panel discovers every tier from a single
 // config (no second config file, which the extension would also auto-detect and
 // double-count):
 //   - 'default' : the default suite (unit tests + the automatic GCI test that
-//              uses useIntegrationTest). This is what `npm test` runs.
+//              uses useIntegrationTest), less ONE_AT_A_TIME. `npm test` runs it
+//              with 'one-at-a-time'.
+//   - 'one-at-a-time' : ONE_AT_A_TIME, one file at a time.
 //   - 'gci'  : the on-demand GCI suite (src/__tests__/gci/**). It shows up in the
 //              panel and can be run interactively, but is deliberately kept OUT
 //              of `npm test` (the "test" script pins --project default). Run it with
@@ -84,18 +115,16 @@ export default defineConfig({
         test: {
           name: 'default',
           include: ['src/**/__tests__/**/*.test.ts'],
-          exclude: ['src/__tests__/gci/**'],
-          globalSetup: ['src/__tests__/gciTraceLogs.globalSetup.ts'],
-          setupFiles: [
-            'src/__tests__/vitest.windowSetup.cjs',
-            'src/__tests__/vitest.uriSetup.ts',
-            'src/__tests__/vitest.customErrorMatchers.ts',
-            'src/__tests__/vitest.telemetrySetup.ts',
-          ],
-          sequence: {
-            shuffle: true,
-            seed: shuffleSeed,
-          },
+          exclude: ['src/__tests__/gci/**', ...ONE_AT_A_TIME],
+          ...defaultSetup,
+        },
+      },
+      {
+        test: {
+          name: 'one-at-a-time',
+          include: ONE_AT_A_TIME,
+          fileParallelism: false,
+          ...defaultSetup,
         },
       },
       {

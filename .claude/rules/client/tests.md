@@ -30,7 +30,7 @@ Some handlers (e.g. in `systemBrowser.ts`) call async methods without awaiting t
 - **Positive assertion** ("the effect eventually happens", e.g. `expect(window.showTextDocument).toHaveBeenCalled()`): use `await vi.waitFor(() => expect(...).toHaveBeenCalled())`. It polls until the condition holds, returns as soon as it does, tolerates chains that span several ticks, and gives a diagnostic error on timeout. Prefer this over a blind flush.
 - **Negative assertion** ("the effect must _not_ happen", e.g. `expect(window.showTextDocument).not.toHaveBeenCalled()`): `vi.waitFor` does **not** work here — a negative expectation is already satisfied on the first poll, so it returns immediately without ever draining the fire-and-forget queue, and the bug never gets a chance to manifest. Instead, deterministically drain the queue first, then assert: `await new Promise(resolve => setTimeout(resolve, 0));`. Note this flushes only a single macrotask tick — a chain with multiple awaits/nested microtasks may need more, so **verify new negative assertions actually fail against the unfixed code before trusting them green.**
 
-Tests run in random order; the seed is printed at the top of the output. Reproduce a run by replaying that seed via `VITEST_SEED=<seed>` (a root `SeededSequencer` in `client/vitest.config.ts` reads it and pins it into both projects for a fully reproducible file order).
+Tests run in random order; the seed is printed at the top of the output. Reproduce a run by replaying that seed via `VITEST_SEED=<seed>` (a root `SeededSequencer` in `client/vitest.config.ts` reads it and pins it into every project for a fully reproducible file order).
 
 ### Typing overloaded Node/vscode mocks without `any`
 

@@ -3,6 +3,9 @@ import { createSessionGciLibrary } from '../enhancedInspector/enhancedInspectorP
 import { afterAll, afterEach, beforeAll, beforeEach, expect } from 'vitest';
 import { createNativeSocketLibrary } from '../sockets/factory';
 import { NativeSocketLibrary } from '../sockets/nativeSocketLibrary';
+import { retryLoginsWhileStoneFull } from './stoneFullRetry';
+
+retryLoginsWhileStoneFull();
 
 /** The live GCI state handed to a `useIntegrationTest` callback on every login. */
 export type GciTestContext = {
@@ -58,7 +61,10 @@ type UseIntegrationTestOptions = {
  * - Loads the GCI shared library and logs in before any tests run.
  * - Wraps each test in a transaction that is always aborted afterward,
  *   so database changes never leak between tests.
- * - Logs out and closes the library after all tests finish.
+ * - Logs out after all tests finish.
+ * - Has every blocking login made during the suite wait out a stone that is
+ *   full, since a gem logged out or stopped moments ago may still hold its
+ *   slot (see `stoneFullRetry.ts`).
  *
  * The `callback` fires after every login, starting with the one at the end of
  * `beforeAll` — use it to capture the {@link GciTestContext} fields you need

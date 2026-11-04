@@ -4,12 +4,12 @@ Jasper has four test tiers. They differ in what they can prove, what they need t
 
 ## At a glance
 
-| Tier            | What makes it one                                 | Run with                  | Needs a live stone? | Runs in CI?       |
-| --------------- | ------------------------------------------------- | ------------------------- | ------------------- | ----------------- |
-| **Unit**        | A Vitest test that needs no stone                 | `npm test`                | No                  | Yes               |
-| **Integration** | A client test that calls `useIntegrationTest`     | `npm test`                | **Yes**             | Yes — full matrix |
-| **GCI**         | Any test under `client/src/__tests__/gci/`        | `npm run test:gci`        | **Yes**             | **No** — legacy   |
-| **Acceptance**  | A `*.spec.ts` under `acceptance/tests/`           | `npm run test:acceptance` | Only some specs     | Not yet           |
+| Tier            | What makes it one                             | Run with                  | Needs a live stone? | Runs in CI?       |
+| --------------- | --------------------------------------------- | ------------------------- | ------------------- | ----------------- |
+| **Unit**        | A Vitest test that needs no stone             | `npm test`                | No                  | Yes               |
+| **Integration** | A client test that calls `useIntegrationTest` | `npm test`                | **Yes**             | Yes — full matrix |
+| **GCI**         | Any test under `client/src/__tests__/gci/`    | `npm run test:gci`        | **Yes**             | **No** — legacy   |
+| **Acceptance**  | A `*.spec.ts` under `acceptance/tests/`       | `npm run test:acceptance` | Only some specs     | Not yet           |
 
 `npm test` runs the first two, in all three workspaces. Everything else is opt-in.
 
@@ -69,16 +69,16 @@ So a passing unit or integration suite says nothing about whether the extension 
 Four collisions that cost people time:
 
 - **`npm run test:server` vs `npm run test:server:start`.** The first runs the **LSP server workspace's** unit tests (no stone involved). The second starts the **GemStone test stone**. Two unrelated meanings of "server" that happen to share a prefix.
-- **"Integration" doesn't mean "several modules together."** Here it means exactly one thing: *runs against a live stone*. A test that wires up five client modules with no stone is still a unit test.
-- **"GCI test" is ambiguous — prefer "the `gci` suite" for the legacy one.** Plenty of *integration* tests exercise the GCI bindings (`client/src/gciLibrary/__tests__/*.integration.test.ts`), and those are the ones that run in CI. "The GCI suite" / `npm run test:gci` refers only to the legacy on-demand directory.
+- **"Integration" doesn't mean "several modules together."** Here it means exactly one thing: _runs against a live stone_. A test that wires up five client modules with no stone is still a unit test.
+- **"GCI test" is ambiguous — prefer "the `gci` suite" for the legacy one.** Plenty of _integration_ tests exercise the GCI bindings (`client/src/gciLibrary/__tests__/*.integration.test.ts`), and those are the ones that run in CI. "The GCI suite" / `npm run test:gci` refers only to the legacy on-demand directory.
 - **`.test.ts` vs `.spec.ts`.** Vitest tiers use `.test.ts`; acceptance specs use `.spec.ts`. The suffix is what keeps Playwright's files out of Vitest's globs — and it's also why the repo-wide test conventions in `.claude/rules/tests.md` don't apply to acceptance specs, which follow Playwright's own idioms.
 
-One more piece of vocabulary: `client/vitest.config.ts` defines two Vitest **projects**, `default` and `gci`. `npm test` pins `--project default` (unit + integration); `npm run test:gci` pins `--project gci`. Both show up in the VS Code Testing panel, which is why they live in one config file.
+One more piece of vocabulary: `client/vitest.config.ts` defines three Vitest **projects**: `default`, `one-at-a-time` and `gci`. `npm test` pins `--project default --project one-at-a-time` (unit + integration); `one-at-a-time` holds the few integration files that use several sessions at once, which together would fill the test stone's 10 sessions, and runs them one file at a time alongside `default`. `npm run test:gci` pins `--project gci`. All three show up in the VS Code Testing panel, which is why they live in one config file.
 
 ## Choosing a tier for a new test
 
 1. Can it be proven without a stone? → **unit test**.
-2. Does it need a live stone? → **integration test**, using `useIntegrationTest`, co-located with the code. This is the default for stone-dependent work, and a case that *can* be written this way MUST be. The detailed decision guide — including the reasons that look like justifications for the `gci` suite but aren't — is in `.claude/rules/client/tests.md`.
+2. Does it need a live stone? → **integration test**, using `useIntegrationTest`, co-located with the code. This is the default for stone-dependent work, and a case that _can_ be written this way MUST be. The detailed decision guide — including the reasons that look like justifications for the `gci` suite but aren't — is in `.claude/rules/client/tests.md`.
 3. Does it need to verify UI/DOM behavior? → **unit jsdom test**.
 4. **GCI suite**: no. Add nothing here without checking the closed-directory rules first.
 
