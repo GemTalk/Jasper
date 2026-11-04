@@ -90,20 +90,44 @@ export function autoCommitRowTooltip(status: AutoCommitStatus): string {
 }
 
 /**
- * The row's icon colour. Uncoloured when off, because that is the ordinary state and a tree
- * where every row is painted says nothing; the two states worth catching out of the corner
- * of an eye get the workbench's own warning and error colours. The icon SHAPE goes on saying
- * which session is selected — colour and shape carry different things.
- *
- * This is the signal that survives a narrow sidebar. The description is the first thing VS
- * Code truncates away, and a login label like `DataCurator on gs64stone_375 (localhost)`
- * fills the row on its own at any ordinary width — so the words are the explanation, and
- * the colour is the part that is actually always on screen.
+ * The tooltip's auto-commit paragraph, in the warning colour when on and the error colour
+ * when failed. VS Code's hover keeps a span's `color` only when the MarkdownString has
+ * `supportHtml` and the value is a hex colour or a `var(--vscode-…)`.
  */
-function autoCommitIconColor(status: AutoCommitStatus): vscode.ThemeColor | undefined {
-  if (status === 'on') return new vscode.ThemeColor('problemsWarningIcon.foreground');
-  if (status === 'failed') return new vscode.ThemeColor('problemsErrorIcon.foreground');
-  return undefined;
+export function autoCommitTooltipParagraph(status: AutoCommitStatus): string {
+  const text = autoCommitRowTooltip(status);
+  const color =
+    status === 'on'
+      ? 'problemsWarningIcon-foreground'
+      : status === 'failed'
+        ? 'problemsErrorIcon-foreground'
+        : undefined;
+  return color ? `<span style="color:var(--vscode-${color});">${text}</span>` : text;
+}
+
+/**
+ * A row whose auto-commit has failed carries a red `!` badge at its right edge. The
+ * description is the first thing VS Code truncates, and a login label like
+ * `DataCurator on gs64stone_375 (localhost)` fills the row on its own, but a decoration
+ * badge stays on screen. A tree row can only be badged through a `resourceUri` and a
+ * FileDecorationProvider, so the URI carries the state, the way rowanDecorations.ts does.
+ */
+export const AUTO_COMMIT_URI_SCHEME = 'jasper-autocommit';
+
+export function autoCommitFailedUri(sessionId: number): vscode.Uri {
+  return vscode.Uri.from({ scheme: AUTO_COMMIT_URI_SCHEME, path: `/session/${sessionId}/failed` });
+}
+
+export class AutoCommitDecorationProvider implements vscode.FileDecorationProvider {
+  provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
+    if (uri.scheme !== AUTO_COMMIT_URI_SCHEME) return undefined;
+    return {
+      badge: '!',
+      color: new vscode.ThemeColor('list.errorForeground'),
+      tooltip: autoCommitRowTooltip('failed'),
+      propagate: false,
+    };
+  }
 }
 
 /**
@@ -235,12 +259,11 @@ export class GemStoneSessionItem extends vscode.TreeItem {
     tooltip.appendMarkdown(
       `**${transactionStateLabel(transactionMode, inTransaction)}**\n\n${modeDescription(transactionMode)}`,
     );
-    tooltip.appendMarkdown(`\n\n${autoCommitRowTooltip(autoCommit)}`);
+    tooltip.appendMarkdown(`\n\n${autoCommitTooltipParagraph(autoCommit)}`);
+    tooltip.supportHtml = true;
     this.tooltip = tooltip;
-    this.iconPath = new vscode.ThemeIcon(
-      isSelected ? 'debug-start' : 'plug',
-      autoCommitIconColor(autoCommit),
-    );
+    this.iconPath = new vscode.ThemeIcon(isSelected ? 'debug-start' : 'plug');
+    if (autoCommit === 'failed') this.resourceUri = autoCommitFailedUri(id);
     // The contextValue says what THIS session can do — Begin and Commit are each
     // offered only where the stone would accept them, and the auto-commit button
     // shows the session's own state — so it is not one fixed string. The row's actions survive that because their `when` clauses match

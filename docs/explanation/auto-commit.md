@@ -81,15 +81,20 @@ will reach for Abort and find nothing to abort. Hence:
 
 - **the session's own row in the Logins view**, which says the state in words — `· auto-commit ON`,
   `· auto-commit off`, `· auto-commit FAILED`;
-- **a tint on that row's icon** — amber armed, red failed, plain off. This is the part that survives
-  a narrow sidebar: the description is the first thing VS Code truncates, and a login label like
-  `DataCurator on gs64stone_375 (localhost)` fills the row on its own at any ordinary width;
+- **a red `!` badge at the row's right edge when a commit has failed**, and nothing in the other two
+  states. Failure is the state the user must not miss, and the badge survives a narrow sidebar: the
+  description is the first thing VS Code truncates, and a login label like
+  `DataCurator on gs64stone_375 (localhost)` fills the row on its own at any ordinary width. The
+  row's icon is never coloured — it says which session is selected, and a tinted triangle read as
+  noise;
 - **a button on the row** whose icon is the state — `$(sync-ignored)` off, `$(sync)` on, `$(error)`
   failed — and whose click is the switch;
-- **the same words, tint and button on the session row in the Databases panel**, which mirrors the
+- **the same words and button on the session row in the Databases panel**, the words coloured amber
+  on and red failed, which mirrors the
   tree's session actions on purpose: a session is a session, and someone who found this in one place
   should not have to wonder whether the other place can do it;
-- a tooltip on that row, and a turn-on notice, that both say Abort will not take a change back;
+- a tooltip on that row, its auto-commit sentence amber on and red failed, and a turn-on notice, that
+  both say Abort will not take a change back;
 - a prompt before arming over a transaction that already holds uncommitted work, because the next
   change would commit all of it.
 
@@ -128,7 +133,7 @@ offering Abort has had nothing committed under it.
 A commit that fails is nearly always a conflict with another session, and the next write would hit
 the same conflict. Retrying per keystroke would fail every time and bury the message, so auto-commit
 stops — but it does **not** fall back to `off`, which would say the user turned it off. `failed` is a
-third state: armed, and not committing. The indicator goes red, and the prompt offers the three
+third state: armed, and not committing. The row gets its red `!` badge, and the prompt offers the three
 things that are actually useful — abort, read the conflict report, or turn it off. A manual commit or
 abort that lands settles the transaction, as does a Begin or a transaction-mode switch (both replace
 the session's view), and auto-commit resumes on its own.

@@ -2,10 +2,21 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
-import { __resetConfig, __setConfig, TreeItemCollapsibleState } from '../__mocks__/vscode';
+import {
+  __resetConfig,
+  __setConfig,
+  ThemeColor,
+  TreeItemCollapsibleState,
+  Uri,
+} from '../__mocks__/vscode';
 import { LoginStorage } from '../loginStorage';
 import { fakeSecretStorage } from './support/secretStorage';
-import { LoginTreeProvider, GemStoneLoginItem, GemStoneSessionItem } from '../loginTreeProvider';
+import {
+  AutoCommitDecorationProvider,
+  GemStoneLoginItem,
+  GemStoneSessionItem,
+  LoginTreeProvider,
+} from '../loginTreeProvider';
 import { DEFAULT_LOGIN, GemStoneLogin } from '../loginTypes';
 import type { ActiveSession, SessionManager } from '../sessionManager';
 import {
@@ -248,21 +259,58 @@ describe('GemStoneSessionItem', () => {
     );
   });
 
-  it('tints the icon for the two states worth catching, and leaves off plain', () => {
+  it('never colours the icon, in any auto-commit state', () => {
     const session = makeSession(makeLogin(), 3);
     const colorOf = (item: GemStoneSessionItem) =>
       (item.iconPath as { color?: { id: string } }).color?.id;
 
     expect(colorOf(new GemStoneSessionItem(session, false))).toBeUndefined();
-
     registerSessionAutoCommit(3, true);
-    expect(colorOf(new GemStoneSessionItem(session, false))).toBe('problemsWarningIcon.foreground');
-
+    expect(colorOf(new GemStoneSessionItem(session, false))).toBeUndefined();
     setAutoCommitStatus(3, 'failed');
-    expect(colorOf(new GemStoneSessionItem(session, false))).toBe('problemsErrorIcon.foreground');
+    expect(colorOf(new GemStoneSessionItem(session, false))).toBeUndefined();
   });
 
-  it('keeps the icon SHAPE for the selection, so colour and shape say different things', () => {
+  it('badges the row only when a commit has failed', () => {
+    const session = makeSession(makeLogin(), 3);
+    const provider = new AutoCommitDecorationProvider();
+    const badgeOf = (item: GemStoneSessionItem) =>
+      item.resourceUri && provider.provideFileDecoration(item.resourceUri);
+
+    expect(badgeOf(new GemStoneSessionItem(session, false))).toBeUndefined();
+    registerSessionAutoCommit(3, true);
+    expect(badgeOf(new GemStoneSessionItem(session, false))).toBeUndefined();
+
+    setAutoCommitStatus(3, 'failed');
+    const badge = badgeOf(new GemStoneSessionItem(session, false));
+    expect(badge?.badge).toBe('!');
+    expect(badge?.color).toEqual(new ThemeColor('list.errorForeground'));
+    expect(badge?.tooltip).toMatch(/NOT in the repository/);
+  });
+
+  it('leaves URIs of other schemes undecorated', () => {
+    const provider = new AutoCommitDecorationProvider();
+    expect(provider.provideFileDecoration(Uri.file('/tmp/x.gs'))).toBeUndefined();
+  });
+
+  it("colours the tooltip's auto-commit paragraph when on or failed, and leaves off plain", () => {
+    const session = makeSession(makeLogin(), 3);
+    const tooltipOf = () =>
+      new GemStoneSessionItem(session, false).tooltip as { value: string; supportHtml?: boolean };
+
+    expect(tooltipOf().value).not.toContain('<span');
+    registerSessionAutoCommit(3, true);
+    expect(tooltipOf().supportHtml).toBe(true);
+    expect(tooltipOf().value).toContain(
+      '<span style="color:var(--vscode-problemsWarningIcon-foreground);">Auto-commit is ON',
+    );
+    setAutoCommitStatus(3, 'failed');
+    expect(tooltipOf().value).toContain(
+      '<span style="color:var(--vscode-problemsErrorIcon-foreground);">Auto-commit tried',
+    );
+  });
+
+  it('keeps the icon SHAPE for the selection', () => {
     const session = makeSession(makeLogin(), 3);
     registerSessionAutoCommit(3, true);
 

@@ -12,7 +12,12 @@ import { LoginStorage } from './loginStorage';
 import { getLoginPasswords } from './loginCredentials';
 import { offerToMovePlainTextPasswords } from './plainTextPasswordOffer';
 import { runStopStone } from './stopStoneManager';
-import { LoginTreeProvider, GemStoneLoginItem, GemStoneSessionItem } from './loginTreeProvider';
+import {
+  AutoCommitDecorationProvider,
+  GemStoneLoginItem,
+  GemStoneSessionItem,
+  LoginTreeProvider,
+} from './loginTreeProvider';
 import { registerTransactionStatusBar } from './transactionStatusBar';
 import { explainGciError } from './gciLibraryError';
 import {
@@ -1074,7 +1079,10 @@ export function activate(context: vscode.ExtensionContext) {
     treeDataProvider: treeProvider,
     showCollapseAll: false,
   });
-  context.subscriptions.push(treeView);
+  context.subscriptions.push(
+    treeView,
+    vscode.window.registerFileDecorationProvider(new AutoCommitDecorationProvider()),
+  );
 
   // Auto-open the Getting Started walkthrough on the first activation after
   // install (see maybeOpenGettingStarted). Fires once per machine; reset via the
