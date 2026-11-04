@@ -45,13 +45,13 @@ Use `withTransientSession` when a test needs a second, independent session (e.g.
 
 ## The session gate
 
-The test stone takes only 10 sessions at once. Before logging in, each file books the sessions it will use and waits, first come first served, until the stone has room, so a login is never refused for want of a slot (`sessionGate.globalSetup.ts`). How many a file books is set in `sessionGateClient.ts`; most files need 1.
+The test stone takes only 10 sessions at once. Before logging in, each file books the sessions it will use and waits, first come first served, until the stone has room, so a login is never refused for want of a slot (`sessionGate.globalSetup.ts`). How many a file books is set in `sessionGateClient.ts`: the most sessions it has logged in at once. Most files need 1, the default. A gem that has logged out but not yet left the stone still takes a slot, and the gate counts it as taken, but not against its file's booking.
 
 For that, the gate has to know which sessions on the stone are whose, so **every login a test makes must be reported to it**, including logins made by app code the test calls:
 
 - a second session: `reportedTransientLogin(session)`, never `session.transientLogin(...)`, which lint rejects in tests;
 - a `SessionManager` the test builds: wrap it in `reportingLoginsOf(...)`, which also reports the logins it makes for itself, such as the one that ends a stopped run's gem;
-- any other login: `reportLogin(own)`, or `reportRefusedLogin()` for a login that is meant to fail. A refused login still uses up a login serial.
+- any other login: `reportLogin(own)`, which also reports its logout, or `reportRefusedLogin()` for a login that is meant to fail. A refused login still uses up a login serial.
 
 The harness's own `login()` and `withTransientSession` report for you.
 
@@ -70,6 +70,7 @@ Declaring `allowedCommits` (see the options table above) opens that many levels 
 ## Failure modes you'll actually hit
 
 - **"this file logged in N session(s) it never reported"**: a login the gate was never told about, from the test or from app code it called, named by the test that was running when it appeared. Report it as above.
+- **"this file had N sessions logged in at once, but booked M"**: the file needs a bigger booking. The message gives the line to add.
 - **"N login(s) came and went between two looks at the stone"**, at the end of the run: the same, for a login too short for the gate to see, listed with the files running at the time. A login from outside the test run during it shows up here too.
 - **The setup banner**: if no stone is reachable, `beforeAll` fails with a banner pointing at `npm run test:server:start`, prepended to the underlying login/library-load error.
 - **`sessionCleanupFailed` poisoning the file**: if `afterEach` cleanup fails — including the commit-guard-still-armed check — every remaining test in that file fails fast in `beforeEach` rather than running against a session in an unknown state. Look at the _first_ failure in the file; it's the real one.

@@ -32,13 +32,16 @@ const BUDGETS: Record<string, number> = {
   'src/refactoring/__tests__/refactoringInstallDecoy.integration.test.ts': 2,
 };
 
+const budgetKey = (testPath: string) =>
+  testPath.slice(testPath.lastIndexOf('/client/') + '/client/'.length);
+
 export function budgetFor(testPath: string): number {
-  const rel = testPath.slice(testPath.lastIndexOf('/client/') + '/client/'.length);
-  return BUDGETS[rel] ?? 1;
+  return BUDGETS[budgetKey(testPath)] ?? 1;
 }
 
 // One per useIntegrationTest call that is running; nested describes can hold several.
 const held: Socket[] = [];
+const fileOf = new Map<Socket, string>();
 
 /** Waits until the stone has room for `n` sessions, then holds them until {@link releaseSessions}. */
 export async function acquireSessions(file: string, n: number): Promise<Socket | undefined> {
@@ -60,12 +63,22 @@ export async function acquireSessions(file: string, n: number): Promise<Socket |
     throw new Error(`Session gate: ${answer.error}`);
   }
   held.push(socket);
+  fileOf.set(socket, file);
   return socket;
 }
 
 /** Tells the gate that a session with login serial `serial` belongs to this file. */
 export function reportSession(serial: string | bigint, socket = held.at(-1)): void {
   socket?.write(JSON.stringify({ op: 'opened', serial: String(serial) }) + '\n');
+}
+
+/**
+ * Tells the gate the session with login serial `serial` has logged out, or its
+ * gem was ended. Its gem may linger on the stone a moment longer; the gate
+ * still counts it as taken, but no longer against this file's booking.
+ */
+export function reportSessionClosed(serial: string | bigint, socket = held.at(-1)): void {
+  socket?.write(JSON.stringify({ op: 'closed', serial: String(serial) }) + '\n');
 }
 
 /**
@@ -95,11 +108,20 @@ export function loginSerialOf(own: ActiveSession): string {
 }
 
 /**
- * Tells the gate that `own`, a login a test made itself, belongs to this file.
- * Every login in a test goes through here, or a file's afterAll fails it.
+ * Tells the gate that `own`, a login a test made itself, belongs to this file,
+ * and has its logout tell the gate too. Every login in a test goes through
+ * here, or a file's afterAll fails it.
  */
 export function reportLogin(own: ActiveSession): ActiveSession {
-  reportSession(loginSerialOf(own));
+  const serial = loginSerialOf(own);
+  const socket = held.at(-1);
+  reportSession(serial, socket);
+  const logout = own.logout.bind(own);
+  own.logout = () => {
+    const freed = logout();
+    if (freed) reportSessionClosed(serial, socket);
+    return freed;
+  };
   return own;
 }
 
@@ -114,38 +136,52 @@ function testRunningAt(time: number): string {
   return testsStarted.findLast((t) => t.at <= time)?.name ?? "the file's beforeAll";
 }
 
+type GateVerdict = {
+  unreported: { serial: string; firstSeen: number }[];
+  overBudget?: { booked: number; seen: number };
+};
+
 /**
- * Throws if this file's worker logged in a session the gate was never told
- * about: the watcher saw it on the stone, but no `reportSession` named it.
- * A login made by app code the test called counts too.
+ * Throws if this file broke the gate's rules: its worker logged in a session
+ * the gate was never told about (the watcher saw it on the stone, but no
+ * `reportSession` named it; a login made by app code the test called counts
+ * too), or it had more sessions logged in at once than it booked.
  */
-export async function assertEveryLoginReported(socket: Socket | undefined): Promise<void> {
+export async function assertBookingKept(socket: Socket | undefined): Promise<void> {
   if (!socket) return;
-  const answer = await new Promise<{ unreported: { serial: string; firstSeen: number }[] }>(
-    (resolve, reject) => {
-      let buffer = '';
-      const onData = (chunk: Buffer) => {
-        buffer += chunk.toString();
-        const nl = buffer.indexOf('\n');
-        if (nl < 0) return;
-        socket.off('data', onData);
-        resolve(JSON.parse(buffer.slice(0, nl)));
-      };
-      socket.on('data', onData);
-      socket.once('error', reject);
-      socket.write(JSON.stringify({ op: 'check' }) + '\n');
-    },
-  );
-  if (answer.unreported.length === 0) return;
-  const where = answer.unreported
-    .map((u) => `login serial ${u.serial}, first seen during "${testRunningAt(u.firstSeen)}"`)
-    .join('; ');
-  throw new Error(
-    `Session gate: this file logged in ${answer.unreported.length} session(s) it never reported: ${where}. ` +
-      `The gate can't count a session it doesn't know is yours, so it may give that slot to another file, ` +
-      `whose login the stone then refuses. Report each login with reportLogin (sessionGateClient.ts). ` +
-      `If app code the test calls logs in for itself, the test has to report that login too.`,
-  );
+  const answer = await new Promise<GateVerdict>((resolve, reject) => {
+    let buffer = '';
+    const onData = (chunk: Buffer) => {
+      buffer += chunk.toString();
+      const nl = buffer.indexOf('\n');
+      if (nl < 0) return;
+      socket.off('data', onData);
+      resolve(JSON.parse(buffer.slice(0, nl)));
+    };
+    socket.on('data', onData);
+    socket.once('error', reject);
+    socket.write(JSON.stringify({ op: 'check' }) + '\n');
+  });
+  const problems: string[] = [];
+  if (answer.unreported.length > 0) {
+    const where = answer.unreported
+      .map((u) => `login serial ${u.serial}, first seen during "${testRunningAt(u.firstSeen)}"`)
+      .join('; ');
+    problems.push(
+      `this file logged in ${answer.unreported.length} session(s) it never reported: ${where}. ` +
+        `The gate can't count a session it doesn't know is yours, so it may give that slot to another file, ` +
+        `whose login the stone then refuses. Report each login with reportLogin (sessionGateClient.ts). ` +
+        `If app code the test calls logs in for itself, the test has to report that login too.`,
+    );
+  }
+  if (answer.overBudget) {
+    const { booked, seen } = answer.overBudget;
+    problems.push(
+      `this file had ${seen} sessions logged in at once, but booked ${booked}. ` +
+        `Book ${seen}: add '${budgetKey(fileOf.get(socket) ?? '')}': ${seen} to BUDGETS in sessionGateClient.ts.`,
+    );
+  }
+  if (problems.length > 0) throw new Error(`Session gate: ${problems.join(' Also, ')}`);
 }
 
 /**
@@ -192,5 +228,6 @@ export function releaseSessions(socket: Socket | undefined): void {
   if (!socket) return;
   const i = held.indexOf(socket);
   if (i >= 0) held.splice(i, 1);
+  fileOf.delete(socket);
   socket.end();
 }

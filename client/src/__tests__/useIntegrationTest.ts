@@ -6,12 +6,13 @@ import { NativeSocketLibrary } from '../sockets/nativeSocketLibrary';
 import type { Socket } from 'node:net';
 import {
   acquireSessions,
-  assertEveryLoginReported,
+  assertBookingKept,
   budgetFor,
   noteTestStarted,
   releaseSessions,
   reportingRefusal,
   reportSession,
+  reportSessionClosed,
 } from './sessionGateClient';
 
 /** The live GCI state handed to a `useIntegrationTest` callback on every login. */
@@ -70,8 +71,8 @@ type UseIntegrationTestOptions = {
  *   so database changes never leak between tests.
  * - Books its sessions with the session gate before logging in, and gives
  *   them back after logging out, failing the file first if any login it made,
- *   or app code made for it, was never reported to the gate (see
- *   sessionGateClient.ts).
+ *   or app code made for it, was never reported to the gate, or if it had more
+ *   sessions on the stone at once than it booked (see sessionGateClient.ts).
  * - Logs out after all tests finish.
  *
  * The `callback` fires after every login, starting with the one at the end of
@@ -111,6 +112,7 @@ export function useIntegrationTest(
   let originalGemstoneGlobalDir: string | undefined;
   let sessionCleanupFailed = false;
   let gate: Socket | undefined;
+  let sessionSerial: bigint | undefined;
   // The transaction level a currently-open commit budget sits on top of, or
   // undefined when no budget is open right now -- nothing is nested, so no
   // floor applies. Inferred by subtraction after opening the nested levels,
@@ -158,7 +160,7 @@ export function useIntegrationTest(
       if (session) {
         logout();
       }
-      await assertEveryLoginReported(gate);
+      await assertBookingKept(gate);
     } finally {
       releaseSessions(gate);
       gate = undefined;
@@ -247,7 +249,8 @@ export function useIntegrationTest(
         ),
       gate,
     );
-    reportSession(serialOf(session), gate);
+    sessionSerial = serialOf(session);
+    reportSession(sessionSerial, gate);
     armCommitGuard(session);
 
     // A test that logs out and back in gets a session of its own: it is not
@@ -340,7 +343,8 @@ export function useIntegrationTest(
    *   shared one.
    */
   function logout() {
-    gciLibrary.logout(session);
+    const { sessionFreed } = gciLibrary.logout(session);
+    if (sessionFreed && sessionSerial !== undefined) reportSessionClosed(sessionSerial, gate);
     const loggedOutSession = session;
 
     session = undefined;
@@ -370,12 +374,15 @@ export function useIntegrationTest(
       gate,
     );
 
+    const transientSerial = serialOf(transientSession);
     try {
-      reportSession(serialOf(transientSession), gate);
+      reportSession(transientSerial, gate);
       armCommitGuard(transientSession);
       callback(transientSession);
     } finally {
-      gciLibrary.logout(transientSession);
+      if (gciLibrary.logout(transientSession).sessionFreed) {
+        reportSessionClosed(transientSerial, gate);
+      }
     }
   }
 

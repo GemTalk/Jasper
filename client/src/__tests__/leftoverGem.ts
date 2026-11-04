@@ -1,6 +1,6 @@
 import { onTestFinished } from 'vitest';
 import type { ActiveSession } from '../activeSession';
-import { loginSerialOf, reportSession } from './sessionGateClient';
+import { loginSerialOf, reportSession, reportSessionClosed } from './sessionGateClient';
 
 // Gems are told apart by their login's serial number, which GemStone never gives
 // another login, not by session number, which the next login gets once the gem
@@ -27,7 +27,8 @@ export function endGemAfterTest(admin: () => ActiveSession, own: ActiveSession):
       `| now | now := (System descriptionOfSessionSerialNum: ${serial}) at: 10. ` +
         `now > 0 ifTrue: [System stopSession: now]. 'ok'`,
     );
-    // PROTOTYPE: wait for the gem to leave, so the file stays within its session budget.
+    reportSessionClosed(serial);
+    // Waits for the gem to leave, so the next test starts without it holding a slot.
     const deadline = Date.now() + 10_000;
     while (stillOnStone(admin(), serial) && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 25));
