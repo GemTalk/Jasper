@@ -46,17 +46,17 @@ class SeededSequencer extends BaseSequencer {
 // Integration tests that each hold several sessions on the stone at once, or leave
 // stopped gems behind that take seconds to leave. Run together, they fill the
 // test stone's 10 Community-license sessions, so they get a project of their own
-// that runs them one file at a time, alongside the parallel 'default' project.
-const ONE_AT_A_TIME = [
-  'src/__tests__/activeSession.integration.test.ts',
+// that runs at most SESSION_HEAVY_LANES of them at a time, alongside the parallel
+// 'default' project. One lane at a time made CI's jobs outrun their time limits.
+const SESSION_HEAVY = [
   'src/__tests__/clearStoppedRun.integration.test.ts',
   'src/__tests__/conditionalBreakpointStop.integration.test.ts',
   'src/__tests__/forceStop.integration.test.ts',
   'src/__tests__/forceStopLogout.integration.test.ts',
   'src/__tests__/forceStopSurfaces.integration.test.ts',
-  'src/__tests__/transcriptSink.integration.test.ts',
   'src/stoneSessions/__tests__/stoneSessions.integration.test.ts',
 ];
+const SESSION_HEAVY_LANES = 2;
 
 const defaultSetup = {
   globalSetup: ['src/__tests__/gciTraceLogs.globalSetup.ts'],
@@ -76,12 +76,12 @@ const defaultSetup = {
 // config (no second config file, which the extension would also auto-detect and
 // double-count):
 //   - 'default' : the default suite (unit tests + the automatic GCI test that
-//              uses useIntegrationTest), less ONE_AT_A_TIME. `npm test` runs it
-//              with 'one-at-a-time'.
-//   - 'one-at-a-time' : ONE_AT_A_TIME, one file at a time.
+//              uses useIntegrationTest), less SESSION_HEAVY. `npm test` runs it
+//              with 'session-heavy'.
+//   - 'session-heavy' : SESSION_HEAVY, SESSION_HEAVY_LANES files at a time.
 //   - 'gci'  : the on-demand GCI suite (src/__tests__/gci/**). It shows up in the
 //              panel and can be run interactively, but is deliberately kept OUT
-//              of `npm test` (the "test" script pins --project default). Run it with
+//              of `npm test` (the "test" script pins --project default --project session-heavy). Run it with
 //              `npm run test:gci` (which pins --project gci).
 export default defineConfig({
   test: {
@@ -115,16 +115,18 @@ export default defineConfig({
         test: {
           name: 'default',
           include: ['src/**/__tests__/**/*.test.ts'],
-          exclude: ['src/__tests__/gci/**', ...ONE_AT_A_TIME],
+          exclude: ['src/__tests__/gci/**', ...SESSION_HEAVY],
           ...defaultSetup,
         },
       },
       {
         test: {
-          name: 'one-at-a-time',
-          include: ONE_AT_A_TIME,
-          fileParallelism: false,
+          name: 'session-heavy',
+          include: SESSION_HEAVY,
+          maxWorkers: SESSION_HEAVY_LANES,
           ...defaultSetup,
+          // vitest runs projects with different maxWorkers one after the other.
+          sequence: { ...defaultSetup.sequence, groupOrder: 1 },
         },
       },
       {
