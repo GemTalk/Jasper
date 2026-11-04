@@ -149,6 +149,30 @@ describe("the Classes pane's lookups (integration)", () => {
     expect(ctl.state.className).toBe(PARENT);
   });
 
+  it('keeps the selected dictionary when a click is refused during a run', () => {
+    const transient = transientSession();
+    const ctl = controllerOn(transient);
+    const globals = queries.getDictionaryNames(transient).indexOf('Globals') + 1;
+    void runFor(transient, 1);
+
+    ctl.selectDictFromTree({ dictName: 'Globals', dictIndex: globals });
+
+    expect(ctl.state.dictName).toBe('UserGlobals');
+  });
+
+  it('selects a dictionary clicked again once the run that refused it ends', async () => {
+    const transient = transientSession();
+    const ctl = controllerOn(transient);
+    const globals = queries.getDictionaryNames(transient).indexOf('Globals') + 1;
+    const run = runFor(transient, 1);
+    ctl.selectDictFromTree({ dictName: 'Globals', dictIndex: globals });
+    await run;
+
+    ctl.selectDictFromTree({ dictName: 'Globals', dictIndex: globals });
+
+    expect(ctl.state.dictName).toBe('Globals');
+  });
+
   it('selects a class clicked again once the run that refused it ends', async () => {
     const transient = transientSession();
     defineFixture(transient);

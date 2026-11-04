@@ -1107,6 +1107,31 @@ interface ClassHierarchy {
 
 const noHierarchy = (): ClassHierarchy => ({ chain: [], subs: [] });
 
+/** What the Classes pane shows on each class row of a dictionary, besides its name. */
+interface ClassRowMetadata {
+  definedIvarCounts: Map<string, number>;
+  definedClassVarCounts: Map<string, number>;
+  classVersions: Map<string, queries.ClassVersionInfo>;
+}
+
+const noClassRowMetadata = (): ClassRowMetadata => ({
+  definedIvarCounts: new Map(),
+  definedClassVarCounts: new Map(),
+  classVersions: new Map(),
+});
+
+// `read`'s answer, or an empty map when it fails for any reason but a busy session. A
+// busy refusal says nothing about the answer, so it is thrown for the caller to keep what
+// it has.
+function mapUnlessBusy<K, V>(read: () => Map<K, V>): Map<K, V> {
+  try {
+    return read();
+  } catch (e) {
+    if (queries.isBusyRefusal(e)) throw e;
+    return new Map();
+  }
+}
+
 export class ExplorerController {
   readonly state: ExplorerState = {};
   // className → category for the current dictionary; fetched once per dict.
@@ -2060,6 +2085,12 @@ export class ExplorerController {
   }
 
   selectDict(item: DictItem): void {
+    // Read everything before changing anything: a failed read throws with the previous
+    // dictionary still selected, its classes still listed, and nothing the user set up
+    // (filters, new categories, a method being written) thrown away (#843).
+    const session = this.session();
+    const entries = session ? queries.getClassesWithCategory(session, item.dictIndex) : [];
+    const metadata = this.fetchClassRowMetadata(item.dictIndex);
     this.state.dictName = item.dictName;
     this.state.dictIndex = item.dictIndex;
     this.state.classCategory = undefined;
@@ -2075,11 +2106,8 @@ export class ExplorerController {
     this.newMethodCategories.meta.clear();
     this.pendingNewMethod = undefined;
     this.clearFilters(VIEW_CATEGORIES, VIEW_CLASSES, VIEW_METHODS);
-    const session = this.session();
-    this.classCategoryEntries = session
-      ? queries.getClassesWithCategory(session, item.dictIndex)
-      : [];
-    this.loadClassRowMetadata();
+    this.classCategoryEntries = entries;
+    this.commitClassRowMetadata(metadata);
     this.categoryProvider.refresh();
     this.classProvider.refresh();
     this.hierarchyProvider.refresh();
@@ -2343,6 +2371,26 @@ export class ExplorerController {
     // NOTE: a plain class click no longer auto-opens the definition editor —
     // that cluttered the editor area with a definition tab per class browsed.
     // Use the inline "Open Definition" button (gemstone.explorer.openDefinition).
+  }
+
+  // A dictionary row the user clicked. When it can't be read (a run holds the session,
+  // say), the highlight VS Code already moved goes back to the dictionary still selected.
+  // Error handling is the same as for a clicked class row, below.
+  //
+  // The dictionary already selected is skipped: its row gets highlighted again by a
+  // refused click moving back, or by a jump that selects a dictionary and then reveals its
+  // row, and reading it again would only clear whatever was chosen under it.
+  selectDictFromTree(item: DictItem): void {
+    if (item.dictName === this.state.dictName && item.dictIndex === this.state.dictIndex) return;
+    try {
+      this.selectDict(item);
+    } catch (e) {
+      const { dictName, dictIndex } = this.state;
+      if (dictName === item.dictName && dictIndex === item.dictIndex) throw e;
+      if (dictName !== undefined && dictIndex !== undefined)
+        void this.revealCascade(this.views?.dict, new DictItem(dictName, dictIndex));
+      if (!(e instanceof queries.BrowserQueryError)) throw e;
+    }
   }
 
   // A class row the user clicked. VS Code moves the highlight before this runs, so when
@@ -2827,29 +2875,34 @@ export class ExplorerController {
   // A failed probe leaves the maps empty rather than breaking navigation — classes
   // just render flat and untagged.
   private loadClassRowMetadata(): void {
+    let metadata: ClassRowMetadata;
+    try {
+      metadata = this.fetchClassRowMetadata(this.state.dictIndex);
+    } catch {
+      metadata = noClassRowMetadata();
+    }
+    this.commitClassRowMetadata(metadata);
+  }
+
+  // The row metadata of dictionary `dictIndex`. A read a busy session refused is thrown;
+  // any other failure leaves that map empty.
+  private fetchClassRowMetadata(dictIndex: number | undefined): ClassRowMetadata {
     const session = this.session();
+    if (!session || dictIndex === undefined) return noClassRowMetadata();
+    return {
+      definedIvarCounts: mapUnlessBusy(() => queries.getDefinedInstVarCounts(session, dictIndex)),
+      definedClassVarCounts: mapUnlessBusy(() =>
+        queries.getDefinedClassVarCounts(session, dictIndex),
+      ),
+      classVersions: mapUnlessBusy(() => queries.getClassVersions(session, dictIndex)),
+    };
+  }
+
+  private commitClassRowMetadata(metadata: ClassRowMetadata): void {
     this.forgetClassRows();
-    if (!session || this.state.dictIndex === undefined) {
-      this.definedIvarCounts = new Map();
-      this.definedClassVarCounts = new Map();
-      this.classVersions = new Map();
-      return;
-    }
-    try {
-      this.definedIvarCounts = queries.getDefinedInstVarCounts(session, this.state.dictIndex);
-    } catch {
-      this.definedIvarCounts = new Map();
-    }
-    try {
-      this.definedClassVarCounts = queries.getDefinedClassVarCounts(session, this.state.dictIndex);
-    } catch {
-      this.definedClassVarCounts = new Map();
-    }
-    try {
-      this.classVersions = queries.getClassVersions(session, this.state.dictIndex);
-    } catch {
-      this.classVersions = new Map();
-    }
+    this.definedIvarCounts = metadata.definedIvarCounts;
+    this.definedClassVarCounts = metadata.definedClassVarCounts;
+    this.classVersions = metadata.classVersions;
   }
 
   // Whether a class has locally-defined instance variables.
@@ -9120,7 +9173,7 @@ export function registerGemStoneExplorer(
 
   dictView.onDidChangeSelection((e) => {
     const node = e.selection[0];
-    if (node instanceof DictItem) ctl.selectDict(node);
+    if (node instanceof DictItem) ctl.selectDictFromTree(node);
   });
   categoryView.onDidChangeSelection((e) => {
     const node = e.selection[0];
