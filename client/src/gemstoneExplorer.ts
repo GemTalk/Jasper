@@ -29,6 +29,7 @@ import {
 import * as crypto from 'crypto';
 import { SessionManager, ActiveSession } from './sessionManager';
 import * as queries from './browserQueries';
+import { NbCancelledError } from './nbRunner';
 import { ALL_METHODS_CATEGORY, SESSION_METHODS_CATEGORY } from './systemBrowser';
 import {
   escapeSelectorSlashes,
@@ -290,6 +291,12 @@ export async function openGemstoneDocument(
 // depend on that assumption can be found together — notably the safe-delete
 // self-send exclusion, which has to know WHICH method is going away.
 const EXPLORER_METHOD_ENVIRONMENT = 0;
+
+const EMPTY_CLASS_ROW: queries.ClassRowContents = {
+  instVarNames: [],
+  classVarNames: [],
+  ivarsCanMoveDown: false,
+};
 
 interface ExplorerState {
   dictName?: string;
@@ -1116,19 +1123,19 @@ export class ExplorerController {
   }
   // className → count of locally-defined instance variables, for the current
   // dictionary; fetched once per dict so class rows know whether to show an
-  // expansion chevron. Names are fetched lazily on expand and memoized here.
+  // expansion chevron. What an expanded row shows is fetched lazily, see classRow.
   private definedIvarCounts = new Map<string, number>();
-  private readonly definedIvarNamesCache = new Map<string, string[]>();
-  // className → {superclass, subclasses} from the class hierarchy, memoized so ivar rows
-  // can cheaply know whether a class has subclasses (to gate the ▼ push-down arrow) and
-  // find the push up/down reveal target. Cleared alongside the ivar caches on any reshape.
-  private readonly hierNeighborsCache = new Map<
-    string,
-    { superclass?: string; subclasses: string[] }
-  >();
-  // Same, for locally-defined CLASS variables (drives the class-variable sub-tree).
+  // Holds the fetch from the moment a class is first asked for, not just its answer: a
+  // class row and its two side rows ask at once, and must share one query. A fetch
+  // started before the class list reloaded fills nothing, since clearing drops it.
+  private readonly classRows = new Map<string, Promise<queries.ClassRowContents>>();
+  // Counts how often classRows was cleared, so a fetch still queued from before skips its
+  // query instead of making the fresh rows wait behind an answer nobody keeps.
+  private classRowsCleared = 0;
+  // Settles once the last read queued by inReadOrder has; never rejects.
+  private readsTail: Promise<void> = Promise.resolve();
+  // Same, for locally-defined CLASS variables.
   private definedClassVarCounts = new Map<string, number>();
-  private readonly definedClassVarNamesCache = new Map<string, string[]>();
   // className → {current,total} position in its class history, for classes with
   // more than one version in the current dictionary; fetched once per dict so a
   // reshaped class row can render `Foo[2/3]`. Single-version classes are absent
@@ -1825,10 +1832,8 @@ export class ExplorerController {
     this.classCategoryEntries = [];
     this.definedIvarCounts = new Map();
     this.classVersions = new Map();
-    this.definedIvarNamesCache.clear();
-    this.hierNeighborsCache.clear();
+    this.forgetClassRows();
     this.definedClassVarCounts = new Map();
-    this.definedClassVarNamesCache.clear();
     this.envLines = [];
     this.hierChain = [];
     this.hierSubs = [];
@@ -2776,9 +2781,7 @@ export class ExplorerController {
   // just render flat and untagged.
   private loadClassRowMetadata(): void {
     const session = this.session();
-    this.definedIvarNamesCache.clear();
-    this.hierNeighborsCache.clear();
-    this.definedClassVarNamesCache.clear();
+    this.forgetClassRows();
     if (!session || this.state.dictIndex === undefined) {
       this.definedIvarCounts = new Map();
       this.definedClassVarCounts = new Map();
@@ -2838,76 +2841,73 @@ export class ExplorerController {
     return this.classVersions.get(className);
   }
 
-  // Locally-defined instance variable names for a class, memoized per dict load.
-  // {superclass, immediate subclasses} for a class, memoized. Used to gate the ▼ move-down
-  // arrow (no subclasses ⇒ nowhere to move) and to pick the reveal target after a move.
-  // Resolution is first-match (not dict-scoped), matching the Explorer's Hierarchy pane; under a
-  // class name shadowed across dictionaries this only affects arrow visibility / reveal target —
-  // the refactoring itself stays correct: the source class is resolved dict-scoped, and the engine
-  // binds each chosen destination within the source's own lineage rather than by unscoped name.
-  private hierNeighbors(className: string): { superclass?: string; subclasses: string[] } {
-    const cached = this.hierNeighborsCache.get(className);
-    if (cached) return cached;
-    let neighbors: { superclass?: string; subclasses: string[] } = { subclasses: [] };
+  /**
+   * What `className`'s row in the Classes pane shows when expanded: the instance
+   * and class variables it declares itself, and whether it has subclasses (the
+   * ▼ arrow on its instance variables). Fetched without blocking VS Code and
+   * remembered until the class list reloads.
+   *
+   * A fetch refused because a run holds the session, or cancelled by the user,
+   * answers an empty row and isn't remembered, so the row fills in once asked
+   * again. Any other failure is remembered as an empty row.
+   */
+  classRow(className: string): Promise<queries.ClassRowContents> {
+    const known = this.classRows.get(className);
+    if (known) return known;
     const session = this.session();
-    if (session) {
-      try {
-        const entries = queries.getClassHierarchy(session, className);
-        const supers = entries.filter((e) => e.kind === 'superclass');
-        neighbors = {
-          // superclasses are root-first, so the immediate parent is the last one.
-          superclass: supers.length > 0 ? supers[supers.length - 1].className : undefined,
-          subclasses: entries.filter((e) => e.kind === 'subclass').map((e) => e.className),
-        };
-      } catch (e) {
-        // Treated as a leaf with no superclass. A busy session's refusal isn't
-        // memoized: once its run ends, the memo would keep the empty answer
-        // until the class list reloads.
-        if (queries.isBusyRefusal(e)) return neighbors;
-      }
-    }
-    this.hierNeighborsCache.set(className, neighbors);
-    return neighbors;
+    if (!session) return Promise.resolve(EMPTY_CLASS_ROW);
+
+    const row = this.fetchClassRow(session, className);
+    this.classRows.set(className, row);
+    return row;
   }
 
-  classHasSubclasses(className: string): boolean {
-    return this.hierNeighbors(className).subclasses.length > 0;
+  // Never rejects: every caller sharing the fetch gets a row.
+  private async fetchClassRow(
+    session: ActiveSession,
+    className: string,
+  ): Promise<queries.ClassRowContents> {
+    const dictIndex = this.state.dictIndex;
+    const cleared = this.classRowsCleared;
+    try {
+      return await this.inReadOrder(() =>
+        cleared === this.classRowsCleared
+          ? queries.classRowContents(session, className, dictIndex)
+          : Promise.resolve(EMPTY_CLASS_ROW),
+      );
+    } catch (e) {
+      if (
+        (queries.isBusyRefusal(e) || e instanceof NbCancelledError) &&
+        cleared === this.classRowsCleared
+      ) {
+        this.classRows.delete(className);
+      }
+      return EMPTY_CLASS_ROW;
+    }
   }
 
-  definedIvarNames(className: string): string[] {
-    const cached = this.definedIvarNamesCache.get(className);
-    if (cached) return cached;
-    const session = this.session();
-    let names: string[] = [];
-    if (session) {
-      try {
-        names = queries.getDefinedInstVarNames(session, className, this.state.dictIndex);
-      } catch (e) {
-        // The row simply shows no children; a busy refusal isn't memoized, see hierNeighbors.
-        if (queries.isBusyRefusal(e)) return names;
-      }
-    }
-    this.definedIvarNamesCache.set(className, names);
-    return names;
+  private forgetClassRows(): void {
+    this.classRows.clear();
+    this.classRowsCleared++;
   }
 
-  // Locally-defined class variable names for a class, memoized per dict load.
-  definedClassVarNames(className: string): string[] {
-    const cached = this.definedClassVarNamesCache.get(className);
-    if (cached) return cached;
-    const session = this.session();
-    let names: string[] = [];
-    if (session) {
-      try {
-        names = queries.getDefinedClassVarNames(session, className, this.state.dictIndex);
-      } catch (e) {
-        // The row simply shows no class-variable children; a busy refusal isn't
-        // memoized, see hierNeighbors.
-        if (queries.isBusyRefusal(e)) return names;
-      }
+  /**
+   * Runs `read` once every read queued before it has settled. The non-blocking
+   * executor refuses a query while another holds the session, so rows VS Code
+   * expands together (re-expanding the ones it remembers after a reload) would
+   * refuse each other, each with the busy notice. These are reads, so running
+   * them one at a time is all they need.
+   */
+  private async inReadOrder<T>(read: () => Promise<T>): Promise<T> {
+    const previous = this.readsTail;
+    let settled!: () => void;
+    this.readsTail = new Promise<void>((resolve) => (settled = resolve));
+    try {
+      await previous;
+      return await read();
+    } finally {
+      settled();
     }
-    this.definedClassVarNamesCache.set(className, names);
-    return names;
   }
 
   // Rename this instance variable across its defining class and every subclass,
@@ -3310,12 +3310,12 @@ export class ExplorerController {
     }
 
     // Belt and braces, not a case the tree produces: class-variable rows are built from
-    // definedClassVarNames, which lists only what the class DECLARES, so no row can name a
+    // classRow, which lists only what the class DECLARES, so no row can name a
     // variable an ancestor owns. The real guard is server-side in deleteClassVariable, which
     // also covers the query and MCP paths; this is here so that if a caller ever does hand
     // over an inherited name, it is refused with a sentence rather than silently acting on
-    // the wrong class. Uses the memoized accessor — the same list the row was built from.
-    if (!this.definedClassVarNames(className).includes(classVarName)) {
+    // the wrong class. Reads the remembered row, the same list the row was built from.
+    if (!(await this.classRow(className)).classVarNames.includes(classVarName)) {
       void vscode.window.showWarningMessage(
         `'${classVarName}' is not declared in ${className} — remove it from the class that declares it.`,
       );
@@ -3402,8 +3402,9 @@ export class ExplorerController {
     // row isn't in the rebuilt tree, which we ignore.
     const target = targets[0]?.className;
     if (target) {
+      const { ivarsCanMoveDown } = await this.classRow(target);
       this.views?.klass
-        .reveal(new IvarItem(target, item.ivarName, this.classHasSubclasses(target)), {
+        .reveal(new IvarItem(target, item.ivarName, ivarsCanMoveDown), {
           select: true,
           focus: true,
         })
@@ -3725,8 +3726,9 @@ export class ExplorerController {
     await this.refreshAfterClassReshape(className, classDict);
     // Land on the renamed variable's row on the defining class. Best-effort: reveal
     // rejects if the row isn't in the rebuilt tree, which we ignore.
+    const { ivarsCanMoveDown } = await this.classRow(className);
     this.views?.klass
-      .reveal(new IvarItem(className, newName, this.classHasSubclasses(className)), {
+      .reveal(new IvarItem(className, newName, ivarsCanMoveDown), {
         select: true,
         focus: true,
       })
@@ -8592,7 +8594,7 @@ abstract class RefreshableProvider<T> implements vscode.TreeDataProvider<T> {
   refresh(): void {
     this._onDidChangeTreeData.fire(undefined);
   }
-  abstract getChildren(element?: T): T[];
+  abstract getChildren(element?: T): T[] | Promise<T[]>;
   getTreeItem(element: T): vscode.TreeItem {
     return element as unknown as vscode.TreeItem;
   }
@@ -8668,7 +8670,7 @@ class ClassProvider extends RefreshableProvider<ClassNode | FilterChipItem> {
     if (element instanceof VarSideItem) return new ClassItem(element.className);
     return undefined;
   }
-  getChildren(element?: ClassNode | FilterChipItem): (ClassNode | FilterChipItem)[] {
+  async getChildren(element?: ClassNode | FilterChipItem): Promise<(ClassNode | FilterChipItem)[]> {
     if (this.ctl.state.dictName === undefined || element instanceof FilterChipItem) return [];
     if (!element) {
       const rows = this.ctl.classNames().map((n) => {
@@ -8688,23 +8690,17 @@ class ClassProvider extends RefreshableProvider<ClassNode | FilterChipItem> {
     // as an empty state that still hosts its inline "+" (#499). A class with none has
     // no chevron and so is never asked for children.
     if (element instanceof ClassItem) {
-      return variableSides(
-        this.ctl.definedIvarNames(element.className),
-        this.ctl.definedClassVarNames(element.className),
-      ).map((side) => new VarSideItem(element.className, side.isMeta, side.names.length === 0));
+      const row = await this.ctl.classRow(element.className);
+      return variableSides(row.instVarNames, row.classVarNames).map(
+        (side) => new VarSideItem(element.className, side.isMeta, side.names.length === 0),
+      );
     }
     // A side node expands to its variable rows (each with an inline rename pencil).
     if (element instanceof VarSideItem) {
+      const row = await this.ctl.classRow(element.className);
       return element.isMeta
-        ? this.ctl
-            .definedClassVarNames(element.className)
-            .map((cv) => new ClassVarItem(element.className, cv))
-        : this.ctl
-            .definedIvarNames(element.className)
-            .map(
-              (iv) =>
-                new IvarItem(element.className, iv, this.ctl.classHasSubclasses(element.className)),
-            );
+        ? row.classVarNames.map((cv) => new ClassVarItem(element.className, cv))
+        : row.instVarNames.map((iv) => new IvarItem(element.className, iv, row.ivarsCanMoveDown));
     }
     return [];
   }

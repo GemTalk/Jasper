@@ -86,6 +86,10 @@ import {
 } from './refactoring/queries/dictionariesShadowedByRename';
 export type { ShadowingHolder };
 import { getDefinedInstVarCounts as sharedGetDefinedInstVarCounts } from './queries/getDefinedInstVarCounts';
+import {
+  classRowContents as sharedClassRowContents,
+  type ClassRowContents,
+} from './queries/classRowContents';
 import { getDefinedClassVarNames as sharedGetDefinedClassVarNames } from './refactoring/queries/getDefinedClassVarNames';
 import { getVisibleClassVarNames as sharedGetVisibleClassVarNames } from './refactoring/queries/getVisibleClassVarNames';
 import { getDefinedClassVarCounts as sharedGetDefinedClassVarCounts } from './refactoring/queries/getDefinedClassVarCounts';
@@ -345,6 +349,7 @@ export type {
   RenameClassOptions,
 } from './refactoring/queries/previewRenameClass';
 export type { ClassVersionInfo } from './refactoring/queries/getClassVersions';
+export type { ClassRowContents } from './queries/classRowContents';
 
 const MAX_RESULT = 256 * 1024;
 
@@ -1071,6 +1076,18 @@ export function getDefinedInstVarNames(
   dict?: number | string,
 ): string[] {
   return sharedGetDefinedInstVarNames(defaultQueryExecutorUsing(session), className, dict);
+}
+
+export function classRowContents(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): Promise<ClassRowContents> {
+  return sharedClassRowContents(
+    nbQueryExecutorUsing(session, 'GemStone: Loading class contents…'),
+    className,
+    dict,
+  );
 }
 
 export function getDefinedInstVarCounts(
