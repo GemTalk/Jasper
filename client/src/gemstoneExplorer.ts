@@ -1980,10 +1980,20 @@ export class ExplorerController {
     } catch {
       listingRead = false; /* keep stale on failure */
     }
-    this.loadClassRowMetadata();
-    // Only against a listing that was actually re-read: a failed fetch leaves the stale one,
-    // which says nothing about what is bound now.
-    if (listingRead) this.dropVanishedSelection();
+    // Expanded class rows are read again when next expanded, whatever the reads below find:
+    // what they remembered is exactly what a refresh distrusts.
+    this.forgetClassRows();
+    if (listingRead) {
+      // The rows' details describe the listing, so they are re-read only with it.
+      try {
+        this.commitClassRowMetadata(this.fetchClassRowMetadata(currentDictIndex));
+      } catch {
+        /* a busy session refused it: keep stale */
+      }
+      // Only against a listing that was actually re-read: a failed fetch leaves the stale
+      // one, which says nothing about what is bound now.
+      this.dropVanishedSelection();
+    }
     const stillSelected = this.state.className;
     if (stillSelected !== undefined) {
       try {
@@ -1996,7 +2006,11 @@ export class ExplorerController {
       } catch {
         /* keep stale on failure */
       }
-      this.loadHierarchy();
+      try {
+        this.commitHierarchy(this.fetchHierarchy(stillSelected));
+      } catch {
+        /* a busy session refused it: keep stale */
+      }
     }
 
     this.dictProvider.refresh();

@@ -173,6 +173,18 @@ describe("the Classes pane's lookups (integration)", () => {
     expect(ctl.state.dictName).toBe('Globals');
   });
 
+  it('keeps the Hierarchy pane when a refresh is refused during a run', async () => {
+    const transient = transientSession();
+    defineFixture(transient);
+    const ctl = controllerOn(transient);
+    ctl.selectClass(new ClassItem(CHILD), false);
+    void runFor(transient, 1);
+
+    await ctl.refreshRetainingSelection({ reveal: false });
+
+    expect(ctl.hierarchyChildren()).not.toEqual([]);
+  });
+
   it('selects a class clicked again once the run that refused it ends', async () => {
     const transient = transientSession();
     defineFixture(transient);
