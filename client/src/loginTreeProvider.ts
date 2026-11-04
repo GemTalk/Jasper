@@ -3,7 +3,9 @@ import { GemStoneLogin, loginLabel, sessionsForLogin } from './loginTypes';
 import { LoginStorage } from './loginStorage';
 import { ActiveSession, SessionManager } from './sessionManager';
 import {
+  AUTO_COMMIT_NEEDS_AUTO_BEGIN,
   AutoCommitStatus,
+  autoCommitBlockedByMode,
   getAutoCommitStatus,
   onAutoCommitChanged,
 } from './autoCommit/autoCommitState';
@@ -11,6 +13,7 @@ import {
   canBegin,
   canCommit,
   modeDescription,
+  TransactionMode,
   transactionStateLabel,
   transactionStateLabelIfKnown,
 } from './queries/transactionMode';
@@ -72,7 +75,7 @@ export function autoCommitRowSuffix(status: AutoCommitStatus): string {
 }
 
 /** What the row's tooltip adds under the state — the consequence, not the restatement. */
-export function autoCommitRowTooltip(status: AutoCommitStatus): string {
+export function autoCommitRowTooltip(status: AutoCommitStatus, mode?: TransactionMode): string {
   if (status === 'on') {
     return (
       'Auto-commit is ON: every change is committed as soon as it is made, and Abort will ' +
@@ -87,7 +90,8 @@ export function autoCommitRowTooltip(status: AutoCommitStatus): string {
       'conflicted, or turn auto-commit off.'
     );
   }
-  return 'Auto-commit is off: changes stay in this session’s transaction until you commit.';
+  const off = 'Auto-commit is off: changes stay in this session’s transaction until you commit.';
+  return autoCommitBlockedByMode(mode) ? `${off} ${AUTO_COMMIT_NEEDS_AUTO_BEGIN}` : off;
 }
 
 /**
@@ -95,8 +99,11 @@ export function autoCommitRowTooltip(status: AutoCommitStatus): string {
  * when failed. VS Code's hover keeps a span's `color` only when the MarkdownString has
  * `supportHtml` and the value is a hex colour or a `var(--vscode-…)`.
  */
-export function autoCommitTooltipParagraph(status: AutoCommitStatus): string {
-  const text = autoCommitRowTooltip(status);
+export function autoCommitTooltipParagraph(
+  status: AutoCommitStatus,
+  mode?: TransactionMode,
+): string {
+  const text = autoCommitRowTooltip(status, mode);
   const color =
     status === 'on'
       ? 'problemsWarningIcon-foreground'
@@ -260,7 +267,7 @@ export class GemStoneSessionItem extends vscode.TreeItem {
     tooltip.appendMarkdown(
       `**${transactionStateLabel(transactionMode, inTransaction)}**\n\n${modeDescription(transactionMode)}`,
     );
-    tooltip.appendMarkdown(`\n\n${autoCommitTooltipParagraph(autoCommit)}`);
+    tooltip.appendMarkdown(`\n\n${autoCommitTooltipParagraph(autoCommit, transactionMode)}`);
     tooltip.supportHtml = true;
     this.tooltip = tooltip;
     this.iconPath = new vscode.ThemeIcon(isSelected ? 'debug-start' : 'plug');

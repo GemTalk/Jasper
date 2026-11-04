@@ -25,7 +25,14 @@ import { ActiveSession, SessionManager } from '../sessionManager';
 import * as queries from '../browserQueries';
 import { getGciLog, logInfo } from '../gciLog';
 import { conflictReport, hasConflictDetail } from '../queries/transactionConflicts';
-import { getAutoCommitStatus, setAutoCommitStatus } from './autoCommitState';
+import {
+  AUTO_COMMIT_NEEDS_AUTO_BEGIN,
+  autoCommitBlockedByMode,
+  getAutoCommitStatus,
+  setAutoCommitStatus,
+} from './autoCommitState';
+import { AutoCommitFailureKind } from './autoCommitRunner';
+import { modeLabel } from '../queries/transactionMode';
 
 export const TOGGLE_AUTO_COMMIT_COMMAND = 'gemstone.autoCommit.toggle';
 
@@ -39,6 +46,46 @@ export function autoCommitDefaultForNewSessions(): boolean {
     .get<boolean>(AUTO_COMMIT_DEFAULT_SETTING, false);
 }
 
+const SWITCH_TO_AUTO_BEGIN = 'Switch to Auto-Begin and Turn On…';
+
+/**
+ * Say why auto-commit cannot run in this session's mode, and offer to switch the mode and
+ * then turn auto-commit on — what the user was asking for in the first place.
+ */
+async function explainNeedsAutoBegin(session: ActiveSession, lead: string): Promise<void> {
+  const choice = await vscode.window.showWarningMessage(
+    `${lead} ${AUTO_COMMIT_NEEDS_AUTO_BEGIN}`,
+    SWITCH_TO_AUTO_BEGIN,
+  );
+  if (choice !== SWITCH_TO_AUTO_BEGIN) return;
+  // The ordinary mode switch, which asks before the abort it costs.
+  await vscode.commands.executeCommand(
+    'gemstone.setTransactionMode',
+    { activeSession: session },
+    'autoBegin',
+  );
+  // Declined, or refused by the stone: the mode says which, and only Auto-Begin may arm.
+  if (session.transactionMode !== 'autoBegin') return;
+  if (getAutoCommitStatus(session.id) === 'off') await armAutoCommit(session);
+}
+
+/**
+ * The session's mode moved out of Auto-Begin (a mode switch, or code that set it), so an
+ * armed auto-commit is turned off rather than left to fail on its next commit.
+ */
+export function autoCommitTransactionModeChanged(session: ActiveSession): void {
+  if (getAutoCommitStatus(session.id) === 'off') return;
+  if (!autoCommitBlockedByMode(session.transactionMode)) return;
+  setAutoCommitStatus(session.id, 'off');
+  logInfo(
+    `[autoCommit] session ${session.id}: turned off — ${modeLabel(session.transactionMode)} mode`,
+  );
+  void vscode.window.showInformationMessage(
+    `Auto-commit is OFF for session ${session.id}, now in ${modeLabel(session.transactionMode)} ` +
+      `mode. ${AUTO_COMMIT_NEEDS_AUTO_BEGIN}`,
+  );
+}
+
 const ARM_ANYWAY = 'Turn On Anyway';
 const COMMIT_FIRST = 'Commit Now, Then Turn On';
 const MAKE_DEFAULT = 'Make This the Default';
@@ -48,6 +95,13 @@ const MAKE_DEFAULT = 'Make This the Default';
  * uncommitted work. Answers whether it ended up armed.
  */
 async function armAutoCommit(session: ActiveSession): Promise<boolean> {
+  if (autoCommitBlockedByMode(session.transactionMode)) {
+    await explainNeedsAutoBegin(
+      session,
+      `Session ${session.id} is in ${modeLabel(session.transactionMode)} mode.`,
+    );
+    return false;
+  }
   // `undefined` means the probe itself failed, and it asks the same question: the point of
   // the prompt is that the user cannot see what is staged, and a failed probe leaves them
   // no better off than a positive one. Silence here would be the one wrong answer.
@@ -138,8 +192,11 @@ export async function toggleAutoCommit(
 ): Promise<void> {
   const target = targetSession(sessionManager, session);
   if (!target) return;
-  if (getAutoCommitStatus(target.id) === 'off') await armAutoCommit(target);
-  else disarmAutoCommit(target);
+  // Re-read so a mode changed by code since the last read cannot slip past the mode check.
+  if (getAutoCommitStatus(target.id) === 'off') {
+    sessionManager.refreshTransactionState(target.id);
+    await armAutoCommit(target);
+  } else disarmAutoCommit(target);
 }
 
 /** The failed row's error button: the ways to resolve the failure. */
@@ -238,7 +295,20 @@ export async function offerAutoCommitRecovery(
 }
 
 /** The handler installed on the runner: report the failure and offer the way out. */
-export function reportAutoCommitFailure(session: ActiveSession, reason: string): void {
+export function reportAutoCommitFailure(
+  session: ActiveSession,
+  reason: string,
+  kind: AutoCommitFailureKind,
+): void {
+  if (kind === 'notInTransaction') {
+    // Not a conflict, so the conflict prompt would mislead; the runner has turned it off.
+    void explainNeedsAutoBegin(
+      session,
+      `Session ${session.id}: auto-commit could not commit because the session is not in a ` +
+        'transaction, and has been turned off. Your changes are NOT in the repository.',
+    );
+    return;
+  }
   void offerAutoCommitRecovery(session, reason, abortHandler);
 }
 

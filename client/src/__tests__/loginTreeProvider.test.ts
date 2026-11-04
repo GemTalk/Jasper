@@ -16,6 +16,7 @@ import {
   GemStoneLoginItem,
   GemStoneSessionItem,
   LoginTreeProvider,
+  autoCommitRowTooltip,
 } from '../loginTreeProvider';
 import { DEFAULT_LOGIN, GemStoneLogin } from '../loginTypes';
 import type { ActiveSession, SessionManager } from '../sessionManager';
@@ -415,5 +416,18 @@ describe('GemStoneSessionItem', () => {
     const before = new GemStoneSessionItem(sessionInMode('manualBegin', false), true);
     const after = new GemStoneSessionItem(sessionInMode('manualBegin', true), true);
     expect(before.id).not.toBe(after.id);
+  });
+});
+
+describe('the auto-commit tooltip outside Auto-Begin', () => {
+  it.each(['manualBegin', 'transactionless'] as const)(
+    'says why auto-commit cannot be turned on in %s mode',
+    (mode) => {
+      expect(autoCommitRowTooltip('off', mode)).toMatch(/needs Auto-Begin/);
+    },
+  );
+
+  it('says nothing about the mode in Auto-Begin, where it can be turned on', () => {
+    expect(autoCommitRowTooltip('off', 'autoBegin')).not.toMatch(/Auto-Begin/);
   });
 });

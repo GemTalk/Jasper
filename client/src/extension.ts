@@ -22,10 +22,12 @@ import { registerTransactionStatusBar } from './transactionStatusBar';
 import { explainGciError } from './gciLibraryError';
 import {
   TRANSACTION_MODES,
+  isTransactionMode,
   canBegin,
   canCommit,
   modeDescription,
   modeLabel,
+  TransactionMode,
   transactionStateLabel,
 } from './queries/transactionMode';
 import { showConfigurationCommand } from './configuration/showConfigurationCommand';
@@ -138,10 +140,17 @@ import { undoLastCommand } from './undo/undoLastCommand';
 import { FS_CHANGED_COMMAND, SEARCH_RESYNC_COMMAND } from './undo/afterUndo';
 import { resyncEditorsAfterAbort } from './afterAbort';
 import { clearUndoStack, onUndoStackChanged } from './undo/undoStack';
-import { forgetSessionAutoCommit, registerSessionAutoCommit } from './autoCommit/autoCommitState';
+import {
+  AUTO_COMMIT_NEEDS_AUTO_BEGIN,
+  autoCommitBlockedByMode,
+  forgetSessionAutoCommit,
+  getAutoCommitStatus,
+  registerSessionAutoCommit,
+} from './autoCommit/autoCommitState';
 import { setAutoCommitFailureHandler } from './autoCommit/autoCommitRunner';
 import {
   autoCommitDefaultForNewSessions,
+  autoCommitTransactionModeChanged,
   autoCommitTransactionSettled,
   reportAutoCommitFailure,
   setAutoCommitAbortHandler,
@@ -223,7 +232,7 @@ import { ExportManager } from './exportManager';
 import { FileInManager } from './fileInManager';
 import { showTranscript, getTranscriptChannel } from './transcriptChannel';
 import { getLogpointChannel, showLogpointChannel } from './debugger/logpointChannel';
-import { getGciLog, logError, logWarning } from './gciLog';
+import { getGciLog, logError, logInfo, logWarning } from './gciLog';
 import { commitFailureMessage, isCommitConflict } from './commitFailure';
 import { CODE_LENS_SELECTORS, GemStoneCodeLensProvider } from './gemstoneCodeLensProvider';
 import * as queries from './browserQueries';
@@ -1696,11 +1705,22 @@ export function activate(context: vscode.ExtensionContext) {
   // later session reusing the id never inherits an armed state nobody asked for. Seeded on
   // `onDidAddSession`, which fires AFTER the post-login abort — arming before that would
   // make committing the login's own spurious uncommitted state auto-commit's first act.
+  // The mode has been read by then, and a session outside Auto-Begin starts off whatever the
+  // default says (see autoCommitBlockedByMode).
   context.subscriptions.push(
-    sessionManager.onDidAddSession((id: number) =>
-      registerSessionAutoCommit(id, autoCommitDefaultForNewSessions()),
-    ),
+    sessionManager.onDidAddSession((id: number) => {
+      const mode = sessionManager.getSession(id)?.transactionMode;
+      const wanted = autoCommitDefaultForNewSessions();
+      registerSessionAutoCommit(id, wanted && !autoCommitBlockedByMode(mode));
+      if (wanted && autoCommitBlockedByMode(mode)) {
+        logInfo(`[autoCommit] session ${id}: left off — logged in to ${modeLabel(mode)} mode`);
+      }
+    }),
     sessionManager.onDidRemoveSession((id: number) => forgetSessionAutoCommit(id)),
+    sessionManager.onDidChangeTransactionState((id: number) => {
+      const session = sessionManager.getSession(id);
+      if (session) autoCommitTransactionModeChanged(session);
+    }),
   );
   // The runner is deliberately free of `vscode` so the write path can call it; these two
   // hand it the workbench it needs — how to tell the user a commit failed, and how to run
@@ -2026,22 +2046,27 @@ export function activate(context: vscode.ExtensionContext) {
    * way to ask it not to — so the confirmation says so, and says how much is at
    * stake when the session holds uncommitted work. Cancelling changes nothing.
    */
-  const setTransactionModeFor = async (session: ActiveSession): Promise<void> => {
+  const setTransactionModeFor = async (
+    session: ActiveSession,
+    target?: TransactionMode,
+  ): Promise<void> => {
     sessionManager.refreshTransactionState(session.id);
     const current = session.transactionMode;
 
-    const pick = await vscode.window.showQuickPick(
-      TRANSACTION_MODES.map((mode) => ({
-        label: mode === current ? `$(check) ${modeLabel(mode)}` : modeLabel(mode),
-        description: mode === current ? 'current' : undefined,
-        detail: modeDescription(mode),
-        mode,
-      })),
-      {
-        placeHolder: `Session ${session.id}: transaction mode (currently ${modeLabel(current)})`,
-        matchOnDetail: true,
-      },
-    );
+    const pick = target
+      ? { mode: target }
+      : await vscode.window.showQuickPick(
+          TRANSACTION_MODES.map((mode) => ({
+            label: mode === current ? `$(check) ${modeLabel(mode)}` : modeLabel(mode),
+            description: mode === current ? 'current' : undefined,
+            detail: modeDescription(mode),
+            mode,
+          })),
+          {
+            placeHolder: `Session ${session.id}: transaction mode (currently ${modeLabel(current)})`,
+            matchOnDetail: true,
+          },
+        );
     if (!pick || pick.mode === current) return;
 
     const choice = await vscode.window.showWarningMessage(
@@ -2051,7 +2076,11 @@ export function activate(context: vscode.ExtensionContext) {
         detail: `${loginLabel(session.login)}\n\n${transactionModeSwitchDetail(
           queries.sessionNeedsCommit(session),
           fileInManager.hasUnsavedChanges(session),
-        )}`,
+        )}${
+          getAutoCommitStatus(session.id) !== 'off' && autoCommitBlockedByMode(pick.mode)
+            ? `\n\nAuto-commit will be turned off. ${AUTO_COMMIT_NEEDS_AUTO_BEGIN}`
+            : ''
+        }`,
       },
       'Switch Mode',
     );
@@ -2613,11 +2642,17 @@ export function activate(context: vscode.ExtensionContext) {
       return beginSession(session);
     }),
 
-    vscode.commands.registerCommand('gemstone.setTransactionMode', (item?: GemStoneSessionItem) => {
-      const session = sessionForBeginOrModeCommand(item);
-      if (!session) return;
-      return setTransactionModeFor(session);
-    }),
+    // A mode name second skips the picker; auto-commit's "Switch to Auto-Begin" passes one.
+    // Checked, because a tree's context menu passes its selected rows there.
+    vscode.commands.registerCommand(
+      'gemstone.setTransactionMode',
+      (item?: GemStoneSessionItem, mode?: unknown) => {
+        const session = sessionForBeginOrModeCommand(item);
+        if (!session) return;
+        const target = typeof mode === 'string' && isTransactionMode(mode) ? mode : undefined;
+        return setTransactionModeFor(session, target);
+      },
+    ),
 
     // Explorer toolbar variants: act on the currently selected session so Commit /
     // Abort are reachable without switching to the Sessions view. They carry the

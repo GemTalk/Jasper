@@ -151,9 +151,24 @@ the session's view), and auto-commit resumes on its own.
 Jadeite draws the same three-state distinction, with the same abort-or-see-the-conflicts choice, and
 for the same reasons; the vocabulary here is deliberately close to it.
 
-## What it assumes about transaction mode
+## It needs Auto-Begin
 
-Auto-commit assumes the ordinary manual transaction mode a Jasper session logs in to. Transaction
-mode being visible and settable is separate work
-([#256](https://github.com/GemTalk/Jasper/issues/256)); when that lands, the two will need to agree
-about what auto-commit means in a mode where the session is not in a transaction to begin with.
+Auto-commit only works in Auto-Begin, GemStone's default transaction mode, where a commit starts
+the next transaction at once. In Manual and Transactionless, checked on 3.6.2 and 3.7.5:
+
+- a commit leaves the session **outside** a transaction;
+- outside one, a change still lands, but a commit is refused with error 2030;
+- a Begin **throws that change away** (pinned in `transactionMode.integration.test.ts`).
+
+So in either mode auto-commit would strand every change after at most one commit. Beginning a new
+transaction after each commit would only turn Manual into Auto-Begin behind the user's back, which
+defeats the reason they chose it. Instead:
+
+- turning auto-commit on outside Auto-Begin is refused, with a button that switches the mode to
+  Auto-Begin (the switch still asks before its abort) and then turns auto-commit on;
+- a session that leaves Auto-Begin (the mode switch, or code that sets the mode) has auto-commit
+  turned off, and the switch's confirmation says so first;
+- a new session that logs in outside Auto-Begin starts off, whatever the default says, and its
+  row's tooltip explains why;
+- should a commit still be refused with 2030, auto-commit turns off and says the session is not in
+  a transaction, rather than going to `failed` and blaming a conflict.

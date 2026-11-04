@@ -100,6 +100,22 @@ describe('autoCommitAfterWrite', () => {
     expect(handler.mock.calls[0][1]).toBe('commit failed - conflicts');
   });
 
+  it('turns auto-commit off, not failed, when the session is not in a transaction', () => {
+    // Error 2030: the session left Auto-Begin, so no abort or retry would help.
+    const handler = vi.fn();
+    setAutoCommitFailureHandler(handler);
+    const notInTransaction = { success: false, err: { number: 2030, message: 'not in txn' } };
+    const session = makeSession(
+      1,
+      vi.fn(() => notInTransaction),
+    );
+    registerSessionAutoCommit(1, true);
+
+    autoCommitAfterWrite(session, 'test write');
+    expect(getAutoCommitStatus(1)).toBe('off');
+    expect(handler.mock.calls[0][2]).toBe('notInTransaction');
+  });
+
   it('treats a throwing commit as a failure rather than letting it escape', () => {
     const session = makeSession(
       1,

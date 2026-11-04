@@ -25,8 +25,10 @@ import {
   AUTO_COMMIT_DEFAULT_SETTING,
   autoCommitDefaultForNewSessions,
   autoCommitTransactionSettled,
+  autoCommitTransactionModeChanged,
   offerAutoCommitRecovery,
   recoverAutoCommit,
+  reportAutoCommitFailure,
   toggleAutoCommit,
 } from '../autoCommitUi';
 import { __resetConfig, __setConfig } from '../../__mocks__/vscode';
@@ -44,7 +46,10 @@ function makeSession(id = 1, commit = vi.fn(() => OK)): ActiveSession {
 }
 
 function managerFor(session: ActiveSession | undefined): SessionManager {
-  return { getSelectedSession: () => session } as unknown as SessionManager;
+  return {
+    getSelectedSession: () => session,
+    refreshTransactionState: vi.fn(),
+  } as unknown as SessionManager;
 }
 
 const warn = vscode.window.showWarningMessage as unknown as ReturnType<typeof vi.fn>;
@@ -322,5 +327,82 @@ describe('the default for new sessions', () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(autoCommitDefaultForNewSessions()).toBe(false);
+  });
+});
+
+describe('transaction modes other than Auto-Begin', () => {
+  it.each(['manualBegin', 'transactionless'] as const)(
+    'refuses to turn on in %s mode, says why, and offers the mode switch',
+    async (mode) => {
+      const session = makeSession();
+      session.transactionMode = mode;
+      warn.mockResolvedValue(undefined);
+
+      await toggleAutoCommit(managerFor(session));
+
+      expect(getAutoCommitStatus(1)).toBe('off');
+      expect(warn.mock.calls[0][0]).toMatch(/needs Auto-Begin/);
+      expect(warn.mock.calls[0]).toContain('Switch to Auto-Begin and Turn On…');
+    },
+  );
+
+  it('switches to Auto-Begin and then turns auto-commit on, when asked to', async () => {
+    const session = makeSession();
+    session.transactionMode = 'manualBegin';
+    warn.mockResolvedValue('Switch to Auto-Begin and Turn On…');
+    vi.mocked(vscode.commands.executeCommand).mockImplementationOnce(async () => {
+      session.transactionMode = 'autoBegin';
+    });
+
+    await toggleAutoCommit(managerFor(session));
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'gemstone.setTransactionMode',
+      { activeSession: session },
+      'autoBegin',
+    );
+    expect(getAutoCommitStatus(1)).toBe('on');
+  });
+
+  it('leaves auto-commit off when the mode switch is declined', async () => {
+    const session = makeSession();
+    session.transactionMode = 'manualBegin';
+    warn.mockResolvedValue('Switch to Auto-Begin and Turn On…');
+    vi.mocked(vscode.commands.executeCommand).mockImplementationOnce(async () => undefined);
+
+    await toggleAutoCommit(managerFor(session));
+
+    expect(getAutoCommitStatus(1)).toBe('off');
+  });
+
+  it('turns an armed session off when its mode leaves Auto-Begin', () => {
+    const session = makeSession();
+    registerSessionAutoCommit(1, true);
+    session.transactionMode = 'manualBegin';
+
+    autoCommitTransactionModeChanged(session);
+
+    expect(getAutoCommitStatus(1)).toBe('off');
+    expect(inform.mock.calls.at(-1)?.[0]).toMatch(/OFF .* Manual mode/);
+  });
+
+  it('leaves an armed session alone while it stays in Auto-Begin', () => {
+    const session = makeSession();
+    registerSessionAutoCommit(1, true);
+    session.transactionMode = 'autoBegin';
+
+    autoCommitTransactionModeChanged(session);
+
+    expect(getAutoCommitStatus(1)).toBe('on');
+  });
+
+  it('explains a commit refused outside a transaction, instead of offering the conflict prompt', () => {
+    const session = makeSession();
+    warn.mockResolvedValue(undefined);
+
+    reportAutoCommitFailure(session, 'not in txn', 'notInTransaction');
+
+    expect(warn.mock.calls[0][0]).toMatch(/not in a transaction/);
+    expect(warn.mock.calls[0]).not.toContain('Show Conflicts');
   });
 });

@@ -20,6 +20,7 @@
  * Keeping this layer plain means the write path can consult it without pulling the
  * workbench into `browserQueries`, whose tests mock barely any of it.
  */
+import type { TransactionMode } from '../queries/transactionMode';
 
 /**
  * What auto-commit is doing for one session.
@@ -31,6 +32,7 @@
  * turned it off) and says so loudly until the transaction is sorted out. `Jadeite` draws
  * the same three-state distinction, and for the same reason.
  */
+
 export type AutoCommitStatus = 'off' | 'on' | 'failed';
 
 /** Told whenever any session's status changes, so the displays can redraw. */
@@ -145,3 +147,18 @@ export function _resetAutoCommitStateForTests(): void {
   pending.clear();
   listeners.clear();
 }
+
+/**
+ * Auto-commit only works in Auto-Begin. In Manual and Transactionless a commit leaves the
+ * session outside a transaction, where a change still lands but a commit is refused (error
+ * 2030), and a Begin throws that change away — so after at most one commit, every change
+ * would be stranded. Checked on 3.6.2 and 3.7.5 (`transactionMode.integration.test.ts`).
+ * An unread mode does not block: the runner's 2030 handling still catches it.
+ */
+export function autoCommitBlockedByMode(mode: TransactionMode | undefined): boolean {
+  return mode !== undefined && mode !== 'autoBegin';
+}
+
+export const AUTO_COMMIT_NEEDS_AUTO_BEGIN =
+  'Auto-commit needs Auto-Begin mode: in Manual and Transactionless a commit leaves the ' +
+  'session outside a transaction, where nothing can be committed.';

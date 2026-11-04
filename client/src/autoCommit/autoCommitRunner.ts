@@ -26,6 +26,7 @@
  * `setAutoCommitFailureHandler` and `autoCommitUi.ts`.
  */
 import { ActiveSession } from '../sessionManager';
+import { ERR_NOT_IN_TRANSACTION } from '../queries/transactionMode';
 import { logInfo, logWarning } from '../gciLog';
 import {
   clearAutoCommitPending,
@@ -48,8 +49,18 @@ export type AutoCommitOutcome =
   | 'committed'
   | 'failed';
 
+/**
+ * Why a commit failed. `notInTransaction` (error 2030) means the session left Auto-Begin, so
+ * no retry or abort will help and auto-commit turns off rather than going to `failed`.
+ */
+export type AutoCommitFailureKind = 'refused' | 'notInTransaction';
+
 /** How the user is told a commit failed. Installed once, at activation. */
-export type AutoCommitFailureHandler = (session: ActiveSession, reason: string) => void;
+export type AutoCommitFailureHandler = (
+  session: ActiveSession,
+  reason: string,
+  kind: AutoCommitFailureKind,
+) => void;
 
 let failureHandler: AutoCommitFailureHandler | undefined;
 
@@ -61,11 +72,15 @@ export function setAutoCommitFailureHandler(handler: AutoCommitFailureHandler | 
   failureHandler = handler;
 }
 
-function reportFailure(session: ActiveSession, reason: string): void {
-  setAutoCommitStatus(session.id, 'failed');
+function reportFailure(
+  session: ActiveSession,
+  reason: string,
+  kind: AutoCommitFailureKind = 'refused',
+): void {
+  setAutoCommitStatus(session.id, kind === 'notInTransaction' ? 'off' : 'failed');
   logWarning(`[autoCommit] session ${session.id}: commit failed — ${reason}`);
   try {
-    failureHandler?.(session, reason);
+    failureHandler?.(session, reason, kind);
   } catch {
     /* a prompt that throws must not fail the edit that triggered the commit */
   }
@@ -83,7 +98,11 @@ function commitNow(session: ActiveSession, what: string): AutoCommitOutcome {
       logInfo(`[autoCommit] session ${session.id}: committed (${what})`);
       return 'committed';
     }
-    reportFailure(session, err.message || `error ${err.number}`);
+    reportFailure(
+      session,
+      err.message || `error ${err.number}`,
+      err.number === ERR_NOT_IN_TRANSACTION ? 'notInTransaction' : 'refused',
+    );
     return 'failed';
   } catch (e: unknown) {
     reportFailure(session, e instanceof Error ? e.message : String(e));
