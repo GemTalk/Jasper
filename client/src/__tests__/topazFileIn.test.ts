@@ -735,12 +735,10 @@ name
     expect(commit).toHaveBeenCalledTimes(1);
   });
 
-  it('still commits the part that compiled when a method in the file did not', () => {
+  it('commits nothing when a method in the file did not compile', () => {
     // `fileInClass` reports a bad method against its line and carries on by design — it does
-    // not throw — so the deferred region closes normally and commits what did go in. That is
-    // the right answer: the rest is real work, and leaving it uncommitted on a session the
-    // user armed would be the surprise. (The commits-nothing-on-a-throw rule is the deferred
-    // region's own, pinned in autoCommit/__tests__/autoCommitRunner.test.ts.)
+    // not throw — so it tells the deferred region it failed, and the part that compiled is left
+    // uncommitted for the user to keep or abort.
     registerSessionAutoCommit(1, true);
     const session = createMockSession();
     let first = true;
@@ -756,7 +754,7 @@ name
     const result = fileInClass(session, TWO_METHODS);
 
     expect(result.success).toBe(false);
-    expect(commit).toHaveBeenCalledTimes(1);
+    expect(commit).not.toHaveBeenCalled();
   });
 
   it('commits nothing on a session that never armed it', () => {

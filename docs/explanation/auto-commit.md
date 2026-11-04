@@ -29,13 +29,13 @@ Seven hooks, chosen to be the places an operation *finishes*:
 
 | Hook | Covers |
 | --- | --- |
-| the `writing` wrapper in `browserQueries`' write-path section | method compiles, class edits, comments, categories, dictionary edits, breakpoints — everything the Explorer, the browsers, the editors and the MCP tools reach the stone through |
+| the `writing` wrapper in `browserQueries`' write-path section | method compiles, class edits, comments, categories, dictionary edits — everything the Explorer, the browsers, the editors and the MCP tools reach the stone through |
 | `codeExecutor` after a completed execution | Do It, Display It, Inspect It |
 | `smalltalkNotebookController` / MCP `execute_code` | a doit by another route |
 | the GemStone Debugger | a run that halted and was then resumed or stepped to the end; an expression evaluated in a frame; a variable edited or reverted |
 | the basic Inspector | an expression in its evaluation pane; a slot edited or reverted |
 | `notifyRefactoringApplied` | all fifteen refactorings |
-| `runWithAutoCommitDeferred` closing | a file-in, an editor save, an undo, and the Explorer's multi-row actions — removing a class subtree, a drag that moves or copies several methods, a drag that refiles several classes |
+| `runWithAutoCommitDeferred` closing | a file-in (`.gs` or Tonel `.st`), an editor save, adding a class variable with its accessors, an undo, and the Explorer's multi-row actions — removing a class subtree, a drag that moves or copies several methods, a drag that refiles several classes |
 
 **Not** at the GCI round trip, which is what "commit every time you go to the server" would literally
 mean. Jasper reads the stone constantly — every tree expansion, every completion, every hover — and a
@@ -50,6 +50,10 @@ button: the abort then rewinds to a repository that already holds the wreckage. 
 for `notifyRefactoringApplied`, which runs after the apply has landed and the panel has closed — the
 abort window shut — and which is the one point every refactoring passes through.
 
+**Not** when a breakpoint is set, cleared, enabled or disabled. A breakpoint is per-gem state that a
+commit does not persist, so the only thing a commit there could do is commit the user's *other*
+pending work, at a moment they chose only to set a breakpoint.
+
 ## Deferral: the operations that are only correct as a whole
 
 `runWithAutoCommitDeferred` (and its synchronous twin) holds commits back across an operation, then
@@ -57,7 +61,9 @@ commits once. Three properties matter:
 
 - **It commits once, not per write.** A file-in of forty methods is one change, not forty.
 - **A failure commits nothing.** The caller's own rollback — the refactoring panel's abort, a retry —
-  is left the transaction it expects.
+  is left the transaction it expects. A file-in reports its errors rather than throwing, so it
+  passes the region a test of its answer: a file-in with any error commits nothing, and the user
+  decides what to keep. Its error notice says so, and that the next change would commit it.
 - **It nests.** An inner region borrows the outer one's commit, so a file-in that reaches
   `fileInClass` through `fileInFile` still commits once.
 

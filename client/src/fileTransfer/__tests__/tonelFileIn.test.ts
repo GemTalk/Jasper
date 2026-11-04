@@ -11,6 +11,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('fs', () => ({ readFileSync: vi.fn() }));
+vi.mock('../../autoCommit/autoCommitRunner', () => ({
+  runWithAutoCommitDeferred: vi.fn((_session: unknown, _what: string, run: () => unknown) => run()),
+}));
 vi.mock('../../browserQueries', () => ({
   getDictionaryNames: vi.fn(() => ['UserGlobals', 'Globals', 'Published']),
   executeFetchString: vi.fn(() => ''),
@@ -29,6 +32,7 @@ import * as queries from '../../browserQueries';
 import type { ActiveSession } from '../../sessionManager';
 import * as fs from 'fs';
 import { applyTonelClass, chooseTonelDictionary, fileInTonelUri } from '../tonelFileIn';
+import { runWithAutoCommitDeferred } from '../../autoCommit/autoCommitRunner';
 import type { TonelClass } from '../../queries/tonel/tonelWire';
 
 // A FRESH session object per test: the Tonel capability answer is cached per
@@ -615,5 +619,21 @@ describe('fileInTonelUri — dismissing the dictionary prompt', () => {
 
     expect(outcome.cancelled).toBe(false);
     expect(outcome.skipped).toEqual([]);
+  });
+});
+
+describe('fileInTonelUri — auto-commit', () => {
+  it('files the whole file in as one auto-commit region, not one commit per class and method', async () => {
+    // A stone that refuses Tonel answers at once, so the test needs no file or prompt.
+    vi.mocked(queries.tonelCapability).mockReturnValue({ available: false, missing: ['x'] });
+    const outcome = await fileInTonelUri(SESSION, '/tmp/Widget.class.st');
+
+    expect(runWithAutoCommitDeferred).toHaveBeenCalledWith(
+      SESSION,
+      'file-in',
+      expect.any(Function),
+      expect.any(Function),
+    );
+    expect(outcome.files).toBe(1);
   });
 });

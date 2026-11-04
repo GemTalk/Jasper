@@ -1146,7 +1146,9 @@ export function addClassVariable(
   classVarName: string,
   dict?: number | string,
 ): string {
-  return sharedAddClassVariable(defaultQueryExecutorUsing(session), className, classVarName, dict);
+  return writing(session, 'class variable add', () =>
+    sharedAddClassVariable(defaultQueryExecutorUsing(session), className, classVarName, dict),
+  );
 }
 
 export function deleteClassVariable(
@@ -1155,11 +1157,8 @@ export function deleteClassVariable(
   classVarName: string,
   dict?: number | string,
 ): string {
-  return sharedDeleteClassVariable(
-    defaultQueryExecutorUsing(session),
-    className,
-    classVarName,
-    dict,
+  return writing(session, 'class variable remove', () =>
+    sharedDeleteClassVariable(defaultQueryExecutorUsing(session), className, classVarName, dict),
   );
 }
 
@@ -1170,7 +1169,9 @@ export function addAccessors(
   accessors: Accessor[],
   dict?: number | string,
 ): AddAccessorsResult {
-  return sharedAddAccessors(defaultQueryExecutorUsing(session), className, isMeta, accessors, dict);
+  return writing(session, 'accessors', () =>
+    sharedAddAccessors(defaultQueryExecutorUsing(session), className, isMeta, accessors, dict),
+  );
 }
 
 export function getDefinedClassVarNames(
@@ -2271,7 +2272,9 @@ export function revertClassToVersion(
   index: number,
   dict?: number | string,
 ): string {
-  return sharedRevertClassToVersion(defaultQueryExecutorUsing(session), className, index, dict);
+  return writing(session, 'class version revert', () =>
+    sharedRevertClassToVersion(defaultQueryExecutorUsing(session), className, index, dict),
+  );
 }
 
 // Per-method source history (in-stone, per-user, this-stone-only, read-only) and
@@ -2331,7 +2334,9 @@ export function removeClassVersion(
   index: number,
   dict?: number | string,
 ): string {
-  return sharedRemoveClassVersion(defaultQueryExecutorUsing(session), className, index, dict);
+  return writing(session, 'class version remove', () =>
+    sharedRemoveClassVersion(defaultQueryExecutorUsing(session), className, index, dict),
+  );
 }
 
 export function getGrailStubReflection(
@@ -2782,6 +2787,9 @@ export function moveDictionaryDown(session: ActiveSession, dictIndex: number): s
   );
 }
 
+// The breakpoint calls below are outside `writing` on purpose: a breakpoint is per-gem state
+// that a commit does not persist (see `debugger/breakpointManager.ts`), so an auto-commit here
+// would only commit the user's OTHER pending work at a moment they did not choose.
 export function setBreakAtStepPoint(
   session: ActiveSession,
   className: string,
@@ -2791,16 +2799,14 @@ export function setBreakAtStepPoint(
   environmentId: number = 0,
   dict?: number | string,
 ): string {
-  return writing(session, 'breakpoint', () =>
-    sharedSetBreakAtStepPoint(
-      defaultQueryExecutorUsing(session),
-      className,
-      isMeta,
-      selector,
-      stepPoint,
-      environmentId,
-      dict,
-    ),
+  return sharedSetBreakAtStepPoint(
+    defaultQueryExecutorUsing(session),
+    className,
+    isMeta,
+    selector,
+    stepPoint,
+    environmentId,
+    dict,
   );
 }
 
@@ -2813,16 +2819,14 @@ export function clearBreakAtStepPoint(
   environmentId: number = 0,
   dict?: number | string,
 ): string {
-  return writing(session, 'breakpoint', () =>
-    sharedClearBreakAtStepPoint(
-      defaultQueryExecutorUsing(session),
-      className,
-      isMeta,
-      selector,
-      stepPoint,
-      environmentId,
-      dict,
-    ),
+  return sharedClearBreakAtStepPoint(
+    defaultQueryExecutorUsing(session),
+    className,
+    isMeta,
+    selector,
+    stepPoint,
+    environmentId,
+    dict,
   );
 }
 
@@ -2834,15 +2838,13 @@ export function clearAllBreaks(
   environmentId: number = 0,
   dict?: number | string,
 ): string {
-  return writing(session, 'breakpoints', () =>
-    sharedClearAllBreaks(
-      defaultQueryExecutorUsing(session),
-      className,
-      isMeta,
-      selector,
-      environmentId,
-      dict,
-    ),
+  return sharedClearAllBreaks(
+    defaultQueryExecutorUsing(session),
+    className,
+    isMeta,
+    selector,
+    environmentId,
+    dict,
   );
 }
 
@@ -3011,16 +3013,14 @@ export function disableBreakAtStepPoint(
   environmentId: number = 0,
   dict?: number | string,
 ): string {
-  return writing(session, 'breakpoint', () =>
-    sharedDisableBreakAtStepPoint(
-      defaultQueryExecutorUsing(session),
-      className,
-      isMeta,
-      selector,
-      stepPoint,
-      environmentId,
-      dict,
-    ),
+  return sharedDisableBreakAtStepPoint(
+    defaultQueryExecutorUsing(session),
+    className,
+    isMeta,
+    selector,
+    stepPoint,
+    environmentId,
+    dict,
   );
 }
 
@@ -3029,21 +3029,15 @@ export function getAllBreakpoints(session: ActiveSession) {
 }
 
 export function enableAllBreakpoints(session: ActiveSession): string {
-  return writing(session, 'breakpoints', () =>
-    sharedEnableAllBreakpoints(defaultQueryExecutorUsing(session)),
-  );
+  return sharedEnableAllBreakpoints(defaultQueryExecutorUsing(session));
 }
 
 export function disableAllBreakpoints(session: ActiveSession): string {
-  return writing(session, 'breakpoints', () =>
-    sharedDisableAllBreakpoints(defaultQueryExecutorUsing(session)),
-  );
+  return sharedDisableAllBreakpoints(defaultQueryExecutorUsing(session));
 }
 
 export function removeAllBreakpoints(session: ActiveSession): string {
-  return writing(session, 'breakpoints', () =>
-    sharedRemoveAllBreakpoints(defaultQueryExecutorUsing(session)),
-  );
+  return sharedRemoveAllBreakpoints(defaultQueryExecutorUsing(session));
 }
 
 export function hasBreakpoints(session: ActiveSession): boolean {
@@ -3056,7 +3050,5 @@ export function breakpointByOop(
   op: 'setBreakAtStepPoint:' | 'disableBreakAtStepPoint:' | 'clearBreakAtStepPoint:',
   stepPoint: number,
 ): string {
-  return writing(session, 'breakpoint', () =>
-    sharedBreakpointByOop(defaultQueryExecutorUsing(session), methodOop, op, stepPoint),
-  );
+  return sharedBreakpointByOop(defaultQueryExecutorUsing(session), methodOop, op, stepPoint);
 }

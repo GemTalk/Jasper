@@ -65,10 +65,18 @@ describe('the write path with auto-commit armed', () => {
       (s: ActiveSession) => queries.recategorizeMethod(s, 'Account', false, 'balance', 'printing'),
     ],
     ['setClassComment', (s: ActiveSession) => queries.setClassComment(s, 'Account', 'A bank one')],
+    ['addClassVariable', (s: ActiveSession) => queries.addClassVariable(s, 'Account', 'Rate')],
     [
-      'setBreakAtStepPoint',
-      (s: ActiveSession) => queries.setBreakAtStepPoint(s, 'Account', false, 'balance', 1),
+      'deleteClassVariable',
+      (s: ActiveSession) => queries.deleteClassVariable(s, 'Account', 'Rate'),
     ],
+    [
+      'addAccessors',
+      (s: ActiveSession) =>
+        queries.addAccessors(s, 'Account', false, [{ selector: 'rate', source: 'rate ^rate' }]),
+    ],
+    ['revertClassToVersion', (s: ActiveSession) => queries.revertClassToVersion(s, 'Account', 1)],
+    ['removeClassVersion', (s: ActiveSession) => queries.removeClassVersion(s, 'Account', 1)],
   ])('commits after %s', (_name, run) => {
     const commit = vi.fn(() => OK);
     const session = makeSession(1, commit);
@@ -83,6 +91,41 @@ describe('the write path with auto-commit armed', () => {
     ['getDictionaryNames', (s: ActiveSession) => queries.getDictionaryNames(s)],
     ['sessionNeedsCommit', (s: ActiveSession) => queries.sessionNeedsCommit(s)],
   ])('does not commit after %s, which only reads', (_name, run) => {
+    const commit = vi.fn(() => OK);
+    const session = makeSession(1, commit);
+    registerSessionAutoCommit(1, true);
+
+    run(session);
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  // A breakpoint is per-gem state a commit does not persist, so committing here would only
+  // commit the user's other pending work at a moment they did not choose.
+  it.each([
+    [
+      'setBreakAtStepPoint',
+      (s: ActiveSession) => queries.setBreakAtStepPoint(s, 'Account', false, 'balance', 1),
+    ],
+    [
+      'clearBreakAtStepPoint',
+      (s: ActiveSession) => queries.clearBreakAtStepPoint(s, 'Account', false, 'balance', 1),
+    ],
+    [
+      'disableBreakAtStepPoint',
+      (s: ActiveSession) => queries.disableBreakAtStepPoint(s, 'Account', false, 'balance', 1),
+    ],
+    [
+      'clearAllBreaks',
+      (s: ActiveSession) => queries.clearAllBreaks(s, 'Account', false, 'balance'),
+    ],
+    ['enableAllBreakpoints', (s: ActiveSession) => queries.enableAllBreakpoints(s)],
+    ['disableAllBreakpoints', (s: ActiveSession) => queries.disableAllBreakpoints(s)],
+    ['removeAllBreakpoints', (s: ActiveSession) => queries.removeAllBreakpoints(s)],
+    [
+      'breakpointByOop',
+      (s: ActiveSession) => queries.breakpointByOop(s, '12345', 'setBreakAtStepPoint:', 1),
+    ],
+  ])('does not commit after %s, a breakpoint the stone does not keep', (_name, run) => {
     const commit = vi.fn(() => OK);
     const session = makeSession(1, commit);
     registerSessionAutoCommit(1, true);

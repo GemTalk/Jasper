@@ -16,11 +16,14 @@
 // file-in leaves the session dirty exactly as compiling a method from the Explorer does,
 // so the user decides whether to keep it. The one exception is a session the user has
 // armed for auto-commit (issue #254), where the whole file-in commits as ONE change once
-// it has finished — see `runWithAutoCommitDeferredSync` on `fileInFile`.
+// it has finished, and not at all if any part of it failed — see `fileInSucceeded`.
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { runWithAutoCommitDeferredSync } from '../autoCommit/autoCommitRunner';
+import {
+  runWithAutoCommitDeferred,
+  runWithAutoCommitDeferredSync,
+} from '../autoCommit/autoCommitRunner';
 import { isAutoCommitArmed } from '../autoCommit/autoCommitState';
 import { ActiveSession, SessionManager } from '../sessionManager';
 import * as queries from '../browserQueries';
@@ -88,6 +91,11 @@ export interface FileInOutcome {
   cancelled: boolean;
 }
 
+/** A file-in with any error commits nothing: the user decides what to keep. */
+function fileInSucceeded(outcome: FileInOutcome): boolean {
+  return outcome.errors.length === 0;
+}
+
 function emptyOutcome(): FileInOutcome {
   return {
     executed: 0,
@@ -152,8 +160,11 @@ export function fileInFile(
   filePath: string,
   seen: Set<string> = new Set(),
 ): FileInOutcome {
-  return runWithAutoCommitDeferredSync(session, 'file-in', () =>
-    fileInOneFile(session, filePath, seen),
+  return runWithAutoCommitDeferredSync(
+    session,
+    'file-in',
+    () => fileInOneFile(session, filePath, seen),
+    fileInSucceeded,
   );
 }
 
@@ -319,20 +330,27 @@ export async function fileInUris(
   if (!session) return;
 
   const total = emptyOutcome();
-  await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: 'Filing in...' },
-    async (progress) => {
-      for (const uri of uris) {
-        progress.report({ message: path.basename(uri.fsPath) });
-        // Yield so VS Code can paint before this file's work starts. The GCI calls
-        // underneath are synchronous, so a single large file still blocks the
-        // extension host while it goes in — this only keeps a multi-file pick from
-        // looking like nothing is happening.
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        absorb(total, await fileInOneUri(session, uri));
-        if (total.stopped || total.cancelled) break;
-      }
-    },
+  // The whole pick is one file-in: it commits once, or not at all if any file had an error.
+  await runWithAutoCommitDeferred(
+    session,
+    'file-in',
+    async () =>
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: 'Filing in...' },
+        async (progress) => {
+          for (const uri of uris) {
+            progress.report({ message: path.basename(uri.fsPath) });
+            // Yield so VS Code can paint before this file's work starts. The GCI calls
+            // underneath are synchronous, so a single large file still blocks the
+            // extension host while it goes in — this only keeps a multi-file pick from
+            // looking like nothing is happening.
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            absorb(total, await fileInOneUri(session, uri));
+            if (total.stopped || total.cancelled) break;
+          }
+        },
+      ),
+    () => fileInSucceeded(total),
   );
 
   await rememberDirectory(store, path.dirname(uris[0].fsPath));
@@ -397,9 +415,14 @@ async function report(session: ActiveSession, outcome: FileInOutcome): Promise<v
 
   if (outcome.errors.length > 0) {
     const first = outcome.errors[0];
+    // With errors nothing was committed, even on an auto-commit session; but its next
+    // change commits the whole transaction, this file-in included.
+    const uncommitted = isAutoCommitArmed(session.id)
+      ? ' Nothing was committed. Abort to discard it — your next change would commit it.'
+      : '';
     const choice = await vscode.window.showErrorMessage(
       `File in finished with ${outcome.errors.length} error(s) — ${counts} went in. ` +
-        `First: ${path.basename(first.file)}:${first.line} ${first.message}`,
+        `First: ${path.basename(first.file)}:${first.line} ${first.message}.${uncommitted}`,
       SHOW_LOG,
     );
     if (choice === SHOW_LOG) fileInChannel()?.show(true);

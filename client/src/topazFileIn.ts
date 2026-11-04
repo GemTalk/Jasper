@@ -208,8 +208,11 @@ export function fileInClass(
   fileContent: string,
   environmentId: number = 0,
 ): FileInResult {
-  return runWithAutoCommitDeferredSync(session, 'file-in', () =>
-    fileInClassRegions(session, fileContent, environmentId),
+  return runWithAutoCommitDeferredSync(
+    session,
+    'file-in',
+    () => fileInClassRegions(session, fileContent, environmentId),
+    (result) => result.success,
   );
 }
 
@@ -589,8 +592,11 @@ export function fileInChangedRegions(
   newContent: string,
   environmentId: number = 0,
 ): FileInResult {
-  return runWithAutoCommitDeferredSync(session, 'file-in', () =>
-    fileInChangedRegionsOf(session, oldContent, newContent, environmentId),
+  return runWithAutoCommitDeferredSync(
+    session,
+    'file-in',
+    () => fileInChangedRegionsOf(session, oldContent, newContent, environmentId),
+    (result) => result.success,
   );
 }
 

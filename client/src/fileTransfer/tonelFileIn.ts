@@ -41,6 +41,7 @@
 // exactly as compiling a method from the Explorer does.
 import * as vscode from 'vscode';
 import * as queries from '../browserQueries';
+import { runWithAutoCommitDeferred } from '../autoCommit/autoCommitRunner';
 import type { ActiveSession } from '../sessionManager';
 import * as fs from 'fs';
 import { FileInNote, FileInOutcome } from './fileIn';
@@ -341,6 +342,16 @@ export async function fileInTonelUri(
   session: ActiveSession,
   filePath: string,
 ): Promise<FileInOutcome> {
+  // One commit for the whole file, as a `.gs` file-in gets, not one per class and method.
+  return await runWithAutoCommitDeferred(
+    session,
+    'file-in',
+    () => fileInTonelFile(session, filePath),
+    (outcome) => outcome.errors.length === 0,
+  );
+}
+
+async function fileInTonelFile(session: ActiveSession, filePath: string): Promise<FileInOutcome> {
   const outcome = emptyTonelOutcome();
   outcome.files = 1;
 

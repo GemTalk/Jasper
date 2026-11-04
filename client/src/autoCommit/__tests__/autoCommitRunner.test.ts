@@ -156,6 +156,23 @@ describe('runWithAutoCommitDeferred', () => {
     expect(commit).not.toHaveBeenCalled();
   });
 
+  it('commits nothing when the operation reports a failure it did not throw', async () => {
+    const commit = vi.fn(() => OK);
+    const session = makeSession(1, commit);
+    registerSessionAutoCommit(1, true);
+
+    await runWithAutoCommitDeferred(
+      session,
+      'test op',
+      () => {
+        autoCommitAfterWrite(session, 'test write');
+        return { errors: 1 };
+      },
+      (answer) => answer.errors === 0,
+    );
+    expect(commit).not.toHaveBeenCalled();
+  });
+
   it('commits nothing when the operation wrote nothing', async () => {
     const commit = vi.fn(() => OK);
     const session = makeSession(1, commit);
@@ -245,6 +262,23 @@ describe('runWithAutoCommitDeferredSync', () => {
         throw new Error('unreadable file');
       }),
     ).toThrow('unreadable file');
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('commits nothing when the synchronous operation reports a failure', () => {
+    const commit = vi.fn(() => OK);
+    const session = makeSession(1, commit);
+    registerSessionAutoCommit(1, true);
+
+    runWithAutoCommitDeferredSync(
+      session,
+      'test op',
+      () => {
+        autoCommitAfterWrite(session, 'test write');
+        return false;
+      },
+      (ok) => ok,
+    );
     expect(commit).not.toHaveBeenCalled();
   });
 

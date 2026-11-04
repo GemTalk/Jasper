@@ -130,7 +130,7 @@ function settleDeferred(session: ActiveSession, succeeded: boolean, what: string
   }
   if (!succeeded) {
     logWarning(
-      `[autoCommit] session ${session.id}: the operation failed, so its changes were ` +
+      `[autoCommit] session ${session.id}: the ${what} failed, so its changes were ` +
         'left uncommitted for the caller to abort or retry',
     );
   }
@@ -142,7 +142,8 @@ function settleDeferred(session: ActiveSession, succeeded: boolean, what: string
  * Every write inside runs without committing; when the outermost call finishes
  * SUCCESSFULLY and something inside actually wrote, one commit follows. A throw commits
  * nothing and leaves the transaction exactly as the operation left it, which is what the
- * caller's own abort-based rollback needs to still work.
+ * caller's own abort-based rollback needs to still work. So does an answer `succeeded`
+ * rejects, for an operation that reports its errors instead of throwing (a file-in).
  *
  * Nests: an inner region just borrows the outer one's commit, which is logged under the
  * outer region's `what`.
@@ -151,17 +152,18 @@ export async function runWithAutoCommitDeferred<T>(
   session: ActiveSession,
   what: string,
   run: () => T | Promise<T>,
+  succeeded: (answer: T) => boolean = () => true,
 ): Promise<T> {
   if (getAutoCommitStatus(session.id) !== 'on') return await run();
 
   suspendAutoCommit(session.id);
-  let succeeded = false;
+  let ok = false;
   try {
     const answer = await run();
-    succeeded = true;
+    ok = succeeded(answer);
     return answer;
   } finally {
-    settleDeferred(session, succeeded, what);
+    settleDeferred(session, ok, what);
   }
 }
 
@@ -176,16 +178,17 @@ export function runWithAutoCommitDeferredSync<T>(
   session: ActiveSession,
   what: string,
   run: () => T,
+  succeeded: (answer: T) => boolean = () => true,
 ): T {
   if (getAutoCommitStatus(session.id) !== 'on') return run();
 
   suspendAutoCommit(session.id);
-  let succeeded = false;
+  let ok = false;
   try {
     const answer = run();
-    succeeded = true;
+    ok = succeeded(answer);
     return answer;
   } finally {
-    settleDeferred(session, succeeded, what);
+    settleDeferred(session, ok, what);
   }
 }

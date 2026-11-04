@@ -3058,7 +3058,8 @@ export class ExplorerController {
   // Add a class variable to a class. Unlike adding an instance variable this does NOT
   // reshape the class (class variables are not part of instance layout), so there is
   // no preview / migration panel — just the name, then the shared binding is added
-  // (initialized to nil), no new class version, no instances migrated, no commit.
+  // (initialized to nil), no new class version, no instances migrated, and no commit unless
+  // the session has auto-commit on.
   async addClassVarOnClass(className: string): Promise<void> {
     const session = this.session();
     if (!session) return;
@@ -3112,53 +3113,56 @@ export class ExplorerController {
       accessorSlots,
     );
 
-    let addResult: string;
-    try {
-      addResult = queries.addClassVariable(session, className, name, this.state.dictIndex);
-    } catch (e: unknown) {
-      void vscode.window.showErrorMessage(
-        `Add class variable failed: ${e instanceof Error ? e.message : String(e)}`,
-      );
-      return;
-    }
-    // addClassVariable answers the non-throwing sentinel 'no-class' when the class
-    // can't be resolved — treat that as a failure, not success, so we don't refresh,
-    // reveal, and add accessors as if the variable had been added when it wasn't.
-    if (addResult.trim() !== 'ok') {
-      void vscode.window.showWarningMessage(
-        `Couldn't resolve ${className} to add the class variable '${name}'.`,
-      );
-      return;
-    }
-
-    // Adding a class variable does NOT reshape the class (no new version); this is
-    // just the general "class members changed" pane refresh, reused despite its name.
-    await this.refreshAfterClassReshape(className);
-    // Select the newly-added class variable (its row is under the "class" side); fall
-    // back to the class-variable side node, then leave the class selected.
-    try {
-      await this.views?.klass.reveal(new ClassVarItem(className, name), {
-        select: true,
-        focus: false,
-      });
-    } catch {
+    // One commit for the variable and its accessors, as Undo records them as one entry.
+    await runWithAutoCommitDeferred(session, 'class variable add', async () => {
+      let addResult: string;
       try {
-        await this.views?.klass.reveal(new VarSideItem(className, true), {
+        addResult = queries.addClassVariable(session, className, name, this.state.dictIndex);
+      } catch (e: unknown) {
+        void vscode.window.showErrorMessage(
+          `Add class variable failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        return;
+      }
+      // addClassVariable answers the non-throwing sentinel 'no-class' when the class
+      // can't be resolved — treat that as a failure, not success, so we don't refresh,
+      // reveal, and add accessors as if the variable had been added when it wasn't.
+      if (addResult.trim() !== 'ok') {
+        void vscode.window.showWarningMessage(
+          `Couldn't resolve ${className} to add the class variable '${name}'.`,
+        );
+        return;
+      }
+
+      // Adding a class variable does NOT reshape the class (no new version); this is
+      // just the general "class members changed" pane refresh, reused despite its name.
+      await this.refreshAfterClassReshape(className);
+      // Select the newly-added class variable (its row is under the "class" side); fall
+      // back to the class-variable side node, then leave the class selected.
+      try {
+        await this.views?.klass.reveal(new ClassVarItem(className, name), {
           select: true,
           focus: false,
         });
       } catch {
-        /* best-effort — leave the class selected if neither row can be revealed */
+        try {
+          await this.views?.klass.reveal(new VarSideItem(className, true), {
+            select: true,
+            focus: false,
+          });
+        } catch {
+          /* best-effort — leave the class selected if neither row can be revealed */
+        }
       }
-    }
-    if (wantAccessors) await this.generateAccessorsFor(className, name, 'classvar', false);
+      if (wantAccessors) await this.generateAccessorsFor(className, name, 'classvar', false);
 
-    // Announced last, so the notice carrying Undo is the one left on screen when accessors
-    // were generated too.
-    notifyUndoable(
-      `Added class variable ${name} to ${className}`,
-      recording?.commit(`Add class variable ${name} to ${className}`),
-    );
+      // Announced last, so the notice carrying Undo is the one left on screen when accessors
+      // were generated too.
+      notifyUndoable(
+        `Added class variable ${name} to ${className}`,
+        recording?.commit(`Add class variable ${name} to ${className}`),
+      );
+    });
   }
 
   // Generate accessors for an existing variable (the "Add Accessors" row action, and
