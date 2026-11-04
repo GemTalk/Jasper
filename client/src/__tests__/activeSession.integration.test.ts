@@ -8,6 +8,7 @@ import { pollNbResultReady, runNbCall } from '../nbRunner';
 import { testActiveSession } from './testActiveSession';
 import { useIntegrationTest } from './useIntegrationTest';
 import { endGemAfterTest, loginSerialOf, stillOnStone } from './leftoverGem';
+import { reportedTransientLogin } from './sessionGateClient';
 
 /**
  * Each call below would hand a freed native session to the GCI library if it
@@ -23,7 +24,7 @@ describe('a logged-out session (integration)', () => {
   });
 
   function transientSession(): ActiveSession {
-    const { session: transient, err } = session.transientLogin(session.login);
+    const { session: transient, err } = reportedTransientLogin(session);
     if (!transient) throw new Error(`Transient login failed: ${err.message}`);
     return transient;
   }
@@ -147,7 +148,7 @@ describe('logging out never waits for the gem (integration)', () => {
   }
 
   function transientWithSerial(): { transient: ActiveSession; serial: string } {
-    const { session: transient, err } = session.transientLogin(session.login);
+    const { session: transient, err } = reportedTransientLogin(session);
     if (!transient) throw new Error(`Transient login failed: ${err.message}`);
     const serial = loginSerialOf(transient);
     // Ends a gem the test leaves behind, so a failure can't strand it.
@@ -200,7 +201,7 @@ describe('whether a session is busy (integration)', () => {
   // Logging out with a non-blocking call outstanding frees the session too, so
   // a test can leave one behind.
   function transientSession(): ActiveSession {
-    const { session: transient, err } = session.transientLogin(session.login);
+    const { session: transient, err } = reportedTransientLogin(session);
     if (!transient) throw new Error(`Transient login failed: ${err.message}`);
     onTestFinished(() => {
       transient.logout();

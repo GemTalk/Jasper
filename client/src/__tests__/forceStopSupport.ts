@@ -4,6 +4,7 @@ import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
 import { armForceStop } from '../forceStop';
 import { NbCancelledError, runNbCall, stoppedRunHolds } from '../nbRunner';
 import { endGemAfterTest, stillOnStone } from './leftoverGem';
+import { reportedTransientLogin } from './sessionGateClient';
 
 /** What the Force Stop stone tests share, for the session `getSession` answers. */
 export function forceStopSupport(getSession: () => ActiveSession) {
@@ -12,7 +13,7 @@ export function forceStopSupport(getSession: () => ActiveSession) {
 
   /** A session of its own, armed as a login arms it; its gem is ended whatever the test does. */
   function armedSession(): ActiveSession {
-    const { session: own, err } = getSession().transientLogin(getSession().login);
+    const { session: own, err } = reportedTransientLogin(getSession());
     if (!own) throw new Error(`Login failed: ${err.message}`);
     endGemAfterTest(getSession, own);
     armForceStop(own);
@@ -21,7 +22,7 @@ export function forceStopSupport(getSession: () => ActiveSession) {
 
   const deps = {
     loginTransient: (from: ActiveSession) => {
-      const { session: sender, err } = from.transientLogin(from.login);
+      const { session: sender, err } = reportedTransientLogin(from);
       if (!sender) throw new Error(`Login failed: ${err.message}`);
       return { session: sender, logout: () => void sender.logout() };
     },

@@ -20,6 +20,7 @@ import { needsWsl, refreshWslNetworkInfo, wslExec, wslExecSync } from '../../wsl
 import { testActiveSession } from '../../__tests__/testActiveSession';
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { endGemAfterTest, loginSerialOf, stillOnStone } from '../../__tests__/leftoverGem';
+import { reportedTransientLogin } from '../../__tests__/sessionGateClient';
 
 describe('Stone sessions (integration)', () => {
   let session: ActiveSession;
@@ -28,21 +29,12 @@ describe('Stone sessions (integration)', () => {
     session = testActiveSession(testContext.gciLibrary, testContext.session);
   });
 
-  // Other files' sessions share the test stone, whose session limit is small,
-  // and a logout frees its slot only a moment after it returns, so a login
-  // refused for lack of a slot waits for one.
   const loginAs =
     (login = session.login): TransientLogin =>
     () => {
-      const deadline = Date.now(); // PROTOTYPE: retry off
-      for (;;) {
-        const { session: own, err } = session.transientLogin(login);
-        if (own) return { session: own, logout: () => void own.logout() };
-        if (!/maximum number of users/.test(err.message) || Date.now() >= deadline) {
-          throw new Error(`Login failed: ${err.message}`);
-        }
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
-      }
+      const { session: own, err } = reportedTransientLogin(session, login);
+      if (!own) throw new Error(`Login failed: ${err.message}`);
+      return { session: own, logout: () => void own.logout() };
     };
 
   /** A session of its own, whose gem is ended whatever the test does. */

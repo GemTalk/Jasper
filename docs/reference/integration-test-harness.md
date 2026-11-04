@@ -28,10 +28,10 @@ A `login()` from _inside_ a test gets a session of its own, which starts outside
 
 | Hook         | Does, in order                                                                                                                                                                                                                      |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `beforeAll`  | Set `GEMSTONE_GLOBAL_DIR` → load the GCI library → login → **arm the commit guard** → `resetNonTransactionalSessionState` → fire `callback`                                                                                         |
+| `beforeAll`  | Book the file's sessions with the session gate → set `GEMSTONE_GLOBAL_DIR` → load the GCI library → login → report its serial to the gate → **arm the commit guard** → `resetNonTransactionalSessionState` → fire `callback`        |
 | `beforeEach` | Poison check (fail fast if a previous test's cleanup failed) → auto re-login if a prior test called `logout()` → `beginTransaction` → open the `allowedCommits` level budget (a no-op at `0`) → `resetNonTransactionalSessionState` |
 | `afterEach`  | **assert the commit guard is still armed** → read the transaction level and unwind every level → `resetNonTransactionalSessionState` → the budget floor check (skipped at `allowedCommits: 0`)                                      |
-| `afterAll`   | logout → close the library → restore `GEMSTONE_GLOBAL_DIR`                                                                                                                                                                          |
+| `afterAll`   | logout → **fail if a login was never reported to the gate** → give the booking back → restore `GEMSTONE_GLOBAL_DIR`                                                                                                                 |
 
 ## `login({ user })` and `withTransientSession`
 
@@ -42,6 +42,18 @@ Use `withTransientSession` when a test needs a second, independent session (e.g.
 - accept a `user` override — it always logs in as the harness's default user;
 - touch the shared `session` the harness manages;
 - re-fire `callback`.
+
+## The session gate
+
+The test stone takes only 10 sessions at once. Before logging in, each file books the sessions it will use and waits, first come first served, until the stone has room, so a login is never refused for want of a slot (`sessionGate.globalSetup.ts`). How many a file books is set in `sessionGateClient.ts`; most files need 1.
+
+For that, the gate has to know which sessions on the stone are whose, so **every login a test makes must be reported to it**, including logins made by app code the test calls:
+
+- a second session: `reportedTransientLogin(session)`, never `session.transientLogin(...)`, which lint rejects in tests;
+- a `SessionManager` the test builds: wrap it in `reportingLoginsOf(...)`, which also reports the logins it makes for itself, such as the one that ends a stopped run's gem;
+- any other login: `reportLogin(own)`, or `reportRefusedLogin()` for a login that is meant to fail. A refused login still uses up a login serial.
+
+The harness's own `login()` and `withTransientSession` report for you.
 
 ## The commit invariant
 
@@ -57,6 +69,8 @@ Declaring `allowedCommits` (see the options table above) opens that many levels 
 
 ## Failure modes you'll actually hit
 
+- **"this file logged in N session(s) it never reported"**: a login the gate was never told about, from the test or from app code it called, named by the test that was running when it appeared. Report it as above.
+- **"N login(s) came and went between two looks at the stone"**, at the end of the run: the same, for a login too short for the gate to see, listed with the files running at the time. A login from outside the test run during it shows up here too.
 - **The setup banner**: if no stone is reachable, `beforeAll` fails with a banner pointing at `npm run test:server:start`, prepended to the underlying login/library-load error.
 - **`sessionCleanupFailed` poisoning the file**: if `afterEach` cleanup fails — including the commit-guard-still-armed check — every remaining test in that file fails fast in `beforeEach` rather than running against a session in an unknown state. Look at the _first_ failure in the file; it's the real one.
 - **Session/oop identity**: `session` and any oop values are koffi pointer wrappers with no enumerable properties. `toEqual` treats any two of them as equal regardless of the underlying native pointer — compare with `toBe` when the assertion is about _which_ session or oop a call received, or wrap the argument in `sameObject(...)` (`client/src/__tests__/support/sameObject.ts`) inside `toHaveBeenCalledWith`.

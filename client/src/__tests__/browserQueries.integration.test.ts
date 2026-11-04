@@ -16,6 +16,7 @@ import { useIntegrationTest } from './useIntegrationTest';
 import { testActiveSession } from './testActiveSession';
 import { countPureExportSetMembersSatisfying } from './support/gemstone';
 import { SESSION_BUSY_MESSAGE } from '../gciLibraryError';
+import { reportedTransientLogin } from './sessionGateClient';
 
 /**
  * The System Browser's queries against a real stone. browserQueries.test.ts
@@ -55,7 +56,7 @@ describe('browser queries (integration)', () => {
   };
 
   function transientSession(): ActiveSession {
-    const { session: transient, err } = session().transientLogin(session().login);
+    const { session: transient, err } = reportedTransientLogin(session());
     if (!transient) throw new Error(`Transient login failed: ${err.message}`);
     return transient;
   }

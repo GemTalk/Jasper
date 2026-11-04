@@ -5,6 +5,7 @@ import { COMMIT_GUARD_REASON, useIntegrationTest } from '../../__tests__/useInte
 import { requireParsedStoneNrs, resolveTestConnection } from '../../__tests__/testConnection';
 import { gemNrsFor, stoneNrsFor } from '../../loginTypes';
 import { requireGciCapability } from './requireGciCapability';
+import { reportRefusedLogin, reportSession } from '../../__tests__/sessionGateClient';
 
 /**
  * The raw GCI login entry points (GciTsLogin, GciTsLogin_, GciTsNbLogin,
@@ -38,9 +39,10 @@ describe('GCI login (integration)', () => {
   // live, unarmed one. As strict as the harness's own `armCommitGuard`: a
   // guard that was already set is not this file's doing, so it fails too.
   // Either failure logs out first, so it doesn't leave the session open until
-  // the worker exits.
+  // the worker exits. It also reports the session to the session gate.
   function armIfLive<T extends { session: unknown }>(result: T): T {
     if (result.session === null) {
+      reportRefusedLogin();
       return result;
     }
     let armedNewly: boolean;
@@ -60,6 +62,12 @@ describe('GCI login (integration)', () => {
         `gciLogin.integration.test: GemStone reports commits were already disabled on this fresh session, so the "no commits allowed" guard is not this file's doing. Usual causes: this user's UserProfile has "disableCommits" set, or the stone is mid-restore. Check the stone and the credentials in .env.test (or .env.test.local).`,
       );
     }
+    reportSession(
+      gci.executeAndFetchInteger(
+        result.session,
+        '(System descriptionOfSession: System session) at: 9',
+      ),
+    );
     return result;
   }
 
@@ -86,6 +94,8 @@ describe('GCI login (integration)', () => {
     const finished = await pollNbLoginFinished(session, signal);
     if (finished.result === 1) {
       armIfLive({ session });
+    } else {
+      reportRefusedLogin();
     }
     return { session, ...finished };
   }

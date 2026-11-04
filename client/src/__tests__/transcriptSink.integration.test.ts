@@ -41,6 +41,7 @@ import {
   GCI_PERFORM_FLAG_ENABLE_DEBUG,
   GCI_PERFORM_FLAG_INTERPRETED,
 } from '../gciConstants';
+import { reportedTransientLogin } from './sessionGateClient';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -359,7 +360,7 @@ tmps := SessionTemps current.
     // writes, which puts it on the worker, then waits there long enough for
     // the first logout to land; the pause before it lets the worker actually
     // start, since the write is reported just before the resume is queued.
-    const { session: busy, err } = session().transientLogin(session().login);
+    const { session: busy, err } = reportedTransientLogin(session());
     if (!busy) throw new Error(`Transient login failed: ${err.message}`);
     const gemLogin = loginSerialOf(busy);
     expect(installTranscriptSink(busy)).toBe(true);
