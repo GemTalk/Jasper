@@ -34,7 +34,7 @@ describe('Stone sessions (integration)', () => {
   const loginAs =
     (login = session.login): TransientLogin =>
     () => {
-      const deadline = Date.now() + 15_000;
+      const deadline = Date.now(); // PROTOTYPE: retry off
       for (;;) {
         const { session: own, err } = session.transientLogin(login);
         if (own) return { session: own, logout: () => void own.logout() };

@@ -3,6 +3,8 @@ import { createSessionGciLibrary } from '../enhancedInspector/enhancedInspectorP
 import { afterAll, afterEach, beforeAll, beforeEach, expect } from 'vitest';
 import { createNativeSocketLibrary } from '../sockets/factory';
 import { NativeSocketLibrary } from '../sockets/nativeSocketLibrary';
+import type { Socket } from 'node:net';
+import { acquireSessions, budgetFor, releaseSessions, reportSession } from './sessionGateClient';
 
 /** The live GCI state handed to a `useIntegrationTest` callback on every login. */
 export type GciTestContext = {
@@ -96,6 +98,7 @@ export function useIntegrationTest(
   let session: unknown;
   let originalGemstoneGlobalDir: string | undefined;
   let sessionCleanupFailed = false;
+  let gate: Socket | undefined;
   // The transaction level a currently-open commit budget sits on top of, or
   // undefined when no budget is open right now -- nothing is nested, so no
   // floor applies. Inferred by subtraction after opening the nested levels,
@@ -120,7 +123,9 @@ export function useIntegrationTest(
   // gciLibrary and session are created inside a beforeAll hook, so they don't
   // exist at call time. The callback fires at the end of that hook, letting
   // callers assign the values into their own variables before any test runs.
-  beforeAll(() => {
+  beforeAll(async () => {
+    const testPath = expect.getState().testPath ?? '';
+    gate = await acquireSessions(testPath, budgetFor(testPath));
     configureGemstoneGlobalDir();
 
     handleIntegrationTestSetupErrorDuring(() => {
@@ -134,7 +139,7 @@ export function useIntegrationTest(
       );
       login();
     });
-  });
+  }, 70_000);
 
   afterAll(() => {
     try {
@@ -142,6 +147,8 @@ export function useIntegrationTest(
         logout();
       }
     } finally {
+      releaseSessions(gate);
+      gate = undefined;
       restoreGemstoneGlobalDir();
     }
   });
@@ -222,6 +229,7 @@ export function useIntegrationTest(
       loginOptions?.user ?? process.env.VITE_GEMSTONE_USER!,
       process.env.VITE_GEMSTONE_PASSWORD!,
     );
+    reportSession(serialOf(session), gate);
     armCommitGuard(session);
 
     // A test that logs out and back in gets a session of its own: it is not
@@ -341,11 +349,20 @@ export function useIntegrationTest(
     );
 
     try {
+      reportSession(serialOf(transientSession), gate);
       armCommitGuard(transientSession);
       callback(transientSession);
     } finally {
       gciLibrary.logout(transientSession);
     }
+  }
+
+  /** The login serial of `aSession`, so the session gate can tell its sessions apart. */
+  function serialOf(aSession: unknown): bigint {
+    return gciLibrary.executeAndFetchInteger(
+      aSession,
+      '(System descriptionOfSession: System session) at: 9',
+    );
   }
 
   /**
