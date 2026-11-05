@@ -22,10 +22,13 @@ describe("the Classes pane's lookups (integration)", () => {
   let gci: GciLibrary;
   let handle: unknown;
 
-  useIntegrationTest((testContext) => {
-    gci = testContext.gciLibrary;
-    handle = testContext.session;
-  });
+  useIntegrationTest(
+    (testContext) => {
+      gci = testContext.gciLibrary;
+      handle = testContext.session;
+    },
+    { sessions: 2 },
+  );
 
   const session = (): ActiveSession => testActiveSession(gci, handle);
 

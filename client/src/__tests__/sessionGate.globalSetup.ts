@@ -1,4 +1,4 @@
-// PROTOTYPE: a counter of the test stone's sessions, shared by every test file.
+// A counter of the test stone's sessions, shared by every test file.
 //
 // A file asks for the sessions it will use before logging in, and waits, first
 // come first served, until they are free. A GCI session of its own watches which user
@@ -8,6 +8,8 @@
 // stone counts as taken. A login no file reports fails the file whose test
 // worker made it, or the run, when it was too short for the watcher to see.
 // So does a file that has more sessions logged in at once than it booked.
+// If the watcher fails mid-run, every file still waiting on the gate, and the
+// run itself, fails with that error rather than vitest crashing.
 // The bookkeeping is in sessionGateLedger.ts; this is its sockets and watcher.
 import { writeFileSync, rmSync } from 'node:fs';
 import { createServer, type Socket } from 'node:net';
@@ -29,9 +31,36 @@ interface TestProject {
 
 export default async function setup(project: TestProject) {
   const env = project.viteConfig.env as Record<string, string>;
-  const ledger = new SessionLedger<Socket>(CAPACITY);
+  const socketPath =
+    process.platform === 'win32'
+      ? `\\\\.\\pipe\\jasper-session-gate-${process.pid}`
+      : join(tmpdir(), `jasper-gate-${process.pid}.sock`);
+  const teardown = await startGate(socketPath, (onSample, onFail) =>
+    startGciWatcher(env, onSample, onFail),
+  );
+  project.provide('sessionGateSocket', socketPath);
+  return teardown;
+}
+
+/**
+ * Starts the watcher, the first look included; a failure in later looks goes to
+ * `onFail` instead of being thrown, since nothing up the stack could catch it.
+ */
+export type StartWatcher = (
+  onSample: (sessions: Map<string, number>) => void,
+  onFail: (error: unknown) => void,
+) => Watcher;
+
+/** Serves the gate on `socketPath`; answers the teardown, which fails the run if a rule was broken. */
+export async function startGate(
+  socketPath: string,
+  startWatcher: StartWatcher,
+  capacity = CAPACITY,
+): Promise<() => Promise<void>> {
+  const ledger = new SessionLedger<Socket>(capacity);
   const waitTimers = new Map<Socket, NodeJS.Timeout>();
   const afterNextSample: (() => void)[] = [];
+  let watcherFailure: string | undefined;
 
   const reply = (socket: Socket, msg: object) => {
     if (!socket.destroyed) socket.write(JSON.stringify(msg) + '\n');
@@ -53,10 +82,12 @@ export default async function setup(project: TestProject) {
       while ((nl = buffer.indexOf('\n')) >= 0) {
         const msg = JSON.parse(buffer.slice(0, nl));
         buffer = buffer.slice(nl + 1);
-        if (msg.op === 'acquire') {
-          if (msg.n > CAPACITY) {
+        if (watcherFailure && (msg.op === 'acquire' || msg.op === 'check')) {
+          reply(socket, { error: watcherFailure });
+        } else if (msg.op === 'acquire') {
+          if (msg.n > capacity) {
             reply(socket, {
-              error: `${msg.file} declares ${msg.n} stone sessions; only ${CAPACITY} are available to tests`,
+              error: `${msg.file} declares ${msg.n} stone sessions; only ${capacity} are available to tests`,
             });
             continue;
           }
@@ -66,7 +97,7 @@ export default async function setup(project: TestProject) {
             setTimeout(() => {
               if (!ledger.withdraw(socket)) return;
               reply(socket, {
-                error: `waited ${WAIT_LIMIT_MS / 1000} s for ${msg.n} stone session(s); ${ledger.committed()} of ${CAPACITY} taken, held by ${ledger.describeHolders()}`,
+                error: `waited ${WAIT_LIMIT_MS / 1000} s for ${msg.n} stone session(s); ${ledger.committed()} of ${capacity} taken, held by ${ledger.describeHolders()}`,
               });
             }, WAIT_LIMIT_MS),
           );
@@ -80,10 +111,15 @@ export default async function setup(project: TestProject) {
         } else if (msg.op === 'check') {
           // A login made just before the check only shows in the next sample.
           afterNextSample.push(() =>
-            reply(socket, {
-              unreported: ledger.unreportedFrom(socket),
-              overBudget: ledger.overBudgetOf(socket),
-            }),
+            reply(
+              socket,
+              watcherFailure
+                ? { error: watcherFailure }
+                : {
+                    unreported: ledger.unreportedFrom(socket),
+                    overBudget: ledger.overBudgetOf(socket),
+                  },
+            ),
           );
         }
       }
@@ -97,14 +133,21 @@ export default async function setup(project: TestProject) {
     socket.on('error', () => {});
   });
 
-  const socketPath =
-    process.platform === 'win32'
-      ? `\\\\.\\pipe\\jasper-session-gate-${process.pid}`
-      : join(tmpdir(), `jasper-gate-${process.pid}.sock`);
   rmSync(socketPath, { force: true });
   await new Promise<void>((resolve) => server.listen(socketPath, resolve));
 
-  const watcher = startWatcher(env, (sessions) => {
+  const failWaiting = (error: unknown) => {
+    watcherFailure = `the session watching the test stone failed, so the gate can no longer tell which sessions are free: ${error instanceof Error ? error.message : String(error)}`;
+    console.error(`session gate: ${watcherFailure}`);
+    for (const [socket, timer] of waitTimers) {
+      clearTimeout(timer);
+      if (ledger.withdraw(socket)) reply(socket, { error: watcherFailure });
+    }
+    waitTimers.clear();
+    for (const done of afterNextSample.splice(0)) done();
+  };
+
+  const watcher = startWatcher((sessions) => {
     const leftOver = ledger.sample(sessions);
     if (leftOver && leftOver.size > 0) {
       console.warn(
@@ -113,14 +156,14 @@ export default async function setup(project: TestProject) {
     }
     tryGrant();
     for (const done of afterNextSample.splice(0)) done();
-  });
-
-  project.provide('sessionGateSocket', socketPath);
+  }, failWaiting);
 
   return async () => {
     watcher.stop();
-    const endSerial = watcher.freshLoginSerial();
+    // Files still connected are given their answer before the server closes.
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (watcherFailure) throw new Error(`session gate: ${watcherFailure}`);
+    const endSerial = watcher.freshLoginSerial();
     const waits = ledger.grants.map((g) => g.waitMs).sort((a, b) => a - b);
     const total = waits.reduce((a, b) => a + b, 0);
     const summary = {
@@ -140,7 +183,7 @@ export default async function setup(project: TestProject) {
       writeFileSync(process.env.SESSION_GATE_STATS, JSON.stringify(summary, null, 2));
     }
     console.log(
-      `session gate: ${summary.grants} grants, ${summary.waited} waited, total ${total} ms, p50 ${summary.p50WaitMs} ms, p90 ${summary.p90WaitMs} ms, max ${summary.maxWaitMs} ms, peak committed ${summary.peakCommitted}/${CAPACITY}, peak live ${summary.peakLive}; ${watcher.lookMs.length} looks at the stone, p50 ${summary.watcherLookMs.p50} ms, p99 ${summary.watcherLookMs.p99} ms, max ${summary.watcherLookMs.max} ms`,
+      `session gate: ${summary.grants} grants, ${summary.waited} waited, total ${total} ms, p50 ${summary.p50WaitMs} ms, p90 ${summary.p90WaitMs} ms, max ${summary.maxWaitMs} ms, peak committed ${summary.peakCommitted}/${capacity}, peak live ${summary.peakLive}; ${watcher.lookMs.length} looks at the stone, p50 ${summary.watcherLookMs.p50} ms, p99 ${summary.watcherLookMs.p99} ms, max ${summary.watcherLookMs.max} ms`,
     );
     const missed = ledger.loginsNeverSeen(watcher.serial, endSerial);
     if (missed.length > 0) {
@@ -188,7 +231,7 @@ ws contents`;
 
 const LOOK_EVERY_MS = 50;
 
-type Watcher = {
+export type Watcher = {
   /** The watcher's own login serial: lower than every test login's. */
   serial: number;
   stop: () => void;
@@ -203,9 +246,10 @@ type Watcher = {
  * tests use, and every 50 ms hands `onSample` the user sessions on the stone.
  * GCI rather than topaz: Windows has only the GCI library, with the stone in WSL.
  */
-function startWatcher(
+function startGciWatcher(
   env: Record<string, string>,
   onSample: (sessions: Map<string, number>) => void,
+  onFail: (error: unknown) => void,
 ): Watcher {
   // The GCI reads GEMSTONE_GLOBAL_DIR; as useIntegrationTest does, from the VITE_ copy.
   process.env.GEMSTONE_GLOBAL_DIR = env.VITE_GEMSTONE_GLOBAL_DIR;
@@ -222,9 +266,9 @@ function startWatcher(
   const lookMs: number[] = [];
   let timer: NodeJS.Timeout | undefined;
   let stopped = false;
+  let failed = false;
 
   const look = () => {
-    if (stopped) return;
     const started = performance.now();
     const listed = gci.executeAndFetchString(session, LIVE_SESSIONS);
     lookMs.push(performance.now() - started);
@@ -233,9 +277,21 @@ function startWatcher(
       .filter(Boolean)
       .map((entry) => entry.split(':'));
     onSample(new Map(pairs.map(([s, pid]) => [s, Number(pid)])));
-    timer = setTimeout(look, LOOK_EVERY_MS);
+  };
+  // Thrown in a timer, a failure would crash vitest's main process.
+  const lookAgain = () => {
+    if (stopped) return;
+    try {
+      look();
+    } catch (error) {
+      failed = true;
+      onFail(error);
+      return;
+    }
+    timer = setTimeout(lookAgain, LOOK_EVERY_MS);
   };
   look();
+  timer = setTimeout(lookAgain, LOOK_EVERY_MS);
 
   return {
     serial,
@@ -243,7 +299,12 @@ function startWatcher(
     stop: () => {
       stopped = true;
       clearTimeout(timer);
-      gci.logout(session);
+      try {
+        gci.logout(session);
+      } catch (error) {
+        // After a failed look the session is usually already gone.
+        if (!failed) throw error;
+      }
     },
     freshLoginSerial: () => {
       const fresh = login();

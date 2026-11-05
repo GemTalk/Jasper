@@ -30,9 +30,12 @@ describe('GCI login (integration)', () => {
 
   let gci: GciLibrary;
 
-  useIntegrationTest(({ gciLibrary }) => {
-    gci = gciLibrary;
-  });
+  useIntegrationTest(
+    ({ gciLibrary }) => {
+      gci = gciLibrary;
+    },
+    { sessions: 2 },
+  );
 
   // eslint-disable-next-line no-restricted-syntax -- the raw logins below are this file's subject and need the password; see the header comment
   const { stoneNrs, gemNrs, gsUser, gsPassword, netldiName } = resolveTestConnection();

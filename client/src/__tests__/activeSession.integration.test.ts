@@ -19,9 +19,12 @@ import { reportedTransientLogin } from './sessionGateClient';
 describe('a logged-out session (integration)', () => {
   let session: ActiveSession;
 
-  useIntegrationTest((testContext) => {
-    session = testActiveSession(testContext.gciLibrary, testContext.session);
-  });
+  useIntegrationTest(
+    (testContext) => {
+      session = testActiveSession(testContext.gciLibrary, testContext.session);
+    },
+    { sessions: 4 },
+  );
 
   function transientSession(): ActiveSession {
     const { session: transient, err } = reportedTransientLogin(session);
@@ -131,9 +134,12 @@ describe('a logged-out session (integration)', () => {
 describe('logging out never waits for the gem (integration)', () => {
   let session: ActiveSession;
 
-  useIntegrationTest((testContext) => {
-    session = testActiveSession(testContext.gciLibrary, testContext.session);
-  });
+  useIntegrationTest(
+    (testContext) => {
+      session = testActiveSession(testContext.gciLibrary, testContext.session);
+    },
+    { sessions: 4 },
+  );
 
   /**
    * Polls until `serial` is off the stone, or fails after `ms`; never a hung test.
@@ -194,9 +200,12 @@ describe('logging out never waits for the gem (integration)', () => {
 describe('whether a session is busy (integration)', () => {
   let session: ActiveSession;
 
-  useIntegrationTest((testContext) => {
-    session = testActiveSession(testContext.gciLibrary, testContext.session);
-  });
+  useIntegrationTest(
+    (testContext) => {
+      session = testActiveSession(testContext.gciLibrary, testContext.session);
+    },
+    { sessions: 4 },
+  );
 
   // Logging out with a non-blocking call outstanding frees the session too, so
   // a test can leave one behind.

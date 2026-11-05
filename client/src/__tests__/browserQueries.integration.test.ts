@@ -30,10 +30,13 @@ describe('browser queries (integration)', () => {
   let gci: GciLibrary;
   let handle: unknown;
 
-  useIntegrationTest((testContext) => {
-    gci = testContext.gciLibrary;
-    handle = testContext.session;
-  });
+  useIntegrationTest(
+    (testContext) => {
+      gci = testContext.gciLibrary;
+      handle = testContext.session;
+    },
+    { sessions: 3 },
+  );
 
   /**
    * The live session the queries run against, assembled from the same test

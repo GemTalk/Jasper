@@ -83,7 +83,6 @@ export default defineConfig({
       {
         test: {
           name: 'default',
-          ...(process.env.W ? { maxWorkers: Number(process.env.W) } : {}),
           include: ['src/**/__tests__/**/*.test.ts'],
           exclude: ['src/__tests__/gci/**'],
           globalSetup: [

@@ -52,10 +52,13 @@ describe('transcript sink (integration)', () => {
   let gci: GciLibrary;
   let handle: unknown;
 
-  useIntegrationTest((testContext) => {
-    gci = testContext.gciLibrary;
-    handle = testContext.session;
-  });
+  useIntegrationTest(
+    (testContext) => {
+      gci = testContext.gciLibrary;
+      handle = testContext.session;
+    },
+    { sessions: 2 },
+  );
 
   /**
    * A real `ActiveSession` around the live `gci`/`handle`, rebuilt per call --

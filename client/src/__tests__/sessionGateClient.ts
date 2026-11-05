@@ -1,4 +1,4 @@
-// PROTOTYPE: a test file's side of the session gate (see sessionGate.globalSetup.ts).
+// A test file's side of the session gate (see sessionGate.globalSetup.ts).
 import { createConnection, type Socket } from 'node:net';
 import { inject } from 'vitest';
 import type { ActiveSession } from '../activeSession';
@@ -10,38 +10,8 @@ declare module 'vitest' {
   }
 }
 
-// PROTOTYPE ONLY: in the real design each file declares this through
-// useIntegrationTest({ sessions: N }). A map keeps the prototype's diff small.
-const BUDGETS: Record<string, number> = {
-  'src/__tests__/forceStop.integration.test.ts': 3,
-  'src/__tests__/forceStopSurfaces.integration.test.ts': 3,
-  'src/__tests__/forceStopLogout.integration.test.ts': 3,
-  'src/__tests__/clearStoppedRun.integration.test.ts': 3,
-  'src/__tests__/conditionalBreakpointStop.integration.test.ts': 3,
-  'src/stoneSessions/__tests__/stoneSessions.integration.test.ts': 3,
-  'src/__tests__/browserQueries.integration.test.ts': 3,
-  'src/__tests__/activeSession.integration.test.ts': 4,
-  'src/__tests__/useIntegrationTest.integration.test.ts': 2,
-  'src/__tests__/explorer/gemstoneExplorer.integration.test.ts': 2,
-  'src/__tests__/transcriptSink.integration.test.ts': 2,
-  'src/__tests__/gciLibrary.test.ts': 2,
-  'src/gciLibrary/__tests__/gciAsync.integration.test.ts': 2,
-  'src/gciLibrary/__tests__/gciSessionUtils.integration.test.ts': 2,
-  'src/gciLibrary/__tests__/gciLogin.integration.test.ts': 2,
-  'src/fileTransfer/__tests__/fileIn.integration.test.ts': 2,
-  'src/refactoring/__tests__/refactoringInstallDecoy.integration.test.ts': 2,
-};
-
-const budgetKey = (testPath: string) =>
-  testPath.slice(testPath.lastIndexOf('/client/') + '/client/'.length);
-
-export function budgetFor(testPath: string): number {
-  return BUDGETS[budgetKey(testPath)] ?? 1;
-}
-
 // One per useIntegrationTest call that is running; nested describes can hold several.
 const held: Socket[] = [];
-const fileOf = new Map<Socket, string>();
 
 /** Waits until the stone has room for `n` sessions, then holds them until {@link releaseSessions}. */
 export async function acquireSessions(file: string, n: number): Promise<Socket | undefined> {
@@ -63,7 +33,6 @@ export async function acquireSessions(file: string, n: number): Promise<Socket |
     throw new Error(`Session gate: ${answer.error}`);
   }
   held.push(socket);
-  fileOf.set(socket, file);
   return socket;
 }
 
@@ -137,6 +106,7 @@ function testRunningAt(time: number): string {
 }
 
 type GateVerdict = {
+  error?: string;
   unreported: { serial: string; firstSeen: number }[];
   overBudget?: { booked: number; seen: number };
 };
@@ -162,6 +132,7 @@ export async function assertBookingKept(socket: Socket | undefined): Promise<voi
     socket.once('error', reject);
     socket.write(JSON.stringify({ op: 'check' }) + '\n');
   });
+  if (answer.error) throw new Error(`Session gate: ${answer.error}`);
   const problems: string[] = [];
   if (answer.unreported.length > 0) {
     const where = answer.unreported
@@ -178,7 +149,7 @@ export async function assertBookingKept(socket: Socket | undefined): Promise<voi
     const { booked, seen } = answer.overBudget;
     problems.push(
       `this file had ${seen} sessions logged in at once, but booked ${booked}. ` +
-        `Book ${seen}: add '${budgetKey(fileOf.get(socket) ?? '')}': ${seen} to BUDGETS in sessionGateClient.ts.`,
+        `Book ${seen}: pass { sessions: ${seen} } to the useIntegrationTest call that holds them.`,
     );
   }
   if (problems.length > 0) throw new Error(`Session gate: ${problems.join(' Also, ')}`);
@@ -228,6 +199,5 @@ export function releaseSessions(socket: Socket | undefined): void {
   if (!socket) return;
   const i = held.indexOf(socket);
   if (i >= 0) held.splice(i, 1);
-  fileOf.delete(socket);
   socket.end();
 }

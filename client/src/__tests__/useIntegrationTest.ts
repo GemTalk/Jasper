@@ -7,7 +7,6 @@ import type { Socket } from 'node:net';
 import {
   acquireSessions,
   assertBookingKept,
-  budgetFor,
   noteTestStarted,
   releaseSessions,
   reportingRefusal,
@@ -60,6 +59,13 @@ type UseIntegrationTestOptions = {
    * `docs/reference/integration-test-harness.md` for the full contract.
    */
   allowedCommits?: number;
+  /**
+   * How many sessions this suite has logged in on the stone at once: its own,
+   * plus any second session a test logs in, through `withTransientSession` or
+   * otherwise. Defaults to 1. The session gate books this many before the
+   * suite logs in, and fails the file if the suite holds more.
+   */
+  sessions?: number;
 };
 
 /**
@@ -69,7 +75,7 @@ type UseIntegrationTestOptions = {
  * - Loads the GCI shared library and logs in before any tests run.
  * - Wraps each test in a transaction that is always aborted afterward,
  *   so database changes never leak between tests.
- * - Books its sessions with the session gate before logging in, and gives
+ * - Books `options.sessions` with the session gate before logging in, and gives
  *   them back after logging out, failing the file first if any login it made,
  *   or app code made for it, was never reported to the gate, or if it had more
  *   sessions on the stone at once than it booked (see sessionGateClient.ts).
@@ -126,6 +132,8 @@ export function useIntegrationTest(
 
   const allowedCommits = options?.allowedCommits ?? 0;
   assertUsableAllowedCommits(allowedCommits);
+  const sessions = options?.sessions ?? 1;
+  assertUsableSessions(sessions);
 
   // One nested level per allowed commit, plus one of headroom so the teardown
   // check can catch an overrun before a real commit is ever attempted against
@@ -139,7 +147,7 @@ export function useIntegrationTest(
   // callers assign the values into their own variables before any test runs.
   beforeAll(async () => {
     const testPath = expect.getState().testPath ?? '';
-    gate = await acquireSessions(testPath, budgetFor(testPath));
+    gate = await acquireSessions(testPath, sessions);
     configureGemstoneGlobalDir();
 
     handleIntegrationTestSetupErrorDuring(() => {
@@ -374,13 +382,14 @@ export function useIntegrationTest(
       gate,
     );
 
-    const transientSerial = serialOf(transientSession);
+    let transientSerial: bigint | undefined;
     try {
+      transientSerial = serialOf(transientSession);
       reportSession(transientSerial, gate);
       armCommitGuard(transientSession);
       callback(transientSession);
     } finally {
-      if (gciLibrary.logout(transientSession).sessionFreed) {
+      if (gciLibrary.logout(transientSession).sessionFreed && transientSerial !== undefined) {
         reportSessionClosed(transientSerial, gate);
       }
     }
@@ -520,6 +529,14 @@ export function useIntegrationTest(
  * commit too many, would fail every test in the suite for a budget that was
  * never openable in the first place.
  */
+function assertUsableSessions(sessions: number) {
+  if (Number.isInteger(sessions) && sessions >= 1) return;
+
+  throw new Error(
+    `useIntegrationTest: sessions must be a whole number of at least 1, but got ${sessions}.`,
+  );
+}
+
 function assertUsableAllowedCommits(allowedCommits: number) {
   if (Number.isInteger(allowedCommits) && allowedCommits >= 0) return;
 
