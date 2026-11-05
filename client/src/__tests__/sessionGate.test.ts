@@ -1,8 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createConnection, type Socket } from 'node:net';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { startGate, type StartWatcher, type Watcher } from './sessionGate.globalSetup';
+import {
+  gateSocketPath,
+  startGate,
+  type StartWatcher,
+  type Watcher,
+} from './sessionGate.globalSetup';
 import type { ActiveSession } from '../activeSession';
 import {
   assertBookingKept,
@@ -63,7 +66,7 @@ describe('the session gate', () => {
   const booked = async (n = 1): Promise<Socket> => (await ask(n)).socket;
 
   beforeEach(() => {
-    socketPath = join(tmpdir(), `jasper-gate-test-${process.pid}-${Date.now()}.sock`);
+    socketPath = gateSocketPath(`jasper-gate-test-${process.pid}-${Date.now()}`);
     teardown = undefined;
   });
 

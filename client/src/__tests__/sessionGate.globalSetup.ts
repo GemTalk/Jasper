@@ -34,15 +34,17 @@ interface TestProject {
 
 export default async function setup(project: TestProject) {
   const env = project.viteConfig.env as Record<string, string>;
-  const socketPath =
-    process.platform === 'win32'
-      ? `\\\\.\\pipe\\jasper-session-gate-${process.pid}`
-      : join(tmpdir(), `jasper-gate-${process.pid}.sock`);
+  const socketPath = gateSocketPath(`jasper-session-gate-${process.pid}`);
   const teardown = await startGate(socketPath, (onSample, onFail) =>
     startGciWatcher(env, onSample, onFail),
   );
   project.provide('sessionGateSocket', socketPath);
   return teardown;
+}
+
+/** Where a gate named `name` listens: a named pipe on Windows, which has no Unix sockets. */
+export function gateSocketPath(name: string): string {
+  return process.platform === 'win32' ? `\\\\.\\pipe\\${name}` : join(tmpdir(), `${name}.sock`);
 }
 
 /**
