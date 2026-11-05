@@ -7,6 +7,8 @@ Install from either marketplace:
 - **VS Code Marketplace:** https://marketplace.visualstudio.com/items?itemName=GemTalkSystems.gemstone-ide
 - **Open VSX** (VSCodium, Gitpod, code-server, etc.): https://open-vsx.org/extension/gemtalksystems/gemstone-ide
 
+Jasper is built and tested on Microsoft's VS Code. It is published to Open VSX so that VS Code forks (Cursor, Windsurf and others) can install it, but forks are not tested, and fork-specific problems are fixed on a best-effort basis.
+
 Jasper works on **macOS**, **Linux**, and **Windows**:
 
 | Platform           | Server management | Client IDE (connect to remote GemStone) |
