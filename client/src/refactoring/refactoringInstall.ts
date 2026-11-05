@@ -49,7 +49,7 @@ import {
   REFACTORING_PAYLOAD_FILES,
   REFACTORING_RECEIPT,
 } from './refactoringPayload';
-import { Receipt, receiptFor } from '../serverPlugin/pluginFingerprint';
+import { receiptFor } from '../serverPlugin/pluginFingerprint';
 import {
   gemCanRead,
   gsStringLiteral,
@@ -178,7 +178,9 @@ export async function installRefactoringSupport(
       'refactoring-load',
       '| ldr | ' +
         'ldr := GsRefactoringLoader new. ' +
-        `${receiptMessage('ldr', receipt)}. ` +
+        // The loader stores the receipt in its own transaction, with the engine.
+        `ldr receiptDigest: ${gsStringLiteral(receipt.digest)} ` +
+        `installedBy: ${gsStringLiteral(receipt.installedBy)}. ` +
         `ldr loadFromServerDir: ${gsStringLiteral(gemPayloadDir)}. ` +
         "(ldr allOk ifTrue: ['OK'] ifFalse: ['FAIL']), (String with: Character lf), ldr reportString",
     );
@@ -234,16 +236,4 @@ export function supportsServerUtf8FileIn(stoneVersion: string | undefined): bool
   } catch {
     return false;
   }
-}
-
-/**
- * The message that has a `GsRefactoringLoader` (held by `loaderVar`) record
- * `receipt` as it loads. The loader replaces the receipt inside its own
- * transaction, so the receipt is committed with the engine or rolled back with it.
- */
-export function receiptMessage(loaderVar: string, receipt: Receipt): string {
-  return (
-    `${loaderVar} receiptDigest: ${gsStringLiteral(receipt.digest)} ` +
-    `installedBy: ${gsStringLiteral(receipt.installedBy)}`
-  );
 }

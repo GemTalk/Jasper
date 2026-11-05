@@ -1,18 +1,12 @@
-// Checks that the test stone's server plugin (the refactoring engine, and the
-// Enhanced Inspector where the release supports it) is the one in this
-// checkout, so integration tests never exercise a plugin filed in from another
-// branch or an older install. See `src/__tests__/serverPluginMatch.globalSetup.ts`.
+// Checks that the test stone's server plugin is this checkout's, so integration
+// tests never exercise another branch's code. A feature with no receipt gets this
+// checkout's plugin installed over it; a different one is left alone and stops
+// the run, since it may be someone's work in progress.
 //
-// A feature with no receipt (installed before Jasper recorded one, or by hand)
-// gets the plugin reinstalled from this checkout, which records one. A
-// DIFFERENT feature is left alone and stops the run: it may be someone's work in
-// progress.
-//
-// Exit codes, which the global setup relies on:
-//   0  every installed feature matches (perhaps after that install), or none is
-//      installed (the bare-stone pass)
+// Exit codes, which src/__tests__/serverPluginMatch.globalSetup.ts relies on:
+//   0  everything installed matches (perhaps after that install), or nothing is
 //   1  a feature is different, the install failed, or the stone couldn't be read
-//   2  the stone couldn't be reached; the integration tests report that themselves
+//   2  the stone couldn't be reached; the integration tests report that
 
 import path from 'node:path';
 import dotenv from 'dotenv';
@@ -110,9 +104,9 @@ async function check(): Promise<number> {
     for (const { label, status } of problems) {
       console.error(
         status.state === 'different'
-          ? `The test stone's ${label} isn't this checkout's (installed by Jasper ` +
+          ? `${label} in the test stone isn't this checkout's (installed by Jasper ` +
               `${status.installedBy ?? 'unrecorded'}).`
-          : `Could not check the test stone's ${label}: ` +
+          : `Could not check the ${label} in the test stone: ` +
               `${status.detail ?? 'no record of which version it is'}.`,
       );
     }

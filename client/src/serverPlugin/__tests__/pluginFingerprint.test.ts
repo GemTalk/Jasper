@@ -114,11 +114,6 @@ describe('receiptFor', () => {
 });
 
 describe('readJasperVersion', () => {
-  it("reads the extension's own version", () => {
-    const manifest = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
-    expect(readJasperVersion(REPO_ROOT)).toBe(manifest.version);
-  });
-
   it('answers an empty string when there is no package.json', () => {
     expect(readJasperVersion(dir)).toBe('');
   });

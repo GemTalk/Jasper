@@ -1,23 +1,19 @@
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
-// Stops the run before any test file when the test stone's server plugin (the
-// refactoring engine and the Enhanced Inspector) isn't the one in this checkout:
-// its integration tests would otherwise exercise code from another branch or an
-// older install. One check for local and
-// CI runs alike; see bin/checkServerPluginMain.ts for what it decides, including
-// when it installs this checkout's engine instead of stopping.
-//
-// It runs as a separate process because the main vitest process has no `vscode`
-// stub, which the GCI code needs (see bin/install-server-plugin.mjs).
+// Stops the run before any test file when the test stone's server plugin isn't
+// this checkout's, so its integration tests never exercise another branch's code.
+// bin/checkServerPluginMain.ts decides, and installs this checkout's plugin over
+// one with no receipt. It runs as a separate process because only its launcher
+// stubs `vscode`, which the GCI code needs.
 
 const MISMATCH = 1;
 
 export function decide(status: number | null, output: string): void {
   if (status === MISMATCH) throw new Error(output.trim());
-  // Anything else (match, no engine, stone unreachable, the check itself timing
-  // out) lets the run go ahead: an unreachable stone is reported by the
-  // integration tests, and a unit-only run doesn't need one.
+  // Anything else (match, no plugin, unreachable stone, timeout) lets the run go
+  // ahead: the integration tests report an unreachable stone, and a unit-only run
+  // doesn't need one.
 }
 
 export default function setup(): void {

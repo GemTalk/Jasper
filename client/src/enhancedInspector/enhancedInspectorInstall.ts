@@ -42,12 +42,7 @@ import {
   yieldToEventLoop,
 } from '../serverPlugin/installHelpers';
 import { explainGciError } from '../gciLibraryError';
-import {
-  Receipt,
-  ReceiptSpec,
-  receiptFor,
-  storeReceiptStatements,
-} from '../serverPlugin/pluginFingerprint';
+import { Receipt, ReceiptSpec, receiptFor } from '../serverPlugin/pluginFingerprint';
 
 /**
  * Minimum GemStone version the Enhanced Inspector support is limited to.
@@ -126,13 +121,13 @@ export const ENHANCED_INSPECTOR_RECEIPT: ReceiptSpec = {
 };
 
 /** Server-side snippet storing `receipt` in `GsEnhancedInspector`. */
-function storeReceiptSnippet(receipt: Receipt): string {
-  return (
-    `| dict | dict := System myUserProfile symbolList detect: ` +
-    `[:d | d name == #${ENHANCED_INSPECTOR_DICTIONARY}]. ` +
-    storeReceiptStatements(ENHANCED_INSPECTOR_RECEIPT, 'dict', receipt) +
-    "'ok'"
-  );
+function storeReceiptSnippet({ digest, installedBy }: Receipt): string {
+  const { digestKey, installedByKey } = ENHANCED_INSPECTOR_RECEIPT;
+  return `| dict |
+dict := System myUserProfile symbolList detect: [:d | d name == #${ENHANCED_INSPECTOR_DICTIONARY}].
+dict at: #${digestKey} put: ${gsStringLiteral(digest)}.
+dict at: #${installedByKey} put: ${gsStringLiteral(installedBy)}.
+'ok'`;
 }
 
 /**

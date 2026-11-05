@@ -1,27 +1,22 @@
 /**
- * Tells whether a server plugin feature in a stone (the refactoring engine, the
- * Enhanced Inspector) is the one this Jasper ships.
+ * Tells whether a server plugin feature in a stone is the one this Jasper ships.
  *
- * At install, Jasper stores a receipt in the feature's own dictionary: a
- * fingerprint (SHA-256) of the payload files it filed in, and the Jasper version
- * that filed them in. Checking hashes this Jasper's payload files again and
- * compares. Only the fingerprint decides; the Jasper version is shown to the
- * reader and never compared, since a different payload may be older or newer
- * and either can be the one the user wants.
+ * Each install stores a receipt in the feature's dictionary: a SHA-256 of the
+ * payload files and the Jasper version that filed them in. Only the fingerprint
+ * decides; the version is for the reader and never compared, because a different
+ * payload may be older or newer and either can be the one the user wants.
  *
- * The receipt describes what was FILED IN, not what is in the stone now: a
- * method edited afterwards in topaz or the Explorer goes unnoticed.
- *
- * Who writes it: `GsRefactoringLoader>>replaceReceiptIn:` for the refactoring
- * engine, `installEnhancedInspectorSupport` for the Enhanced Inspector, each
- * inside the transaction that files the payload in. Deliberately `vscode`-free.
+ * The receipt describes what was filed in, not what is in the stone now: a method
+ * edited afterwards goes unnoticed. `GsRefactoringLoader>>replaceReceiptIn:` and
+ * `installEnhancedInspectorSupport` write it, each in the transaction that files
+ * the payload in. `vscode`-free, for the test-run check in `bin/`.
  */
 import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ActiveSession } from '../sessionManager';
 import { executeFetchString } from '../browserQueries';
-import { gsStringLiteral, messageOf } from './installHelpers';
+import { messageOf } from './installHelpers';
 
 /** Which payload files a feature's fingerprint covers, and where its receipt is kept. */
 export interface ReceiptSpec {
@@ -39,11 +34,10 @@ export interface Receipt {
 }
 
 /**
- * Fingerprint of the payload the gem files in. The same payload must
- * fingerprint the same from every client, so line endings (CRLF, CR, LF) and a
- * leading BOM are normalized away. `.gitattributes` already checks the payload
- * out as LF; this covers a copy that didn't come through git, or an editor that
- * re-saved it.
+ * Fingerprint of the payload the gem files in. Line endings and a leading BOM are
+ * normalized so every client agrees: `.gitattributes` checks the payload out as
+ * LF, but a copy may not have come through git. Each file's name and length go
+ * in too, so text moved from one file to the next changes the fingerprint.
  */
 export function computePayloadDigest(payloadDir: string, files: readonly string[]): string {
   const hash = createHash('sha256');
@@ -78,18 +72,6 @@ export function receiptFor(spec: ReceiptSpec, payloadDir: string): Receipt {
     digest: computePayloadDigest(payloadDir, spec.files),
     installedBy: readJasperVersion(path.resolve(payloadDir, '..', '..')),
   };
-}
-
-/** Smalltalk statements storing `receipt` in the dictionary held by `dictVar`. */
-export function storeReceiptStatements(
-  spec: ReceiptSpec,
-  dictVar: string,
-  receipt: Receipt,
-): string {
-  return (
-    `${dictVar} at: #${spec.digestKey} put: ${gsStringLiteral(receipt.digest)}. ` +
-    `${dictVar} at: #${spec.installedByKey} put: ${gsStringLiteral(receipt.installedBy)}. `
-  );
 }
 
 /**

@@ -32,11 +32,9 @@ What it does, in order:
      The SAME dictionary object is then shared into every user''s symbol list (the
      Published/Globals mechanism) so the engine is visible to whoever uses the
      client -- not just the installing SystemUser.
-     Then replace the receipt (#replaceReceiptIn:): the dictionary''s
-     #GsRefactoringDigest and #GsRefactoringInstalledBy, which Jasper reads to
-     tell whether this is the engine it ships. Every load removes the old one, so
-     a by-hand load never leaves a receipt describing a different payload; only a
-     caller that sends #receiptDigest:installedBy: (the Jasper client) gets a new one.
+     Then #replaceReceiptIn: removes the old receipt, which Jasper reads to tell
+     whether this is the engine it ships, and stores a new one only when the
+     client sent #receiptDigest:installedBy:. A by-hand load leaves none.
   2. file in the payloads in dependency order, with the dictionary moved to the
      FRONT of the symbol list for the duration (#withDictionaryFirstDo:) and put
      back at the end afterwards. End position is right for normal use but wrong
