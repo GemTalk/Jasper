@@ -35,7 +35,12 @@ export function focusedTheExplorerContainer(executeCommand: ExecuteCommandMock):
 
 /** A TreeView stub. `visible` is the flag `revealCascade` gates on. */
 export function fakeView(visible = true) {
-  return { reveal: vi.fn(async () => {}), selection: [] as unknown[], description: '', visible };
+  return {
+    reveal: vi.fn<(item: unknown) => Promise<void>>(async () => {}),
+    selection: [] as unknown[],
+    description: '',
+    visible,
+  };
 }
 
 export type FakeViews = ReturnType<typeof fakeViews>;

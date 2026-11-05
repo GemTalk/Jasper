@@ -1098,6 +1098,40 @@ export function selfOpenKey(uri: vscode.Uri): string {
   return uri.toString();
 }
 
+/** A class's lineage as the Hierarchy pane shows it. */
+interface ClassHierarchy {
+  /** Superclasses from the root down, then the class itself. */
+  chain: queries.ClassHierarchyEntry[];
+  subs: queries.ClassHierarchyEntry[];
+}
+
+const noHierarchy = (): ClassHierarchy => ({ chain: [], subs: [] });
+
+/** What the Classes pane shows on each class row of a dictionary, besides its name. */
+interface ClassRowMetadata {
+  definedIvarCounts: Map<string, number>;
+  definedClassVarCounts: Map<string, number>;
+  classVersions: Map<string, queries.ClassVersionInfo>;
+}
+
+const noClassRowMetadata = (): ClassRowMetadata => ({
+  definedIvarCounts: new Map(),
+  definedClassVarCounts: new Map(),
+  classVersions: new Map(),
+});
+
+// `read`'s answer, or an empty map when it fails for any reason but a busy session. A
+// busy refusal says nothing about the answer, so it is thrown for the caller to keep what
+// it has.
+function mapUnlessBusy<K, V>(read: () => Map<K, V>): Map<K, V> {
+  try {
+    return read();
+  } catch (e) {
+    if (queries.isBusyRefusal(e)) throw e;
+    return new Map();
+  }
+}
+
 export class ExplorerController {
   readonly state: ExplorerState = {};
   // className → category for the current dictionary; fetched once per dict.
@@ -1946,10 +1980,20 @@ export class ExplorerController {
     } catch {
       listingRead = false; /* keep stale on failure */
     }
-    this.loadClassRowMetadata();
-    // Only against a listing that was actually re-read: a failed fetch leaves the stale one,
-    // which says nothing about what is bound now.
-    if (listingRead) this.dropVanishedSelection();
+    // Expanded class rows are read again when next expanded, whatever the reads below find:
+    // what they remembered is exactly what a refresh distrusts.
+    this.forgetClassRows();
+    if (listingRead) {
+      // The rows' details describe the listing, so they are re-read only with it.
+      try {
+        this.commitClassRowMetadata(this.fetchClassRowMetadata(currentDictIndex));
+      } catch {
+        /* a busy session refused it: keep stale */
+      }
+      // Only against a listing that was actually re-read: a failed fetch leaves the stale
+      // one, which says nothing about what is bound now.
+      this.dropVanishedSelection();
+    }
     const stillSelected = this.state.className;
     if (stillSelected !== undefined) {
       try {
@@ -1962,7 +2006,11 @@ export class ExplorerController {
       } catch {
         /* keep stale on failure */
       }
-      this.loadHierarchy();
+      try {
+        this.commitHierarchy(this.fetchHierarchy(stillSelected));
+      } catch {
+        /* a busy session refused it: keep stale */
+      }
     }
 
     this.dictProvider.refresh();
@@ -2051,6 +2099,12 @@ export class ExplorerController {
   }
 
   selectDict(item: DictItem): void {
+    // Read everything before changing anything: a failed read throws with the previous
+    // dictionary still selected, its classes still listed, and nothing the user set up
+    // (filters, new categories, a method being written) thrown away (#843).
+    const session = this.session();
+    const entries = session ? queries.getClassesWithCategory(session, item.dictIndex) : [];
+    const metadata = this.fetchClassRowMetadata(item.dictIndex);
     this.state.dictName = item.dictName;
     this.state.dictIndex = item.dictIndex;
     this.state.classCategory = undefined;
@@ -2066,11 +2120,8 @@ export class ExplorerController {
     this.newMethodCategories.meta.clear();
     this.pendingNewMethod = undefined;
     this.clearFilters(VIEW_CATEGORIES, VIEW_CLASSES, VIEW_METHODS);
-    const session = this.session();
-    this.classCategoryEntries = session
-      ? queries.getClassesWithCategory(session, item.dictIndex)
-      : [];
-    this.loadClassRowMetadata();
+    this.classCategoryEntries = entries;
+    this.commitClassRowMetadata(metadata);
     this.categoryProvider.refresh();
     this.classProvider.refresh();
     this.hierarchyProvider.refresh();
@@ -2304,6 +2355,15 @@ export class ExplorerController {
   // can't force-open) the Hierarchy pane — used when selecting the class is a
   // side effect (e.g. filtering methods by one of its ivars), not a navigation.
   selectClass(item: ClassItem, revealHierarchy = true): void {
+    // Read everything before changing anything: a failed read throws with the previous
+    // class still selected and its methods still listed, never the new class over the old
+    // one's methods (#843).
+    const session = this.session();
+    const envLines =
+      session && this.state.dictIndex !== undefined
+        ? queries.getClassEnvironments(session, this.state.dictIndex, item.className, this.maxEnv())
+        : [];
+    const hierarchy = this.fetchHierarchy(item.className);
     this.state.className = item.className;
     this.state.selectedSelector = undefined;
     this.state.selectedIsMeta = undefined;
@@ -2312,12 +2372,8 @@ export class ExplorerController {
     this.newMethodCategories.meta.clear();
     this.pendingNewMethod = undefined;
     this.clearFilters(VIEW_METHODS);
-    const session = this.session();
-    this.envLines =
-      session && this.state.dictIndex !== undefined
-        ? queries.getClassEnvironments(session, this.state.dictIndex, item.className, this.maxEnv())
-        : [];
-    this.loadHierarchy();
+    this.envLines = envLines;
+    this.commitHierarchy(hierarchy);
     this.methodProvider.refresh();
     this.hierarchyProvider.refresh();
     if (revealHierarchy) void this.revealHierarchySelf();
@@ -2329,6 +2385,44 @@ export class ExplorerController {
     // NOTE: a plain class click no longer auto-opens the definition editor —
     // that cluttered the editor area with a definition tab per class browsed.
     // Use the inline "Open Definition" button (gemstone.explorer.openDefinition).
+  }
+
+  // A dictionary row the user clicked. When it can't be read (a run holds the session,
+  // say), the highlight VS Code already moved goes back to the dictionary still selected.
+  // Error handling is the same as for a clicked class row, below.
+  //
+  // The dictionary already selected is skipped: its row gets highlighted again by a
+  // refused click moving back, or by a jump that selects a dictionary and then reveals its
+  // row, and reading it again would only clear whatever was chosen under it.
+  selectDictFromTree(item: DictItem): void {
+    if (item.dictName === this.state.dictName && item.dictIndex === this.state.dictIndex) return;
+    try {
+      this.selectDict(item);
+    } catch (e) {
+      const { dictName, dictIndex } = this.state;
+      if (dictName === item.dictName && dictIndex === item.dictIndex) throw e;
+      if (dictName !== undefined && dictIndex !== undefined)
+        void this.revealCascade(this.views?.dict, new DictItem(dictName, dictIndex));
+      if (!(e instanceof queries.BrowserQueryError)) throw e;
+    }
+  }
+
+  // A class row the user clicked. VS Code moves the highlight before this runs, so when
+  // the class can't be read (a run holds the session, say), the highlight goes back to the
+  // class still selected; otherwise it would light a row whose methods aren't the ones
+  // listed. A failed read has already given the busy notice or logged its error, so it
+  // ends here; anything else is thrown on, as is a failure once the clicked class is
+  // selected, which has no previous class to go back to.
+  selectClassFromTree(item: ClassItem): void {
+    try {
+      this.selectClass(item);
+    } catch (e) {
+      const previous = this.state.className;
+      if (previous === item.className) throw e;
+      if (previous !== undefined)
+        void this.revealCascade(this.views?.klass, new ClassItem(previous));
+      if (!(e instanceof queries.BrowserQueryError)) throw e;
+    }
   }
 
   // Resolve a class's dictionary (name + 1-based index). Prefers the given dict
@@ -2535,9 +2629,10 @@ export class ExplorerController {
     // the already-highlighted row fires no onDidChangeSelection, so the hierarchy
     // would never reload. classClicked fires on EVERY click, so re-sync here. The
     // matching guard on the classView selection wiring keeps this to exactly one
-    // selectClass per click.
+    // selectClass per click that succeeds. A refused click leaves the previous class
+    // selected, so both try it; the busy notice still shows once.
     if (className !== this.state.className) {
-      this.selectClass(new ClassItem(className));
+      this.selectClassFromTree(new ClassItem(className));
     }
     if (this.classClicks.register(className)) {
       void this.openClassDefinition(new ClassItem(className));
@@ -2559,28 +2654,43 @@ export class ExplorerController {
 
   // Fetch the selected class's superclass chain + immediate subclasses.
   private loadHierarchy(): void {
-    const session = this.session();
-    if (!session || this.state.className === undefined) {
-      this.hierChain = [];
-      this.hierSubs = [];
-      return;
+    let hierarchy: ClassHierarchy;
+    try {
+      hierarchy = this.fetchHierarchy(this.state.className);
+    } catch {
+      hierarchy = noHierarchy();
     }
+    this.commitHierarchy(hierarchy);
+  }
+
+  private commitHierarchy(hierarchy: ClassHierarchy): void {
+    this.hierChain = hierarchy.chain;
+    this.hierSubs = hierarchy.subs;
+  }
+
+  // The Hierarchy pane's rows for `className` in the selected dictionary. A read a busy
+  // session refused is thrown, since it says nothing about the class; any other failure
+  // answers no rows.
+  private fetchHierarchy(className: string | undefined): ClassHierarchy {
+    const session = this.session();
+    if (!session || className === undefined) return noHierarchy();
     let entries: queries.ClassHierarchyEntry[];
     try {
       // Scope the lookup to the selected dictionary: without dictIndex, a class
       // name shadowed across dictionaries resolves to the global first match, so
       // the Hierarchy pane would show the OTHER dictionary's class's lineage.
-      entries = queries.getClassHierarchy(session, this.state.className, this.state.dictIndex);
-    } catch {
-      this.hierChain = [];
-      this.hierSubs = [];
-      return;
+      entries = queries.getClassHierarchy(session, className, this.state.dictIndex);
+    } catch (e) {
+      if (queries.isBusyRefusal(e)) throw e;
+      return noHierarchy();
     }
     const supers = entries.filter((e) => e.kind === 'superclass');
     const self = entries.find((e) => e.kind === 'self');
     // chain = superclasses (root-first) then the class itself (last element).
-    this.hierChain = self ? [...supers, self] : supers;
-    this.hierSubs = entries.filter((e) => e.kind === 'subclass');
+    return {
+      chain: self ? [...supers, self] : supers,
+      subs: entries.filter((e) => e.kind === 'subclass'),
+    };
   }
 
   // Children of a hierarchy node (for HierarchyProvider): the chain nests as a
@@ -2779,29 +2889,34 @@ export class ExplorerController {
   // A failed probe leaves the maps empty rather than breaking navigation — classes
   // just render flat and untagged.
   private loadClassRowMetadata(): void {
+    let metadata: ClassRowMetadata;
+    try {
+      metadata = this.fetchClassRowMetadata(this.state.dictIndex);
+    } catch {
+      metadata = noClassRowMetadata();
+    }
+    this.commitClassRowMetadata(metadata);
+  }
+
+  // The row metadata of dictionary `dictIndex`. A read a busy session refused is thrown;
+  // any other failure leaves that map empty.
+  private fetchClassRowMetadata(dictIndex: number | undefined): ClassRowMetadata {
     const session = this.session();
+    if (!session || dictIndex === undefined) return noClassRowMetadata();
+    return {
+      definedIvarCounts: mapUnlessBusy(() => queries.getDefinedInstVarCounts(session, dictIndex)),
+      definedClassVarCounts: mapUnlessBusy(() =>
+        queries.getDefinedClassVarCounts(session, dictIndex),
+      ),
+      classVersions: mapUnlessBusy(() => queries.getClassVersions(session, dictIndex)),
+    };
+  }
+
+  private commitClassRowMetadata(metadata: ClassRowMetadata): void {
     this.forgetClassRows();
-    if (!session || this.state.dictIndex === undefined) {
-      this.definedIvarCounts = new Map();
-      this.definedClassVarCounts = new Map();
-      this.classVersions = new Map();
-      return;
-    }
-    try {
-      this.definedIvarCounts = queries.getDefinedInstVarCounts(session, this.state.dictIndex);
-    } catch {
-      this.definedIvarCounts = new Map();
-    }
-    try {
-      this.definedClassVarCounts = queries.getDefinedClassVarCounts(session, this.state.dictIndex);
-    } catch {
-      this.definedClassVarCounts = new Map();
-    }
-    try {
-      this.classVersions = queries.getClassVersions(session, this.state.dictIndex);
-    } catch {
-      this.classVersions = new Map();
-    }
+    this.definedIvarCounts = metadata.definedIvarCounts;
+    this.definedClassVarCounts = metadata.definedClassVarCounts;
+    this.classVersions = metadata.classVersions;
   }
 
   // Whether a class has locally-defined instance variables.
@@ -9072,7 +9187,7 @@ export function registerGemStoneExplorer(
 
   dictView.onDidChangeSelection((e) => {
     const node = e.selection[0];
-    if (node instanceof DictItem) ctl.selectDict(node);
+    if (node instanceof DictItem) ctl.selectDictFromTree(node);
   });
   categoryView.onDidChangeSelection((e) => {
     const node = e.selection[0];
@@ -9082,9 +9197,12 @@ export function registerGemStoneExplorer(
     // Only a class row navigates; selecting an ivar child is inert (it's acted on
     // via its inline pencil, not selection). Skip when the class is already the
     // selected one so a click doesn't run selectClass twice — the row's classClicked
-    // command also (re)selects; between the two, exactly one runs per click.
+    // command also (re)selects; between the two, exactly one runs per click that
+    // succeeds (see handleClassClick).
     const node = e.selection[0];
-    if (node instanceof ClassItem && node.className !== ctl.state.className) ctl.selectClass(node);
+    if (node instanceof ClassItem && node.className !== ctl.state.className) {
+      ctl.selectClassFromTree(node);
+    }
   });
   hierarchyView.onDidChangeSelection((e) => {
     if (e.selection[0]) ctl.selectHierarchyNode(e.selection[0]);
