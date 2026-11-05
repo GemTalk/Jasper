@@ -10,8 +10,8 @@ import { endServerSession } from '../forceStop';
 import { testActiveSession } from './testActiveSession';
 import { useIntegrationTest } from './useIntegrationTest';
 import { forceStopSupport } from './forceStopSupport';
-import { endGemAfterTest, loginSerialOf } from './leftoverGem';
-import { reportedTransientLogin, reportingLoginsOf } from './sessionGateClient';
+import { endGemAfterTest } from './leftoverGem';
+import { reportedSerialOf, reportedTransientLogin, reportingLoginsOf } from './sessionGateClient';
 
 describe('Force Stop at logout (integration)', () => {
   let session: ActiveSession;
@@ -35,7 +35,7 @@ describe('Force Stop at logout (integration)', () => {
   // to end the gone gem under another live login's number.
   it("does not end another login that has taken a gone gem's session number", async () => {
     const own = armedSession();
-    const serial = loginSerialOf(own);
+    const serial = reportedSerialOf(own);
     own.logout();
     for (let i = 0; i < 40 && onStone(serial); i++) {
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -58,7 +58,7 @@ describe('Force Stop at logout (integration)', () => {
       stop: (own: ActiveSession, code: string) => Promise<void> = stopAndAbandon,
     ) {
       const own = manager.login(session.login, process.env.VITE_GEMSTONE_GCI_LIBRARY_PATH!);
-      const serial = loginSerialOf(own);
+      const serial = reportedSerialOf(own);
       endGemAfterTest(() => session, own);
       await stop(own, code);
       return { own, serial };

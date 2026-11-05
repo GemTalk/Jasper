@@ -5,6 +5,39 @@
 /** How long after its login a refusal's report can arrive (see loginsNeverSeen). */
 export const REFUSAL_REPORT_SLACK_MS = 2_000;
 
+/** Smalltalk answering the login serial of the session that runs it. */
+export const LOGIN_SERIAL_CODE = '(System descriptionOfSession: System session) at: 9';
+
+/** A test file's path from `client/` on, as messages name it. */
+export function testFileName(path: string): string {
+  return path.split('/client/')[1] ?? path;
+}
+
+/** A login the stone refused, as reported by the file whose worker made it. */
+export type Refusal = {
+  at: number;
+  pid: number | undefined;
+  file: string | undefined;
+  /** What the refusal was matched to, once it was. */
+  matchedTo?: string;
+};
+
+/** A login serial the gate knows of, and when it first learned of it. */
+type KnownSerial = { serial: number; at: number; how: 'seen' | 'reported' | 'run edge' };
+
+/** A login too short for the watcher to see, with what can explain it. */
+export type UnseenLogin = {
+  serial: number;
+  running: string[];
+  after: KnownSerial;
+  before: KnownSerial;
+  /** Refusals reported within {@link UNSEEN_LOGIN_CONTEXT_MS} of the gap, matched or not. */
+  refusalsNearby: Refusal[];
+};
+
+/** How far either side of an unseen login its report lists refusals. */
+export const UNSEEN_LOGIN_CONTEXT_MS = 10_000;
+
 export type BookingRequest = { file: string; pid: number; n: number };
 
 type Holder = BookingRequest & {
@@ -31,7 +64,7 @@ export class SessionLedger<K> {
   private readonly reported = new Map<string, number>();
   // Logins files reported the stone refused, each of which used up a serial,
   // and may have been seen on the stone, with no user yet, before it was refused.
-  private readonly refusals: { at: number; pid: number | undefined; used: boolean }[] = [];
+  private readonly refusals: Refusal[] = [];
   private readonly excused = new Set<string>();
   private readonly blamed = new Set<string>();
   private readonly workerPids = new Set<number>();
@@ -39,11 +72,15 @@ export class SessionLedger<K> {
   readonly grants: Grant[] = [];
   peakCommitted = 0;
   peakLive = 0;
+  readonly startedAt: number;
 
+  /** `capacity` can be set later, once the stone has said how many sessions it takes, but before any {@link grant}. */
   constructor(
-    readonly capacity: number,
+    public capacity: number,
     private readonly clock: () => number = Date.now,
-  ) {}
+  ) {
+    this.startedAt = clock();
+  }
 
   /** Puts `key` in line for `request.n` sessions; {@link grant} answers who gets in. */
   request(key: K, request: BookingRequest): void {
@@ -112,18 +149,19 @@ export class SessionLedger<K> {
 
   /** `key`'s file had a login refused, using up a login serial with no session to show for it. */
   refused(key: K): void {
-    this.refusals.push({ at: this.clock(), pid: this.holders.get(key)?.pid, used: false });
+    const h = this.holders.get(key);
+    this.refusals.push({ at: this.clock(), pid: h?.pid, file: h?.file });
   }
 
-  /** Spends an unused refusal by worker `pid` near `at`, if there is one. */
-  private refusalNear(at: number, pid?: number): boolean {
+  /** Matches an unmatched refusal by worker `pid` near `at` to `what`, if there is one. */
+  private refusalNear(at: number, pid: number, what: string): boolean {
     const r = this.refusals.find(
       (x) =>
-        !x.used &&
-        (pid === undefined || x.pid === pid) &&
+        x.matchedTo === undefined &&
+        x.pid === pid &&
         Math.abs(x.at - at) <= REFUSAL_REPORT_SLACK_MS,
     );
-    if (r) r.used = true;
+    if (r) r.matchedTo = what;
     return r !== undefined;
   }
 
@@ -218,7 +256,7 @@ export class SessionLedger<K> {
       if (this.reported.has(serial) || this.blamed.has(serial) || this.excused.has(serial))
         continue;
       // A login seen on the stone before the stone refused it.
-      if (this.refusalNear(s.firstSeen, h.pid)) {
+      if (this.refusalNear(s.firstSeen, h.pid, `login serial ${serial}, seen on the stone`)) {
         this.excused.add(serial);
         continue;
       }
@@ -246,55 +284,72 @@ export class SessionLedger<K> {
    * the gate knows of that it never saw nor was told about is a login too short
    * for the watcher's look. `firstSerial` and `endSerial` bound the run's logins.
    * Answers each with the files that held bookings in the time it can have
-   * happened. Each reported refusal not already matched to a session the
-   * watcher saw accounts for one such serial.
+   * happened, the known serials either side, and the refusals reported near it.
+   * Each reported refusal not already matched to a session the watcher saw
+   * accounts for one such serial.
+   *
+   * A login the watcher's look leaves out (GcUser, SymbolUser), or one made
+   * between the watcher's own login and its first look, would show here too.
    */
-  loginsNeverSeen(
-    firstSerial: number | undefined,
-    endSerial: number,
-  ): { serial: number; running: string[] }[] {
-    const when = new Map<number, number>();
-    if (firstSerial !== undefined) when.set(firstSerial, 0);
-    when.set(endSerial, this.clock());
-    for (const [serial, s] of this.sightings) when.set(Number(serial), s.firstSeen);
-    for (const [serial, at] of this.reported) {
-      const n = Number(serial);
-      when.set(n, Math.min(at, when.get(n) ?? Infinity));
-    }
+  loginsNeverSeen(firstSerial: number | undefined, endSerial: number): UnseenLogin[] {
+    const when = new Map<number, KnownSerial>();
+    const know = (serial: number, at: number, how: KnownSerial['how']) => {
+      const prev = when.get(serial);
+      if (!prev || at < prev.at) when.set(serial, { serial, at, how });
+    };
+    if (firstSerial !== undefined) know(firstSerial, this.startedAt, 'run edge');
+    know(endSerial, this.clock(), 'run edge');
+    for (const [serial, s] of this.sightings) know(Number(serial), s.firstSeen, 'seen');
+    for (const [serial, at] of this.reported) know(Number(serial), at, 'reported');
     const known = [...when.keys()].sort((a, b) => a - b);
-    const missed: { serial: number; from: number; to: number; running: string[] }[] = [];
+    const missed: UnseenLogin[] = [];
     for (let i = 1; i < known.length; i++) {
+      const after = when.get(known[i - 1])!;
+      const before = when.get(known[i])!;
       for (let serial = known[i - 1] + 1; serial < known[i]; serial++) {
-        const from = when.get(known[i - 1])!;
-        const to = when.get(known[i])!;
         const running = this.grants
-          .filter((g) => g.at <= to && (g.holdMs === undefined || g.at + g.holdMs >= from))
-          .map((g) => g.file.split('/client/')[1] ?? g.file);
-        missed.push({ serial, from, to, running: [...new Set(running)] });
+          .filter(
+            (g) => g.at <= before.at && (g.holdMs === undefined || g.at + g.holdMs >= after.at),
+          )
+          .map((g) => testFileName(g.file));
+        missed.push({ serial, running: [...new Set(running)], after, before, refusalsNearby: [] });
       }
     }
     // Nearest gap, not the one containing it: a refusal is reported once the
     // stone answers, which can be after the next login was already seen.
-    const distance = (m: { from: number; to: number }, at: number) =>
-      at < m.from ? m.from - at : at > m.to ? at - m.to : 0;
+    const distance = (m: UnseenLogin, at: number) =>
+      at < m.after.at ? m.after.at - at : at > m.before.at ? at - m.before.at : 0;
+    const unexplained = [...missed];
     for (const refusal of this.refusals) {
-      if (refusal.used) continue;
+      if (refusal.matchedTo !== undefined) continue;
       let best = -1;
-      for (let i = 0; i < missed.length; i++) {
-        if (best < 0 || distance(missed[i], refusal.at) < distance(missed[best], refusal.at))
+      for (let i = 0; i < unexplained.length; i++) {
+        if (
+          best < 0 ||
+          distance(unexplained[i], refusal.at) < distance(unexplained[best], refusal.at)
+        )
           best = i;
       }
-      if (best >= 0 && distance(missed[best], refusal.at) <= REFUSAL_REPORT_SLACK_MS) {
-        refusal.used = true;
-        missed.splice(best, 1);
+      if (best >= 0 && distance(unexplained[best], refusal.at) <= REFUSAL_REPORT_SLACK_MS) {
+        refusal.matchedTo = `unseen login serial ${unexplained[best].serial}`;
+        unexplained.splice(best, 1);
       }
     }
-    return missed.map(({ serial, running }) => ({ serial, running }));
+    for (const m of unexplained) {
+      m.refusalsNearby = this.refusals.filter((r) => distance(m, r.at) <= UNSEEN_LOGIN_CONTEXT_MS);
+    }
+    return unexplained;
+  }
+
+  /** `at`, a time from this ledger's clock, as seconds into the run. */
+  secondsIn(at: number): string {
+    return `${((at - this.startedAt) / 1000).toFixed(2)} s`;
   }
 
   describeHolders(): string {
     return (
-      [...this.holders.values()].map((h) => `${h.file} (${h.n})`).join(', ') || 'no running file'
+      [...this.holders.values()].map((h) => `${testFileName(h.file)} (${h.n})`).join(', ') ||
+      'no running file'
     );
   }
 }

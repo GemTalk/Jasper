@@ -32,7 +32,7 @@ import {
 } from '../transcriptSink';
 import { runNbCall, NbCancelledError, pollNbResultReady, stopCallsOn } from '../nbRunner';
 import { expectEventLoopToRemainResponsiveDuring } from './support/timers';
-import { loginSerialOf, stillOnStoneCode } from './leftoverGem';
+import { stillOnStoneCode } from './leftoverGem';
 import {
   OOP_CLASS_STRING,
   OOP_CLASS_UTF8,
@@ -41,7 +41,7 @@ import {
   GCI_PERFORM_FLAG_ENABLE_DEBUG,
   GCI_PERFORM_FLAG_INTERPRETED,
 } from '../gciConstants';
-import { reportedTransientLogin } from './sessionGateClient';
+import { reportedSerialOf, reportedTransientLogin } from './sessionGateClient';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -365,7 +365,7 @@ tmps := SessionTemps current.
     // start, since the write is reported just before the resume is queued.
     const { session: busy, err } = reportedTransientLogin(session());
     if (!busy) throw new Error(`Transient login failed: ${err.message}`);
-    const gemLogin = loginSerialOf(busy);
+    const gemLogin = reportedSerialOf(busy);
     expect(installTranscriptSink(busy)).toBe(true);
     let wroteOnce: () => void = () => {};
     const onWorker = new Promise<void>((resolve) => {

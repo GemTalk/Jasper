@@ -7,8 +7,8 @@ import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL, GS_ERR_HALT } from '../gciConstan
 import { pollNbResultReady, runNbCall } from '../nbRunner';
 import { testActiveSession } from './testActiveSession';
 import { useIntegrationTest } from './useIntegrationTest';
-import { endGemAfterTest, loginSerialOf, stillOnStone } from './leftoverGem';
-import { reportedTransientLogin } from './sessionGateClient';
+import { endGemAfterTest, stillOnStone } from './leftoverGem';
+import { reportedSerialOf, reportedTransientLogin } from './sessionGateClient';
 
 /**
  * Each call below would hand a freed native session to the GCI library if it
@@ -67,7 +67,7 @@ describe('a logged-out session (integration)', () => {
   it('refuses calls once a gem the stone already stopped is logged out', async () => {
     const stopped = transientSession();
     const id = stopped.executeAndFetchString('System session printString');
-    const serial = loginSerialOf(stopped);
+    const serial = reportedSerialOf(stopped);
     session.executeAndFetchString(`System stopSession: ${id}. 'ok'`);
     // The stone deregisters the stopped gem asynchronously: about half a second on
     // CI, but a loaded runner has taken past 4s. 15s stays inside the test's own 20s.
@@ -156,7 +156,7 @@ describe('logging out never waits for the gem (integration)', () => {
   function transientWithSerial(): { transient: ActiveSession; serial: string } {
     const { session: transient, err } = reportedTransientLogin(session);
     if (!transient) throw new Error(`Transient login failed: ${err.message}`);
-    const serial = loginSerialOf(transient);
+    const serial = reportedSerialOf(transient);
     // Ends a gem the test leaves behind, so a failure can't strand it.
     endGemAfterTest(() => session, transient);
     return { transient, serial };

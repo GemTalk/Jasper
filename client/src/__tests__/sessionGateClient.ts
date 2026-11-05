@@ -3,6 +3,7 @@ import { createConnection, type Socket } from 'node:net';
 import { inject } from 'vitest';
 import type { ActiveSession } from '../activeSession';
 import type { SessionManager } from '../sessionManager';
+import { LOGIN_SERIAL_CODE } from './sessionGateLedger';
 
 declare module 'vitest' {
   export interface ProvidedContext {
@@ -53,27 +54,49 @@ export function reportSessionClosed(serial: string | bigint, socket = held.at(-1
 /**
  * Tells the gate a login was refused. A login the stone refuses, such as one
  * with a wrong password, still uses up a login serial, which the gate would
- * otherwise read as a login it never saw.
+ * otherwise read as a login it never saw. Report only those: see
+ * {@link deniedByStone}.
  */
 export function reportRefusedLogin(socket = held.at(-1)): void {
   socket?.write(JSON.stringify({ op: 'refused' }) + '\n');
 }
 
-/** Runs `login`, telling the gate when it throws, and rethrows. */
+// gcierr.ht, the same in every vendored release from 3.6.2 through 3.7.5.
+const GS_ERR_LOGIN_DENIAL = 4051;
+
+/**
+ * Whether `error` is the stone refusing a login, a wrong user or password,
+ * which uses up a login serial. A login that never reached the stone, to an
+ * unknown stone or NetLDI, uses none, nor does an error thrown before or after
+ * the GCI login call itself.
+ */
+export function deniedByStone(error: unknown): boolean {
+  return (error as { number?: unknown } | undefined)?.number === GS_ERR_LOGIN_DENIAL;
+}
+
+/** Runs `login`, telling the gate when the stone refuses it, and rethrows. */
 export function reportingRefusal<T>(login: () => T, socket = held.at(-1)): T {
   try {
     return login();
   } catch (error) {
-    reportRefusedLogin(socket);
+    if (deniedByStone(error)) reportRefusedLogin(socket);
     throw error;
   }
 }
 
-/** The login serial of `own`, which the gate tells sessions apart by. */
-export function loginSerialOf(own: ActiveSession): string {
-  return own.executeAndFetchString(
-    '((System descriptionOfSession: System session) at: 9) printString',
-  );
+function loginSerialOf(own: ActiveSession): string {
+  return own.executeAndFetchString(`(${LOGIN_SERIAL_CODE}) printString`);
+}
+
+const serialOfReported = new WeakMap<ActiveSession, string>();
+
+/** The login serial `own` was reported with, by {@link reportLogin}, without asking the stone again. */
+export function reportedSerialOf(own: ActiveSession): string {
+  const serial = serialOfReported.get(own);
+  if (serial === undefined) {
+    throw new Error('Session gate: this session was never reported; log it in through reportLogin');
+  }
+  return serial;
 }
 
 /**
@@ -85,6 +108,7 @@ export function reportLogin(own: ActiveSession): ActiveSession {
   const serial = loginSerialOf(own);
   const socket = held.at(-1);
   reportSession(serial, socket);
+  serialOfReported.set(own, serial);
   const logout = own.logout.bind(own);
   own.logout = () => {
     const freed = logout();
@@ -166,14 +190,16 @@ export function reportedTransientLogin(
   // eslint-disable-next-line no-restricted-syntax -- the one place a test's transientLogin is allowed: it reports the session
   const result = from.transientLogin(login);
   if (result.session) reportLogin(result.session);
-  else reportRefusedLogin();
+  else if (deniedByStone(result.err)) reportRefusedLogin();
   return result;
 }
 
 /**
  * Has every login `manager` makes reported to the gate, including the ones it
  * makes for itself, such as the short login that ends a stopped run's gem at
- * logout. A test's own SessionManager goes through here.
+ * logout. A test's own SessionManager goes through here. SessionManager
+ * rethrows a refused login without its error number, so a refusal through it
+ * goes unreported, and the gate's end-of-run check would name its serial.
  */
 export function reportingLoginsOf(manager: SessionManager): SessionManager {
   const { login, loginAsync, loginTransient } = manager;
@@ -182,7 +208,7 @@ export function reportingLoginsOf(manager: SessionManager): SessionManager {
     try {
       return reportLogin(await loginAsync.apply(manager, args));
     } catch (error) {
-      reportRefusedLogin();
+      if (deniedByStone(error)) reportRefusedLogin();
       throw error;
     }
   };

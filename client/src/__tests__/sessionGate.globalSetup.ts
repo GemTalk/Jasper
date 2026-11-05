@@ -17,11 +17,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { GciLibrary } from '../gciLibrary';
 import { createNativeSocketLibrary } from '../sockets/factory';
-import { SessionLedger } from './sessionGateLedger';
+import {
+  LOGIN_SERIAL_CODE,
+  REFUSAL_REPORT_SLACK_MS,
+  SessionLedger,
+  testFileName,
+  type UnseenLogin,
+} from './sessionGateLedger';
 
-const LICENSE_LIMIT = 10;
-// The watcher's own session takes one.
-const CAPACITY = LICENSE_LIMIT - 1;
 const WAIT_LIMIT_MS = 60_000;
 
 interface TestProject {
@@ -51,13 +54,17 @@ export type StartWatcher = (
   onFail: (error: unknown) => void,
 ) => Watcher;
 
-/** Serves the gate on `socketPath`; answers the teardown, which fails the run if a rule was broken. */
+/**
+ * Serves the gate on `socketPath`; answers the teardown, which fails the run if
+ * a rule was broken. Tests get the stone's session limit less the watcher's
+ * own session, unless `capacity` says otherwise.
+ */
 export async function startGate(
   socketPath: string,
   startWatcher: StartWatcher,
-  capacity = CAPACITY,
+  capacity?: number,
 ): Promise<() => Promise<void>> {
-  const ledger = new SessionLedger<Socket>(capacity);
+  const ledger = new SessionLedger<Socket>(capacity ?? 0);
   const waitTimers = new Map<Socket, NodeJS.Timeout>();
   const afterNextSample: (() => void)[] = [];
   let watcherFailure: string | undefined;
@@ -80,14 +87,21 @@ export async function startGate(
       buffer += chunk.toString();
       let nl;
       while ((nl = buffer.indexOf('\n')) >= 0) {
-        const msg = JSON.parse(buffer.slice(0, nl));
+        let msg;
+        try {
+          msg = JSON.parse(buffer.slice(0, nl));
+        } catch {
+          // Dropping the socket gives back any booking it held.
+          socket.destroy();
+          return;
+        }
         buffer = buffer.slice(nl + 1);
         if (watcherFailure && (msg.op === 'acquire' || msg.op === 'check')) {
           reply(socket, { error: watcherFailure });
         } else if (msg.op === 'acquire') {
-          if (msg.n > capacity) {
+          if (msg.n > ledger.capacity) {
             reply(socket, {
-              error: `${msg.file} declares ${msg.n} stone sessions; only ${capacity} are available to tests`,
+              error: `${msg.file} declares ${msg.n} stone sessions; only ${ledger.capacity} are available to tests`,
             });
             continue;
           }
@@ -97,7 +111,7 @@ export async function startGate(
             setTimeout(() => {
               if (!ledger.withdraw(socket)) return;
               reply(socket, {
-                error: `waited ${WAIT_LIMIT_MS / 1000} s for ${msg.n} stone session(s); ${ledger.committed()} of ${capacity} taken, held by ${ledger.describeHolders()}`,
+                error: `waited ${WAIT_LIMIT_MS / 1000} s for ${msg.n} stone session(s); ${ledger.committed()} of ${ledger.capacity} taken, held by ${ledger.describeHolders()}`,
               });
             }, WAIT_LIMIT_MS),
           );
@@ -147,7 +161,7 @@ export async function startGate(
     for (const done of afterNextSample.splice(0)) done();
   };
 
-  const watcher = startWatcher((sessions) => {
+  const onSample = (sessions: Map<string, number>) => {
     const leftOver = ledger.sample(sessions);
     if (leftOver && leftOver.size > 0) {
       console.warn(
@@ -156,7 +170,18 @@ export async function startGate(
     }
     tryGrant();
     for (const done of afterNextSample.splice(0)) done();
-  }, failWaiting);
+  };
+
+  let watcher: Watcher;
+  try {
+    watcher = startWatcher(onSample, failWaiting);
+  } catch (error) {
+    // Left listening, the server would hold vitest open for its 10 s close timeout.
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    throw error;
+  }
+  // The watcher's own session takes one.
+  ledger.capacity = capacity ?? watcher.sessionLimit - 1;
 
   return async () => {
     watcher.stop();
@@ -183,12 +208,12 @@ export async function startGate(
       writeFileSync(process.env.SESSION_GATE_STATS, JSON.stringify(summary, null, 2));
     }
     console.log(
-      `session gate: ${summary.grants} grants, ${summary.waited} waited, total ${total} ms, p50 ${summary.p50WaitMs} ms, p90 ${summary.p90WaitMs} ms, max ${summary.maxWaitMs} ms, peak committed ${summary.peakCommitted}/${capacity}, peak live ${summary.peakLive}; ${watcher.lookMs.length} looks at the stone, p50 ${summary.watcherLookMs.p50} ms, p99 ${summary.watcherLookMs.p99} ms, max ${summary.watcherLookMs.max} ms`,
+      `session gate: ${summary.grants} grants, ${summary.waited} waited, total ${total} ms, p50 ${summary.p50WaitMs} ms, p90 ${summary.p90WaitMs} ms, max ${summary.maxWaitMs} ms, peak committed ${summary.peakCommitted}/${ledger.capacity}, peak live ${summary.peakLive}; ${watcher.lookMs.length} looks at the stone, p50 ${summary.watcherLookMs.p50} ms, p99 ${summary.watcherLookMs.p99} ms, max ${summary.watcherLookMs.max} ms`,
     );
     const missed = ledger.loginsNeverSeen(watcher.serial, endSerial);
     if (missed.length > 0) {
       throw new Error(
-        `session gate: ${missed.length} login(s) came and went between two looks at the stone, and no file reported them: ${missed.map((m) => `login serial ${m.serial}, while ${m.running.join(', ') || 'no file'} ran`).join('; ')}. A test, or app code it called, logged in without reporting it (see reportLogin in sessionGateClient.ts). A login from outside the run during it shows up here too.`,
+        `session gate: ${missed.length} login(s) came and went between two looks at the stone, and no file reported them. A test, or app code it called, logged in without reporting it (see reportLogin in sessionGateClient.ts), or the stone refused a login whose refusal was not reported within ${REFUSAL_REPORT_SLACK_MS / 1000} s of it. A login from outside the run during it shows up here too.\n${missed.map((m) => describeUnseen(ledger, m)).join('\n')}`,
       );
     }
     // Files catch their own unreported logins in afterAll; this catches the rest,
@@ -202,13 +227,28 @@ export async function startGate(
   };
 }
 
+function describeUnseen(ledger: SessionLedger<Socket>, m: UnseenLogin): string {
+  const known = (k: UnseenLogin['after']) =>
+    `${k.serial} (${k.how} ${ledger.secondsIn(k.at)} into the run)`;
+  const refusals = m.refusalsNearby.length
+    ? m.refusalsNearby
+        .map(
+          (r) =>
+            `${ledger.secondsIn(r.at)} by worker ${r.pid ?? '?'}${r.file ? ` (${testFileName(r.file)})` : ''}, ${r.matchedTo ? `matched to ${r.matchedTo}` : 'unmatched'}`,
+        )
+        .join('; ')
+    : 'none';
+  return `  login serial ${m.serial}: between ${known(m.after)} and ${known(m.before)}, while ${m.running.join(', ') || 'no file'} ran. Refusals reported near it: ${refusals}.`;
+}
+
 function percentiles(ms: number[]): { p50: number; p99: number; max: number } {
   const sorted = [...ms].sort((a, b) => a - b);
   const at = (q: number) => Math.round((sorted[Math.floor(sorted.length * q)] ?? 0) * 10) / 10;
   return { p50: at(0.5), p99: at(0.99), max: Math.round((sorted.at(-1) ?? 0) * 10) / 10 };
 }
 
-const OWN_SERIAL = '((System descriptionOfSession: System session) at: 9) printString';
+const OWN_SERIAL = `(${LOGIN_SERIAL_CODE}) printString`;
+const SESSION_LIMIT = '(System stoneConfigurationAt: #StnMaxSessions) printString';
 
 // Each user session on the stone but this one, as "<login serial>:<GCI client
 // process id> ...": fields 9 and 21 of `System descriptionOfSession:`. Aborts
@@ -234,6 +274,8 @@ const LOOK_EVERY_MS = 50;
 export type Watcher = {
   /** The watcher's own login serial: lower than every test login's. */
   serial: number;
+  /** How many sessions the stone takes at once, the watcher's included. */
+  sessionLimit: number;
   stop: () => void;
   /** The serial of a login made now: higher than every login before it. */
   freshLoginSerial: () => number;
@@ -263,6 +305,14 @@ function startGciWatcher(
     );
   const session = login();
   const serial = Number(gci.executeAndFetchString(session, OWN_SERIAL));
+  const limitText = gci.executeAndFetchString(session, SESSION_LIMIT);
+  const sessionLimit = Number(limitText);
+  if (!Number.isInteger(sessionLimit) || sessionLimit < 2) {
+    gci.logout(session);
+    throw new Error(
+      `session gate: the test stone answered ${limitText} for its session limit (StnMaxSessions); expected a whole number of at least 2`,
+    );
+  }
   const lookMs: number[] = [];
   let timer: NodeJS.Timeout | undefined;
   let stopped = false;
@@ -295,6 +345,7 @@ function startGciWatcher(
 
   return {
     serial,
+    sessionLimit,
     lookMs,
     stop: () => {
       stopped = true;

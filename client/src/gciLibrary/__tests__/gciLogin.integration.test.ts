@@ -6,10 +6,12 @@ import { requireParsedStoneNrs, resolveTestConnection } from '../../__tests__/te
 import { gemNrsFor, stoneNrsFor } from '../../loginTypes';
 import { requireGciCapability } from './requireGciCapability';
 import {
+  deniedByStone,
   reportRefusedLogin,
   reportSession,
   reportSessionClosed,
 } from '../../__tests__/sessionGateClient';
+import { LOGIN_SERIAL_CODE } from '../../__tests__/sessionGateLedger';
 
 /**
  * The raw GCI login entry points (GciTsLogin, GciTsLogin_, GciTsNbLogin,
@@ -46,10 +48,11 @@ describe('GCI login (integration)', () => {
   // live, unarmed one. As strict as the harness's own `armCommitGuard`: a
   // guard that was already set is not this file's doing, so it fails too.
   // Either failure logs out first, so it doesn't leave the session open until
-  // the worker exits. It also reports the session to the session gate.
-  function armIfLive<T extends { session: unknown }>(result: T): T {
+  // the worker exits. It also reports the session to the session gate, or a
+  // refusal when the stone itself refused the login.
+  function armIfLive<T extends { session: unknown; err: unknown }>(result: T): T {
     if (result.session === null) {
-      reportRefusedLogin();
+      if (deniedByStone(result.err)) reportRefusedLogin();
       return result;
     }
     let armedNewly: boolean;
@@ -69,10 +72,7 @@ describe('GCI login (integration)', () => {
         `gciLogin.integration.test: GemStone reports commits were already disabled on this fresh session, so the "no commits allowed" guard is not this file's doing. Usual causes: this user's UserProfile has "disableCommits" set, or the stone is mid-restore. Check the stone and the credentials in .env.test (or .env.test.local).`,
       );
     }
-    const serial = gci.executeAndFetchInteger(
-      result.session,
-      '(System descriptionOfSession: System session) at: 9',
-    );
+    const serial = gci.executeAndFetchInteger(result.session, LOGIN_SERIAL_CODE);
     serials.set(result.session, serial);
     reportSession(serial);
     return result;
@@ -105,8 +105,8 @@ describe('GCI login (integration)', () => {
   async function finishNbLogin(session: unknown, signal: AbortSignal) {
     const finished = await pollNbLoginFinished(session, signal);
     if (finished.result === 1) {
-      armIfLive({ session });
-    } else {
+      armIfLive({ session, err: undefined });
+    } else if (deniedByStone(finished.err)) {
       reportRefusedLogin();
     }
     return { session, ...finished };

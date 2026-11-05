@@ -19,8 +19,8 @@ import { isThisMachine } from '../../thisMachine';
 import { needsWsl, refreshWslNetworkInfo, wslExec, wslExecSync } from '../../wslBridge';
 import { testActiveSession } from '../../__tests__/testActiveSession';
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
-import { endGemAfterTest, loginSerialOf, stillOnStone } from '../../__tests__/leftoverGem';
-import { reportedTransientLogin } from '../../__tests__/sessionGateClient';
+import { endGemAfterTest, stillOnStone } from '../../__tests__/leftoverGem';
+import { reportedSerialOf, reportedTransientLogin } from '../../__tests__/sessionGateClient';
 
 describe('Stone sessions (integration)', () => {
   let session: ActiveSession;
@@ -29,7 +29,7 @@ describe('Stone sessions (integration)', () => {
     (testContext) => {
       session = testActiveSession(testContext.gciLibrary, testContext.session);
     },
-    { sessions: 3 },
+    { sessions: 4 },
   );
 
   const loginAs =
@@ -44,7 +44,7 @@ describe('Stone sessions (integration)', () => {
   function otherSession(): { own: ActiveSession; serial: number } {
     const { session: own } = loginAs()();
     endGemAfterTest(() => session, own);
-    return { own, serial: Number(loginSerialOf(own)) };
+    return { own, serial: Number(reportedSerialOf(own)) };
   }
 
   function rowFor(list: StoneSessionList, serial: number): StoneSession | undefined {

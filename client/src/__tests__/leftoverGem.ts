@@ -1,12 +1,10 @@
 import { onTestFinished } from 'vitest';
 import type { ActiveSession } from '../activeSession';
-import { loginSerialOf, reportSession, reportSessionClosed } from './sessionGateClient';
+import { reportedSerialOf, reportSessionClosed } from './sessionGateClient';
 
 // Gems are told apart by their login's serial number, which GemStone never gives
 // another login, not by session number, which the next login gets once the gem
 // has gone: a test that goes by number can check, or end, another test's session.
-
-export { loginSerialOf };
 
 /** Smalltalk answering whether the login with serial number `serial` is still on the stone ('true' or 'false'); needs SessionAccess. */
 export function stillOnStoneCode(serial: string): string {
@@ -18,10 +16,9 @@ export function stillOnStone(admin: ActiveSession, serial: string): boolean {
   return admin.executeAndFetchString(stillOnStoneCode(serial)) === 'true';
 }
 
-/** End `own`'s gem when the test finishes, if it is still on the stone, from `admin`. */
+/** End `own`'s gem when the test finishes, if it is still on the stone, from `admin`. `own` must have been reported to the session gate. */
 export function endGemAfterTest(admin: () => ActiveSession, own: ActiveSession): void {
-  const serial = loginSerialOf(own);
-  reportSession(serial);
+  const serial = reportedSerialOf(own);
   onTestFinished(async () => {
     admin().executeAndFetchString(
       `| now | now := (System descriptionOfSessionSerialNum: ${serial}) at: 10. ` +

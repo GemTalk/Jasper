@@ -13,6 +13,7 @@ import {
   reportSession,
   reportSessionClosed,
 } from './sessionGateClient';
+import { LOGIN_SERIAL_CODE } from './sessionGateLedger';
 
 /** The live GCI state handed to a `useIntegrationTest` callback on every login. */
 export type GciTestContext = {
@@ -397,10 +398,7 @@ export function useIntegrationTest(
 
   /** The login serial of `aSession`, so the session gate can tell its sessions apart. */
   function serialOf(aSession: unknown): bigint {
-    return gciLibrary.executeAndFetchInteger(
-      aSession,
-      '(System descriptionOfSession: System session) at: 9',
-    );
+    return gciLibrary.executeAndFetchInteger(aSession, LOGIN_SERIAL_CODE);
   }
 
   /**
