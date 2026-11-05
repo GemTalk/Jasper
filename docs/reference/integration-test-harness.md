@@ -64,5 +64,8 @@ Declaring `allowedCommits` (see the options table above) opens that many levels 
 ## Running it
 
 - `npm run test:server:start` / `:list` / `:stop` — provision, inspect, and tear down the test stone.
+- `npm run test:server:check-plugin` — check that the test stone's server plugin is this checkout's.
+- `npm run test:server:install-plugin` / `:uninstall-plugin` — install this checkout's server plugin into the test stone, or remove it.
 - `npx vitest run <file>` from `client/` — run a single integration test file.
 - CI runs the suite twice per matrix cell: once against a bare stone, once after installing the Jasper Server Plugin. See `.claude/rules/client/tests.md` for gating a test to one pass.
+- Every run of the `default` project starts with that plugin check (`client/src/__tests__/serverPluginMatch.globalSetup.ts`). A plugin that isn't this checkout's stops the run, since it may be someone's work in progress; install this checkout's with `test:server:install-plugin`. A plugin with no record of which it is gets replaced with this checkout's automatically. Either install commits into the stone, so on a stone shared by several worktrees it changes the plugin the others test against.

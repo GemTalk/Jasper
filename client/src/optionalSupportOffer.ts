@@ -12,7 +12,9 @@
  *               choice; "Not Now" (also Escape / the window-close control) asks
  *               again next connect.
  * The Command Palette entry (`runInstallServerSupport`) installs/reinstalls every
- * support applicable to the stone's version.
+ * support applicable to the stone's version. A support that is installed but not
+ * the one this Jasper ships is offered for reinstall by a separate notice,
+ * `noticeDifferentServerSupport` (serverSupportStatus.ts).
  *
  * A feature is *applicable* when the stone's version supports it (the Enhanced
  * Inspector needs 3.7.5+; the refactoring engine loads on any release) and

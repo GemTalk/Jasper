@@ -1012,6 +1012,11 @@
         "category": "GemStone"
       },
       {
+        "command": "gemstone.showServerSupportStatus",
+        "title": "Show Server Support Status",
+        "category": "GemStone"
+      },
+      {
         "command": "gemstone.openWalkthrough",
         "title": "Get Started with GemStone",
         "category": "GemStone",
@@ -2598,6 +2603,10 @@
           "when": "gemstone.hasActiveSession && gemstone.serverSupportInstalled"
         },
         {
+          "command": "gemstone.showServerSupportStatus",
+          "when": "gemstone.hasActiveSession"
+        },
+        {
           "command": "gemstone.serveSeaside",
           "when": "gemstone.hasActiveSession"
         },
@@ -3770,6 +3779,7 @@
     "test:server:stop": "npm run test:server:stop --workspace client",
     "test:server:list": "npm run test:server:list --workspace client",
     "test:server:install-plugin": "tsx client/bin/install-server-plugin.mjs",
+    "test:server:check-plugin": "tsx client/bin/check-server-plugin.mjs",
     "test:server:uninstall-plugin": "tsx client/bin/uninstall-server-plugin.mjs",
     "test:server": "npm test --workspace server",
     "test:client": "npm test --workspace client",

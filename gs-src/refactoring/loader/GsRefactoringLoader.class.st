@@ -14,6 +14,11 @@ What it does, in order:
      The SAME dictionary object is then shared into every user's symbol list (the
      Published/Globals mechanism) so the engine is visible to whoever uses the
      client -- not just the installing SystemUser.
+     Then replace the receipt (#replaceReceiptIn:): the dictionary's
+     #GsRefactoringDigest and #GsRefactoringInstalledBy, which Jasper reads to
+     tell whether this is the engine it ships. Every load removes the old one, so
+     a by-hand load never leaves a receipt describing a different payload; only a
+     caller that sends #receiptDigest:installedBy: (the Jasper client) gets a new one.
   2. file in the payloads in dependency order, with the dictionary moved to the
      FRONT of the symbol list for the duration (#withDictionaryFirstDo:) and put
      back at the end afterwards. End position is right for normal use but wrong
@@ -50,7 +55,8 @@ Class {
 	#superclass : 'Object',
 	#instVars : [
 		'dir',
-		'report'
+		'report',
+		'receipt'
 	],
 	#category : 'Refactoring-Loader'
 }
@@ -92,7 +98,7 @@ GsRefactoringLoader >> stageFromServerDir: aString [
 
 	dir := aString.
 	report := OrderedCollection new.
-	[ self ensureDictionary.
+	[ self replaceReceiptIn: self ensureDictionary.
 	  self withDictionaryFirstDo: [
 	    self fileIn: 'ast-core.gs'.
 	    self fileIn: 'compat.gs'.
@@ -104,6 +110,27 @@ GsRefactoringLoader >> stageFromServerDir: aString [
 			^self ].
 	self verify.
 	^self
+]
+
+{ #category : 'receipt' }
+GsRefactoringLoader >> receiptDigest: aDigest installedBy: aVersion [
+	"Have this load record a receipt of what it filed in: aDigest, the client's
+	 fingerprint of the payload files, and aVersion, the Jasper version that sent
+	 them. Both are Strings."
+
+	receipt := Array with: aDigest with: aVersion
+]
+
+{ #category : 'receipt' }
+GsRefactoringLoader >> replaceReceiptIn: aDict [
+	"Inside the load's transaction, so an aborted load keeps the previous receipt
+	 beside the previous engine."
+
+	aDict removeKey: #GsRefactoringDigest ifAbsent: [nil].
+	aDict removeKey: #GsRefactoringInstalledBy ifAbsent: [nil].
+	receipt isNil ifTrue: [^self].
+	aDict at: #GsRefactoringDigest put: (receipt at: 1).
+	aDict at: #GsRefactoringInstalledBy put: (receipt at: 2)
 ]
 
 { #category : 'loading' }

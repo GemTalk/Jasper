@@ -85,7 +85,10 @@ export default defineConfig({
           name: 'default',
           include: ['src/**/__tests__/**/*.test.ts'],
           exclude: ['src/__tests__/gci/**'],
-          globalSetup: ['src/__tests__/gciTraceLogs.globalSetup.ts'],
+          globalSetup: [
+            'src/__tests__/gciTraceLogs.globalSetup.ts',
+            'src/__tests__/serverPluginMatch.globalSetup.ts',
+          ],
           setupFiles: [
             'src/__tests__/vitest.windowSetup.cjs',
             'src/__tests__/vitest.uriSetup.ts',

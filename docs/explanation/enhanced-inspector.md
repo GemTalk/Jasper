@@ -21,6 +21,8 @@ The tradeoff, made explicit in `gs-src/enhancedInspector/README.md`, is that the
 
 `ENHANCED_INSPECTOR_FILES` in `enhancedInspectorInstall.ts` lists the payload files in dependency order — earlier files define classes and behavior that later files depend on — and the installer files them in that order over a single session, so a later file can compile against classes an earlier file just installed. That array is the sole authority on load order (there is no other manifest to keep in sync with it); reordering it without checking the payload's actual dependencies risks a file-in failure partway through, which aborts the whole install rather than leaving a partial one committed.
 
+Just before its commit, the install also stores a receipt in `GsEnhancedInspector`: a fingerprint of those files and the Jasper version that installed them. That's how Jasper tells, at login and in **GemStone: Show Server Support Status**, whether a stone's Inspector is the one it ships (`client/src/serverPlugin/pluginFingerprint.ts`).
+
 ## Installing on a rowan3 extent
 
 A stone built from the rowan3 extent comes with Rowan. Rowan brings its own copies of classes the Enhanced Inspector also ships, like STON, Announcements and RSR. Rowan also keeps track of which package every method belongs to, and it checks every method compiled into the stone.
