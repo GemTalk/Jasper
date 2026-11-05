@@ -34,7 +34,10 @@ import { getDictionaryClassFileOutOrder as sharedGetDictionaryClassFileOutOrder 
 import { getDictionaryEntries as sharedGetDictionaryEntries } from './queries/getDictionaryEntries';
 import { getGlobalsForDictionary as sharedGetGlobalsForDictionary } from './queries/getGlobalsForDictionary';
 import { getMethodCategories as sharedGetMethodCategories } from './queries/getMethodCategories';
-import { getClassEnvironments as sharedGetClassEnvironments } from './queries/getClassEnvironments';
+import {
+  getClassEnvironments as sharedGetClassEnvironments,
+  getClassEnvironmentsAsync as sharedGetClassEnvironmentsAsync,
+} from './queries/getClassEnvironments';
 import { getMethodInstVarAccess as sharedGetMethodInstVarAccess } from './queries/getMethodInstVarAccess';
 import { getClassDefinition as sharedGetClassDefinition } from './queries/getClassDefinition';
 import {
@@ -45,7 +48,10 @@ import { getClassComment as sharedGetClassComment } from './queries/getClassComm
 import { getStoredClassComment as sharedGetStoredClassComment } from './queries/getStoredClassComment';
 import { canClassBeWritten as sharedCanClassBeWritten } from './queries/canClassBeWritten';
 import { getAllClassNames as sharedGetAllClassNames } from './queries/getAllClassNames';
-import { getClassHierarchy as sharedGetClassHierarchy } from './queries/getClassHierarchy';
+import {
+  getClassHierarchy as sharedGetClassHierarchy,
+  getClassHierarchyAsync as sharedGetClassHierarchyAsync,
+} from './queries/getClassHierarchy';
 import { dictionariesContainingClass as sharedDictionariesContainingClass } from './queries/dictionariesContainingClass';
 import {
   tonelCapability as sharedTonelCapability,
@@ -837,6 +843,20 @@ export function getClassEnvironments(
   );
 }
 
+export function getClassEnvironmentsAsync(
+  session: ActiveSession,
+  dictIndex: number,
+  className: string,
+  maxEnv: number,
+) {
+  return sharedGetClassEnvironmentsAsync(
+    nbQueryExecutorUsing(session, 'GemStone: Loading methods…'),
+    dictIndex,
+    className,
+    maxEnv,
+  );
+}
+
 export function getMethodInstVarAccess(
   session: ActiveSession,
   dictIndex: number,
@@ -945,6 +965,18 @@ export function getClassHierarchy(
   dict?: number | string,
 ) {
   return sharedGetClassHierarchy(defaultQueryExecutorUsing(session), className, dict);
+}
+
+export function getClassHierarchyAsync(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+) {
+  return sharedGetClassHierarchyAsync(
+    nbQueryExecutorUsing(session, 'GemStone: Loading class hierarchy…'),
+    className,
+    dict,
+  );
 }
 
 export function getClassDescendantNames(
