@@ -4,14 +4,16 @@
 
 ## Why the floor is what it is
 
-Jasper's runtime floor is dictated by `engines.vscode`: VS Code bundles a specific Electron/Node build, and that bundled Node is the actual lowest common denominator the extension runs on — regardless of what `@types/node` or local dev tooling assume.
+VS Code is an Electron app, and Electron embeds both a Node runtime and a Chromium browser. Jasper runs in both. The extension itself runs in VS Code's extension host, on the embedded Node. Its webviews run in the embedded Chromium. Neither one is installed on the user's machine: each VS Code release ships its own, so the user's VS Code version decides which Node and which Chromium Jasper gets.
+
+That is why Jasper's runtime floor is dictated by `engines.vscode`. The oldest VS Code that `engines.vscode` allows fixes two things. Its bundled Node is the oldest Node the extension runs on, whatever `@types/node` or local dev tooling assume. Its bundled Chromium is the oldest browser webview code runs in, so webview code may only use browser features that Chromium supports. Nothing validates the Chromium floor yet.
 
 We want the floor as far back as reasonably possible, to keep supporting users on VS Code installs that haven't auto-updated recently. Two independent ceilings limit how far back we're willing to go — whichever one lands on the *more recent* release wins:
 
 1. **Node LTS support.** The bundled Node must still be an actively-maintained LTS, not EOL — an EOL Node no longer receives security patches, so the extension's stated runtime floor would be unpatched.
 2. **Adoption ceiling, ~1 year.** Even when an older release's Node hasn't gone EOL yet, we don't chase VS Code installs back indefinitely. About a year is judged enough time for the userbase to have auto-updated past very old releases, so reaching back further has diminishing returns and just adds support burden.
 
-Look up the VS Code → Electron → Node mapping at [github.com/ewanharris/vscode-versions](https://github.com/ewanharris/vscode-versions) to check both bounds when re-evaluating the floor.
+Look up the VS Code → Electron → Node and Chromium mapping at [github.com/ewanharris/vscode-versions](https://github.com/ewanharris/vscode-versions) to check both bounds when re-evaluating the floor.
 
 `tsconfig.base.json`'s `target` and `lib` values are sourced from [github.com/tsconfig/bases](https://github.com/tsconfig/bases)' preset for the Node version matching the floor (e.g. its `nodeNN` preset for whichever Node major the floor bundles). We can't `extends` that package directly, though: its presets assume ESM (`"module": "node16"`/`"nodenext"`), while this project compiles to `"module": "commonjs"` — so the matching preset's `target`/`lib` fields are copied in by hand instead of pulled in via `extends`.
 
@@ -21,13 +23,25 @@ Both are DefinitelyTyped releases, so in both cases the patch digit is DT's own 
 
 The `@typescript/native` devDependency range is a separate, compiler-version concern rather than a Node-runtime one — it just needs to stay new enough to recognize whatever `tsconfig.base.json`'s `lib` array declares. Check the [TypeScript release notes](https://www.typescriptlang.org/docs/handbook/release-notes/) for the minimum version that ships each `lib` entry whenever `lib` changes.
 
+## When to re-evaluate
+
+Nothing prompts a raise, so put it on the calendar: review about every six months. At each review, the floor is due for a raise once either `engines.vscode` is more than about a year old or its bundled Node is near end of life.
+
+## What goes into the decision
+
+- **Telemetry.** The telemetry dashboards chart the VS Code version per active machine and the oldest version still in use. Before raising, check how many active machines sit below the proposed floor. Forks report the VS Code version they are built on, not their own; see [the telemetry reference](../reference/telemetry.md#on-every-event).
+- **Customers.** Some enterprise customers lock IDE versions under strict upgrade policies. Check with the ones you know of before raising.
+- **The window is a team decision.** Microsoft defines no end of life for VS Code versions and in practice patches only the latest, so the ~1-year ceiling is this team's trade-off, not a platform rule: a wider window means more old code paths to keep working. Revisit it if that trade-off changes.
+
+What users notice: anyone on a VS Code older than the new `engines.vscode` keeps the Jasper version they already have installed, and stops getting updates.
+
 ## How to raise it
 
 1. Using the [vscode-versions](https://github.com/ewanharris/vscode-versions) mapping, find both bounds and take whichever is more recent:
    - the earliest VS Code release whose bundled Node is still an actively-maintained LTS (not EOL), and
    - the VS Code release from about a year ago.
 
-   That release is the new floor; note its bundled Node version.
+   That release is the candidate floor; note its bundled Node version. Before adopting it, check telemetry for how many active machines it would leave behind, and check with customers who upgrade slowly that it won't break them (see [What goes into the decision](#what-goes-into-the-decision)).
 2. Update all of these together — they encode the same runtime floor and are a **coordinated set, not independent knobs**. A partial bump lets the type checker or bundler assume APIs that don't exist on the shipped runtime floor:
    - `engines.vscode` and `engines.node` (root `package.json`). `engines.node` stays an open `>=` floor: it ships in the .vsix as the extension's runtime claim, so it must not exclude a newer Node that a future VS Code bundles
    - `devEngines.runtime` (root `package.json`): the dev toolchain's Node range. Its lowest bound mirrors `engines.node` down to the patch, and `npm run lint:supply-chain` fails when they differ. Unlike `engines.node`, it lists each supported Node LTS major explicitly (`^22.15.1 || ^24.19.0`): `.npmrc` sets `engine-strict`, so an odd-numbered release or an untested future major would pass an open `>=` range and then fail `npm ci` on a dependency's `engines.node`. Drop majors below the new floor, and add a new LTS major only once CI runs it. Each major's lower bound is a patch CI actually runs: the floor major's is the floor leg's Node, and the newest major's is `.nvmrc`'s, so bump it whenever `.nvmrc` moves (`npm run lint:supply-chain` fails when they differ). `devEngines.packageManager`, alongside it, pins the *npm* floor instead. That is a separate, dev-toolchain-only concern that this document does not govern, but with an invariant this list still has to protect: that floor must stay ≤ the npm bundled by `.nvmrc`'s Node, or every setup path (contributor and CI alike) needs an explicit `npm i -g` step. Bumping `.nvmrc` down (or the `devEngines.packageManager` floor up) can break that silently, and if it holds, re-pin the global `npm install -g npm@…` calls in the CI floor job and `acceptance/Dockerfile` to whatever npm the new `.nvmrc` bundles
@@ -36,9 +50,10 @@ The `@typescript/native` devDependency range is a separate, compiler-version con
    - `tsconfig.base.json`'s `target` and `lib` (copy the values from the matching Node-version preset in [tsconfig/bases](https://github.com/tsconfig/bases) — see above for why we copy rather than `extends`)
    - `esbuild.mjs`'s `target` (the `client` and `server` build calls)
    - the floor `node-version` in the `health-check.yml` CI `include` job (the *dev* jobs read `.nvmrc` automatically and don't need a separate edit)
-3. If the `lib` bump requires a newer TypeScript feature, raise the `@typescript/native` devDependency range in root `package.json` to match (see the release-notes link above). Leave the `typescript` alias alone — it tracks typescript-eslint's needs, not the compiler's.
-4. Revisit the major-version ignores in `.github/dependabot.yml` that hold a dependency back because its `engines.node` excludes part of the old floor (today: `jsdom` and `@types/jsdom`). Drop each one whose `engines.node` now covers every Node the new `devEngines.runtime` allows (not the root `engines.node`, whose open `>=` range no such dependency can cover); otherwise Dependabot keeps withholding its majors after they stop being a problem.
-5. Run `npm run compile && npm test` to confirm the new floor builds and passes.
+3. Update the floor marker in the telemetry dashboards. Their "VS Code version" query hardcodes the current floor, so without this the chart's "(floor)" bar is quietly wrong. They live in an internal GemTalk repo, whose README says how; ask the team for access.
+4. If the `lib` bump requires a newer TypeScript feature, raise the `@typescript/native` devDependency range in root `package.json` to match (see the release-notes link above). Leave the `typescript` alias alone — it tracks typescript-eslint's needs, not the compiler's.
+5. Revisit the major-version ignores in `.github/dependabot.yml` that hold a dependency back because its `engines.node` excludes part of the old floor (today: `jsdom` and `@types/jsdom`). Drop each one whose `engines.node` now covers every Node the new `devEngines.runtime` allows (not the root `engines.node`, whose open `>=` range no such dependency can cover); otherwise Dependabot keeps withholding its majors after they stop being a problem.
+6. Run `npm run compile && npm test` to confirm the new floor builds and passes.
 
 ## TypeScript 7 is installed under an alias
 

@@ -7,6 +7,15 @@ A release comes in two halves, and the split is deliberate:
 1. **The release PR** — the version bump and the changelog. Both need judgment, so both are done by a person and reviewed like any other change.
 2. **The `Release` workflow** — tag, package, publish, wait, announce. All mechanical, so a pipeline does it, from a commit that is already on `main` and already green.
 
+## Freeze `main` first
+
+Stop merges to `main` before you start preparing the release PR, and keep `main` frozen until the `Release` workflow has published. A release is decided up front: step 1's changelog sweep records what is on `main`, and that is what you are releasing. It has to stay that way until it ships, because the workflow publishes whatever is at the tip of `main` when it is dispatched (the `validate` job comment in `.github/workflows/release.yml` explains why there is no commit SHA input). Any merge in between breaks that, even one that would only make the release fail:
+
+- a merge before step 2 ships a change the sweep never saw: with no release note unless it wrote its own, and either way one the person releasing didn't choose to ship;
+- a merge between step 2 and dispatch moves the tip off the commit you waited on, so `validate` fails with no `ci-complete` yet or, once that run is green, ships the extra change.
+
+Nothing enforces the freeze. Announce the release, and its end, in the team's Slack channel.
+
 ## 1. Open the release PR
 
 ```sh
@@ -46,7 +55,7 @@ The PR page does not show this run. Its "checks passed" line is for the PR's com
 
 ## 3. Run the `Release` workflow
 
-Only once that Health Check run shows a green ✓:
+Only once that Health Check run shows a green ✓, and with `main` still [frozen](#freeze-main-first):
 
 **Actions → Release → Run workflow**, dispatched from `main`, with:
 
