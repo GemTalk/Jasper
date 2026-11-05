@@ -141,14 +141,30 @@ describe("the Classes pane's lookups (integration)", () => {
     expect(blocking).not.toHaveBeenCalled();
   });
 
-  it('keeps the selected class when a click is refused during a run', () => {
+  it('selects a clicked class without a call that blocks until GemStone answers', async () => {
+    const transient = transientSession();
+    onTestFinished(() => {
+      transient.logout();
+    });
+    defineFixture(transient);
+    const ctl = controllerOn(transient);
+    const blocking = vi.spyOn(transient, 'executeAndFetchString');
+
+    await ctl.selectClassFromTree(new ClassItem(CHILD));
+
+    expect(blocking).not.toHaveBeenCalled();
+    expect(ctl.state.className).toBe(CHILD);
+    expect(ctl.hierarchyChildren()).not.toEqual([]);
+  });
+
+  it('keeps the selected class when a click is refused during a run', async () => {
     const transient = transientSession();
     defineFixture(transient);
     const ctl = controllerOn(transient);
     ctl.selectClass(new ClassItem(PARENT), false);
     void runFor(transient, 1);
 
-    ctl.selectClassFromTree(new ClassItem(CHILD));
+    await ctl.selectClassFromTree(new ClassItem(CHILD));
 
     expect(ctl.state.className).toBe(PARENT);
   });
@@ -195,10 +211,10 @@ describe("the Classes pane's lookups (integration)", () => {
     const ctl = controllerOn(transient);
     ctl.selectClass(new ClassItem(PARENT), false);
     const run = runFor(transient, 1);
-    ctl.selectClassFromTree(new ClassItem(CHILD));
+    await ctl.selectClassFromTree(new ClassItem(CHILD));
     await run;
 
-    ctl.selectClassFromTree(new ClassItem(CHILD));
+    await ctl.selectClassFromTree(new ClassItem(CHILD));
 
     expect(ctl.state.className).toBe(CHILD);
   });
