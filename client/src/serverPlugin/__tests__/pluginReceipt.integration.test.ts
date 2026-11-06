@@ -28,7 +28,8 @@ describe('server plugin receipts (integration)', () => {
       handle = testContext.session;
       login = testContext.login;
     },
-    { allowedCommits: 1, sessions: 2 },
+    // login() keeps the session before it, so each feature's SystemUser login adds one.
+    { allowedCommits: 1, sessions: 1 + PLUGIN_FEATURES.length },
   );
   const session = (): ActiveSession => testActiveSession(gci, handle);
   const repoRoot = path.resolve(__dirname, '..', '..', '..', '..');
