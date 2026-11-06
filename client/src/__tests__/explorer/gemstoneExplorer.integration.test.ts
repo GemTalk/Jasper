@@ -169,13 +169,29 @@ describe("the Classes pane's lookups (integration)", () => {
     expect(ctl.state.className).toBe(PARENT);
   });
 
-  it('keeps the selected dictionary when a click is refused during a run', () => {
+  it('selects a clicked dictionary without a call that blocks until GemStone answers', async () => {
+    const transient = transientSession();
+    onTestFinished(() => {
+      transient.logout();
+    });
+    const ctl = controllerOn(transient);
+    const globals = queries.getDictionaryNames(transient).indexOf('Globals') + 1;
+    const blocking = vi.spyOn(transient, 'executeAndFetchString');
+
+    await ctl.selectDictFromTree({ dictName: 'Globals', dictIndex: globals });
+
+    expect(blocking).not.toHaveBeenCalled();
+    expect(ctl.state.dictName).toBe('Globals');
+    expect(ctl.filteredCategoryPaths()).not.toEqual([]);
+  });
+
+  it('keeps the selected dictionary when a click is refused during a run', async () => {
     const transient = transientSession();
     const ctl = controllerOn(transient);
     const globals = queries.getDictionaryNames(transient).indexOf('Globals') + 1;
     void runFor(transient, 1);
 
-    ctl.selectDictFromTree({ dictName: 'Globals', dictIndex: globals });
+    await ctl.selectDictFromTree({ dictName: 'Globals', dictIndex: globals });
 
     expect(ctl.state.dictName).toBe('UserGlobals');
   });
@@ -185,10 +201,10 @@ describe("the Classes pane's lookups (integration)", () => {
     const ctl = controllerOn(transient);
     const globals = queries.getDictionaryNames(transient).indexOf('Globals') + 1;
     const run = runFor(transient, 1);
-    ctl.selectDictFromTree({ dictName: 'Globals', dictIndex: globals });
+    await ctl.selectDictFromTree({ dictName: 'Globals', dictIndex: globals });
     await run;
 
-    ctl.selectDictFromTree({ dictName: 'Globals', dictIndex: globals });
+    await ctl.selectDictFromTree({ dictName: 'Globals', dictIndex: globals });
 
     expect(ctl.state.dictName).toBe('Globals');
   });

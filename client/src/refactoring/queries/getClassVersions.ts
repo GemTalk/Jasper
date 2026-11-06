@@ -1,4 +1,4 @@
-import { QueryExecutor } from '../../queries/types';
+import { NbQueryExecutor, QueryExecutor } from '../../queries/types';
 import { splitLines, dictLookupExpr } from '../../queries/util';
 
 /** A class's position in its class history: the 1-based index of the currently
@@ -21,8 +21,19 @@ export function getClassVersions(
   execute: QueryExecutor,
   dict: number | string,
 ): Map<string, ClassVersionInfo> {
+  return parseClassVersions(execute(classVersionsCode(dict)));
+}
+
+export async function getClassVersionsAsync(
+  execute: NbQueryExecutor,
+  dict: number | string,
+): Promise<Map<string, ClassVersionInfo>> {
+  return parseClassVersions(await execute(classVersionsCode(dict)));
+}
+
+function classVersionsCode(dict: number | string): string {
   const dictExpr = dictLookupExpr(dict);
-  const code = `| ws dict |
+  return `| ws dict |
 dict := ${dictExpr}.
 dict ifNil: [^ ''].
 ws := WriteStream on: String new.
@@ -33,8 +44,11 @@ dict keysAndValuesDo: [:k :v |
     (hist notNil and: [hist size > 1]) ifTrue: [
       ws nextPutAll: k; tab; print: (hist indexOf: v); tab; print: hist size; lf]]].
 ws contents`;
+}
+
+function parseClassVersions(raw: string): Map<string, ClassVersionInfo> {
   const map = new Map<string, ClassVersionInfo>();
-  for (const line of splitLines(execute(code))) {
+  for (const line of splitLines(raw)) {
     const parts = line.split('\t');
     if (parts.length < 3) continue;
     const current = parseInt(parts[1], 10);
