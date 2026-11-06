@@ -1,7 +1,7 @@
 // Checks that the test stone's server plugin is this checkout's, so integration
 // tests never exercise another branch's code. A feature with no receipt gets this
-// checkout's plugin installed over it; a different one is left alone and stops
-// the run, since it may be someone's work in progress.
+// checkout's plugin installed over it; a different one is left alone, since it
+// may be someone's work in progress, and fails the integration tests.
 //
 // Exit codes, which src/__tests__/serverPluginMatch.globalSetup.ts relies on:
 //   0  everything installed matches (perhaps after that install), or nothing is

@@ -1,6 +1,6 @@
 import { GciLibrary } from '../gciLibrary';
 import { createSessionGciLibrary } from '../enhancedInspector/enhancedInspectorPerfTracker';
-import { afterAll, afterEach, beforeAll, beforeEach, expect } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, inject } from 'vitest';
 import { createNativeSocketLibrary } from '../sockets/factory';
 import { NativeSocketLibrary } from '../sockets/nativeSocketLibrary';
 
@@ -121,6 +121,10 @@ export function useIntegrationTest(
   // exist at call time. The callback fires at the end of that hook, letting
   // callers assign the values into their own variables before any test runs.
   beforeAll(() => {
+    // From serverPluginMatch.globalSetup.ts; unset in the gci project.
+    const pluginMismatch = inject('serverPluginMismatch');
+    if (pluginMismatch) throw new Error(pluginMismatch);
+
     configureGemstoneGlobalDir();
 
     handleIntegrationTestSetupErrorDuring(() => {
