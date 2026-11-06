@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
-vi.mock('../../gciLog', () => ({ logInfo: vi.fn() }));
+vi.mock('../../gciLog', () => ({ logInfo: vi.fn(), logWarning: vi.fn() }));
 vi.mock('../../browserQueries', () => ({
   getClassesWithCategory: vi.fn(),
   recategorizeClass: vi.fn(),
@@ -18,6 +18,11 @@ import { refreshClassCategories } from '../afterUndo';
 import { reverseClassCategoryEdit } from '../reverseClassCategoryEdit';
 import { ClassCategoryUndoEntry } from '../undoTypes';
 import type { ActiveSession } from '../../sessionManager';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+} from '../../autoCommit/autoCommitState';
+import { autoCommitAfterWrite } from '../../autoCommit/autoCommitRunner';
 
 /**
  * Undoing a class-category change (#434).
@@ -175,5 +180,54 @@ describe('reverseClassCategoryEdit', () => {
     );
 
     expect(refreshClassCategories).toHaveBeenCalledWith(undefined);
+  });
+});
+
+/**
+ * Auto-commit (issue #254): the classes are refiled one at a time, and half a refile in the
+ * repository is not a reversal, so it commits once, and not at all if any class failed.
+ * `recategorizeClass` is mocked here; the stand-in reports its write as the real one's
+ * `writing` wrapper does (pinned in browserQueriesAutoCommit.test.ts).
+ */
+describe('reverseClassCategoryEdit on an auto-commit session', () => {
+  const commit = vi.fn(() => ({ success: true, err: { number: 0, message: '' } }));
+  const armed = { id: 1, GciTsCommit: commit } as unknown as ActiveSession;
+  const twoClasses = () =>
+    entry([
+      { className: 'A', before: 'Old', after: 'New' },
+      { className: 'B', before: 'Old', after: 'New' },
+    ]);
+
+  beforeEach(() => {
+    _resetAutoCommitStateForTests();
+    registerSessionAutoCommit(1, true);
+    commit.mockClear();
+    vi.mocked(getClassesWithCategory).mockReturnValue(entries({ A: 'New', B: 'New' }));
+  });
+  afterEach(() => _resetAutoCommitStateForTests());
+
+  it('commits the whole refile once', async () => {
+    vi.mocked(recategorizeClass).mockImplementation((s, name) => {
+      autoCommitAfterWrite(s, 'class category');
+      return `Recategorized: ${name}`;
+    });
+
+    await reverseClassCategoryEdit(armed, twoClasses());
+
+    expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits nothing when one class could not be refiled', async () => {
+    vi.mocked(recategorizeClass).mockImplementation((s, name) => {
+      autoCommitAfterWrite(s, 'class category');
+      return name === 'B' ? 'Class not found: B' : `Recategorized: ${name}`;
+    });
+
+    await reverseClassCategoryEdit(armed, twoClasses());
+
+    expect(commit).not.toHaveBeenCalled();
+    expect(vi.mocked(vscode.window.showErrorMessage).mock.calls[0][0]).toContain(
+      'Nothing was committed',
+    );
   });
 });

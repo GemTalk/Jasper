@@ -220,6 +220,7 @@
       } else if (msg.command === 'applyFailed') showApplyFailed(msg.message, msg.canAbort === true);
       else if (msg.command === 'aborted') showAborted();
       else if (msg.command === 'abortFailed') showAbortFailed(msg.message);
+      else if (msg.command === 'abortCancelled' && abortBtn) abortBtn.disabled = false;
     };
     if (typeof doc.defaultView !== 'undefined' && doc.defaultView) {
       doc.defaultView.addEventListener('message', function (e) {

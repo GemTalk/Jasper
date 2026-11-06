@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', () => ({ defaultQueryExecutorUsing: () => () => '' }));
-vi.mock('../../gciLog', () => ({ logInfo: vi.fn() }));
+vi.mock('../../gciLog', () => ({ logInfo: vi.fn(), logWarning: vi.fn() }));
 vi.mock('../queries/classSlotQueries', () => ({
   captureClassSlots: vi.fn(),
   applyClassSlotOps: vi.fn(),
@@ -19,6 +19,10 @@ import { refreshSearch } from '../afterUndo';
 import { reverseClassEdit } from '../reverseClassEdit';
 import { ClassEditUndoEntry, ClassSlotState } from '../undoTypes';
 import type { ActiveSession } from '../../sessionManager';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+} from '../../autoCommit/autoCommitState';
 
 /**
  * Reverting a class edit (#434).
@@ -254,6 +258,30 @@ describe('reverseClassEdit', () => {
       'Shadowed',
       undefined,
       'DictionaryB',
+    );
+  });
+});
+
+/** Auto-commit (issue #254): the reversal writes through a raw executor, so it commits itself. */
+describe('reverseClassEdit on an auto-commit session', () => {
+  const commit = vi.fn(() => ({ success: true, err: { number: 0, message: '' } }));
+  const armed = { id: 1, GciTsCommit: commit } as unknown as ActiveSession;
+
+  beforeEach(() => {
+    _resetAutoCommitStateForTests();
+    registerSessionAutoCommit(1, true);
+    commit.mockClear();
+  });
+  afterEach(() => _resetAutoCommitStateForTests());
+
+  it('commits the revert once', async () => {
+    vi.mocked(captureClassSlots).mockReturnValue([bound('2')]);
+
+    await reverseClassEdit(armed, entry([bound('1')], [bound('2')]));
+
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(vscode.window.showInformationMessage).mock.calls[0][0]).toContain(
+      'Committed — this session has auto-commit on.',
     );
   });
 });

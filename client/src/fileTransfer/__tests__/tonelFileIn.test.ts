@@ -11,6 +11,11 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('fs', () => ({ readFileSync: vi.fn() }));
+vi.mock('../../autoCommit/autoCommitRunner', () => ({
+  runWithAutoCommitDeferredSync: vi.fn((_session: unknown, _what: string, run: () => unknown) =>
+    run(),
+  ),
+}));
 vi.mock('../../browserQueries', () => ({
   getDictionaryNames: vi.fn(() => ['UserGlobals', 'Globals', 'Published']),
   executeFetchString: vi.fn(() => ''),
@@ -29,6 +34,8 @@ import * as queries from '../../browserQueries';
 import type { ActiveSession } from '../../sessionManager';
 import * as fs from 'fs';
 import { applyTonelClass, chooseTonelDictionary, fileInTonelUri } from '../tonelFileIn';
+import { runWithAutoCommitDeferredSync } from '../../autoCommit/autoCommitRunner';
+import { fileInSucceeded } from '../fileIn';
 import type { TonelClass } from '../../queries/tonel/tonelWire';
 
 // A FRESH session object per test: the Tonel capability answer is cached per
@@ -79,6 +86,15 @@ beforeEach(() => {
 });
 
 describe('applyTonelClass — the class definition', () => {
+  // A file with no methods still wrote the class, and the report needs to know it did.
+  it('says whether the definition went in', () => {
+    expect(applyTonelClass(SESSION, widget(), 'UserGlobals').defined).toBe(true);
+    vi.mocked(queries.compileClassDefinition).mockImplementationOnce(() => {
+      throw new Error('bad superclass');
+    });
+    expect(applyTonelClass(SESSION, widget(), 'UserGlobals').defined).toBe(false);
+  });
+
   it('creates the class in the dictionary it was given', () => {
     applyTonelClass(SESSION, widget(), 'UserGlobals');
     expect(definitionSource()).toContain('inDictionary: UserGlobals');
@@ -615,5 +631,41 @@ describe('fileInTonelUri — dismissing the dictionary prompt', () => {
 
     expect(outcome.cancelled).toBe(false);
     expect(outcome.skipped).toEqual([]);
+  });
+});
+
+describe('fileInTonelUri — auto-commit', () => {
+  beforeEach(() => {
+    vi.mocked(fs.readFileSync).mockReturnValue(`Class {\n\t#name : 'Widget'\n}\n`);
+    vi.mocked(queries.tonelCapability).mockReturnValue({ available: true, missing: [] });
+    vi.mocked(queries.executeFetchString).mockReturnValue(
+      'NAME\t6\nWidget\nSUPER\t6\nObject\nTYPE\t6\nnormal\n' +
+        'CATEGORY\t1\nX\nCOMMENT\t0\n\nIVARS\t0\n\nCVARS\t0\n\nCIVARS\t0\n\nPOOLS\t0\n\n' +
+        'OPTIONS\t0\n\nUNCARRIED\t0\n\n',
+    );
+  });
+
+  it('writes the whole file in one auto-commit region, judged by fileInSucceeded', async () => {
+    vi.mocked(queries.dictionariesContainingClass).mockReturnValue(['UserGlobals']);
+
+    await fileInTonelUri(SESSION, '/tmp/Widget.st');
+
+    expect(runWithAutoCommitDeferredSync).toHaveBeenCalledTimes(1);
+    expect(runWithAutoCommitDeferredSync).toHaveBeenCalledWith(
+      SESSION,
+      'file-in',
+      expect.any(Function),
+      fileInSucceeded,
+    );
+  });
+
+  // The prompt is asked before the region opens, so no save made while it is up is held back.
+  it('asks the dictionary question before the region opens, and opens none when dismissed', async () => {
+    vi.mocked(queries.dictionariesContainingClass).mockReturnValue(['UserGlobals', 'Globals']);
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
+
+    await fileInTonelUri(SESSION, '/tmp/Widget.st');
+
+    expect(runWithAutoCommitDeferredSync).not.toHaveBeenCalled();
   });
 });

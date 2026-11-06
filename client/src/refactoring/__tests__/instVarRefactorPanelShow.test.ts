@@ -440,9 +440,34 @@ describe('showInstVarRefactorPanel', () => {
     panel.__emit(applyMsg);
     await new Promise((r) => setTimeout(r, 0));
     panel.__emit({ command: 'abort' });
+    await new Promise((r) => setTimeout(r, 0));
 
     expect(h.abort).toHaveBeenCalledOnce();
     expect(panel.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'aborted' }),
+    );
+  });
+
+  it('leaves the panel as it was when the abort is backed out of', async () => {
+    const h = handlers();
+    h.apply = vi.fn(async (): Promise<ApplyResult> => ({
+      applied: 1,
+      failed: [{ id: 'c2', label: 'Sub (recompiled)', error: 'boom' }],
+      dropped: [],
+      committed: false,
+      partiallyApplied: true,
+    }));
+    h.abort = vi.fn(async () => false);
+
+    void showInstVarRefactorPanel('Add tally to Foo', start, h);
+    const panel = lastPanel();
+    panel.__emit(applyMsg);
+    await new Promise((r) => setTimeout(r, 0));
+    panel.__emit({ command: 'abort' });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(panel.webview.postMessage).toHaveBeenCalledWith({ command: 'abortCancelled' });
+    expect(panel.webview.postMessage).not.toHaveBeenCalledWith(
       expect.objectContaining({ command: 'aborted' }),
     );
   });
@@ -465,6 +490,7 @@ describe('showInstVarRefactorPanel', () => {
     panel.__emit(applyMsg);
     await new Promise((r) => setTimeout(r, 0));
     panel.__emit({ command: 'abort' });
+    await new Promise((r) => setTimeout(r, 0));
 
     expect(panel.webview.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({

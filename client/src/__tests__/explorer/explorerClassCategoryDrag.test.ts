@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -27,6 +27,11 @@ import {
   FilterChipItem,
 } from '../../gemstoneExplorer';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+} from '../../autoCommit/autoCommitState';
+import { autoCommitAfterWrite } from '../../autoCommit/autoCommitRunner';
 import type { ClassCategoryEntry } from '../../browserQueries';
 
 function makeViews() {
@@ -40,8 +45,10 @@ function makeViews() {
 
 const notifyDocumentChanged = vi.fn();
 
+const commit = vi.fn(() => ({ success: true, err: { number: 0, message: '' } }));
+
 function makeController(entries: ClassCategoryEntry[] = []) {
-  const session = { id: 1 } as ActiveSession;
+  const session = { id: 1, GciTsCommit: () => commit() } as unknown as ActiveSession;
   const sessionManager = { getSelectedSession: () => session } as unknown as SessionManager;
   const ctl = new ExplorerController(
     sessionManager,
@@ -324,10 +331,10 @@ describe('filing dragged classes into a category', () => {
       'JasperIt-New',
     );
 
+    // One notice for a drop that half worked, naming both halves, not a success toast beside it.
     expect(showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('Widget'));
-    expect(showInformationMessage).toHaveBeenCalledWith(
-      "Moved Gadget to class category 'JasperIt-New'.",
-    );
+    expect(showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('Moved: Gadget.'));
+    expect(showInformationMessage).not.toHaveBeenCalled();
     // Only the class that actually moved has a stale definition on screen; telling the
     // other one to re-read would throw away edits over a move that never happened.
     expect(notifyDocumentChanged).toHaveBeenCalledTimes(1);
@@ -466,5 +473,54 @@ describe('dropping methods onto a class row', () => {
     await dropMethodsOn(ctl, undefined);
 
     expect(dragToClass).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Auto-commit (issue #254): one drop is one commit, and none when any class failed to move.
+ * The mocked `recategorizeClass` reports its write as the real one's `writing` wrapper does.
+ */
+describe('dragging classes on an auto-commit session', () => {
+  beforeEach(() => {
+    _resetAutoCommitStateForTests();
+    registerSessionAutoCommit(1, true);
+    commit.mockClear();
+  });
+  afterEach(() => _resetAutoCommitStateForTests());
+
+  const twoClasses = () =>
+    makeController([entry('Widget', 'JasperIt-Old'), entry('Gadget', 'JasperIt-Old')]);
+
+  it('commits a drop of several classes once', async () => {
+    vi.mocked(queries.recategorizeClass).mockImplementation((s, name) => {
+      autoCommitAfterWrite(s, 'class category');
+      return `Recategorized: ${name}`;
+    });
+
+    await drag(
+      twoClasses(),
+      [new ClassItem('Widget'), new ClassItem('Gadget')],
+      new ClassCategoryItem('New', 'JasperIt-New', false),
+    );
+
+    expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits nothing when one class could not be moved', async () => {
+    vi.mocked(queries.recategorizeClass).mockImplementation((s, name) => {
+      autoCommitAfterWrite(s, 'class category');
+      return name === 'Gadget' ? 'Class not found: Gadget' : `Recategorized: ${name}`;
+    });
+
+    await drag(
+      twoClasses(),
+      [new ClassItem('Widget'), new ClassItem('Gadget')],
+      new ClassCategoryItem('New', 'JasperIt-New', false),
+    );
+
+    expect(vi.mocked(queries.recategorizeClass)).toHaveBeenCalledTimes(2);
+    expect(commit).not.toHaveBeenCalled();
+    expect(showErrorMessage.mock.calls.at(-1)?.[0]).toContain('Nothing was committed');
+    expect(showInformationMessage).not.toHaveBeenCalled();
   });
 });

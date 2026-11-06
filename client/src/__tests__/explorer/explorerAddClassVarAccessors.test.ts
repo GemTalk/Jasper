@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 // Stub browserQueries (→ native GCI). The class-variable add + accessor paths use
@@ -21,6 +21,11 @@ import { captureClassVar } from '../../undo/queries/classVarQueries';
 import { captureMethodSlots } from '../../undo/queries/methodSlotQueries';
 import { peekUndoEntry, resetUndoStacks, undoStackDepth } from '../../undo/undoStack';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+} from '../../autoCommit/autoCommitState';
+import { autoCommitAfterWrite } from '../../autoCommit/autoCommitRunner';
 
 /**
  * Drives ExplorerController's Add Class Variable and Add Accessors handlers: the
@@ -288,5 +293,54 @@ describe('ExplorerController add accessors (standalone row action)', () => {
       ],
       1,
     );
+  });
+});
+
+/**
+ * Auto-commit (issue #254): the variable and its accessors commit together, or not at all.
+ * The mocked writes report themselves as the real ones' `writing` wrapper does.
+ */
+describe('adding a class variable with accessors on an auto-commit session', () => {
+  const commit = vi.fn(() => ({ success: true, err: { number: 0, message: '' } }));
+  const session = { id: 1, GciTsCommit: () => commit() } as unknown as ActiveSession;
+
+  beforeEach(() => {
+    _resetAutoCommitStateForTests();
+    registerSessionAutoCommit(1, true);
+    commit.mockClear();
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Registry');
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue('Add accessors' as never);
+    vi.mocked(queries.addClassVariable).mockImplementation((s) => {
+      autoCommitAfterWrite(s, 'class variable add');
+      return 'ok';
+    });
+  });
+  afterEach(() => _resetAutoCommitStateForTests());
+
+  it('commits the variable and its accessors once', async () => {
+    vi.mocked(queries.addAccessors).mockImplementation((s) => {
+      autoCommitAfterWrite(s, 'accessors');
+      return { created: 2, skipped: 0, noClass: false };
+    });
+
+    await makeController(session).ctl.addClassVarOnClass('Foo');
+
+    expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits nothing when the accessors failed, and says the variable went in without them', async () => {
+    vi.mocked(queries.addAccessors).mockImplementation(() => {
+      throw new Error('not writable');
+    });
+
+    await makeController(session).ctl.addClassVarOnClass('Foo');
+
+    expect(commit).not.toHaveBeenCalled();
+    expect(
+      vi
+        .mocked(vscode.window.showInformationMessage)
+        .mock.calls.map((c) => c[0])
+        .join('\n'),
+    ).toContain('without its accessors. Nothing was committed');
   });
 });

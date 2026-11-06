@@ -15,6 +15,11 @@ import {
   fileInChangedRegions,
 } from '../topazFileIn';
 import * as queries from '../browserQueries';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+} from '../autoCommit/autoCommitState';
+import { autoCommitAfterWrite, setAutoCommitFailureHandler } from '../autoCommit/autoCommitRunner';
 import { fakeActiveSession } from './fakeActiveSession';
 
 vi.mock('../browserQueries', () => ({
@@ -31,10 +36,17 @@ vi.mock('../browserQueries', () => ({
   deleteMethod: vi.fn(),
 }));
 
+const COMMIT_OK = { success: true, err: { number: 0, message: '' } };
+let commit = vi.fn(() => COMMIT_OK);
+
 function createMockSession(): ActiveSession {
   return fakeActiveSession({
     id: 1,
-    gci: {},
+    gci: {
+      get GciTsCommit() {
+        return commit;
+      },
+    },
     handle: {},
     login: {
       label: 'Test',
@@ -50,6 +62,22 @@ function createMockSession(): ActiveSession {
     stoneVersion: '3.7.2',
   });
 }
+
+/**
+ * Put auto-commit back to off, and the compile stubs back to plain, before EVERY test here.
+ * The auto-commit block at the bottom arms session 1 and gives the stubs a write-through
+ * implementation; the suite shuffles, so either left behind would reach the other tests.
+ */
+function resetAutoCommit(): void {
+  _resetAutoCommitStateForTests();
+  setAutoCommitFailureHandler(undefined);
+  commit = vi.fn(() => COMMIT_OK);
+  vi.mocked(queries.compileMethod).mockReset();
+  vi.mocked(queries.compileMethod).mockReturnValue(1000n as never);
+  vi.mocked(queries.compileClassDefinition).mockReset();
+}
+
+beforeEach(resetAutoCommit);
 
 describe('parseTopazDocument', () => {
   it('parses method regions with class names', () => {
@@ -642,5 +670,92 @@ foo
     fileInChangedRegions(session, oldText, newText);
 
     expect(queries.compileClassDefinition).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A file-in is one auto-commit, and none if it throws part-way (issue #254).
+ *
+ * `browserQueries` is mocked here, so the real `writing` wrapper never runs; these make the
+ * mocked compiles do what the real ones do and call `autoCommitAfterWrite`, which is what the
+ * deferred region has to coalesce.
+ */
+describe('file-in and auto-commit', () => {
+  const TWO_METHODS = `doit
+Object subclass: 'Account'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals
+%
+category: 'accessing'
+method: Account
+balance
+  ^balance
+%
+method: Account
+name
+  ^name
+%
+`;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetAutoCommit();
+    const session = createMockSession();
+    vi.mocked(queries.compileMethod).mockImplementation(() => {
+      autoCommitAfterWrite(session, 'test write');
+      return 1000n as never;
+    });
+    vi.mocked(queries.compileClassDefinition).mockImplementation(() => {
+      autoCommitAfterWrite(session, 'test write');
+      return 'Account';
+    });
+  });
+
+  it('commits ONCE for a file-in of several methods, not once each', () => {
+    registerSessionAutoCommit(1, true);
+
+    fileInClass(createMockSession(), TWO_METHODS);
+
+    // A definition plus two methods went in.
+    expect(queries.compileMethod).toHaveBeenCalledTimes(2);
+    expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits once through fileInChangedRegions too', () => {
+    registerSessionAutoCommit(1, true);
+
+    fileInChangedRegions(createMockSession(), undefined, TWO_METHODS);
+
+    expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits nothing when a method in the file did not compile', () => {
+    // `fileInClass` reports a bad method against its line and carries on by design — it does
+    // not throw — so it tells the deferred region it failed, and the part that compiled is left
+    // uncommitted for the user to keep or abort.
+    registerSessionAutoCommit(1, true);
+    const session = createMockSession();
+    let first = true;
+    vi.mocked(queries.compileMethod).mockImplementation(() => {
+      if (first) {
+        first = false;
+        autoCommitAfterWrite(session, 'test write');
+        return 1000n as never;
+      }
+      throw new BrowserQueryError('does not compile (line 3)');
+    });
+
+    const result = fileInClass(session, TWO_METHODS);
+
+    expect(result.success).toBe(false);
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('commits nothing on a session that never armed it', () => {
+    fileInClass(createMockSession(), TWO_METHODS);
+    expect(commit).not.toHaveBeenCalled();
   });
 });

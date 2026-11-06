@@ -24,6 +24,8 @@
  * names the methods, in the same shape as the class revert's discard prompt.
  */
 import * as vscode from 'vscode';
+import { runRawWritesWithAutoCommit } from '../autoCommit/autoCommitRunner';
+import { commitStateNote, heldBackNote } from '../autoCommit/autoCommitState';
 import { dictionaryNameFor } from '../refactoring/dictionaryLabel';
 import { ActiveSession } from '../sessionManager';
 import { defaultQueryExecutorUsing } from '../browserQueries';
@@ -136,13 +138,20 @@ export async function reverseClassVarEdit(
     if (clause) done.push(clause);
   };
 
-  if (varOp === 'declare') {
-    reverseVariable();
-    reverseAccessors();
-  } else {
-    reverseAccessors();
-    reverseVariable();
-  }
+  runRawWritesWithAutoCommit(
+    session,
+    'undo',
+    () => {
+      if (varOp === 'declare') {
+        reverseVariable();
+        reverseAccessors();
+      } else {
+        reverseAccessors();
+        reverseVariable();
+      }
+    },
+    () => failures.length === 0,
+  );
 
   await refreshExplorer();
   await refreshSearch(session.id);
@@ -167,7 +176,7 @@ export async function reverseClassVarEdit(
     void vscode.window.showErrorMessage(
       done.length === 0
         ? `Undo of ${entry.label} failed: ${failures[0]}`
-        : `Undo of ${entry.label} was partial — ${failures[0]}`,
+        : `Undo of ${entry.label} was partial — ${failures[0]}.${heldBackNote(session.id)}`,
     );
     // Spent only when something landed: a partial reversal leaves the recorded state
     // describing nothing the stone holds, so offering it again would reverse from a state it
@@ -184,8 +193,8 @@ export async function reverseClassVarEdit(
         `${stranded.length === 1 ? 's' : ''} nil.`
       : '';
   void vscode.window.showInformationMessage(
-    `Undid ${entry.label} — ${done.join(', ')}.${strandedNote} Compiled but NOT committed — ` +
-      'commit when ready.',
+    `Undid ${entry.label} — ${done.join(', ')}.${strandedNote} ` +
+      commitStateNote(session.id, 'Compiled but NOT committed — commit when ready.'),
   );
   return true;
 }

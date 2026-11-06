@@ -31,6 +31,7 @@ vi.mock('vscode', () => ({
 
 vi.mock('../../browserQueries', () => ({ executeFetchString: vi.fn(() => '') }));
 vi.mock('../../gciLog', () => ({ logError: vi.fn() }));
+vi.mock('../../autoCommit/autoCommitRunner', () => ({ autoCommitAfterWrite: vi.fn() }));
 
 vi.mock('../queries/basicInspectorQueries', () => ({
   PAGE_SIZE: 100,
@@ -63,6 +64,7 @@ import * as vscode from 'vscode';
 import { BasicInspector } from '../basicInspector';
 import * as queries from '../queries/basicInspectorQueries';
 import * as debug from '../../debugger/debugQueries';
+import { autoCommitAfterWrite } from '../../autoCommit/autoCommitRunner';
 import { forgetSession as forgetSessionPins } from '../../exportSetPins';
 import type { ActiveSession } from '../../sessionManager';
 import { fakeActiveSession, startNonBlockingCall } from '../../__tests__/fakeActiveSession';
@@ -548,6 +550,14 @@ describe('editing a slot', () => {
     expect(debug.saveObjs).not.toHaveBeenCalled();
   });
 
+  it('auto-commits the edit, and the revert', () => {
+    send(EDIT);
+    expect(autoCommitAfterWrite).toHaveBeenCalledTimes(1);
+
+    send({ command: 'revertSlot', columnId: 0, oop: '100', kind: 'instvar', index: 2 });
+    expect(autoCommitAfterWrite).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps the value from before the first edit, not from the previous one', () => {
     send(EDIT);
     vi.mocked(debug.getInstVarOop).mockReturnValue(999n);
@@ -648,6 +658,18 @@ describe('the evaluation pane', () => {
     expect(postsOf('evalResult').at(-1)).toMatchObject({ ok: true, text: '' });
     expect(postsOf('addChild')).toHaveLength(0);
     expect(vscode.window.setStatusBarMessage).toHaveBeenCalled();
+  });
+
+  it('auto-commits after an expression runs, and not after one that failed', () => {
+    send({ ...EVAL, mode: 'execute' });
+    expect(autoCommitAfterWrite).toHaveBeenCalledWith(session, 'Inspector evaluate');
+
+    vi.mocked(autoCommitAfterWrite).mockClear();
+    vi.mocked(debug.evaluateWithReceiverToOop).mockImplementationOnce(() => {
+      throw new Error('doesNotUnderstand: #nope');
+    });
+    send({ ...EVAL, mode: 'execute' });
+    expect(autoCommitAfterWrite).not.toHaveBeenCalled();
   });
 
   it('reports why an expression failed instead of opening an empty column', () => {

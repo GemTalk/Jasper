@@ -23,6 +23,8 @@
 import * as vscode from 'vscode';
 import { SessionManager } from '../sessionManager';
 import * as queries from '../browserQueries';
+import { autoCommitAfterWrite } from '../autoCommit/autoCommitRunner';
+import { commitStateNote, heldBackNote } from '../autoCommit/autoCommitState';
 import { PREVIEW_PAGE_BYTES } from './queries/previewRenameMethod';
 import {
   UndoStartPreview,
@@ -173,6 +175,9 @@ export async function undoLastRefactoringCommand(sessions: SessionManager): Prom
     void vscode.window.showErrorMessage(`Undo failed: ${result.error}`);
     return;
   }
+  // Only a reversal that landed whole is committed; a partial one is left for the user to
+  // abort, as any failed multi-write operation is.
+  if (result.failed.length === 0) autoCommitAfterWrite(session, 'refactoring undo');
 
   await refreshExplorer();
   await refreshSearch(session.id);
@@ -182,10 +187,11 @@ export async function undoLastRefactoringCommand(sessions: SessionManager): Prom
   if (result.failed.length > 0) {
     const first = result.failed[0];
     void vscode.window.showErrorMessage(
-      result.failed.length === 1
-        ? `Undo could not reverse ${first.label}: ${first.error}`
+      (result.failed.length === 1
+        ? `Undo could not reverse ${first.label}: ${first.error}.`
         : `Undo reversed ${result.applied} change${result.applied === 1 ? '' : 's'}; ` +
-            `${result.failed.length} could not be reversed. First: ${first.label}: ${first.error}`,
+          `${result.failed.length} could not be reversed. First: ${first.label}: ${first.error}.`) +
+        (result.applied > 0 ? heldBackNote(session.id) : ''),
     );
     return;
   }
@@ -197,8 +203,8 @@ export async function undoLastRefactoringCommand(sessions: SessionManager): Prom
     start.mechanism === 'mirror'
       ? `Reversed ${start.label} (${result.applied} change` +
           `${result.applied === 1 ? '' : 's'}). The class keeps its history. ` +
-          'Compiled but NOT committed — commit when ready.'
+          commitStateNote(session.id, 'Compiled but NOT committed — commit when ready.')
       : `Undid ${start.label} (${result.applied} change${result.applied === 1 ? '' : 's'}). ` +
-          'Compiled but NOT committed — commit when ready.',
+          commitStateNote(session.id, 'Compiled but NOT committed — commit when ready.'),
   );
 }

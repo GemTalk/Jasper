@@ -957,9 +957,11 @@ export const InputBoxValidationSeverity = {
 
 export class MarkdownString {
   // Mirror the real MarkdownString flags the extension sets: `isTrusted` enables
-  // command: links, `supportThemeIcons` enables $(codicon) rendering.
+  // command: links, `supportThemeIcons` enables $(codicon) rendering, `supportHtml`
+  // keeps inline HTML such as a coloured <span>.
   isTrusted?: boolean;
   supportThemeIcons?: boolean;
+  supportHtml?: boolean;
   constructor(public value: string = '') {}
   appendMarkdown(value: string): MarkdownString {
     this.value += value;
