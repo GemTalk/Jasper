@@ -1183,6 +1183,23 @@ function mapUnlessBusy<K, V>(read: () => Map<K, V>): Map<K, V> {
   }
 }
 
+// mapUnlessBusy for a non-blocking read, which the user can also cancel from its progress
+// notification: a cancelled read is thrown too.
+async function mapUnlessBusyAsync<K, V>(read: () => Promise<Map<K, V>>): Promise<Map<K, V>> {
+  try {
+    return await read();
+  } catch (e) {
+    if (queries.isBusyRefusal(e) || e instanceof NbCancelledError) throw e;
+    return new Map();
+  }
+}
+
+/** What selecting a dictionary shows: its classes and the details on their rows. */
+interface DictSelection {
+  entries: queries.ClassCategoryEntry[];
+  metadata: ClassRowMetadata;
+}
+
 export class ExplorerController {
   readonly state: ExplorerState = {};
   // className → category for the current dictionary; fetched once per dict.
@@ -1223,6 +1240,9 @@ export class ExplorerController {
   // The row click still waiting for its reads. Only this one may commit: a newer click
   // replaces it, and every commit clears it, so a jump made meanwhile wins too.
   private pendingClick: PendingClick | undefined;
+  // Counts refreshes. A dictionary click reads by the clicked row's index, which a refresh
+  // can shift to another dictionary, so a click that read across one is dropped.
+  private refreshes = 0;
   // className → {current,total} position in its class history, for classes with
   // more than one version in the current dictionary; fetched once per dict so a
   // reshaped class row can render `Foo[2/3]`. Single-version classes are absent
@@ -1987,6 +2007,7 @@ export class ExplorerController {
   // selection highlighted across a data refresh on its own (stable row ids), so
   // skipping reveal loses nothing but the unwanted jump.
   async refreshRetainingSelection({ reveal = true }: { reveal?: boolean } = {}): Promise<void> {
+    this.refreshes++;
     // Before anything is re-read, not after: a refresh means what is held is suspect.
     this.onImageReread?.();
     const session = this.session();
@@ -2160,6 +2181,11 @@ export class ExplorerController {
     const session = this.session();
     const entries = session ? queries.getClassesWithCategory(session, item.dictIndex) : [];
     const metadata = this.fetchClassRowMetadata(item.dictIndex);
+    this.commitDictSelection(item, { entries, metadata });
+  }
+
+  private commitDictSelection(item: DictItem, { entries, metadata }: DictSelection): void {
+    this.pendingClick = undefined;
     this.state.dictName = item.dictName;
     this.state.dictIndex = item.dictIndex;
     this.state.classCategory = undefined;
@@ -2186,9 +2212,9 @@ export class ExplorerController {
   }
 
   selectClassCategory(item: ClassCategoryItem): void {
-    // A class click still reading would commit over this choice, selecting a class the
-    // category may filter out of the Classes pane.
-    if (this.pendingClick?.item instanceof ClassItem) this.pendingClick = undefined;
+    // A row click still reading would commit over this choice: a class the category may
+    // filter out of the Classes pane, or a dictionary whose commit clears the category.
+    this.pendingClick = undefined;
     this.state.classCategory = item.fullPath;
     // A category node keeps showing (and the classes pane keeps highlighting) a
     // selected class that still lives under it. Dropping the controller's className
@@ -2455,24 +2481,69 @@ export class ExplorerController {
     // Use the inline "Open Definition" button (gemstone.explorer.openDefinition).
   }
 
-  // A dictionary row the user clicked. When it can't be read (a run holds the session,
-  // say), the highlight VS Code already moved goes back to the dictionary still selected.
-  // Error handling is the same as for a clicked class row, below.
-  //
-  // The dictionary already selected is skipped: its row gets highlighted again by a
-  // refused click moving back, or by a jump that selects a dictionary and then reveals its
-  // row, and reading it again would only clear whatever was chosen under it.
-  selectDictFromTree(item: DictItem): void {
-    if (item.dictName === this.state.dictName && item.dictIndex === this.state.dictIndex) return;
-    try {
-      this.selectDict(item);
-    } catch (e) {
+  /**
+   * Selects a dictionary row the user clicked, reading its classes without blocking VS
+   * Code.
+   *
+   * VS Code moves the highlight before this runs. When the click doesn't take, because
+   * the dictionary can't be read (a run holds the session, say), a later click or jump
+   * replaced it, or a refresh ran while it read, the highlight goes back to the dictionary
+   * still selected. A failure once the clicked dictionary is selected leaves the highlight
+   * where it is, since there is nothing to go back to.
+   *
+   * Clicking the dictionary already selected reads nothing: its row also gets highlighted
+   * by a refused click moving back, or by a jump that selects a dictionary and then
+   * reveals its row, and reading it again would only clear whatever was chosen under it.
+   *
+   * @returns A promise that settles once the click has been committed or dropped, and
+   * never rejects: a failure is logged, unless the read already gave the busy notice or
+   * logged it.
+   */
+  selectDictFromTree(item: DictItem): Promise<void> {
+    const session = this.session();
+    const isSelected = () =>
+      item.dictName === this.state.dictName && item.dictIndex === this.state.dictIndex;
+    const refreshes = this.refreshes;
+    return this.startClick(item, isSelected(), async (isLatest) => {
+      const stillApplies = () => isLatest() && this.refreshes === refreshes;
+      try {
+        const selection = await this.inReadOrder(() => this.readDictSelection(item, stillApplies));
+        if (selection && stillApplies()) return this.commitDictSelection(item, selection);
+      } catch (e) {
+        logClickFailure(e, this.session() !== session);
+        if (isSelected()) return;
+      }
       const { dictName, dictIndex } = this.state;
-      if (dictName === item.dictName && dictIndex === item.dictIndex) throw e;
-      if (dictName !== undefined && dictIndex !== undefined)
+      if (this.dropClick(item, isLatest) && dictName !== undefined && dictIndex !== undefined)
         void this.revealCascade(this.views?.dict, new DictItem(dictName, dictIndex));
-      if (!(e instanceof queries.BrowserQueryError)) throw e;
-    }
+    });
+  }
+
+  // What selecting `item` would show, or undefined once the click no longer applies, so
+  // the queries it hasn't started yet are skipped. The row details mirror
+  // fetchClassRowMetadata: a detail added here must be added there too.
+  private async readDictSelection(
+    item: DictItem,
+    stillApplies: () => boolean,
+  ): Promise<DictSelection | undefined> {
+    const session = this.session();
+    if (!stillApplies()) return undefined;
+    if (!session) return { entries: [], metadata: noClassRowMetadata() };
+    const { dictIndex } = item;
+    const entries = await queries.getClassesWithCategoryAsync(session, dictIndex);
+    if (!stillApplies()) return undefined;
+    const definedIvarCounts = await mapUnlessBusyAsync(() =>
+      queries.getDefinedInstVarCountsAsync(session, dictIndex),
+    );
+    if (!stillApplies()) return undefined;
+    const definedClassVarCounts = await mapUnlessBusyAsync(() =>
+      queries.getDefinedClassVarCountsAsync(session, dictIndex),
+    );
+    if (!stillApplies()) return undefined;
+    const classVersions = await mapUnlessBusyAsync(() =>
+      queries.getClassVersionsAsync(session, dictIndex),
+    );
+    return { entries, metadata: { definedIvarCounts, definedClassVarCounts, classVersions } };
   }
 
   /**
@@ -3052,7 +3123,8 @@ export class ExplorerController {
   }
 
   // The row metadata of dictionary `dictIndex`. A read a busy session refused is thrown;
-  // any other failure leaves that map empty.
+  // any other failure leaves that map empty. readDictSelection reads the same details
+  // without blocking: a detail added here must be added there too.
   private fetchClassRowMetadata(dictIndex: number | undefined): ClassRowMetadata {
     const session = this.session();
     if (!session || dictIndex === undefined) return noClassRowMetadata();
@@ -9425,7 +9497,7 @@ export function registerGemStoneExplorer(
 
   dictView.onDidChangeSelection((e) => {
     const node = e.selection[0];
-    if (node instanceof DictItem) ctl.selectDictFromTree(node);
+    if (node instanceof DictItem) void ctl.selectDictFromTree(node);
   });
   categoryView.onDidChangeSelection((e) => {
     const node = e.selection[0];

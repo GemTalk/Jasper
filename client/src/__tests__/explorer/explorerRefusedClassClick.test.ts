@@ -36,6 +36,7 @@ import { logWarning } from '../../gciLog';
 import { GCI_ERR_OP_IN_PROGRESS } from '../../gciConstants';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 import { fakeViews } from '../helpers/explorerContainerFocus';
+import { settle } from '../helpers/explorerClicks';
 
 const methodsOf = (className: string) => [
   { isMeta: false, envId: 0, category: `${className} methods`, selectors: ['foo'] },
@@ -88,9 +89,6 @@ function methodsHeldBack(className: string) {
   );
   return { answer: () => answer(methodsOf(className)), refuse: (e: unknown = busy()) => refuse(e) };
 }
-
-// Lets clicks the test didn't await (the row command's) finish.
-const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const methodsReadFor = () => vi.mocked(getClassEnvironmentsAsync).mock.calls.map((c) => c[2]);
 const hierarchyReadFor = () => vi.mocked(getClassHierarchyAsync).mock.calls.map((c) => c[1]);
