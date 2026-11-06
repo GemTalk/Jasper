@@ -1577,6 +1577,7 @@ export class DebuggerPanel {
   /** Cancel was clicked for the current op; later clicks do nothing. */
   private cancelRequested = false;
   private resultHandedOver = false;
+  private closeRequested = false;
   /** Set in dispose() so an in-flight Nb op's continuation skips touching a dead panel. */
   private disposed = false;
 
@@ -1665,8 +1666,20 @@ export class DebuggerPanel {
     return debugger_;
   }
 
-  /** Close the panel, terminating the process it owns. */
+  /**
+   * Close the panel, terminating the process it owns. An op still running owns
+   * the session, so it is cancelled first and the panel closes once it ends.
+   */
   close(): void {
+    this.closeRequested = true;
+    if (this.nbBusy) this.cancelActiveOp();
+    this.closeIfRequested();
+  }
+
+  private closeIfRequested(): void {
+    if (!this.closeRequested || this.disposed || this.nbBusy) return;
+    // A cancelled Resume still going ends through afterStoppedRunEnded.
+    if (stoppedRunHolds(this.session)) return;
     this.panel.dispose();
   }
 
@@ -2859,6 +2872,7 @@ export class DebuggerPanel {
       this.activeNbCancel = undefined;
       this.nbBusy = false;
       this.setCancellable(false);
+      this.closeIfRequested();
     }
     if (this.disposed) return;
     // Execute It is run-for-effect: printing the answer is exactly what it is asking not to do, but
@@ -3198,6 +3212,7 @@ export class DebuggerPanel {
         ? { ...ended, errorMessage: 'Stopped by Force Stop.' }
         : ended,
     );
+    this.closeIfRequested();
   }
 
   /**
@@ -3630,6 +3645,7 @@ export class DebuggerPanel {
       this.activeNbCancel = undefined;
       this.setCancellable(false);
       this.nbBusy = false;
+      this.closeIfRequested();
     }
   }
 
@@ -5258,6 +5274,12 @@ export class DebuggerPanel {
     // next halt reads it while deciding where to open, and fails there instead.
     // Whatever else goes wrong below, it goes wrong for this panel alone.
     DebuggerPanel.panels.get(this.sessionId)?.delete(this);
+    // Closing the panel implicitly terminates the suspended process it owned,
+    // releasing the stalled GsProcess on the server (same as dismissing the
+    // error notifier). clearStack is best-effort: the session may already be gone.
+    // Started here, before anything below can throw, so `onClosed` always fires.
+    const closed = this.resultHandedOver ? undefined : this.onClosed;
+    void debug.clearStack(this.session, this.gsProcess).then(closed, closed);
     // Capture the pair's columns before the tabs start closing — the panel is
     // already disposed, so this is the remembered value, not a live read.
     const ourColumns = [this.panelGroupColumn, this.sourceGroupColumn];
@@ -5301,11 +5323,6 @@ export class DebuggerPanel {
     this.stashedSourceKeys.clear();
     for (const d of this.disposables) d.dispose();
     this.disposables = [];
-    // Closing the panel implicitly terminates the suspended process it owned,
-    // releasing the stalled GsProcess on the server (same as dismissing the
-    // error notifier). clearStack is best-effort: the session may already be gone.
-    const closed = this.resultHandedOver ? undefined : this.onClosed;
-    void debug.clearStack(this.session, this.gsProcess).then(closed, closed);
   }
 
   /**

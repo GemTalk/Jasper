@@ -4,6 +4,7 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 import type { ActiveSession } from '../activeSession';
 import { OOP_ILLEGAL } from '../gciConstants';
+import { fetchCellResult } from '../notebookCellResult';
 import { NbCancelledError } from '../nbRunner';
 import { installTranscriptSink } from '../transcriptSink';
 import * as queries from '../browserQueries';
@@ -31,7 +32,7 @@ function resumingDebugger(stops: Stop[]): OpenCellDebugger {
           CONTINUE_FLAGS,
         );
         if (err.number !== 0) throw new Error(err.message);
-        return result;
+        return fetchCellResult(session, result);
       }),
       close: () => {},
     };
@@ -44,7 +45,7 @@ function waitingDebugger(stops: Stop[]): OpenCellDebugger & { closeAll: () => vo
   const open: OpenCellDebugger = (session, gsProcess, message) => {
     stops.push({ gsProcess, message });
     let close = (): void => {};
-    const result = new Promise<bigint>((_resolve, reject) => {
+    const result = new Promise<string>((_resolve, reject) => {
       close = () => {
         void clearStack(session, gsProcess).then(() => reject(new NbCancelledError()));
       };

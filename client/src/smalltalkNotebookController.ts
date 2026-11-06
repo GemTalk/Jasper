@@ -49,8 +49,8 @@ export const SMALLTALK_LANGUAGE_ID = SMALLTALK_LANGUAGE;
 
 /** A debugger a stopped cell waits on. */
 export interface CellDebugSession {
-  /** The cell's result oop once the process runs to completion; rejects with NbCancelledError once it is terminated. */
-  result: Promise<bigint>;
+  /** The cell's printed result once the process runs to completion; rejects with NbCancelledError once it is terminated. */
+  result: Promise<string>;
   close(): void;
 }
 
@@ -62,9 +62,18 @@ export type OpenCellDebugger = (
 
 export const openCellDebugger: OpenCellDebugger = (session, gsProcess, message) => {
   let panel: DebuggerPanel | undefined;
-  const result = new Promise<bigint>((resolve, reject) => {
+  const result = new Promise<string>((resolve, reject) => {
+    // Read inside the callback: the panel disposes as it returns, and the clear
+    // that starts then holds the session on a worker thread.
+    const onComplete = (resultOop: bigint): void => {
+      try {
+        resolve(fetchCellResult(session, resultOop));
+      } catch (e) {
+        reject(e);
+      }
+    };
     try {
-      panel = DebuggerPanel.create(session, gsProcess, message, resolve, () =>
+      panel = DebuggerPanel.create(session, gsProcess, message, onComplete, () =>
         reject(new NbCancelledError()),
       );
     } catch (e) {
@@ -105,7 +114,7 @@ export async function evalSmalltalk(
     },
     () => stopped,
   );
-  return fetchCellResult(session, await debugging.result);
+  return await debugging.result;
 }
 
 async function runCell(
@@ -118,6 +127,9 @@ async function runCell(
   }
 
   const code = wrapCellCode(source);
+  // Before clearing a process too: a clean-up that writes to the Transcript
+  // while clientForwarder mode is on stops at that write.
+  const endForwarding = (): void => appendTranscriptOutput(endClientForwarderMode(session));
   appendTranscriptOutput(startClientForwarderMode(session, code));
   try {
     const outcome = await runNbCall(
@@ -157,6 +169,7 @@ async function runCell(
           });
           if (stop.kind === 'completed') return stop.resultOop;
           if (stop.cancelled) {
+            endForwarding();
             await clearStack(session, stop.context);
             throw new NbCancelledError();
           }
@@ -165,6 +178,7 @@ async function runCell(
         // wrapCellCode reports every other Smalltalk error inline, so this is
         // a stop that got past its handlers. Left suspended inside a Transcript
         // write, the process would keep the session's Transcript semaphore (#646).
+        endForwarding();
         return await failCell(session, err);
       },
       {
@@ -181,7 +195,7 @@ async function runCell(
     // wrapCellCode printStrings server-side, so the result IS a string.
     return typeof outcome === 'bigint' ? fetchCellResult(session, outcome) : outcome;
   } finally {
-    appendTranscriptOutput(endClientForwarderMode(session));
+    endForwarding();
   }
 }
 

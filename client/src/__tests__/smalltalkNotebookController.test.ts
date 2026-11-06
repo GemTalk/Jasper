@@ -222,13 +222,17 @@ describe('SmalltalkNotebookController', () => {
     };
 
     it('opens the debugger on the halted process, and shows the result it resumes to', async () => {
-      const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(halted())));
+      const gci = halted();
+      const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
 
       const running = runCells([makeCell('self halt. 3')]);
       await vi.waitFor(() => expect(DebuggerPanel.create).toHaveBeenCalled());
       expect(vi.mocked(DebuggerPanel.create).mock.lastCall![1]).toBe(0x99n);
       expect(executionAt(0).end).not.toHaveBeenCalled();
       debuggerCallbacks().onComplete(0x55n);
+      // Read before onComplete returns: the panel then disposes, and the clear
+      // that starts holds the session on a worker thread.
+      expect(gci.GciTsFetchUtf8).toHaveBeenCalledWith(expect.anything(), 0x55n, expect.anything());
       await running;
 
       const execution = executionAt(0);
@@ -279,6 +283,14 @@ describe('SmalltalkNotebookController', () => {
 
     expect(clearStack).toHaveBeenCalledTimes(1);
     expect(clearStack.mock.calls[0][1]).toBe(0x99n);
+    // A clean-up that writes to the Transcript while clientForwarder mode is on
+    // stops at that write, as Execute It's release found.
+    const endCall = gci.executeAndFetchString.mock.calls.findIndex((c) =>
+      String(c[1]).includes('jasperEndClientForwarderMode'),
+    );
+    expect(gci.executeAndFetchString.mock.invocationCallOrder[endCall]).toBeLessThan(
+      clearStack.mock.invocationCallOrder[0],
+    );
     expect(executionAt(0).end).toHaveBeenCalledWith(false, expect.any(Number));
     ctrl.dispose();
   });
