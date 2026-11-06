@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from './sessionManager';
-import { wrapExecuteCode } from './queries/executeCode';
+import { executeCodeRaised, wrapExecuteCode } from './queries/executeCode';
 import { GemStoneNotebookKernel, GEMSTONE_NOTEBOOK_TYPE } from './gemstoneNotebookKernel';
 import { startClientForwarderMode, endClientForwarderMode, settleNbResult } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
@@ -111,10 +111,8 @@ async function runCell(
 
     // wrapExecuteCode printStrings server-side, so the result IS a string.
     const data = fetchCellResult(session, resultOop);
-    // A cell is a doit like any other, so it commits on an auto-commit session (issue #254)
-    // -- the same reading as Do It in the editor. Only on success: a cell that raised has
-    // nothing finished to commit.
-    autoCommitAfterWrite(session, 'notebook cell');
+    // A cell that raised answers its error inline, so only a clean answer commits.
+    if (!executeCodeRaised(data)) autoCommitAfterWrite(session, 'notebook cell');
     return data;
   } finally {
     appendTranscriptOutput(endClientForwarderMode(session));

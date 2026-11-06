@@ -143,17 +143,18 @@ import { clearUndoStack, onUndoStackChanged } from './undo/undoStack';
 import {
   AUTO_COMMIT_NEEDS_AUTO_BEGIN,
   autoCommitBlockedByMode,
-  forgetSessionAutoCommit,
   getAutoCommitStatus,
-  registerSessionAutoCommit,
 } from './autoCommit/autoCommitState';
-import { setAutoCommitFailureHandler } from './autoCommit/autoCommitRunner';
 import {
-  autoCommitDefaultForNewSessions,
-  autoCommitTransactionModeChanged,
+  setAutoCommitCommittedHandler,
+  setAutoCommitFailureHandler,
+} from './autoCommit/autoCommitRunner';
+import {
   autoCommitTransactionSettled,
   reportAutoCommitFailure,
+  registerAutoCommitSessionHooks,
   setAutoCommitAbortHandler,
+  setAutoCommitCommitHandler,
   recoverAutoCommit,
   toggleAutoCommit,
   TOGGLE_AUTO_COMMIT_COMMAND,
@@ -232,7 +233,7 @@ import { ExportManager } from './exportManager';
 import { FileInManager } from './fileInManager';
 import { showTranscript, getTranscriptChannel } from './transcriptChannel';
 import { getLogpointChannel, showLogpointChannel } from './debugger/logpointChannel';
-import { getGciLog, logError, logInfo, logWarning } from './gciLog';
+import { getGciLog, logError, logWarning } from './gciLog';
 import { commitFailureMessage, isCommitConflict } from './commitFailure';
 import { CODE_LENS_SELECTORS, GemStoneCodeLensProvider } from './gemstoneCodeLensProvider';
 import * as queries from './browserQueries';
@@ -1702,38 +1703,28 @@ export function activate(context: vscode.ExtensionContext) {
 
   // ── Auto-commit (issue #254) ───────────────────────────────────────────
   // Per session, seeded from the window-wide default at login and dropped at logout, so a
-  // later session reusing the id never inherits an armed state nobody asked for. Seeded on
-  // `onDidAddSession`, which fires AFTER the post-login abort — arming before that would
-  // make committing the login's own spurious uncommitted state auto-commit's first act.
-  // The mode has been read by then, and a session outside Auto-Begin starts off whatever the
-  // default says (see autoCommitBlockedByMode).
-  context.subscriptions.push(
-    sessionManager.onDidAddSession((id: number) => {
-      const mode = sessionManager.getSession(id)?.transactionMode;
-      const wanted = autoCommitDefaultForNewSessions();
-      registerSessionAutoCommit(id, wanted && !autoCommitBlockedByMode(mode));
-      if (wanted && autoCommitBlockedByMode(mode)) {
-        logInfo(`[autoCommit] session ${id}: left off — logged in to ${modeLabel(mode)} mode`);
-      }
-    }),
-    sessionManager.onDidRemoveSession((id: number) => forgetSessionAutoCommit(id)),
-    sessionManager.onDidChangeTransactionState((id: number) => {
-      const session = sessionManager.getSession(id);
-      if (session) autoCommitTransactionModeChanged(session);
-    }),
-  );
-  // The runner is deliberately free of `vscode` so the write path can call it; these two
-  // hand it the workbench it needs — how to tell the user a commit failed, and how to run
-  // the real Abort (the one that refreshes the panes and clears the undo stack) when they
-  // choose it from the failure prompt.
+  // later session reusing the id never inherits an armed state nobody asked for.
+  context.subscriptions.push(...registerAutoCommitSessionHooks(sessionManager));
+  // The runner is deliberately free of `vscode` so the write path can call it; these hand it
+  // the workbench it needs — how to tell the user a commit failed, how to run the real Abort
+  // and Commit when they are chosen from a prompt, and what a landed auto-commit refreshes.
   setAutoCommitFailureHandler(reportAutoCommitFailure);
   setAutoCommitAbortHandler((session) =>
     abortSession(session, { uncommittedAlreadyConfirmed: true }),
   );
+  setAutoCommitCommitHandler((session) => commitSession(session));
+  // An auto-commit moves the view as a manual Commit does, so it drops the same two caches —
+  // not the export refresh, which is far too heavy to run after every save.
+  setAutoCommitCommittedHandler((session) => {
+    dropCachedClassOrganizer(session);
+    omniSearch?.notifySessionSynced(session.id);
+  });
   context.subscriptions.push(
     new vscode.Disposable(() => {
       setAutoCommitFailureHandler(undefined);
       setAutoCommitAbortHandler(undefined);
+      setAutoCommitCommitHandler(undefined);
+      setAutoCommitCommittedHandler(undefined);
     }),
   );
 
@@ -1889,10 +1880,11 @@ export function activate(context: vscode.ExtensionContext) {
   // invoked from the Sessions tree (a session item), the Databases panel, the
   // GemStone Explorer toolbar (the currently selected session) or the Command
   // Palette — which names no session, and so is the one that asks first.
+  // Answers whether the commit landed, for auto-commit's "Commit Now, Then Turn On".
   const commitSession = async (
     session: ActiveSession,
     options?: { ask?: boolean },
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     const confirmation = sessionActionConfirmation({
       action: 'Commit',
       sessionId: session.id,
@@ -1906,7 +1898,7 @@ export function activate(context: vscode.ExtensionContext) {
         { modal: true, detail: confirmation.detail },
         confirmation.confirmLabel,
       );
-      if (choice !== confirmation.confirmLabel) return;
+      if (choice !== confirmation.confirmLabel) return false;
     }
     try {
       const { success, err } = sessionManager.commit(session.id);
@@ -1923,6 +1915,7 @@ export function activate(context: vscode.ExtensionContext) {
         // against.
         dropCachedClassOrganizer(session);
         omniSearch?.notifySessionSynced(session.id);
+        return true;
       } else {
         // Only a refusal has a conflict set, so an errored commit costs no extra
         // round trip. Read first — see the transactionConflicts.ts header.
@@ -1942,6 +1935,7 @@ export function activate(context: vscode.ExtensionContext) {
       // its own does not say which one.
       announceSessionAction('Commit', sessionDescription(session), { success: false, reason: msg });
     }
+    return false;
   };
 
   /**
@@ -1956,10 +1950,14 @@ export function activate(context: vscode.ExtensionContext) {
    * Factored out of abortSession so the three cannot drift apart — a browser left
    * showing a view that no longer exists is the same bug however it got there.
    */
-  const refreshAfterViewReplaced = async (session: ActiveSession): Promise<void> => {
+  const refreshAfterViewReplaced = async (
+    session: ActiveSession,
+    // False when the caller cannot be sure the view moved (a mode switch that threw).
+    viewReplaced = true,
+  ): Promise<void> => {
     // The transaction a failed auto-commit was stuck on is gone with the old view,
     // so auto-commit has something to work with again.
-    autoCommitTransactionSettled(session.id);
+    if (viewReplaced) autoCommitTransactionSettled(session.id);
     await exportManager.refreshSession(session);
     SystemBrowser.refresh(session.id);
     // The new view can hold classes/globals/dicts committed by other sessions —
@@ -2099,7 +2097,12 @@ export function activate(context: vscode.ExtensionContext) {
       // that is no longer in it, and bring the browsers along while it is still
       // logged in.
       sessionManager.refreshTransactionState(session.id);
-      if (sessionManager.getSession(session.id)) await refreshAfterViewReplaced(session);
+      // Only a switch that changed the mode is known to have aborted; one that threw before
+      // that left the conflicting transaction in place, and re-arming over it would just fail
+      // again on the next write.
+      if (sessionManager.getSession(session.id)) {
+        await refreshAfterViewReplaced(session, session.transactionMode !== current);
+      }
       return;
     }
     await refreshAfterViewReplaced(session);
@@ -2108,12 +2111,8 @@ export function activate(context: vscode.ExtensionContext) {
     );
   };
 
-  // `uncommittedAlreadyConfirmed` is for the ONE caller that has already asked about that
-  // half: the auto-commit failure prompt, whose "Abort and Discard" button is itself the
-  // confirmation and which has already said the changes are not in the repository. Asking
-  // twice there reads as a bug. It suppresses only the uncommitted-changes half — the
-  // unsaved exported .gs files are a separate loss that prompt says nothing about, so that
-  // warning still stands.
+  // Only the auto-commit failure prompt passes `uncommittedAlreadyConfirmed`: its Abort button
+  // already confirmed discarding uncommitted work. The unsaved-.gs warning still applies.
   const abortSession = async (
     session: ActiveSession,
     options?: { ask?: boolean; uncommittedAlreadyConfirmed?: boolean },
@@ -2678,29 +2677,21 @@ export function activate(context: vscode.ExtensionContext) {
       return abortSession(session);
     }),
 
-    // Auto-commit's switch (issue #254). Reached from the button on the session row — the
-    // row that DISPLAYS the state — its context menu, and the palette, which acts on the
-    // selected session. Takes the row's session when it has one: the state is per session,
-    // so the switch has to be able to say which one it flipped.
-    //
-    // THREE command ids for one action, which needs saying: a contributed menu entry's icon
-    // is fixed text in the manifest, so a single command could offer the click but could
-    // never show the state. `turnOn` / `turnOff` differ from `toggle` only in the icon and
-    // title the manifest gives them, and each is gated on the row's `contextValue`, so
-    // exactly one button is ever on the row. (The same bargain the `undoLast`/`revertLast`
-    // pair strikes, for the same reason.) A failed row's button is `recover` instead.
+    // Auto-commit's switch (issue #254). One handler, three ids: see sessionContextValue.
     ...[
       TOGGLE_AUTO_COMMIT_COMMAND,
       'gemstone.autoCommit.turnOn',
       'gemstone.autoCommit.turnOff',
     ].map((id) =>
-      vscode.commands.registerCommand(id, (item?: GemStoneSessionItem) =>
-        toggleAutoCommit(sessionManager, item?.activeSession),
-      ),
+      vscode.commands.registerCommand(id, (item?: GemStoneSessionItem) => {
+        const session = sessionForBeginOrModeCommand(item);
+        if (session) return toggleAutoCommit(sessionManager, session);
+      }),
     ),
-    vscode.commands.registerCommand('gemstone.autoCommit.recover', (item?: GemStoneSessionItem) =>
-      recoverAutoCommit(sessionManager, item?.activeSession),
-    ),
+    vscode.commands.registerCommand('gemstone.autoCommit.recover', (item?: GemStoneSessionItem) => {
+      const session = sessionForBeginOrModeCommand(item);
+      if (session) return recoverAutoCommit(sessionManager, session);
+    }),
 
     vscode.commands.registerCommand('gemstone.openBrowser', async (item?: GemStoneSessionItem) => {
       const session = item ? item.activeSession : await sessionManager.resolveSession();

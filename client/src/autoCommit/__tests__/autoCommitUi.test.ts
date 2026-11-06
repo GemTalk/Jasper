@@ -28,7 +28,9 @@ import {
   autoCommitTransactionModeChanged,
   offerAutoCommitRecovery,
   recoverAutoCommit,
+  registerAutoCommitSessionHooks,
   reportAutoCommitFailure,
+  setAutoCommitCommitHandler,
   toggleAutoCommit,
 } from '../autoCommitUi';
 import { __resetConfig, __setConfig } from '../../__mocks__/vscode';
@@ -57,6 +59,7 @@ const inform = vscode.window.showInformationMessage as unknown as ReturnType<typ
 
 beforeEach(() => {
   _resetAutoCommitStateForTests();
+  setAutoCommitCommitHandler(undefined);
   __resetConfig();
   vi.mocked(queries.sessionNeedsCommit).mockReturnValue(false);
   warn.mockReset();
@@ -160,9 +163,112 @@ describe('arming over a transaction that already has uncommitted work', () => {
 
     expect(getAutoCommitStatus(1)).toBe('off');
   });
+
+  it('commits through the registered Commit, which reports conflicts and refreshes', async () => {
+    warn.mockResolvedValue('Commit Now, Then Turn On');
+    const direct = vi.fn(() => OK);
+    const viaCommand = vi.fn(async () => true);
+    setAutoCommitCommitHandler(viaCommand);
+    const session = makeSession(1, direct);
+
+    await toggleAutoCommit(managerFor(session));
+
+    expect(viaCommand).toHaveBeenCalledWith(session);
+    expect(direct).not.toHaveBeenCalled();
+    expect(getAutoCommitStatus(1)).toBe('on');
+  });
+
+  it('leaves auto-commit off when the registered Commit did not land', async () => {
+    warn.mockResolvedValue('Commit Now, Then Turn On');
+    setAutoCommitCommitHandler(async () => false);
+
+    await toggleAutoCommit(managerFor(makeSession()));
+
+    expect(getAutoCommitStatus(1)).toBe('off');
+    expect(vi.mocked(vscode.window.showErrorMessage).mock.calls.at(-1)?.[0]).toContain(
+      'auto-commit was left off',
+    );
+  });
+
+  it('leaves auto-commit off, rather than throwing, when the session cannot commit at all', async () => {
+    warn.mockResolvedValue('Commit Now, Then Turn On');
+    const throwing = vi.fn(() => {
+      throw new Error('operation in progress');
+    });
+
+    await expect(toggleAutoCommit(managerFor(makeSession(1, throwing)))).resolves.toBeUndefined();
+    expect(getAutoCommitStatus(1)).toBe('off');
+  });
+});
+
+/** The per-session lifecycle: seeded at login, dropped at logout, off outside Auto-Begin. */
+describe('registerAutoCommitSessionHooks', () => {
+  function hooked(session: ActiveSession) {
+    const handlers: Record<string, (id: number) => void> = {};
+    const on = (name: string) => (h: (id: number) => void) => {
+      handlers[name] = h;
+      return { dispose: () => {} };
+    };
+    registerAutoCommitSessionHooks({
+      onDidAddSession: on('add'),
+      onDidRemoveSession: on('remove'),
+      onDidChangeTransactionState: on('mode'),
+      getSession: (id: number) => (id === session.id ? session : undefined),
+    });
+    return handlers;
+  }
+
+  it('starts a new session on when the default says so', () => {
+    __setConfig('gemstone', AUTO_COMMIT_DEFAULT_SETTING, true);
+    const session = makeSession();
+    session.transactionMode = 'autoBegin';
+
+    hooked(session).add(1);
+
+    expect(getAutoCommitStatus(1)).toBe('on');
+  });
+
+  it('starts a session that logged in outside Auto-Begin off, whatever the default says', () => {
+    __setConfig('gemstone', AUTO_COMMIT_DEFAULT_SETTING, true);
+    const session = makeSession();
+    session.transactionMode = 'manualBegin';
+
+    hooked(session).add(1);
+
+    expect(getAutoCommitStatus(1)).toBe('off');
+  });
+
+  it('forgets a session at logout, so a later one reusing the id starts clean', () => {
+    const handlers = hooked(makeSession());
+    registerSessionAutoCommit(1, true);
+
+    handlers.remove(1);
+
+    expect(getAutoCommitStatus(1)).toBe('off');
+  });
+
+  it('turns auto-commit off when the session leaves Auto-Begin', () => {
+    const session = makeSession();
+    const handlers = hooked(session);
+    registerSessionAutoCommit(1, true);
+    session.transactionMode = 'transactionless';
+
+    handlers.mode(1);
+
+    expect(getAutoCommitStatus(1)).toBe('off');
+  });
 });
 
 describe('recovering from a failed commit', () => {
+  it('does not blame a conflict for a commit that got no answer, nor offer the conflicts', async () => {
+    reportAutoCommitFailure(makeSession(), 'the session is busy', 'threw');
+
+    const [message, ...choices] = warn.mock.calls.at(-1) as [string, ...string[]];
+    expect(message).toContain('may be busy or no longer connected');
+    expect(message).not.toContain('conflict');
+    expect(choices).not.toContain('Show Conflicts');
+  });
+
   it('runs the abort, and leaves arming to the abort itself', async () => {
     // The real abort settles the transaction through `autoCommitTransactionSettled`, and
     // only when it actually ran: it can still be backed out of at its own "unsaved exported

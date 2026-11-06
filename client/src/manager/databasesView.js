@@ -641,10 +641,8 @@
    * the button that flips it.
    *
    * The state-reading `toggle`, whose icon this picks at render time, or `recover` on a failed
-   * row. The Logins & Sessions tree needs separate on/off command ids for the same button
-   * because a contributed menu entry's icon is fixed text in the manifest; a webview has no
-   * such problem. The wording and the glyphs match the tree deliberately: a session is a session,
-   * and the two places must not describe the same state differently.
+   * row. The wording and the glyphs match the tree's deliberately: the two must not describe
+   * the same state differently.
    */
   const AUTO_COMMIT_FACE = {
     on: {

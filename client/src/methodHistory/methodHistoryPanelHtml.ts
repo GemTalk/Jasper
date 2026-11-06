@@ -251,7 +251,7 @@ export function renderMethodHistoryHtml(opts: MethodHistoryHtmlOptions): string 
     <div class="title">History of <code>${escapeHtml(methodLabel)}</code></div>
     <div class="subtitle">${count} version${
       count === 1 ? '' : 's'
-    } in this stone — newest first. Read-only; a restore recompiles a version as the new current one and is not committed.</div>
+    } in this stone — newest first. Read-only; a restore recompiles a version as the new current one, committed only if the session has auto-commit on.</div>
   </header>
   <ul class="versions">
 ${rows}

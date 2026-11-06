@@ -4,7 +4,7 @@ Background for [#254](https://github.com/GemTalk/Jasper/issues/254). Worth readi
 hook, moving one, or writing an operation that recovers by aborting.
 
 The feature itself is small — commit after a change — and almost all of the design is in the two
-questions that follow from it: **where does "after a change" actually mean**, and **what does a
+questions that follow from it: **what does "after a change" actually mean**, and **what does a
 committed change do to the ways back out**.
 
 ## The state is per session, and lives in a module
@@ -25,17 +25,22 @@ handler, installed by the extension at activation.
 
 ## Where it fires — and the one place it deliberately does not
 
-Seven hooks, chosen to be the places an operation *finishes*:
+These hooks, chosen to be the places an operation *finishes*:
 
 | Hook | Covers |
 | --- | --- |
 | the `writing` wrapper in `browserQueries`' write-path section | method compiles, class edits, comments, categories, dictionary edits — everything the Explorer, the browsers, the editors and the MCP tools reach the stone through |
 | `codeExecutor` after a completed execution | Do It, Display It, Inspect It |
-| `smalltalkNotebookController` / MCP `execute_code` | a doit by another route |
-| the GemStone Debugger | a run that halted and was then resumed or stepped to the end; an expression evaluated in a frame; a variable edited or reverted |
+| `smalltalkNotebookController` / MCP `execute_code` | a doit by another route, unless it raised (its error comes back as an answer, not a throw) |
+| the GemStone Debugger | a run that halted and was then resumed or stepped to the end, together with everything done while it was halted (see *Holds* below) |
 | the basic Inspector | an expression in its evaluation pane; a slot edited or reverted |
 | `notifyRefactoringApplied` | all fifteen refactorings |
-| `runWithAutoCommitDeferred` closing | a file-in (`.gs` or Tonel `.st`), an editor save, adding a class variable with its accessors, an undo, and the Explorer's multi-row actions — removing a class subtree, a drag that moves or copies several methods, a drag that refiles several classes |
+| `undoRefactoringCommand` | an undo of a refactoring, when it reversed every change |
+| `runWithAutoCommitDeferred` closing | a file-in (`.gs` or Tonel `.st`), an editor save, adding a class variable with its accessors, each undo reverser's writes, and the Explorer's multi-row actions — removing a class subtree or several methods, a drag that moves or copies several methods, a drag that refiles several classes |
+
+Writes made through a raw query executor rather than `browserQueries` never pass through `writing`,
+so they never say they wrote. The undo reversers are the case in point; they run their writes in
+`runRawWritesWithAutoCommit`, which treats the region as owing a commit whenever its writes return.
 
 **Not** at the GCI round trip, which is what "commit every time you go to the server" would literally
 mean. Jasper reads the stone constantly — every tree expansion, every completion, every hover — and a
@@ -60,10 +65,14 @@ pending work, at a moment they chose only to set a breakpoint.
 commits once. Three properties matter:
 
 - **It commits once, not per write.** A file-in of forty methods is one change, not forty.
-- **A failure commits nothing.** The caller's own rollback — the refactoring panel's abort, a retry —
-  is left the transaction it expects. A file-in reports its errors rather than throwing, so it
-  passes the region a test of its answer: a file-in with any error commits nothing, and the user
-  decides what to keep. Its error notice says so, and that the next change would commit it.
+- **A failure commits nothing.** The caller's own rollback — an abort, a retry — is left the
+  transaction it expects. An operation that reports its errors rather than throwing passes the
+  region a test of its answer: a file-in with any error, or a pick cancelled part-way, commits
+  nothing, and so does an undo or a multi-row action where any one write failed. When part of it
+  landed, its notice says so, and that the next change would commit it.
+- **While commits are held, notices say "not committed".** A change made under a halted debugger
+  is not committed yet, so `commitStateNote` answers the not-committed wording whenever the session
+  is paused, not only when auto-commit is off.
 - **It nests.** An inner region borrows the outer one's commit, so a file-in that reaches
   `fileInClass` through `fileInFile` still commits once.
 
@@ -73,14 +82,34 @@ answer to "which writes belong together": the undo recording already groups them
 records one undo entry is a drag that should make one commit. If it is one change that either lands
 or does not, it does not need to.
 
+**Wrap the writes, never a panel.** Suspension is per session, so a region open across a webview
+holds back every save the user makes while it is up, and loses them if the operation then fails.
+So an undo defers only its reverser's writes, after the plan panel has been answered; a file-in
+asks every Tonel dictionary question before its region opens; and a drag that moves methods to
+another class opens no region at all, since each of its preview panels is its own approved apply.
+
+## Holds: the two places commits wait on purpose
+
+`holdAutoCommit` is the one deliberate exception to that rule, for a state where *any* commit would
+persist half-done work, whoever asked for it:
+
+- **A debugger holding a halted run.** The run's work so far is in the transaction, so an expression
+  evaluated in a frame, a variable edit, or a save in another editor commits nothing while it is
+  halted. When the run finishes, one commit takes all of it; Terminate commits none of it and says
+  the next change would.
+- **An instance-variable refactoring whose apply failed.** From the failure until its panel closes,
+  nothing commits, so the panel's **Abort** still has the partial reshape to take back. After an
+  abort, commits resume; closed without one, nothing is committed and the notice says so.
+
 ## What a commit does to Undo (nothing) and to Abort (everything)
 
 This is the question worth being sure about, and the answer falls out of how Jasper's undo already
 works. **Undo is a forward operation**: it reverses a change by making the opposite one — recompiling
 the earlier source, renaming back, binding an earlier class version — not by rolling the transaction
 back. Nothing in the undo stack depends on the change being uncommitted, so a committed change is
-exactly as undoable as one that is not. `undoLastCommand` runs deferred so that a reversal touching
-several methods commits once; that is the only thing auto-commit changes about it.
+exactly as undoable as one that is not. Each reverser defers its own writes, so a reversal touching
+several methods commits once, and one that lands only in part commits nothing; that is the only
+thing auto-commit changes about it.
 
 **Abort is a different story, and it is the whole reason this feature needs a visible state.**
 With auto-commit on, Abort no longer takes a change back — the change is in the repository. That is
@@ -114,12 +143,12 @@ switch where the state is, so reading it and changing it are one gesture apart.
 **Why the button costs three commands.** A contributed menu entry's icon is fixed text in the
 manifest, so one command could offer the click but could never show the state.
 `gemstone.autoCommit.turnOn` / `turnOff` / `recover` differ only in icon and title; each is gated on
-one exact `contextValue` (`gemstoneSession`, `gemstoneSessionAutoCommitOn`,
+one state in the row's `contextValue` (`gemstoneSession`, `gemstoneSessionAutoCommitOn`,
 `gemstoneSessionAutoCommitFailed`, written by `sessionContextValue`), so exactly one is ever on the
 row and they all land in the same handler. It is the bargain the `undoLast`/`revertLast` pair
 already strikes. Note the consequence for every OTHER entry on that row: they match the family with
-`=~ /^gemstoneSession(AutoCommitOn|AutoCommitFailed)?$/` rather than one value, and a new entry that
-forgets to will silently vanish whenever auto-commit is on.
+the prefix `=~ /^gemstoneSession/` rather than one value with `==`, and a new entry that uses `==`
+will silently vanish whenever auto-commit is on.
 
 The Databases panel needs **one** id for the same button, because it is a webview and picks its own
 glyph when it draws the row — so it uses the state-reading `gemstone.autoCommit.toggle`. Two things
@@ -133,8 +162,9 @@ That is also why the row speaks in **both** directions rather than only when arm
 among several, silence for "off" was fine; as the only one, it is not — a row that says nothing does
 not read as "off", it reads as a row that has not been told.
 
-Note the one place Abort is still exactly what it was: inside a deferred region. A refactoring panel
-offering Abort has had nothing committed under it.
+Note the places Abort is still exactly what it was: inside a deferred region, and under a hold. A
+halted debugger, and an instance-variable panel offering Abort after a failed apply, have had
+nothing committed under them.
 
 ## The `failed` state, and why it is not just `off`
 

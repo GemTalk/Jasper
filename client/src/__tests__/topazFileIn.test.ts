@@ -674,10 +674,7 @@ foo
 });
 
 /**
- * A file-in is ONE change as far as auto-commit is concerned (issue #254): a class
- * definition and the methods that go with it are only coherent together, so an armed session
- * commits once at the end rather than after every method — and commits nothing at all if the
- * file-in throws part-way through.
+ * A file-in is one auto-commit, and none if it throws part-way (issue #254).
  *
  * `browserQueries` is mocked here, so the real `writing` wrapper never runs; these make the
  * mocked compiles do what the real ones do and call `autoCommitAfterWrite`, which is what the

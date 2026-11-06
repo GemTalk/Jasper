@@ -129,10 +129,8 @@ describe('session row inline button order', () => {
     ]);
   });
 
-  // One button on the row, not three. A contributed entry's icon is fixed text in the
-  // manifest, so showing the state at all takes one command per state — which is only
-  // correct as long as their `when` clauses cannot both hold. Each is anchored on one
-  // auto-commit state, and `loginTreeProvider.sessionContextValue` answers exactly one.
+  // One button on the row, not three (see sessionContextValue): their `when` clauses must
+  // never both hold.
   it.each([
     [TRANSACTIONLESS_ROW, 'gemstone.autoCommit.turnOn'],
     [AUTO_BEGIN_ROW, 'gemstone.autoCommit.turnOn'],

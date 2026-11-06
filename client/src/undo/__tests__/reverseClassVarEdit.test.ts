@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
-vi.mock('../../gciLog', () => ({ logInfo: vi.fn() }));
+vi.mock('../../gciLog', () => ({ logInfo: vi.fn(), logWarning: vi.fn() }));
 vi.mock('../../browserQueries', () => ({ defaultQueryExecutorUsing: () => () => '' }));
 vi.mock('../queries/classVarQueries', () => ({
   captureClassVar: vi.fn(),
@@ -28,6 +28,10 @@ import { applyMethodSlotOps, captureMethodSlots } from '../queries/methodSlotQue
 import { accessorsClause, reverseClassVarEdit } from '../reverseClassVarEdit';
 import { ClassVarEditUndoEntry, MethodSlot, MethodSlotState } from '../undoTypes';
 import type { ActiveSession } from '../../sessionManager';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+} from '../../autoCommit/autoCommitState';
 
 /**
  * Undoing an added class variable (#434).
@@ -364,5 +368,32 @@ describe('accessorsClause', () => {
     expect(accessorsClause([op('remove', 'a'), op('remove', 'b'), op('restore', 'c')])).toBe(
       '2 accessors removed, 1 accessor put back',
     );
+  });
+});
+
+/** Auto-commit (issue #254): the reversal writes through a raw executor, so it commits itself. */
+describe('reverseClassVarEdit on an auto-commit session', () => {
+  const commit = vi.fn(() => ({ success: true, err: { number: 0, message: '' } }));
+  const armed = { id: 1, GciTsCommit: commit } as unknown as ActiveSession;
+
+  beforeEach(() => {
+    _resetAutoCommitStateForTests();
+    registerSessionAutoCommit(1, true);
+    commit.mockClear();
+  });
+  afterEach(() => _resetAutoCommitStateForTests());
+
+  it('commits the variable and its accessors once', async () => {
+    await reverseClassVarEdit(armed, entry());
+
+    expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits nothing when the declaration could not be removed', async () => {
+    vi.mocked(applyClassVarOp).mockReturnValue('not writable');
+
+    await reverseClassVarEdit(armed, entry());
+
+    expect(commit).not.toHaveBeenCalled();
   });
 });

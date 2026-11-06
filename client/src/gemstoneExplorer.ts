@@ -181,7 +181,16 @@ import {
   armRefactoringUndo,
   notifyRefactoringApplied,
 } from './refactoring/refactoringAppliedToast';
-import { runWithAutoCommitDeferred } from './autoCommit/autoCommitRunner';
+import {
+  autoCommitAfterWrite,
+  runWithAutoCommitDeferred,
+  runWithAutoCommitDeferredSync,
+} from './autoCommit/autoCommitRunner';
+import {
+  beforeChangeCommitNote,
+  commitStateNote,
+  heldBackNote,
+} from './autoCommit/autoCommitState';
 import type { ReverseRenameKind } from './refactoring/queries/previewUndoRefactoring';
 import { explorerRowUri } from './activeEditorDecoration';
 
@@ -3113,56 +3122,67 @@ export class ExplorerController {
       accessorSlots,
     );
 
-    // One commit for the variable and its accessors, as Undo records them as one entry.
-    await runWithAutoCommitDeferred(session, 'class variable add', async () => {
-      let addResult: string;
-      try {
-        addResult = queries.addClassVariable(session, className, name, this.state.dictIndex);
-      } catch (e: unknown) {
-        void vscode.window.showErrorMessage(
-          `Add class variable failed: ${e instanceof Error ? e.message : String(e)}`,
-        );
-        return;
-      }
-      // addClassVariable answers the non-throwing sentinel 'no-class' when the class
-      // can't be resolved — treat that as a failure, not success, so we don't refresh,
-      // reveal, and add accessors as if the variable had been added when it wasn't.
-      if (addResult.trim() !== 'ok') {
-        void vscode.window.showWarningMessage(
-          `Couldn't resolve ${className} to add the class variable '${name}'.`,
-        );
-        return;
-      }
-
-      // Adding a class variable does NOT reshape the class (no new version); this is
-      // just the general "class members changed" pane refresh, reused despite its name.
-      await this.refreshAfterClassReshape(className);
-      // Select the newly-added class variable (its row is under the "class" side); fall
-      // back to the class-variable side node, then leave the class selected.
-      try {
-        await this.views?.klass.reveal(new ClassVarItem(className, name), {
-          select: true,
-          focus: false,
-        });
-      } catch {
+    let accessorsFailed = false;
+    await runWithAutoCommitDeferred(
+      session,
+      'class variable add',
+      async () => {
+        let addResult: string;
         try {
-          await this.views?.klass.reveal(new VarSideItem(className, true), {
+          addResult = queries.addClassVariable(session, className, name, this.state.dictIndex);
+        } catch (e: unknown) {
+          void vscode.window.showErrorMessage(
+            `Add class variable failed: ${e instanceof Error ? e.message : String(e)}`,
+          );
+          return;
+        }
+        // addClassVariable answers the non-throwing sentinel 'no-class' when the class
+        // can't be resolved — treat that as a failure, not success, so we don't refresh,
+        // reveal, and add accessors as if the variable had been added when it wasn't.
+        if (addResult.trim() !== 'ok') {
+          void vscode.window.showWarningMessage(
+            `Couldn't resolve ${className} to add the class variable '${name}'.`,
+          );
+          return;
+        }
+
+        // Adding a class variable does NOT reshape the class (no new version); this is
+        // just the general "class members changed" pane refresh, reused despite its name.
+        await this.refreshAfterClassReshape(className);
+        // Select the newly-added class variable (its row is under the "class" side); fall
+        // back to the class-variable side node, then leave the class selected.
+        try {
+          await this.views?.klass.reveal(new ClassVarItem(className, name), {
             select: true,
             focus: false,
           });
         } catch {
-          /* best-effort — leave the class selected if neither row can be revealed */
+          try {
+            await this.views?.klass.reveal(new VarSideItem(className, true), {
+              select: true,
+              focus: false,
+            });
+          } catch {
+            /* best-effort — leave the class selected if neither row can be revealed */
+          }
         }
-      }
-      if (wantAccessors) await this.generateAccessorsFor(className, name, 'classvar', false);
+        if (
+          wantAccessors &&
+          !(await this.generateAccessorsFor(className, name, 'classvar', false))
+        ) {
+          accessorsFailed = true;
+        }
 
-      // Announced last, so the notice carrying Undo is the one left on screen when accessors
-      // were generated too.
-      notifyUndoable(
-        `Added class variable ${name} to ${className}`,
-        recording?.commit(`Add class variable ${name} to ${className}`),
-      );
-    });
+        // Announced last, so the notice carrying Undo is the one left on screen when accessors
+        // were generated too.
+        notifyUndoable(
+          `Added class variable ${name} to ${className}` +
+            (accessorsFailed ? `, without its accessors.${heldBackNote(session.id)}` : ''),
+          recording?.commit(`Add class variable ${name} to ${className}`),
+        );
+      },
+      () => !accessorsFailed,
+    );
   }
 
   // Generate accessors for an existing variable (the "Add Accessors" row action, and
@@ -3172,14 +3192,16 @@ export class ExplorerController {
   // `undoable` is false when this runs as the follow-up to Add Class Variable: that flow
   // records ONE entry covering the variable and its accessors, and a second entry for the
   // accessors alone would make the user press Undo twice for one action (#434).
+  //
+  // Answers whether the accessors went in, so that flow can commit the pair or neither.
   async generateAccessorsFor(
     className: string,
     varName: string,
     kind: 'ivar' | 'classvar',
     undoable = true,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const session = this.session();
-    if (!session) return;
+    if (!session) return false;
     const { isMeta, accessors } = accessorSpecsFor(varName, kind);
     // Snapshot the accessor slots BEFORE compiling: an accessor that already exists is
     // skipped by the add, and its unchanged state is what tells the undo to leave it alone.
@@ -3198,11 +3220,11 @@ export class ExplorerController {
       void vscode.window.showErrorMessage(
         `Add accessors failed: ${e instanceof Error ? e.message : String(e)}`,
       );
-      return;
+      return false;
     }
     if (result.noClass) {
       void vscode.window.showWarningMessage(`Couldn't resolve ${className} to add accessors.`);
-      return;
+      return false;
     }
     // Show the new accessors: navigate the panes to the class they were added to and
     // reveal the new getter on its side (instance for an ivar, class for a classvar).
@@ -3223,7 +3245,7 @@ export class ExplorerController {
     const where = isMeta ? 'class-side ' : '';
     if (result.created === 0) {
       void vscode.window.showInformationMessage(`${varName}: ${where}accessors already existed.`);
-      return;
+      return true;
     }
     const skipNote = result.skipped > 0 ? ` (${result.skipped} already existed)` : '';
     const message =
@@ -3238,6 +3260,7 @@ export class ExplorerController {
         ? recording.commit(`Add ${where}accessors for ${varName} in ${className}`, after)
         : undefined,
     );
+    return true;
   }
 
   // Ask, up front, whether to also generate accessors. Answers true/false, or
@@ -3300,7 +3323,7 @@ export class ExplorerController {
   // just as lightweight — a class variable is not part of instance layout, so removing one
   // reshapes nothing, needs no preview panel and no refactoring engine. Guarded the same
   // way as every other delete: a variable no method references goes without a question and
-  // is announced, one that is referenced asks first. Nothing is committed.
+  // is announced, one that is referenced asks first. Committed only if the session auto-commits.
   async removeClassVar(item: ClassVarItem): Promise<void> {
     const session = this.session();
     if (!session) return;
@@ -3766,9 +3789,10 @@ export class ExplorerController {
     }
     notifyRefactoringApplied(
       session,
-      `Renamed '${oldName}' → '${newName}' (${result.applied} class` +
+      () =>
+        `Renamed '${oldName}' → '${newName}' (${result.applied} class` +
         `${result.applied === 1 ? '' : 'es'} re-versioned). ` +
-        'Compiled but NOT committed — commit when ready.',
+        commitStateNote(session.id, 'Compiled but NOT committed — commit when ready.'),
       'toast',
     );
     return true;
@@ -3923,8 +3947,10 @@ export class ExplorerController {
     }
     notifyRefactoringApplied(
       session,
-      `Renamed '${oldSelector}' → '${newSelector}' (${result.applied} change` +
-        `${result.applied === 1 ? '' : 's'}). Compiled but NOT committed — commit when ready.`,
+      () =>
+        `Renamed '${oldSelector}' → '${newSelector}' (${result.applied} change` +
+        `${result.applied === 1 ? '' : 's'}). ` +
+        commitStateNote(session.id, 'Compiled but NOT committed — commit when ready.'),
       'toast',
     );
     return true;
@@ -4362,13 +4388,15 @@ export class ExplorerController {
       result.migratedFailures && result.migratedFailures > 0
         ? ` (${result.migratedFailures} instance(s) could not be migrated)`
         : '';
-    const commitNote = result.committed
-      ? `Migrated and COMMITTED${migrateNote}.`
-      : 'Compiled but NOT committed — commit when ready.';
+    const commitNote = (): string =>
+      result.committed
+        ? `Migrated and COMMITTED${migrateNote}.`
+        : commitStateNote(session.id, 'Compiled but NOT committed — commit when ready.');
     notifyRefactoringApplied(
       session,
-      `Renamed class '${oldName}' → '${newName}' (${result.applied} change` +
-        `${result.applied === 1 ? '' : 's'}). ${commitNote}`,
+      () =>
+        `Renamed class '${oldName}' → '${newName}' (${result.applied} change` +
+        `${result.applied === 1 ? '' : 's'}). ${commitNote()}`,
       'toast',
     );
   }
@@ -4426,7 +4454,7 @@ export class ExplorerController {
   // the instance and class side — via the server-side engine (R4). The apply is
   // value-preserving (the shared class-variable VALUE carries across) and
   // all-or-nothing: every reference is rewritten (no per-change deselection), so a
-  // method is never left naming a removed variable. Nothing is committed.
+  // method is never left naming a removed variable. Committed only if the session auto-commits.
   async renameClassVariable(item: ClassVarItem): Promise<void> {
     await this.renameClassVarNamed(item.className, item.classVarName, this.state.dictIndex);
   }
@@ -4589,8 +4617,10 @@ export class ExplorerController {
     }
     notifyRefactoringApplied(
       session,
-      `Renamed class variable '${oldName}' → '${newName}' (${result.applied} change` +
-        `${result.applied === 1 ? '' : 's'}). Compiled but NOT committed — commit when ready.`,
+      () =>
+        `Renamed class variable '${oldName}' → '${newName}' (${result.applied} change` +
+        `${result.applied === 1 ? '' : 's'}). ` +
+        commitStateNote(session.id, 'Compiled but NOT committed — commit when ready.'),
       'toast',
     );
     return true;
@@ -4670,6 +4700,10 @@ export class ExplorerController {
           const result = parseRevertResult(
             queries.revertClassToVersion(session, currentName, index, historyDict),
           );
+          // A restore with failed recompiles is half a restore; it is left for the user to abort.
+          if (result.reverted && !result.failed) {
+            autoCommitAfterWrite(session, 'class version revert');
+          }
           const previousName = currentName;
           if (result.reverted && result.name) currentName = result.name;
           const refreshed = result.reverted
@@ -4698,6 +4732,7 @@ export class ExplorerController {
           return { result, versions: refreshed };
         },
       },
+      session.id,
       { dictName },
     );
   }
@@ -4817,39 +4852,44 @@ export class ExplorerController {
     };
     const currentSource = (): string => current.find((v) => v.isCurrent)?.source ?? '';
 
-    const panel = showMethodHistoryPanel(label, versions, {
-      restore: async (index) => {
-        const v = sourceOf(index);
-        if (!v) return { versions: current, error: `version [${index}] is no longer available` };
-        try {
-          // Recompiling routes through the ordinary compile path, which records
-          // this as a new (current) version — so the restore is itself undoable.
-          queries.compileMethod(
-            session,
-            className,
-            isMeta,
-            v.category,
-            v.source,
-            EXPLORER_METHOD_ENVIRONMENT,
-            dict,
+    const panel = showMethodHistoryPanel(
+      label,
+      versions,
+      {
+        restore: async (index) => {
+          const v = sourceOf(index);
+          if (!v) return { versions: current, error: `version [${index}] is no longer available` };
+          try {
+            // Recompiling routes through the ordinary compile path, which records
+            // this as a new (current) version — so the restore is itself undoable.
+            queries.compileMethod(
+              session,
+              className,
+              isMeta,
+              v.category,
+              v.source,
+              EXPLORER_METHOD_ENVIRONMENT,
+              dict,
+            );
+          } catch (e: unknown) {
+            return { versions: current, error: e instanceof Error ? e.message : String(e) };
+          }
+          current = parseMethodHistory(
+            queries.getMethodHistory(session, className, selector, isMeta, dict),
           );
-        } catch (e: unknown) {
-          return { versions: current, error: e instanceof Error ? e.message : String(e) };
-        }
-        current = parseMethodHistory(
-          queries.getMethodHistory(session, className, selector, isMeta, dict),
-        );
-        // The installed method changed — re-render the Methods pane so its
-        // session-method indicators reflect the recompiled source.
-        this.methodProvider.refresh();
-        return { versions: current };
+          // The installed method changed — re-render the Methods pane so its
+          // session-method indicators reflect the recompiled source.
+          this.methodProvider.refresh();
+          return { versions: current };
+        },
+        diff: async (index) => {
+          const v = sourceOf(index);
+          if (!v) return;
+          await openMethodVersionDiff(label, `[${index}]`, v.source, currentSource());
+        },
       },
-      diff: async (index) => {
-        const v = sourceOf(index);
-        if (!v) return;
-        await openMethodVersionDiff(label, `[${index}]`, v.source, currentSource());
-      },
-    });
+      session.id,
+    );
 
     // Keep the panel live: when this method is recompiled elsewhere (the editor is
     // saved, the debugger commits an edit), re-fetch and re-render so the new
@@ -5799,31 +5839,39 @@ export class ExplorerController {
 
     const removed: typeof slots = [];
     const failures: string[] = [];
-    for (const [i, node] of rows.entries()) {
-      let result: string;
-      try {
-        result = queries.deleteMethod(
-          session,
-          className,
-          node.isMeta,
-          node.info.selector,
-          dictIndex,
-        );
-      } catch (e) {
-        result = e instanceof Error ? e.message : String(e);
-      }
-      if (!result.startsWith('Deleted:')) {
-        failures.push(`#${node.info.selector} from ${sideOf(node)}: ${result}`);
-        continue;
-      }
-      removed.push(slots[i]);
-    }
+    runWithAutoCommitDeferredSync(
+      session,
+      'method remove',
+      () => {
+        for (const [i, node] of rows.entries()) {
+          let result: string;
+          try {
+            result = queries.deleteMethod(
+              session,
+              className,
+              node.isMeta,
+              node.info.selector,
+              dictIndex,
+            );
+          } catch (e) {
+            result = e instanceof Error ? e.message : String(e);
+          }
+          if (!result.startsWith('Deleted:')) {
+            failures.push(`#${node.info.selector} from ${sideOf(node)}: ${result}`);
+            continue;
+          }
+          removed.push(slots[i]);
+        }
+      },
+      () => failures.length === 0,
+    );
     const undoEntry = recording?.commit(removed);
     if (failures.length > 0) {
       const done = removed.map((sl) => `#${sl.selector}`);
       notifyUndoableFailure(
         `Remove methods — not removed: ${failures.join('; ')}. ` +
-          `Removed: ${done.length > 0 ? done.join(', ') : 'none'}.`,
+          `Removed: ${done.length > 0 ? done.join(', ') : 'none'}.` +
+          (done.length > 0 ? heldBackNote(session.id) : ''),
         undoEntry,
       );
     } else if (decision === 'silent') notifyUndoable(silentDeleteMessage(target), undoEntry);
@@ -6588,8 +6636,8 @@ export class ExplorerController {
       {
         modal: true,
         detail:
-          'Removes it from this session’s symbol list. Classes it holds are not deleted, and ' +
-          'nothing is committed until you commit the session.',
+          'Removes it from this session’s symbol list. Classes it holds are not deleted. ' +
+          beforeChangeCommitNote(session.id, 'Nothing is committed until you commit the session.'),
       },
       'Remove',
     );
@@ -6617,7 +6665,7 @@ export class ExplorerController {
   // self-referential entry it holds by identity, so the rename is a reflective
   // swap (see queries/renameDictionary): its symbol-list index does not change and
   // classes it holds are untouched. Source that names the dictionary literally is
-  // NOT rewritten, so the confirmation calls that out. Nothing is committed.
+  // NOT rewritten, so the confirmation calls that out. Committed only if the session auto-commits.
   async renameDictionary(node: DictItem): Promise<void> {
     const session = this.session();
     if (!session) return;
@@ -6646,8 +6694,8 @@ export class ExplorerController {
         modal: true,
         detail:
           `Renames it on this session’s symbol list. Source that names the dictionary literally ` +
-          `(e.g. "objectNamed: #${oldName}") is NOT rewritten. Classes it holds are unaffected, and ` +
-          `nothing is committed until you commit the session.`,
+          `(e.g. "objectNamed: #${oldName}") is NOT rewritten. Classes it holds are unaffected. ` +
+          beforeChangeCommitNote(session.id, 'Nothing is committed until you commit the session.'),
       },
       'Rename',
     );
@@ -6734,8 +6782,8 @@ export class ExplorerController {
     const entered = await vscode.window.showInputBox({
       title: 'Rename Class Category',
       prompt: parentPath
-        ? `Rename category node '${oldSegment}' under '${parentPath}' and everything beneath it. Not committed automatically.`
-        : `Rename category node '${oldSegment}' and everything beneath it. Not committed automatically.`,
+        ? `Rename category node '${oldSegment}' under '${parentPath}' and everything beneath it. ${beforeChangeCommitNote(session.id, 'Not committed automatically.')}`
+        : `Rename category node '${oldSegment}' and everything beneath it. ${beforeChangeCommitNote(session.id, 'Not committed automatically.')}`,
       value: oldSegment,
       valueSelection: [0, oldSegment.length],
       validateInput: (v) => {
@@ -6913,7 +6961,7 @@ export class ExplorerController {
    * Move a class to another dictionary. Rebinds the same class object -- `removeKey:` from one
    * dictionary, `at:put:` into the other -- so nothing is re-versioned and no method moves; only
    * which dictionary resolves the name changes. Recorded as an ordinary class edit over both
-   * names, so Undo puts it back (#434). Nothing is committed.
+   * names, so Undo puts it back (#434). Committed only if the session auto-commits.
    */
   async moveClassToDictionary(item?: ClassItem | HierarchyItem): Promise<void> {
     const session = this.session();
@@ -6982,7 +7030,8 @@ export class ExplorerController {
   /**
    * File a class under a different class category. A category is a LABEL on the class
    * (`Class>>category:`), so nothing is recompiled and no binding moves. Recorded per class,
-   * sharing the shape a class-category rename uses (#434). Nothing is committed.
+   * sharing the shape a class-category rename uses (#434). Committed only if the session
+   * auto-commits.
    */
   async moveClassToCategory(item?: ClassItem | HierarchyItem): Promise<void> {
     const session = this.session();
@@ -7057,7 +7106,7 @@ export class ExplorerController {
   // subclasses it's all-or-none: confirm removing the whole subtree, or cancel.
   // A leaf class nothing references goes without a confirmation and is announced instead
   // (see safeDelete.ts); references from inside the doomed subtree don't count, since they
-  // go with it. Nothing is committed — the user commits the session.
+  // go with it. Committed only if the session auto-commits; otherwise the user commits it.
   async removeClass(item?: ClassItem | HierarchyItem): Promise<void> {
     const session = this.session();
     if (!session) {
@@ -7155,7 +7204,10 @@ export class ExplorerController {
       // did not click on, whether or not anything outside references them.
       blockers: descendants.map((d) => d.className),
       blockerLead: `Subclass${descendants.length === 1 ? '' : 'es'} removed with it (all or none)`,
-      note: 'Nothing is committed until you commit the session.',
+      note: beforeChangeCommitNote(
+        session.id,
+        'Nothing is committed until you commit the session.',
+      ),
       // Name what the button REMOVES, never "all". The Classes pane allows a multi-row
       // selection, so "Remove All" beside a dialog titled after ONE class read as "remove
       // every row I have selected" — and then only that one class and its subtree went.
@@ -7181,20 +7233,22 @@ export class ExplorerController {
 
     const failures: string[] = [];
     const removed: string[] = [];
-    // One user action, one commit on an auto-commit session (issue #254) -- the same grouping
-    // the undo recording above uses, because a subtree half in the repository is not what the
-    // user asked to remove.
-    await runWithAutoCommitDeferred(session, 'class remove', () => {
-      for (const t of targets) {
-        try {
-          const result = queries.deleteClass(session, t.dictIndex, t.className);
-          if (result.startsWith('Deleted class:')) removed.push(t.className);
-          else failures.push(`${t.className}: ${result}`);
-        } catch (e: unknown) {
-          failures.push(`${t.className}: ${e instanceof Error ? e.message : String(e)}`);
+    await runWithAutoCommitDeferred(
+      session,
+      'class remove',
+      () => {
+        for (const t of targets) {
+          try {
+            const result = queries.deleteClass(session, t.dictIndex, t.className);
+            if (result.startsWith('Deleted class:')) removed.push(t.className);
+            else failures.push(`${t.className}: ${result}`);
+          } catch (e: unknown) {
+            failures.push(`${t.className}: ${e instanceof Error ? e.message : String(e)}`);
+          }
         }
-      }
-    });
+      },
+      () => failures.length === 0,
+    );
 
     // Drop the removed class from selection/hierarchy and reload the current dict's
     // class list so the pane reflects the deletion.
@@ -7223,7 +7277,10 @@ export class ExplorerController {
     const undoEntry = removed.length > 0 ? recording?.commit() : undefined;
 
     if (failures.length > 0) {
-      void vscode.window.showErrorMessage(`Remove class had errors — ${failures.join('; ')}`);
+      void vscode.window.showErrorMessage(
+        `Remove class had errors — ${failures.join('; ')}.` +
+          (removed.length > 0 ? heldBackNote(session.id) : ''),
+      );
     } else if (decision === 'silent') {
       // Nothing was asked, so the status bar alone is too quiet for a whole class going away —
       // and since this is the one notice for the deletion, it carries Undo (#434).
@@ -7543,7 +7600,7 @@ export class ExplorerController {
 
   // Remove a real (non-computed) method category via the row's trash can, so a
   // category left behind by a rename, a file-in, or a move that emptied it can be
-  // cleared out. Nothing is committed, like the Explorer's other edits.
+  // cleared out. Committed only if the session auto-commits, like the Explorer's other edits.
   //
   // A category that still holds methods is REFUSED, naming the count. GemStone's own
   // `Behavior>>removeCategory:` removes the category and every method filed under it,
@@ -8082,21 +8139,24 @@ export class ExplorerController {
 
     const moved: string[] = [];
     const failures: string[] = [];
-    // One drag, one commit on an auto-commit session (issue #254) -- matching the undo
-    // recording, which is one entry for the drop.
-    await runWithAutoCommitDeferred(session, 'method drag', () => {
-      for (const p of toMove) {
-        try {
-          // recategorizeClass reports a soft failure by RETURNING it ('Class not found:
-          // …', 'Not a class: …'), so the answer has to be read, not just awaited.
-          const result = queries.recategorizeClass(session, p.className, category, p.dictIndex);
-          if (result.startsWith('Recategorized:')) moved.push(p.className);
-          else failures.push(`${p.className}: ${result}`);
-        } catch (e: unknown) {
-          failures.push(`${p.className}: ${e instanceof Error ? e.message : String(e)}`);
+    await runWithAutoCommitDeferred(
+      session,
+      'class drag',
+      () => {
+        for (const p of toMove) {
+          try {
+            // recategorizeClass reports a soft failure by RETURNING it ('Class not found:
+            // …', 'Not a class: …'), so the answer has to be read, not just awaited.
+            const result = queries.recategorizeClass(session, p.className, category, p.dictIndex);
+            if (result.startsWith('Recategorized:')) moved.push(p.className);
+            else failures.push(`${p.className}: ${result}`);
+          } catch (e: unknown) {
+            failures.push(`${p.className}: ${e instanceof Error ? e.message : String(e)}`);
+          }
         }
-      }
-    });
+      },
+      () => failures.length === 0,
+    );
 
     if (moved.length > 0) {
       // The category now holds a class, so it exists on the server and no longer needs
@@ -8119,9 +8179,11 @@ export class ExplorerController {
     }
 
     if (failures.length > 0) {
-      void vscode.window.showErrorMessage(`Move to class category failed — ${failures.join('; ')}`);
-    }
-    if (moved.length > 0) {
+      void vscode.window.showErrorMessage(
+        `Move to class category failed — ${failures.join('; ')}.` +
+          (moved.length > 0 ? ` Moved: ${moved.join(', ')}.${heldBackNote(session.id)}` : ''),
+      );
+    } else if (moved.length > 0) {
       void vscode.window.showInformationMessage(
         moved.length === 1
           ? `Moved ${moved[0]} to class category '${category}'.`
@@ -8172,11 +8234,12 @@ export class ExplorerController {
     }));
     const recording = beginMethodEdit(session, slots);
 
+    // Counted before each write, so a throw at write N means N-1 landed.
+    let movedCount = 0;
     try {
-      // One drag, one commit on an auto-commit session (issue #254) -- the same grouping as
-      // the single undo entry recorded above.
       await runWithAutoCommitDeferred(session, 'method drag', () => {
         for (const p of toMove) {
+          movedCount++;
           queries.recategorizeMethod(
             session,
             p.className,
@@ -8189,7 +8252,8 @@ export class ExplorerController {
       });
     } catch (e) {
       void vscode.window.showErrorMessage(
-        `Move failed: ${e instanceof Error ? e.message : String(e)}`,
+        `Move failed: ${e instanceof Error ? e.message : String(e)}.` +
+          (movedCount > 1 ? heldBackNote(session.id) : ''),
       );
       return;
     }
@@ -8275,38 +8339,37 @@ export class ExplorerController {
   ): Promise<void> {
     if (payloads.length === 0) return;
     let reveal: { selector: string; isMeta: boolean } | undefined;
-    // A mixed selection is two engine calls, and the user made one gesture, so on an
-    // auto-commit session the pair commits once (issue #254).
-    await runWithAutoCommitDeferred(session, 'method drag', async () => {
-      for (const isMeta of [false, true]) {
-        const group = payloads.filter((p) => p.isMeta === isMeta);
-        if (group.length === 0) continue;
-        const outcome = await moveMethod({
-          session,
-          sourceClass: group[0].className,
-          selectors: group.map((p) => p.selector),
-          isMeta,
-          targetName: flipSide ? group[0].className : targetClass,
-          toMeta: flipSide ? !isMeta : isMeta,
-          dict: group[0].dictIndex,
-          // A side flip stays in the source's own dictionary; a drop lands in the dictionary
-          // whose row the user dropped onto. Either way the target is named, never guessed
-          // from the symbol list -- a shadowed class name would send the method to a
-          // stranger's class and delete it from the source (#396).
-          targetDict: flipSide ? group[0].dictIndex : targetDictIndex,
-        });
-        if (outcome && outcome.moved.length > 0 && !reveal) {
-          reveal = { selector: outcome.moved[0], isMeta: outcome.toMeta };
-        }
-        // The move preview panel has resolved and is disposing itself, which surfaces the tab
-        // beside it. Claimed HERE, before the reveal below is awaited, so the claim exists by the
-        // time that activation arrives -- otherwise the follow drags the Explorer onto that tab's
-        // dictionary, and a move into another dictionary lands the user back in the one they
-        // dragged FROM (#396). This path reveals through revealClass rather than
-        // refreshAfterClassReshape, which is why it needs its own claim.
-        if (outcome) this.claimNextEditorActivation();
+    // No deferred region here: each engine call opens its own preview panel, a webview, and
+    // a region across those would hold back every save made while they are up. A mixed
+    // selection is two approved applies, so it commits twice.
+    for (const isMeta of [false, true]) {
+      const group = payloads.filter((p) => p.isMeta === isMeta);
+      if (group.length === 0) continue;
+      const outcome = await moveMethod({
+        session,
+        sourceClass: group[0].className,
+        selectors: group.map((p) => p.selector),
+        isMeta,
+        targetName: flipSide ? group[0].className : targetClass,
+        toMeta: flipSide ? !isMeta : isMeta,
+        dict: group[0].dictIndex,
+        // A side flip stays in the source's own dictionary; a drop lands in the dictionary
+        // whose row the user dropped onto. Either way the target is named, never guessed
+        // from the symbol list -- a shadowed class name would send the method to a
+        // stranger's class and delete it from the source (#396).
+        targetDict: flipSide ? group[0].dictIndex : targetDictIndex,
+      });
+      if (outcome && outcome.moved.length > 0 && !reveal) {
+        reveal = { selector: outcome.moved[0], isMeta: outcome.toMeta };
       }
-    });
+      // The move preview panel has resolved and is disposing itself, which surfaces the tab
+      // beside it. Claimed HERE, before the reveal below is awaited, so the claim exists by the
+      // time that activation arrives -- otherwise the follow drags the Explorer onto that tab's
+      // dictionary, and a move into another dictionary lands the user back in the one they
+      // dragged FROM (#396). This path reveals through revealClass rather than
+      // refreshAfterClassReshape, which is why it needs its own claim.
+      if (outcome) this.claimNextEditorActivation();
+    }
     if (reveal && targetDictName !== undefined && targetDictIndex !== undefined) {
       await this.revealClass(targetDictName, targetDictIndex, targetClass, {
         revealMethod: reveal,
@@ -8320,10 +8383,11 @@ export class ExplorerController {
     if (!session) return;
     const toCopy = payloads.filter((p) => p.className !== targetClass);
     if (toCopy.length === 0) return;
+    let copiedCount = 0;
     try {
-      // One drag, one commit on an auto-commit session (issue #254).
       await runWithAutoCommitDeferred(session, 'method copy', () => {
         for (const p of toCopy) {
+          copiedCount++;
           queries.copyMethodToClass(
             session,
             p.className,
@@ -8337,7 +8401,8 @@ export class ExplorerController {
       });
     } catch (e) {
       void vscode.window.showErrorMessage(
-        `Copy failed: ${e instanceof Error ? e.message : String(e)}`,
+        `Copy failed: ${e instanceof Error ? e.message : String(e)}.` +
+          (copiedCount > 1 ? heldBackNote(session.id) : ''),
       );
       return;
     }

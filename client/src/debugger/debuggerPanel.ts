@@ -25,7 +25,7 @@ import { buildMethodUri } from '../gemstoneFileSystemProvider';
 import { NbCancelledError, NbRunOptions, stoppedRunHolds } from '../nbRunner';
 import { SESSION_SIGNAL_ERROR } from '../forceStop';
 import { resumeOnWorker } from './conditionalBreakpoints';
-import { autoCommitAfterWrite } from '../autoCommit/autoCommitRunner';
+import { autoCommitAfterWrite, holdAutoCommit } from '../autoCommit/autoCommitRunner';
 import { extensionPathFrom } from '../extensionPath';
 import { readWebviewScript } from '../webviewAssets';
 import {
@@ -1579,6 +1579,8 @@ export class DebuggerPanel {
   private cancelRequested = false;
   /** Set in dispose() so an in-flight Nb op's continuation skips touching a dead panel. */
   private disposed = false;
+  /** Closes this debugger's hold on auto-commit (issue #254): see the constructor. */
+  private releaseAutoCommit: (finished: boolean) => boolean = () => false;
 
   /**
    * Variable-revert (single-level undo) state, scoped to the current halt.
@@ -1672,6 +1674,12 @@ export class DebuggerPanel {
   ) {
     this.panel = panel;
     this.sessionId = session.id;
+    // While the run is halted its half-done work is in the transaction, so nothing may commit
+    // it: an evaluate here, a save elsewhere, all wait for the run to finish, and a Terminate
+    // commits none of it.
+    this.releaseAutoCommit = holdAutoCommit(session, 'run finished in the Debugger');
+    // The run's work so far never passed through a write hook, so it is owed from the start.
+    autoCommitAfterWrite(session, 'halted run');
     this.disposables.push(
       new SessionPanelTitle(panel, session.id, 'GemStone Debugger'),
       onDidChangeSessionMode(
@@ -3474,8 +3482,9 @@ export class DebuggerPanel {
     // an onComplete callback drains again).
     appendTranscriptOutput(drainTranscript(this.session));
     // The run finished, so what it changed is finished work, the same as a Do It that never
-    // halted (issue #254).
+    // halted (issue #254): the hold commits it, with whatever was done while it was halted.
     autoCommitAfterWrite(this.session, 'run finished in the Debugger');
+    this.releaseAutoCommit(true);
     if (result.resultOop != null) this.onComplete?.(result.resultOop);
     this.panel.dispose();
   }
@@ -5245,6 +5254,12 @@ export class DebuggerPanel {
     // next halt reads it while deciding where to open, and fails there instead.
     // Whatever else goes wrong below, it goes wrong for this panel alone.
     DebuggerPanel.panels.get(this.sessionId)?.delete(this);
+    if (this.releaseAutoCommit(false)) {
+      void vscode.window.showWarningMessage(
+        `Session ${this.sessionId}: the debugged run did not finish, so its changes were not ` +
+          'committed. Abort to discard them — your next change would commit them.',
+      );
+    }
     // Capture the pair's columns before the tabs start closing — the panel is
     // already disposed, so this is the remembered value, not a live read.
     const ourColumns = [this.panelGroupColumn, this.sourceGroupColumn];

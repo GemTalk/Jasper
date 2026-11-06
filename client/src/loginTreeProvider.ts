@@ -54,20 +54,7 @@ export class GemStoneLoginItem extends vscode.TreeItem {
   }
 }
 
-/**
- * How a session row says what auto-commit is doing (issue #254).
- *
- * This is the ONLY display of it, which is why it speaks in both directions rather than
- * only when armed. Auto-commit changes what Abort means, so a user who cannot see the state
- * loses work either way round: armed and not knowing it, they reach for Abort and find
- * nothing to abort; off and believing otherwise, they log out over uncommitted work. A row
- * that is silent for "off" cannot be read as saying off — it reads as a row that has not
- * been told, which is exactly the ambiguity worth spending a few characters to remove.
- *
- * On the row rather than the status bar because the state is PER SESSION: a status-bar item
- * can only ever speak for one of them, and this way two sessions with different answers
- * each say their own, side by side.
- */
+/** The only display of auto-commit, so it says off too — see docs/explanation/auto-commit.md. */
 export function autoCommitRowSuffix(status: AutoCommitStatus): string {
   if (status === 'on') return ' · auto-commit ON';
   if (status === 'failed') return ' · auto-commit FAILED';
@@ -274,7 +261,8 @@ export class GemStoneSessionItem extends vscode.TreeItem {
     if (autoCommit === 'failed') this.resourceUri = autoCommitFailedUri(id);
     // The contextValue says what THIS session can do — Begin and Commit are each
     // offered only where the stone would accept them, and the auto-commit button
-    // shows the session's own state — so it is not one fixed string. The row's actions survive that because their `when` clauses match
+    // shows the session's own state — so it is not one fixed string. The row's
+    // actions survive that because their `when` clauses match
     // `viewItem =~ /^gemstoneSession/` rather than `== gemstoneSession`; see the
     // session entries in package.json. MCP state is deliberately NOT encoded
     // here: being the served session changes nothing about what the session can

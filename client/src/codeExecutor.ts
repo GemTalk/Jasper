@@ -238,10 +238,7 @@ export class CodeExecutor {
 
       const resultString = await this.pollForResult(session);
 
-      // The code ran to completion, so whatever it created or changed is real work the
-      // session did on the server -- exactly what auto-commit is for (issue #254). Debug It
-      // is left out: it stops on its first statement by design, and the debugger commits
-      // when that run finishes.
+      // Debug It always halts first; the Debugger commits when that run finishes.
       if (mode !== 'debug') autoCommitAfterWrite(session, 'Do It');
 
       this.diagnostics.delete(editor.document.uri);

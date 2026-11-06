@@ -75,8 +75,36 @@ describe('the write path with auto-commit armed', () => {
       (s: ActiveSession) =>
         queries.addAccessors(s, 'Account', false, [{ selector: 'rate', source: 'rate ^rate' }]),
     ],
-    ['revertClassToVersion', (s: ActiveSession) => queries.revertClassToVersion(s, 'Account', 1)],
     ['removeClassVersion', (s: ActiveSession) => queries.removeClassVersion(s, 'Account', 1)],
+    [
+      'compileClassDefinition',
+      (s: ActiveSession) => queries.compileClassDefinition(s, "Object subclass: 'Account'"),
+    ],
+    ['recategorizeClass', (s: ActiveSession) => queries.recategorizeClass(s, 'Account', 'Bank')],
+    [
+      'copyMethodToClass',
+      (s: ActiveSession) => queries.copyMethodToClass(s, 'Account', 'Savings', false, 'balance'),
+    ],
+    [
+      'removeMethodCategory',
+      (s: ActiveSession) => queries.removeMethodCategory(s, 'Account', false, 'printing'),
+    ],
+    [
+      'renameCategory',
+      (s: ActiveSession) => queries.renameCategory(s, 'Account', false, 'printing', 'display'),
+    ],
+    ['removeCategory', (s: ActiveSession) => queries.removeCategory(s, 'Account', false, 'old')],
+    ['moveClass', (s: ActiveSession) => queries.moveClass(s, 1, 2, 'Account')],
+    ['removeDictionary', (s: ActiveSession) => queries.removeDictionary(s, 'MyDict')],
+    [
+      'renameClassCategory',
+      (s: ActiveSession) => queries.renameClassCategory(s, 2, 'Bank-Old', 'Bank-New'),
+    ],
+    ['moveDictionaryUp', (s: ActiveSession) => queries.moveDictionaryUp(s, 2)],
+    ['moveDictionaryDown', (s: ActiveSession) => queries.moveDictionaryDown(s, 2)],
+    // A file-in's doit chunks and `removeallmethods` write too; its region makes them one commit.
+    ['fileInChunk', (s: ActiveSession) => queries.fileInChunk(s, 'UserGlobals at: #X put: 1')],
+    ['removeAllMethods', (s: ActiveSession) => queries.removeAllMethods(s, 'Account', false)],
   ])('commits after %s', (_name, run) => {
     const commit = vi.fn(() => OK);
     const session = makeSession(1, commit);
@@ -91,6 +119,18 @@ describe('the write path with auto-commit armed', () => {
     ['getDictionaryNames', (s: ActiveSession) => queries.getDictionaryNames(s)],
     ['sessionNeedsCommit', (s: ActiveSession) => queries.sessionNeedsCommit(s)],
   ])('does not commit after %s, which only reads', (_name, run) => {
+    const commit = vi.fn(() => OK);
+    const session = makeSession(1, commit);
+    registerSessionAutoCommit(1, true);
+
+    run(session);
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  // These answer a partial result rather than throwing, so their caller commits from the answer.
+  it.each([
+    ['revertClassToVersion', (s: ActiveSession) => queries.revertClassToVersion(s, 'Account', 1)],
+  ])('leaves the commit after %s to its caller', (_name, run) => {
     const commit = vi.fn(() => OK);
     const session = makeSession(1, commit);
     registerSessionAutoCommit(1, true);

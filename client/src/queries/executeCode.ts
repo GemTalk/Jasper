@@ -18,3 +18,9 @@ export function wrapExecuteCode(code: string): string {
   on: AlmostOutOfStack do: [:e | 'Error: AlmostOutOfStack - user code exhausted the call stack']]
   on: AbstractException do: [:e | 'Error: ', e class name asString, ' - ', e messageText asString]`;
 }
+
+/** Whether an answer from {@link wrapExecuteCode} is one of its handlers' error strings. A
+ *  successful String answer is a printString, so it starts with a quote, never with this. */
+export function executeCodeRaised(answer: string): boolean {
+  return answer.startsWith('Error: ');
+}

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', () => ({
   startUndoRefactoringPreview: vi.fn(),
@@ -18,6 +18,10 @@ import { showUndoRefactoringPanel } from '../undoRefactoringPanel';
 import { checkRefactoringUndoAvailable } from '../refactoringUndoAvailability';
 import { undoLastRefactoringCommand } from '../undoRefactoringCommand';
 import type { SessionManager } from '../../sessionManager';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+} from '../../autoCommit/autoCommitState';
 
 /**
  * The refactoring REVERSER (#434) — what `undo/undoLastCommand.ts` calls when the entry it
@@ -390,5 +394,50 @@ describe('undoLastRefactoringCommand', () => {
       expect.stringContaining('Account>>total'),
     );
     expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Auto-commit (issue #254). The engine answers a partial reversal rather than throwing, so the
+ * command reads the answer: a reversal that landed whole commits, one that landed in part is
+ * left for the user to abort, like any failed multi-write operation.
+ */
+describe('undoLastRefactoringCommand on an auto-commit session', () => {
+  const commit = vi.fn(() => ({ success: true, err: { number: 0, message: '' } }));
+  const armed = () => sessionsWith(true, { id: 1, GciTsCommit: () => commit() });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _resetAutoCommitStateForTests();
+    registerSessionAutoCommit(1, true);
+    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(true));
+    vi.mocked(queries.startUndoRefactoringPreview).mockResolvedValue(START);
+    vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined);
+  });
+  afterEach(() => _resetAutoCommitStateForTests());
+
+  it('commits a reversal that landed whole, and says so', async () => {
+    vi.mocked(showUndoRefactoringPanel).mockResolvedValue({ applied: 2, failed: [] });
+
+    await undoLastRefactoringCommand(armed());
+
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(vscode.window.showInformationMessage).mock.calls.at(-1)?.[0]).toContain(
+      'Committed — this session has auto-commit on.',
+    );
+  });
+
+  it('commits nothing when part of it could not be reversed, and says how to discard it', async () => {
+    vi.mocked(showUndoRefactoringPanel).mockResolvedValue({
+      applied: 1,
+      failed: [{ id: '2', label: 'Account>>total', error: 'did not recompile' }],
+    });
+
+    await undoLastRefactoringCommand(armed());
+
+    expect(commit).not.toHaveBeenCalled();
+    expect(vi.mocked(vscode.window.showErrorMessage).mock.calls.at(-1)?.[0]).toContain(
+      'Nothing was committed',
+    );
   });
 });

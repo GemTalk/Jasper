@@ -18,6 +18,7 @@ import {
   _resetAutoCommitStateForTests,
   registerSessionAutoCommit,
   setAutoCommitStatus,
+  commitStateNote,
 } from '../../autoCommit/autoCommitState';
 import { setAutoCommitFailureHandler } from '../../autoCommit/autoCommitRunner';
 import { fakeActiveSession } from '../../__tests__/fakeActiveSession';
@@ -303,6 +304,31 @@ describe('notifyRefactoringApplied and auto-commit', () => {
     notifyRefactoringApplied(makeSession(), 'Renamed it.');
 
     expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('words the notice after the commit, so a refused one is not announced as landed', () => {
+    registerSessionAutoCommit(7, true);
+    commit = vi.fn(() => ({ success: false, err: { number: 2261, message: 'conflicts' } }));
+
+    notifyRefactoringApplied(makeSession(), () =>
+      commitStateNote(7, 'Compiled but NOT committed — commit when ready.'),
+    );
+
+    expect(vi.mocked(vscode.window.showInformationMessage).mock.calls[0][0]).toContain(
+      'NOT committed',
+    );
+  });
+
+  it('says a landed commit landed', () => {
+    registerSessionAutoCommit(7, true);
+
+    notifyRefactoringApplied(makeSession(), () =>
+      commitStateNote(7, 'Compiled but NOT committed — commit when ready.'),
+    );
+
+    expect(vi.mocked(vscode.window.showInformationMessage).mock.calls[0][0]).toContain(
+      'Committed — this session has auto-commit on.',
+    );
   });
 
   it('does not fall over when there is no session to commit', () => {

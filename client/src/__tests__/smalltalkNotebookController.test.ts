@@ -338,7 +338,25 @@ describe('SmalltalkNotebookController', () => {
       ctrl.dispose();
     });
 
-    it('commits nothing when the cell raised', async () => {
+    // The usual shape of a failure: wrapExecuteCode's handler answers the error inline, err 0,
+    // possibly after the cell already wrote something.
+    it('commits nothing when the cell raised an ordinary error', async () => {
+      const gci = makeGci({
+        GciTsFetchUtf8: vi.fn(() => ({
+          data: 'Error: MessageNotUnderstood - a UndefinedObject does not understand #foo',
+          err: { number: 0 },
+        })),
+      });
+      registerSessionAutoCommit(1, true);
+      const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
+
+      await runCells([makeCell('UserGlobals at: #x put: 1. nil foo')]);
+
+      expect(gci.GciTsCommit).not.toHaveBeenCalled();
+      ctrl.dispose();
+    });
+
+    it('commits nothing when the cell raised past the handlers', async () => {
       const gci = makeGci({
         GciTsNbResult: vi.fn(() => ({
           result: 0n,

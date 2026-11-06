@@ -1343,9 +1343,7 @@ export class DatabasesPanel {
     'gemstone.sessionBegin',
     'gemstone.sessionCommit',
     'gemstone.sessionAbort',
-    // Not the manifest's turnOn/turnOff pair: those exist only because a contributed menu
-    // entry's icon is fixed text. This panel picks the glyph itself when it draws the row, so
-    // it can use the single state-reading toggle -- and `recover` for a failed row.
+    // The state-reading toggle, not the tree's turnOn/turnOff pair: this panel draws its own glyph.
     'gemstone.autoCommit.toggle',
     'gemstone.autoCommit.recover',
     'gemstone.setTransactionMode',

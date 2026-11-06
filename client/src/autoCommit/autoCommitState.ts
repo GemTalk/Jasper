@@ -1,38 +1,10 @@
 /**
- * Auto-commit's per-session state (issue #254).
- *
- * Auto-commit belongs to a SESSION, not to the window and not to the workspace: a
- * transaction is a session's, so "commit everything I do" can only mean "commit
- * everything THIS session does". Two sessions against the same stone can sensibly want
- * different answers — one driving a long refactoring it wants to abort as a unit, one
- * poking at objects it wants persisted — and a single window-wide switch could not give
- * them one. The window-wide setting (`gemstone.autoCommit.enableForNewSessions`) only
- * seeds what a NEW session starts at; from then on the session owns its own answer.
- *
- * State lives here, in a module, for the same reason the undo stack does: the write path
- * that has to consult it (`browserQueries`) is a module of free functions taking a
- * session, with nowhere to hang an injected service, and threading a controller through
- * every mutation signature would be a far larger change than the feature.
- *
- * Deliberately free of `vscode` and of GCI. The display (each session's row in the Logins
- * view -- see `loginTreeProvider.ts`), the toggle command and the failure prompt
- * (`autoCommitUi.ts`) are built on top; the committing itself is `autoCommitRunner.ts`.
- * Keeping this layer plain means the write path can consult it without pulling the
- * workbench into `browserQueries`, whose tests mock barely any of it.
+ * Auto-commit's per-session state (issue #254). Free of `vscode` and GCI so the write path in
+ * `browserQueries` can consult it; the design is in docs/explanation/auto-commit.md.
  */
 import type { TransactionMode } from '../queries/transactionMode';
 
-/**
- * What auto-commit is doing for one session.
- *
- * `failed` is a third state rather than a flag beside `on` because it is neither: the
- * session asked for auto-commit and is not getting it. A commit that fails is nearly
- * always a conflict with another session, which the very next write would hit again — so
- * auto-commit stops trying (it does NOT fall back to `off`, which would say the user
- * turned it off) and says so loudly until the transaction is sorted out. `Jadeite` draws
- * the same three-state distinction, and for the same reason.
- */
-
+/** `failed`: asked for, but stopped after a refused commit — not `off`, which the user chose. */
 export type AutoCommitStatus = 'off' | 'on' | 'failed';
 
 /** Told whenever any session's status changes, so the displays can redraw. */
@@ -59,7 +31,6 @@ function notify(): void {
   }
 }
 
-/** Subscribe to status changes. */
 export function onAutoCommitChanged(listener: AutoCommitListener): { dispose: () => void } {
   listeners.add(listener);
   return {
@@ -110,7 +81,6 @@ export function isAutoCommitSuspended(sessionId: number): boolean {
   return (suspensions.get(sessionId) ?? 0) > 0;
 }
 
-/** Open one level of suspension. */
 export function suspendAutoCommit(sessionId: number): void {
   suspensions.set(sessionId, (suspensions.get(sessionId) ?? 0) + 1);
 }
@@ -126,12 +96,10 @@ export function resumeAutoCommit(sessionId: number): boolean {
   return false;
 }
 
-/** Record that a write happened while suspended, so the outermost level commits it. */
 export function markAutoCommitPending(sessionId: number): void {
   pending.add(sessionId);
 }
 
-/** Whether a write happened while this session was suspended. */
 export function hasAutoCommitPending(sessionId: number): boolean {
   return pending.has(sessionId);
 }
@@ -162,3 +130,36 @@ export function autoCommitBlockedByMode(mode: TransactionMode | undefined): bool
 export const AUTO_COMMIT_NEEDS_AUTO_BEGIN =
   'Auto-commit needs Auto-Begin mode: in Manual and Transactionless a commit leaves the ' +
   'session outside a transaction, where nothing can be committed.';
+
+/** Armed and not paused: a write made now is committed at once. */
+function commitsNow(sessionId: number): boolean {
+  return isAutoCommitArmed(sessionId) && !isAutoCommitSuspended(sessionId);
+}
+
+/**
+ * The end of a notice about a change that has just landed: `notCommitted` (the caller's own
+ * wording) unless auto-commit committed it. Read after the commit, so a refused one, or one
+ * held by a pause (a halted debugger), still says not committed.
+ */
+export function commitStateNote(sessionId: number, notCommitted: string): string {
+  return commitsNow(sessionId) ? AUTO_COMMITTED_NOTE : notCommitted;
+}
+
+export const AUTO_COMMITTED_NOTE = 'Committed — this session has auto-commit on.';
+
+/**
+ * Added to the report of an operation that failed part-way on an armed session, and only when
+ * part of it landed: that part is not committed, but the session's next change would commit it.
+ */
+export function heldBackNote(sessionId: number): string {
+  return isAutoCommitArmed(sessionId)
+    ? ' Nothing was committed. Abort to discard it — your next change would commit it.'
+    : '';
+}
+
+/** For a confirmation shown BEFORE a change: what Abort can still do about it. */
+export function beforeChangeCommitNote(sessionId: number, uncommitted: string): string {
+  return commitsNow(sessionId)
+    ? 'Auto-commit is on, so this is committed at once and Abort will not bring it back.'
+    : uncommitted;
+}

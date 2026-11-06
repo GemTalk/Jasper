@@ -7,9 +7,10 @@ import { z } from 'zod';
 import { ActiveSession } from './sessionManager';
 import * as queries from './browserQueries';
 import { autoCommitAfterWrite } from './autoCommit/autoCommitRunner';
+import { isAutoCommitArmed } from './autoCommit/autoCommitState';
 import * as sunit from './sunitQueries';
 import * as python from './pythonQueries';
-import { wrapExecuteCode } from './queries/executeCode';
+import { executeCodeRaised, wrapExecuteCode } from './queries/executeCode';
 import type { TestRunResult } from './queries/runTestMethod';
 import type { TestFailureDetails } from './queries/describeTestFailure';
 import { withMcpErrorMap } from './mcpZodErrorMap';
@@ -408,11 +409,15 @@ export function registerMcpTools(
         // block returns a clean error string instead of taking the gem down.
         try {
           const answer = executeString(session, wrapExecuteCode(a.code));
-          // The code ran, so whatever it changed is the session's work -- same reading as
-          // Do It in the editor (issue #254). Only reached on success: a doit that threw
-          // has nothing finished to commit.
-          autoCommitAfterWrite(session, 'MCP execute_code');
-          return answer;
+          // Code that raised answers its error inline, so only a clean answer commits.
+          if (!executeCodeRaised(answer)) {
+            autoCommitAfterWrite(session, 'MCP execute_code');
+            return answer;
+          }
+          return isAutoCommitArmed(session.id)
+            ? `${answer}\n(Not committed: the code raised. Anything it changed before that is ` +
+                'still in the transaction; call abort to discard it.)'
+            : answer;
         } finally {
           showBufferedTranscript(session);
         }

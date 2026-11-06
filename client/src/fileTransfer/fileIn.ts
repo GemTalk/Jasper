@@ -24,12 +24,12 @@ import {
   runWithAutoCommitDeferred,
   runWithAutoCommitDeferredSync,
 } from '../autoCommit/autoCommitRunner';
-import { isAutoCommitArmed } from '../autoCommit/autoCommitState';
+import { commitStateNote, heldBackNote } from '../autoCommit/autoCommitState';
 import { ActiveSession, SessionManager } from '../sessionManager';
 import * as queries from '../browserQueries';
 import { parseTopazScript } from '../topazFileIn';
 import { rememberDirectory, rememberedDirectory } from './directory';
-import { fileInTonelUri } from './tonelFileIn';
+import { PreparedTonelFile, fileInPreparedTonel, prepareTonelFile } from './tonelFileIn';
 
 /**
  * File types the open dialog offers.
@@ -91,9 +91,10 @@ export interface FileInOutcome {
   cancelled: boolean;
 }
 
-/** A file-in with any error commits nothing: the user decides what to keep. */
-function fileInSucceeded(outcome: FileInOutcome): boolean {
-  return outcome.errors.length === 0;
+/** A file-in commits only when it went in whole: one with any error, or a cancelled one,
+ *  commits nothing, and the user decides what to keep. */
+export function fileInSucceeded(outcome: FileInOutcome): boolean {
+  return outcome.errors.length === 0 && !outcome.cancelled;
 }
 
 function emptyOutcome(): FileInOutcome {
@@ -140,10 +141,13 @@ export function isTonelFile(fsPath: string): boolean {
  * user's: they pick a file and it goes in. It also means one mixed selection in the
  * VS Code Explorer works, each file taking its own route, and reports once.
  */
-async function fileInOneUri(session: ActiveSession, uri: vscode.Uri): Promise<FileInOutcome> {
-  return isTonelFile(uri.fsPath)
-    ? await fileInTonelUri(session, uri.fsPath)
-    : fileInFile(session, uri.fsPath);
+function fileInOneUri(
+  session: ActiveSession,
+  uri: vscode.Uri,
+  tonel: Map<string, PreparedTonelFile>,
+): FileInOutcome {
+  const prepared = tonel.get(uri.fsPath);
+  return prepared ? fileInPreparedTonel(session, prepared) : fileInFile(session, uri.fsPath);
 }
 
 /**
@@ -330,28 +334,41 @@ export async function fileInUris(
   if (!session) return;
 
   const total = emptyOutcome();
+  // Every Tonel file's dictionary question is asked here, before anything is written, so no
+  // prompt sits inside the region below. Dismissing one stops the pick with nothing filed in.
+  const tonel = new Map<string, PreparedTonelFile>();
+  for (const uri of uris.filter((u) => isTonelFile(u.fsPath))) {
+    const prepared = await prepareTonelFile(session, uri.fsPath);
+    tonel.set(uri.fsPath, prepared);
+    if (prepared.outcome.cancelled) {
+      absorb(total, prepared.outcome);
+      break;
+    }
+  }
+
   // The whole pick is one file-in: it commits once, or not at all if any file had an error.
-  await runWithAutoCommitDeferred(
-    session,
-    'file-in',
-    async () =>
-      await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: 'Filing in...' },
-        async (progress) => {
-          for (const uri of uris) {
-            progress.report({ message: path.basename(uri.fsPath) });
-            // Yield so VS Code can paint before this file's work starts. The GCI calls
-            // underneath are synchronous, so a single large file still blocks the
-            // extension host while it goes in — this only keeps a multi-file pick from
-            // looking like nothing is happening.
-            await new Promise((resolve) => setTimeout(resolve, 0));
-            absorb(total, await fileInOneUri(session, uri));
-            if (total.stopped || total.cancelled) break;
-          }
-        },
-      ),
-    () => fileInSucceeded(total),
-  );
+  if (!total.cancelled)
+    await runWithAutoCommitDeferred(
+      session,
+      'file-in',
+      async () =>
+        await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: 'Filing in...' },
+          async (progress) => {
+            for (const uri of uris) {
+              progress.report({ message: path.basename(uri.fsPath) });
+              // Yield so VS Code can paint before this file's work starts. The GCI calls
+              // underneath are synchronous, so a single large file still blocks the
+              // extension host while it goes in — this only keeps a multi-file pick from
+              // looking like nothing is happening.
+              await new Promise((resolve) => setTimeout(resolve, 0));
+              absorb(total, fileInOneUri(session, uri, tonel));
+              if (total.stopped || total.cancelled) break;
+            }
+          },
+        ),
+      () => fileInSucceeded(total),
+    );
 
   await rememberDirectory(store, path.dirname(uris[0].fsPath));
   writeLog(uris, total);
@@ -405,24 +422,20 @@ function writeLog(uris: vscode.Uri[], outcome: FileInOutcome): void {
   log.appendLine('');
 }
 
-/** Summarise to the user, with a way to the detail when there is any. Takes the session
- *  because the "not committed" line is only true when the session is not auto-committing. */
+/** Summarise to the user, with a way to the detail when there is any. */
 async function report(session: ActiveSession, outcome: FileInOutcome): Promise<void> {
   const counts =
     `${outcome.compiled} method(s), ${outcome.executed} chunk(s) from ` +
     `${outcome.files} file(s)`;
   const SHOW_LOG = 'Show Log';
+  const wrote = outcome.executed + outcome.compiled + outcome.removed > 0;
 
   if (outcome.errors.length > 0) {
     const first = outcome.errors[0];
-    // With errors nothing was committed, even on an auto-commit session; but its next
-    // change commits the whole transaction, this file-in included.
-    const uncommitted = isAutoCommitArmed(session.id)
-      ? ' Nothing was committed. Abort to discard it — your next change would commit it.'
-      : '';
     const choice = await vscode.window.showErrorMessage(
       `File in finished with ${outcome.errors.length} error(s) — ${counts} went in. ` +
-        `First: ${path.basename(first.file)}:${first.line} ${first.message}.${uncommitted}`,
+        `First: ${path.basename(first.file)}:${first.line} ${first.message.replace(/\.$/, '')}.` +
+        (wrote ? heldBackNote(session.id) : ''),
       SHOW_LOG,
     );
     if (choice === SHOW_LOG) fileInChannel()?.show(true);
@@ -431,25 +444,24 @@ async function report(session: ActiveSession, outcome: FileInOutcome): Promise<v
 
   const notes: string[] = [];
   if (outcome.stopped) notes.push('Stopped where the file said exit.');
-  if (outcome.cancelled) notes.push('Cancelled — the remaining files were not filed in.');
+  if (outcome.cancelled) notes.push('Cancelled — nothing was filed in.');
   if (outcome.skipped.length > 0) {
     notes.push(`${outcome.skipped.length} directive(s) not recognised.`);
   }
   if (outcome.ignored.length > 0) {
     notes.push(`${outcome.ignored.length} topaz command(s) not run.`);
   }
-  // Said every time, because a file-in that isn't committed disappears at the next abort.
-  // A `commit` line in the file never commits: whether the file-in lands in the repository
-  // is the session's own auto-commit setting to decide (issue #254), not the file's — so on
-  // an auto-commit session the whole file-in has already gone in as one change, and the note
-  // says so rather than telling the user to do it again.
-  notes.push(
-    isAutoCommitArmed(session.id)
-      ? 'Committed — this session has auto-commit on.'
-      : outcome.askedToCommit
-        ? 'The file asked to commit; Jasper did not — commit the session to keep this.'
-        : 'Not committed — commit the session to keep it.',
-  );
+  // A `commit` line in the file never commits; only the session's auto-commit does.
+  if (wrote) {
+    notes.push(
+      commitStateNote(
+        session.id,
+        outcome.askedToCommit
+          ? 'The file asked to commit; Jasper did not — commit the session to keep this.'
+          : 'Not committed — commit the session to keep it.',
+      ),
+    );
+  }
 
   const hasDetail = outcome.skipped.length > 0 || outcome.ignored.length > 0;
   const choice = await vscode.window.showInformationMessage(

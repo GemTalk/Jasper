@@ -12,7 +12,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('fs', () => ({ readFileSync: vi.fn() }));
 vi.mock('../../autoCommit/autoCommitRunner', () => ({
-  runWithAutoCommitDeferred: vi.fn((_session: unknown, _what: string, run: () => unknown) => run()),
+  runWithAutoCommitDeferredSync: vi.fn((_session: unknown, _what: string, run: () => unknown) =>
+    run(),
+  ),
 }));
 vi.mock('../../browserQueries', () => ({
   getDictionaryNames: vi.fn(() => ['UserGlobals', 'Globals', 'Published']),
@@ -32,7 +34,8 @@ import * as queries from '../../browserQueries';
 import type { ActiveSession } from '../../sessionManager';
 import * as fs from 'fs';
 import { applyTonelClass, chooseTonelDictionary, fileInTonelUri } from '../tonelFileIn';
-import { runWithAutoCommitDeferred } from '../../autoCommit/autoCommitRunner';
+import { runWithAutoCommitDeferredSync } from '../../autoCommit/autoCommitRunner';
+import { fileInSucceeded } from '../fileIn';
 import type { TonelClass } from '../../queries/tonel/tonelWire';
 
 // A FRESH session object per test: the Tonel capability answer is cached per
@@ -623,17 +626,37 @@ describe('fileInTonelUri — dismissing the dictionary prompt', () => {
 });
 
 describe('fileInTonelUri — auto-commit', () => {
-  it('files the whole file in as one auto-commit region, not one commit per class and method', async () => {
-    // A stone that refuses Tonel answers at once, so the test needs no file or prompt.
-    vi.mocked(queries.tonelCapability).mockReturnValue({ available: false, missing: ['x'] });
-    const outcome = await fileInTonelUri(SESSION, '/tmp/Widget.class.st');
+  beforeEach(() => {
+    vi.mocked(fs.readFileSync).mockReturnValue(`Class {\n\t#name : 'Widget'\n}\n`);
+    vi.mocked(queries.tonelCapability).mockReturnValue({ available: true, missing: [] });
+    vi.mocked(queries.executeFetchString).mockReturnValue(
+      'NAME\t6\nWidget\nSUPER\t6\nObject\nTYPE\t6\nnormal\n' +
+        'CATEGORY\t1\nX\nCOMMENT\t0\n\nIVARS\t0\n\nCVARS\t0\n\nCIVARS\t0\n\nPOOLS\t0\n\n' +
+        'OPTIONS\t0\n\nUNCARRIED\t0\n\n',
+    );
+  });
 
-    expect(runWithAutoCommitDeferred).toHaveBeenCalledWith(
+  it('writes the whole file in one auto-commit region, judged by fileInSucceeded', async () => {
+    vi.mocked(queries.dictionariesContainingClass).mockReturnValue(['UserGlobals']);
+
+    await fileInTonelUri(SESSION, '/tmp/Widget.st');
+
+    expect(runWithAutoCommitDeferredSync).toHaveBeenCalledTimes(1);
+    expect(runWithAutoCommitDeferredSync).toHaveBeenCalledWith(
       SESSION,
       'file-in',
       expect.any(Function),
-      expect.any(Function),
+      fileInSucceeded,
     );
-    expect(outcome.files).toBe(1);
+  });
+
+  // The prompt is asked before the region opens, so no save made while it is up is held back.
+  it('asks the dictionary question before the region opens, and opens none when dismissed', async () => {
+    vi.mocked(queries.dictionariesContainingClass).mockReturnValue(['UserGlobals', 'Globals']);
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
+
+    await fileInTonelUri(SESSION, '/tmp/Widget.st');
+
+    expect(runWithAutoCommitDeferredSync).not.toHaveBeenCalled();
   });
 });

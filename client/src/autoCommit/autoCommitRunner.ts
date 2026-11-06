@@ -1,29 +1,8 @@
 /**
- * The committing half of auto-commit (issue #254).
- *
- * Two entry points, and the difference between them is the whole design:
- *
- *  - {@link autoCommitAfterWrite} is called from the write path once a mutation has
- *    landed. On an armed session it commits, there and then.
- *  - {@link runWithAutoCommitDeferred} wraps an operation that is only correct as a
- *    WHOLE — a file-in of many methods, an undo that recompiles several — and holds the
- *    commits back until it finishes, then commits once.
- *
- * The second exists because auto-commit's failure mode is not a slow commit, it is a
- * committed half-operation. Several places in Jasper recover from a partly-applied change
- * by aborting the transaction (the instance-variable refactoring panel offers exactly that
- * button), and a commit landing in the middle of one silently disarms that recovery: the
- * abort then rewinds to a repository that already holds the wreckage. So anything with an
- * all-or-nothing contract runs deferred, and an operation that FAILS inside a deferred
- * region commits nothing at all — the caller's own rollback is left the transaction it
- * expects.
- *
- * A commit needs a live session and nothing else, so this layer takes `ActiveSession`
- * directly rather than going through `SessionManager`. It stays free of `vscode`: the
- * write path in `browserQueries` calls into it on every mutation, and that module has no
- * workbench dependency to spare. Telling the user about a failure is therefore a
- * REGISTERED handler, installed by the extension at activation — see
- * `setAutoCommitFailureHandler` and `autoCommitUi.ts`.
+ * The committing half of auto-commit (issue #254): {@link autoCommitAfterWrite} commits a
+ * write that has landed, and the deferred forms ({@link holdAutoCommit} and the regions built
+ * on it) hold commits back across an operation that is only correct as a whole. Free of
+ * `vscode`, so the failure prompt is a registered handler; see docs/explanation/auto-commit.md.
  */
 import { ActiveSession } from '../sessionManager';
 import { ERR_NOT_IN_TRANSACTION } from '../queries/transactionMode';
@@ -40,7 +19,7 @@ import {
   suspendAutoCommit,
 } from './autoCommitState';
 
-/** What a write did about auto-commit, for the caller's logging and for tests. */
+/** What a write did about auto-commit. Only tests read it. */
 export type AutoCommitOutcome =
   /** Auto-commit is off or already failed on this session — nothing was attempted. */
   | 'skipped'
@@ -52,8 +31,9 @@ export type AutoCommitOutcome =
 /**
  * Why a commit failed. `notInTransaction` (error 2030) means the session left Auto-Begin, so
  * no retry or abort will help and auto-commit turns off rather than going to `failed`.
+ * `threw` is a commit that never got an answer: a busy or dead session, not a conflict.
  */
-export type AutoCommitFailureKind = 'refused' | 'notInTransaction';
+export type AutoCommitFailureKind = 'refused' | 'notInTransaction' | 'threw';
 
 /** How the user is told a commit failed. Installed once, at activation. */
 export type AutoCommitFailureHandler = (
@@ -63,6 +43,21 @@ export type AutoCommitFailureHandler = (
 ) => void;
 
 let failureHandler: AutoCommitFailureHandler | undefined;
+
+/** What a landed auto-commit owes the rest of the workbench. Installed once, at activation. */
+export type AutoCommitCommittedHandler = (session: ActiveSession) => void;
+
+let committedHandler: AutoCommitCommittedHandler | undefined;
+
+/**
+ * Install what runs after each auto-commit lands. A commit moves the session's view, so the
+ * caches a manual Commit drops (the ClassOrganizer, GemStone Search's corpora) are stale too.
+ */
+export function setAutoCommitCommittedHandler(
+  handler: AutoCommitCommittedHandler | undefined,
+): void {
+  committedHandler = handler;
+}
 
 /**
  * Install the failure prompt. Left unset in tests and in any context with no workbench,
@@ -96,6 +91,11 @@ function commitNow(session: ActiveSession, what: string): AutoCommitOutcome {
     const { success, err } = session.GciTsCommit();
     if (success) {
       logInfo(`[autoCommit] session ${session.id}: committed (${what})`);
+      try {
+        committedHandler?.(session);
+      } catch {
+        /* a stale cache must not fail the edit that triggered the commit */
+      }
       return 'committed';
     }
     reportFailure(
@@ -105,7 +105,7 @@ function commitNow(session: ActiveSession, what: string): AutoCommitOutcome {
     );
     return 'failed';
   } catch (e: unknown) {
-    reportFailure(session, e instanceof Error ? e.message : String(e));
+    reportFailure(session, e instanceof Error ? e.message : String(e), 'threw');
     return 'failed';
   }
 }
@@ -128,24 +128,23 @@ export function autoCommitAfterWrite(session: ActiveSession, what: string): Auto
 }
 
 /**
- * Close one level of deferral: on the outermost one, commit what the region owes.
+ * Close one level of deferral: on the outermost one, commit what the region owes. Answers
+ * whether a FAILED region left owed changes uncommitted.
  *
- * A region that FAILED commits nothing, deliberately. Its caller may be about to abort as
- * a rollback (the instance-variable refactoring panel does exactly that), and a commit on
- * the way out would leave that abort rewinding to a repository that already held the
- * half-applied change.
+ * A region that FAILED commits nothing, deliberately: its caller may be about to abort as a
+ * rollback, and a commit on the way out would leave that abort rewinding to a repository that
+ * already held the half-applied change.
  */
-function settleDeferred(session: ActiveSession, succeeded: boolean, what: string): void {
-  // False for an inner level, and also for a session that was FORGOTTEN mid-region — a
-  // logout clears its suspension along with everything else, and a commit on a session
-  // that has gone is the last thing this should attempt.
-  if (!resumeAutoCommit(session.id)) return;
+function settleDeferred(session: ActiveSession, succeeded: boolean, what: string): boolean {
+  // False for an inner level, and for a session logged out mid-region (a logout clears its
+  // suspension), which must not be committed on.
+  if (!resumeAutoCommit(session.id)) return false;
   const owed = hasAutoCommitPending(session.id);
   clearAutoCommitPending(session.id);
-  if (!owed) return;
+  if (!owed) return false;
   if (succeeded && isAutoCommitArmed(session.id)) {
     commitNow(session, what);
-    return;
+    return false;
   }
   if (!succeeded) {
     logWarning(
@@ -153,19 +152,34 @@ function settleDeferred(session: ActiveSession, succeeded: boolean, what: string
         'left uncommitted for the caller to abort or retry',
     );
   }
+  return !succeeded;
 }
 
 /**
- * Run an operation that must commit as one unit, or not at all.
- *
- * Every write inside runs without committing; when the outermost call finishes
- * SUCCESSFULLY and something inside actually wrote, one commit follows. A throw commits
- * nothing and leaves the transaction exactly as the operation left it, which is what the
- * caller's own abort-based rollback needs to still work. So does an answer `succeeded`
- * rejects, for an operation that reports its errors instead of throwing (a file-in).
- *
- * Nests: an inner region just borrows the outer one's commit, which is logged under the
- * outer region's `what`.
+ * Hold commits back until the returned function is called, then commit once what was written
+ * meanwhile, or nothing if it is called with `false`. Safe to call more than once; answers
+ * whether closing as failed left owed changes uncommitted. For a pause that spans events
+ * rather than one call, such as a debugger holding a halted run; the region forms below are
+ * built on it.
+ */
+export function holdAutoCommit(
+  session: ActiveSession,
+  what: string,
+): (succeeded: boolean) => boolean {
+  if (getAutoCommitStatus(session.id) !== 'on') return () => false;
+  suspendAutoCommit(session.id);
+  let open = true;
+  return (succeeded) => {
+    if (!open) return false;
+    open = false;
+    return settleDeferred(session, succeeded, what);
+  };
+}
+
+/**
+ * Run an operation that must commit as one unit, or not at all: one commit when it finishes
+ * and `succeeded` accepts its answer, none when it throws or is rejected. Nests: an inner
+ * region borrows the outer one's commit, logged under the outer `what`.
  */
 export async function runWithAutoCommitDeferred<T>(
   session: ActiveSession,
@@ -173,25 +187,20 @@ export async function runWithAutoCommitDeferred<T>(
   run: () => T | Promise<T>,
   succeeded: (answer: T) => boolean = () => true,
 ): Promise<T> {
-  if (getAutoCommitStatus(session.id) !== 'on') return await run();
-
-  suspendAutoCommit(session.id);
+  const release = holdAutoCommit(session, what);
   let ok = false;
   try {
     const answer = await run();
     ok = succeeded(answer);
     return answer;
   } finally {
-    settleDeferred(session, ok, what);
+    release(ok);
   }
 }
 
 /**
- * {@link runWithAutoCommitDeferred} for a SYNCHRONOUS operation.
- *
- * Not a convenience: a file-in compiles its methods through blocking GCI calls in a plain
- * loop, and awaiting the async form around it would let the commit land a tick after the
- * caller had already reported the result. The two nest in either order.
+ * {@link runWithAutoCommitDeferred} for a synchronous operation, so the commit lands before
+ * the caller reports the result rather than a tick after it.
  */
 export function runWithAutoCommitDeferredSync<T>(
   session: ActiveSession,
@@ -199,15 +208,36 @@ export function runWithAutoCommitDeferredSync<T>(
   run: () => T,
   succeeded: (answer: T) => boolean = () => true,
 ): T {
-  if (getAutoCommitStatus(session.id) !== 'on') return run();
-
-  suspendAutoCommit(session.id);
+  const release = holdAutoCommit(session, what);
   let ok = false;
   try {
     const answer = run();
     ok = succeeded(answer);
     return answer;
   } finally {
-    settleDeferred(session, ok, what);
+    release(ok);
   }
+}
+
+/**
+ * {@link runWithAutoCommitDeferredSync} for writes through a raw query executor, which bypass
+ * `browserQueries`' `writing` and so never say they wrote: the region owes a commit whenever
+ * `run` returns.
+ */
+export function runRawWritesWithAutoCommit<T>(
+  session: ActiveSession,
+  what: string,
+  run: () => T,
+  succeeded: (answer: T) => boolean = () => true,
+): T {
+  return runWithAutoCommitDeferredSync(
+    session,
+    what,
+    () => {
+      const answer = run();
+      if (isAutoCommitSuspended(session.id)) markAutoCommitPending(session.id);
+      return answer;
+    },
+    succeeded,
+  );
 }

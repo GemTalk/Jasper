@@ -167,7 +167,11 @@ vi.mock('../../browserQueries', () => ({
   clearBreakAtStepPoint: vi.fn(() => 'ok'),
 }));
 
-vi.mock('../../autoCommit/autoCommitRunner', () => ({ autoCommitAfterWrite: vi.fn() }));
+// The real runner, spied on: the auto-commit tests below drive its hold end to end.
+vi.mock('../../autoCommit/autoCommitRunner', async (orig) => {
+  const actual = await orig<typeof import('../../autoCommit/autoCommitRunner')>();
+  return { ...actual, autoCommitAfterWrite: vi.fn(actual.autoCommitAfterWrite) };
+});
 
 import * as vscode from 'vscode';
 import * as fs from 'fs';
@@ -213,6 +217,10 @@ import { resumeOnWorker } from '../conditionalBreakpoints';
 import { buildMethodUri, parseUri } from '../../gemstoneFileSystemProvider';
 import { NbCancelledError, stoppedRunHolds } from '../../nbRunner';
 import { autoCommitAfterWrite } from '../../autoCommit/autoCommitRunner';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+} from '../../autoCommit/autoCommitState';
 
 const GS_PROCESS = 0x123n;
 const ERROR_MSG = 'a UndefinedObject does not understand #foo';
@@ -310,9 +318,11 @@ function makeSession(id = 1): ActiveSession {
     },
     stoneVersion: '3.7.2',
     enhancedInspectorAvailable: true,
-    gci: { GciTsClearStack: vi.fn() },
+    gci: { GciTsClearStack: vi.fn(), GciTsCommit: commitSpy },
   });
 }
+
+const commitSpy = vi.fn(() => ({ success: true, err: { number: 0, message: '' } }));
 
 /** The most recently created webview panel mock. */
 function lastPanel() {
@@ -989,10 +999,18 @@ describe('DebuggerPanel', () => {
   });
 
   /**
-   * Work the debugger does is work the session did, so auto-commit (issue #254) has to see it:
-   * a halted Do It resumed to the end, and an expression evaluated in a frame.
+   * Auto-commit (issue #254). While the run is halted its half-done work is in the transaction,
+   * so nothing commits until it finishes; then one commit takes everything, and a Terminate
+   * commits none of it and says so.
    */
   describe('auto-commit', () => {
+    beforeEach(() => {
+      _resetAutoCommitStateForTests();
+      registerSessionAutoCommit(session.id, true);
+      commitSpy.mockClear();
+    });
+    afterEach(() => _resetAutoCommitStateForTests());
+
     function openPanel() {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
@@ -1000,13 +1018,28 @@ describe('DebuggerPanel', () => {
       return panel;
     }
 
-    it('commits when a halted run is resumed to completion', async () => {
+    it('commits once when the halted run is resumed to completion', async () => {
       vi.mocked(resumeOnWorker).mockResolvedValueOnce({ completed: true, resultOop: 0x55n });
       const panel = openPanel();
       sendMessage(panel, { command: 'resume' });
       await tick();
 
-      expect(autoCommitAfterWrite).toHaveBeenCalledWith(session, 'run finished in the Debugger');
+      expect(commitSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('holds an expression evaluated in a frame until the run finishes', async () => {
+      vi.mocked(debug.evaluateInFrameNb).mockResolvedValueOnce('1764');
+      vi.mocked(resumeOnWorker).mockResolvedValueOnce({ completed: true, resultOop: 0x55n });
+      const panel = openPanel();
+      sendMessage(panel, { command: 'evalInFrame', level: 3, expr: '42 * 42', mode: 'execute' });
+      await tick();
+
+      expect(autoCommitAfterWrite).toHaveBeenCalledWith(session, 'Debugger evaluate');
+      expect(commitSpy).not.toHaveBeenCalled();
+
+      sendMessage(panel, { command: 'resume' });
+      await tick();
+      expect(commitSpy).toHaveBeenCalledTimes(1);
     });
 
     it('commits nothing when a resume stops at the next halt', async () => {
@@ -1015,16 +1048,28 @@ describe('DebuggerPanel', () => {
       sendMessage(panel, { command: 'resume' });
       await tick();
 
-      expect(autoCommitAfterWrite).not.toHaveBeenCalled();
+      expect(commitSpy).not.toHaveBeenCalled();
     });
 
-    it('commits after an expression evaluated in a frame', async () => {
-      vi.mocked(debug.evaluateInFrameNb).mockResolvedValueOnce('1764');
+    it('commits nothing on Terminate, and says so even when nothing was done while halted', async () => {
       const panel = openPanel();
-      sendMessage(panel, { command: 'evalInFrame', level: 3, expr: '42 * 42', mode: 'execute' });
+      sendMessage(panel, { command: 'terminate' });
       await tick();
 
-      expect(autoCommitAfterWrite).toHaveBeenCalledWith(session, 'Debugger evaluate');
+      expect(commitSpy).not.toHaveBeenCalled();
+      expect(vi.mocked(vscode.window.showWarningMessage).mock.calls.at(-1)?.[0]).toContain(
+        'the debugged run did not finish, so its changes were not committed',
+      );
+    });
+
+    it('says nothing on Terminate on a session that is not auto-committing', async () => {
+      _resetAutoCommitStateForTests();
+      const panel = openPanel();
+      vi.mocked(vscode.window.showWarningMessage).mockClear();
+      sendMessage(panel, { command: 'terminate' });
+      await tick();
+
+      expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
     });
   });
 

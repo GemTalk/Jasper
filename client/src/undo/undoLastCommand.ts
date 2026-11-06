@@ -35,7 +35,6 @@
  */
 import * as vscode from 'vscode';
 import { ActiveSession, SessionManager } from '../sessionManager';
-import { runWithAutoCommitDeferred } from '../autoCommit/autoCommitRunner';
 import { logInfo } from '../gciLog';
 import { dropUndoEntry, peekUndoEntry } from './undoStack';
 import { refreshUndoUi } from './undoUi';
@@ -62,11 +61,10 @@ export async function undoLastCommand(sessions: SessionManager): Promise<void> {
     void vscode.window.showWarningMessage('Select a GemStone session first.');
     return;
   }
-  // One undo can be several writes -- a class-category reversal refiles the classes one at a
-  // time -- and it is only correct as a whole. So on an auto-commit session it commits ONCE,
-  // when the reversal has finished, and a reversal that fails part-way commits nothing:
-  // the transaction is left as it stands, for the user to abort or finish by hand.
-  await runWithAutoCommitDeferred(session, 'undo', () => reverseTopEntry(sessions, session));
+  // On an auto-commit session each reverser commits its own writes once, and not at all if
+  // they fail part-way. That is done around the writes alone, not here: the plan panel is a
+  // webview, and a region open across it would hold back every save made while it is up.
+  await reverseTopEntry(sessions, session);
 }
 
 async function reverseTopEntry(sessions: SessionManager, session: ActiveSession): Promise<void> {

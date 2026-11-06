@@ -225,9 +225,7 @@ describe('GemStoneSessionItem', () => {
     expect((idle.iconPath as { id: string }).id).toBe('plug');
   });
 
-  // This row is the ONLY display of auto-commit (issue #254), so it speaks in both
-  // directions: as one display among several, silence for "off" was fine; as the only one,
-  // a row that says nothing does not read as off, it reads as a row that has not been told.
+  // The only display of auto-commit (issue #254), so it says off too.
   it('says what auto-commit is doing, off included', () => {
     const session = makeSession(makeLogin(), 3);
 

@@ -196,12 +196,8 @@ export interface FileInResult {
 
 /**
  * Parse a Topaz file-out and compile each piece (class definition + methods)
- * back into GemStone. Returns per-method error details for diagnostics.
- *
- * A file-in is ONE change as far as auto-commit is concerned (issue #254): a class
- * definition and the methods that go with it are only coherent together, so an
- * auto-commit session commits once at the end rather than after every method — and
- * commits nothing at all if the file-in throws part-way through.
+ * back into GemStone. Returns per-method error details for diagnostics. One auto-commit
+ * for the whole file-in; see the header of `fileTransfer/fileIn.ts`.
  */
 export function fileInClass(
   session: ActiveSession,
@@ -332,10 +328,8 @@ export type FileInStep =
   | { kind: 'input'; file: string; line: number }
   /** A Topaz command that drives the *topaz program* rather than the image — logging
    *  in, setting the output level, committing. Recognised and deliberately not run
-   *  (Jasper is already connected, and a `commit` LINE never commits -- whether the
-   *  file-in is committed is the session's own auto-commit setting to decide, not the
-   *  file's), but reported, because a `commit` the file expected and did not get changes
-   *  what the file means. */
+   *  (Jasper is already connected, and a `commit` LINE never commits), but reported,
+   *  because a `commit` the file expected and did not get changes what the file means. */
   | { kind: 'sessionCommand'; directive: string; line: number; transaction: boolean }
   /** `exit` / `quit` — Topaz stops reading here, so this does too. */
   | { kind: 'stop'; directive: string; line: number }

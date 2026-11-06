@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', () => ({ defaultQueryExecutorUsing: () => () => '' }));
-vi.mock('../../gciLog', () => ({ logInfo: vi.fn() }));
+vi.mock('../../gciLog', () => ({ logInfo: vi.fn(), logWarning: vi.fn() }));
 vi.mock('../queries/methodSlotQueries', () => ({
   captureMethodSlots: vi.fn(),
   applyMethodSlotOps: vi.fn(),
@@ -20,6 +20,10 @@ import { closeEditorsForRemovedMethods, refreshSearch, revealMethod } from '../a
 import { reverseMethodEdit } from '../reverseMethodEdit';
 import { MethodEditUndoEntry, MethodSlotState } from '../undoTypes';
 import type { ActiveSession } from '../../sessionManager';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+} from '../../autoCommit/autoCommitState';
 
 /**
  * Undoing a method edit (#434).
@@ -236,5 +240,60 @@ describe('reverseMethodEdit', () => {
 
     expect(spent).toBe(false);
     expect(vscode.window.showErrorMessage).toHaveBeenCalled();
+  });
+});
+
+/**
+ * Auto-commit (issue #254). The reversal writes through a raw executor, never through
+ * `browserQueries`' `writing`, so it is the reverser that has to commit it: once when it
+ * landed whole, and not at all when it landed in part.
+ */
+describe('reverseMethodEdit on an auto-commit session', () => {
+  const commit = vi.fn(() => ({ success: true, err: { number: 0, message: '' } }));
+  const armed = { id: 7, GciTsCommit: commit } as unknown as ActiveSession;
+  const armedEntry = (): MethodEditUndoEntry => ({
+    ...entry([has('balance ^1')], [has('balance ^2')]),
+    sessionId: 7,
+  });
+
+  beforeEach(() => {
+    _resetAutoCommitStateForTests();
+    registerSessionAutoCommit(7, true);
+    commit.mockClear();
+  });
+  afterEach(() => _resetAutoCommitStateForTests());
+
+  it('commits the reversal once, and says so', async () => {
+    vi.mocked(captureMethodSlots).mockReturnValue([has('balance ^2')]);
+
+    await reverseMethodEdit(armed, armedEntry());
+
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(vscode.window.showInformationMessage).mock.calls[0][0]).toContain(
+      'Committed — this session has auto-commit on.',
+    );
+  });
+
+  it('commits nothing when part of the reversal failed, and says how to discard it', async () => {
+    const twoSlots: MethodEditUndoEntry = {
+      ...armedEntry(),
+      slots: [
+        { className: 'Account', isMeta: false, selector: 'balance', environmentId: 0 },
+        { className: 'Account', isMeta: false, selector: 'rate', environmentId: 0 },
+      ],
+      before: [has('balance ^1'), has('rate ^1')],
+      after: [has('balance ^2'), has('rate ^2')],
+    };
+    vi.mocked(captureMethodSlots).mockReturnValue([has('balance ^2'), has('rate ^2')]);
+    vi.mocked(applyMethodSlotOps).mockImplementation((_e, ops) =>
+      ops.map((op, i) => ({ op, error: i === 0 ? null : 'not writable' })),
+    );
+
+    await reverseMethodEdit(armed, twoSlots);
+
+    expect(commit).not.toHaveBeenCalled();
+    expect(vi.mocked(vscode.window.showErrorMessage).mock.calls[0][0]).toContain(
+      'Nothing was committed. Abort to discard it',
+    );
   });
 });

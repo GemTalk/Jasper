@@ -455,39 +455,23 @@ describe('undoLastCommand', () => {
 /**
  * Undo and auto-commit (issue #254).
  *
- * The reason this needs pinning is the shape of Jasper's undo: it is a FORWARD operation —
- * it reverses a change by making the opposite one — so a committed change is exactly as
- * undoable as one that is not, and auto-commit takes nothing away. What it must not do is
- * commit an undo in pieces: a class-category reversal refiles the classes one at a time,
- * and half a reversal in the repository is not a reversal.
+ * Each reverser commits its own writes, once, and not at all when they fail part-way (pinned
+ * beside each reverser). What is pinned here is that the dispatcher holds nothing back itself:
+ * the plan panel is a webview, so a save the user makes while it is open must still commit.
  */
 describe('undoLastCommand and auto-commit', () => {
-  it('commits the reversal ONCE, however many writes it took', async () => {
+  it('lets a save made while the plan panel is open commit at once', async () => {
     registerSessionAutoCommit(session.id, true);
     pushUndoEntry(methodEdit('Save Account>>#balance'));
-    // Stand in for the reverser's writes: several, all inside the deferred region.
-    vi.mocked(reverseMethodEdit).mockImplementation(async () => {
-      autoCommitAfterWrite(session, 'test write');
-      autoCommitAfterWrite(session, 'test write');
-      autoCommitAfterWrite(session, 'test write');
-      return true;
+    vi.mocked(showUndoPlanPanel).mockImplementation(async () => {
+      autoCommitAfterWrite(session, 'save');
+      expect(commit).toHaveBeenCalledTimes(1);
+      return false;
     });
 
     await undoLastCommand(sessions);
 
     expect(commit).toHaveBeenCalledTimes(1);
-  });
-
-  it('commits nothing when the reversal throws, so the transaction is the caller’s to sort out', async () => {
-    registerSessionAutoCommit(session.id, true);
-    pushUndoEntry(methodEdit('Save Account>>#balance'));
-    vi.mocked(reverseMethodEdit).mockImplementation(async () => {
-      autoCommitAfterWrite(session, 'test write');
-      throw new Error('the recompile failed');
-    });
-
-    await expect(undoLastCommand(sessions)).rejects.toThrow('the recompile failed');
-    expect(commit).not.toHaveBeenCalled();
   });
 
   it('commits nothing when the user cancels the plan panel', async () => {
@@ -498,15 +482,6 @@ describe('undoLastCommand and auto-commit', () => {
     await undoLastCommand(sessions);
 
     expect(reverseMethodEdit).not.toHaveBeenCalled();
-    expect(commit).not.toHaveBeenCalled();
-  });
-
-  it('commits nothing on a session that never armed auto-commit', async () => {
-    pushUndoEntry(methodEdit('Save Account>>#balance'));
-    vi.mocked(reverseMethodEdit).mockResolvedValue(true);
-
-    await undoLastCommand(sessions);
-
     expect(commit).not.toHaveBeenCalled();
   });
 });

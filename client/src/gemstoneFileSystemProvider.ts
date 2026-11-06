@@ -907,11 +907,8 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     const source = new TextDecoder().decode(content);
 
     try {
-      // ONE save is one change as far as auto-commit is concerned (issue #254). A class
-      // definition save is several writes -- the definition, then its category -- and a
-      // commit between them would put a class in the repository filed under the category
-      // it is being moved out of. Deferring also means a save that throws part-way commits
-      // nothing, so the compile error the user is about to see is the whole story.
+      // A definition save writes the definition, then its category; a commit between them
+      // would file the class under the category it is leaving.
       runWithAutoCommitDeferredSync(session, 'save', () => {
         switch (parsed.kind) {
           case 'method':

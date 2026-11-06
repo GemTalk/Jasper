@@ -1,24 +1,7 @@
 /**
- * Turning auto-commit on and off, and what to do when it fails (issue #254).
- *
- * The switch is deliberately not only a setting. #254 asks for exactly that: "it would be
- * nice if that on/off switch was not buried in a settings tool as the only means of
- * changing it". So it sits on the session row's own context menu, in the Logins view —
- * the same row that DISPLAYS the state, so reading it and changing it are one gesture
- * apart — and on the Command Palette, which acts on the selected session. The setting
- * (`gemstone.autoCommit.enableForNewSessions`) only decides where a NEW session starts.
- *
- * Two moments here are worth more than a toggle:
- *
- *  - **Turning it on over a dirty transaction.** The next write would commit not just
- *    itself but everything already staged in the session, which the user staged while
- *    intending to decide about it later. So the prompt says how much is at stake and lets
- *    them commit it deliberately, arm anyway, or back out.
- *  - **A failed commit.** Almost always a conflict with another session. Auto-commit stops
- *    trying — retrying on every keystroke would fail every time and bury the message — and
- *    the user gets the three things they can actually do: abort, look at the conflicts, or
- *    turn it off. This follows Jadeite's auto-commit failure dialog, which offers the same
- *    abort-or-see-the-conflicts choice.
+ * Turning auto-commit on and off, and what to do when a commit fails (issue #254): the
+ * prompts over a dirty transaction and after a refused commit. See
+ * docs/explanation/auto-commit.md.
  */
 import * as vscode from 'vscode';
 import { ActiveSession, SessionManager } from '../sessionManager';
@@ -28,7 +11,9 @@ import { conflictReport, hasConflictDetail } from '../queries/transactionConflic
 import {
   AUTO_COMMIT_NEEDS_AUTO_BEGIN,
   autoCommitBlockedByMode,
+  forgetSessionAutoCommit,
   getAutoCommitStatus,
+  registerSessionAutoCommit,
   setAutoCommitStatus,
 } from './autoCommitState';
 import { AutoCommitFailureKind } from './autoCommitRunner';
@@ -67,6 +52,34 @@ async function explainNeedsAutoBegin(session: ActiveSession, lead: string): Prom
   // Declined, or refused by the stone: the mode says which, and only Auto-Begin may arm.
   if (session.transactionMode !== 'autoBegin') return;
   if (getAutoCommitStatus(session.id) === 'off') await armAutoCommit(session);
+}
+
+/**
+ * Seed each new session from the default, drop a logged-out one, and turn auto-commit off when a
+ * session leaves Auto-Begin. Seeded on `onDidAddSession`, which fires AFTER the post-login abort:
+ * arming before it would commit the login's own spurious uncommitted state as the first act.
+ */
+export function registerAutoCommitSessionHooks(
+  sessionManager: Pick<
+    SessionManager,
+    'onDidAddSession' | 'onDidRemoveSession' | 'onDidChangeTransactionState' | 'getSession'
+  >,
+): vscode.Disposable[] {
+  return [
+    sessionManager.onDidAddSession((id: number) => {
+      const mode = sessionManager.getSession(id)?.transactionMode;
+      const wanted = autoCommitDefaultForNewSessions();
+      registerSessionAutoCommit(id, wanted && !autoCommitBlockedByMode(mode));
+      if (wanted && autoCommitBlockedByMode(mode)) {
+        logInfo(`[autoCommit] session ${id}: left off — logged in to ${modeLabel(mode)} mode`);
+      }
+    }),
+    sessionManager.onDidRemoveSession((id: number) => forgetSessionAutoCommit(id)),
+    sessionManager.onDidChangeTransactionState((id: number) => {
+      const session = sessionManager.getSession(id);
+      if (session) autoCommitTransactionModeChanged(session);
+    }),
+  ];
 }
 
 /**
@@ -119,15 +132,11 @@ async function armAutoCommit(session: ActiveSession): Promise<boolean> {
       ARM_ANYWAY,
     );
     if (choice !== COMMIT_FIRST && choice !== ARM_ANYWAY) return false;
-    if (choice === COMMIT_FIRST) {
-      const { success, err } = session.GciTsCommit();
-      if (!success) {
-        void vscode.window.showErrorMessage(
-          `Session ${session.id}: that commit failed — ${err.message || `error ${err.number}`}. ` +
-            'Auto-commit was left off.',
-        );
-        return false;
-      }
+    if (choice === COMMIT_FIRST && !(await commitFirst(session))) {
+      void vscode.window.showErrorMessage(
+        `Session ${session.id}: that commit did not land, so auto-commit was left off.`,
+      );
+      return false;
     }
   }
 
@@ -215,6 +224,30 @@ export async function recoverAutoCommit(
   await offerAutoCommitRecovery(target, undefined, abortHandler);
 }
 
+/**
+ * How "Commit Now, Then Turn On" commits. Registered by the extension so it is the SAME commit
+ * the Commit button runs — the one that reports conflicts and refreshes the exported files,
+ * the ClassOrganizer and GemStone Search. Answers whether the commit landed; it reports a
+ * failure itself.
+ */
+export type AutoCommitCommit = (session: ActiveSession) => Promise<boolean>;
+
+let commitHandler: AutoCommitCommit | undefined;
+
+export function setAutoCommitCommitHandler(handler: AutoCommitCommit | undefined): void {
+  commitHandler = handler;
+}
+
+async function commitFirst(session: ActiveSession): Promise<boolean> {
+  if (commitHandler) return await commitHandler(session);
+  try {
+    return session.GciTsCommit().success;
+  } catch {
+    // A busy or dead session throws rather than answering.
+    return false;
+  }
+}
+
 // ── Failure and recovery ───────────────────────────────────────────────────
 
 const ABORT_NOW = 'Abort and Discard';
@@ -265,15 +298,18 @@ export async function offerAutoCommitRecovery(
   session: ActiveSession,
   reason: string | undefined,
   abort: AutoCommitAbort | undefined,
+  kind: AutoCommitFailureKind = 'refused',
 ): Promise<void> {
   const detail = reason ? ` — ${reason}` : '';
+  const cause =
+    kind === 'threw'
+      ? 'The commit got no answer, so the session may be busy or no longer connected.'
+      : 'This is almost always a conflict with another session.';
+  const choices = kind === 'threw' ? [ABORT_NOW, TURN_OFF] : [ABORT_NOW, SHOW_CONFLICTS, TURN_OFF];
   const choice = await vscode.window.showWarningMessage(
     `Session ${session.id}: auto-commit could not commit${detail}. Your changes are NOT in the ` +
-      'repository and auto-commit has stopped trying. This is almost always a conflict with ' +
-      'another session.',
-    ABORT_NOW,
-    SHOW_CONFLICTS,
-    TURN_OFF,
+      `repository and auto-commit has stopped trying. ${cause}`,
+    ...choices,
   );
   if (choice === ABORT_NOW) {
     if (!abort) {
@@ -309,7 +345,7 @@ export function reportAutoCommitFailure(
     );
     return;
   }
-  void offerAutoCommitRecovery(session, reason, abortHandler);
+  void offerAutoCommitRecovery(session, reason, abortHandler, kind);
 }
 
 /**

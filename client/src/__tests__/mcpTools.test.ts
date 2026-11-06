@@ -977,7 +977,21 @@ describe('registerMcpTools', () => {
       expect(commit).toHaveBeenCalledTimes(1);
     });
 
-    it('commits nothing when the code raised', async () => {
+    it('commits nothing when the code raised an ordinary error, and says so', async () => {
+      registerSessionAutoCommit(1, true);
+      vi.mocked(queries.executeFetchString).mockReturnValue(
+        'Error: MessageNotUnderstood - a UndefinedObject does not understand #foo',
+      );
+
+      const answer = await server.getTool('execute_code')!.handler({
+        code: 'UserGlobals at: #x put: 1. nil foo',
+      });
+
+      expect(commit).not.toHaveBeenCalled();
+      expect(JSON.stringify(answer)).toContain('Not committed: the code raised');
+    });
+
+    it('commits nothing when the code threw', async () => {
       registerSessionAutoCommit(1, true);
       vi.mocked(queries.executeFetchString).mockImplementation(() => {
         throw new Error('doesNotUnderstand');

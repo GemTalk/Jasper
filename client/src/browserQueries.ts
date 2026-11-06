@@ -1041,8 +1041,12 @@ export function fileOutDictionary(session: ActiveSession, dict: number | string)
   return sharedFileOutDictionary(defaultQueryExecutorUsing(session), dict);
 }
 
+// A file-in's doit chunks and its `removeallmethods` change the repository like any other
+// write, so they run inside `writing`; the file-in's own deferred region makes it one commit.
 export function fileInChunk(session: ActiveSession, code: string): string {
-  return sharedFileInChunk(defaultQueryExecutorUsing(session), code);
+  return writing(session, 'file-in chunk', () =>
+    sharedFileInChunk(defaultQueryExecutorUsing(session), code),
+  );
 }
 
 export function removeAllMethods(
@@ -1051,7 +1055,9 @@ export function removeAllMethods(
   isMeta: boolean,
   dict?: number | string,
 ): string {
-  return sharedRemoveAllMethods(defaultQueryExecutorUsing(session), className, isMeta, dict);
+  return writing(session, 'remove all methods', () =>
+    sharedRemoveAllMethods(defaultQueryExecutorUsing(session), className, isMeta, dict),
+  );
 }
 
 export function describeClass(
@@ -2272,9 +2278,9 @@ export function revertClassToVersion(
   index: number,
   dict?: number | string,
 ): string {
-  return writing(session, 'class version revert', () =>
-    sharedRevertClassToVersion(defaultQueryExecutorUsing(session), className, index, dict),
-  );
+  // Not `writing`: a restore can land with some changes failed to compile, so the Explorer
+  // decides whether to commit from the answer.
+  return sharedRevertClassToVersion(defaultQueryExecutorUsing(session), className, index, dict);
 }
 
 // Per-method source history (in-stone, per-user, this-stone-only, read-only) and
@@ -2525,12 +2531,8 @@ export function methodsAccessingClassVar(
 }
 
 // ── Write-path queries (mutations) ─────────────────────────────────────────
-// All of these delegate to the shared layer. Each one that changes the REPOSITORY runs
-// inside `writing` / `writingAsync`, which is where auto-commit hangs (issue #254): a
-// session with auto-commit armed commits as soon as the mutation lands, and every other
-// session pays one map lookup. The rest of the section — the undo-record bookkeeping and
-// the reads that sit among these for want of a better home — is deliberately outside it:
-// those write SessionTemps or nothing at all, and there is nothing for a commit to persist.
+// All of these delegate to the shared layer. Each write that changes the repository runs
+// inside `writing`; SessionTemps-only bookkeeping and the reads here stay outside.
 
 /**
  * Run a repository mutation, then let auto-commit have it.
@@ -2542,17 +2544,6 @@ export function methodsAccessingClassVar(
  */
 function writing<T>(session: ActiveSession, what: string, run: () => T): T {
   const answer = run();
-  autoCommitAfterWrite(session, what);
-  return answer;
-}
-
-/** {@link writing} for a mutation that resolves rather than returns. */
-async function writingAsync<T>(
-  session: ActiveSession,
-  what: string,
-  run: () => Promise<T>,
-): Promise<T> {
-  const answer = await run();
   autoCommitAfterWrite(session, what);
   return answer;
 }
@@ -2927,9 +2918,9 @@ export function applyUndoRefactoring(
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Undoing the refactoring…');
-  return writingAsync(session, 'refactoring undo', () =>
-    sharedApplyUndoRefactoring(exec, token, deselectedIds),
-  );
+  // Not `writing`: the apply answers a partial reversal rather than throwing, so whether to
+  // commit is decided by `undoRefactoringCommand`, which reads the answer.
+  return sharedApplyUndoRefactoring(exec, token, deselectedIds);
 }
 
 export function clearUndoRefactoringPreview(session: ActiveSession, token: string): string {

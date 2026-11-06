@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
-vi.mock('../../gciLog', () => ({ logInfo: vi.fn() }));
+vi.mock('../../gciLog', () => ({ logInfo: vi.fn(), logWarning: vi.fn() }));
 vi.mock('../../browserQueries', () => ({
   defaultQueryExecutorUsing: () => () => '',
   renameDictionary: vi.fn(),
@@ -28,6 +28,10 @@ import { refreshSymbolList } from '../afterUndo';
 import { reverseDictionaryEdit } from '../reverseDictionaryEdit';
 import { DictionaryUndoEntry } from '../undoTypes';
 import type { ActiveSession } from '../../sessionManager';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+} from '../../autoCommit/autoCommitState';
 
 /**
  * Undoing a symbol-list change (#434).
@@ -253,5 +257,32 @@ describe('reverseDictionaryEdit', () => {
       expect(await reverseDictionaryEdit(session, created())).toBe(false);
       expect(removeDictionary).not.toHaveBeenCalled();
     });
+  });
+});
+
+/** Auto-commit (issue #254): the reversal writes through a raw executor, so it commits itself. */
+describe('reverseDictionaryEdit on an auto-commit session', () => {
+  const commit = vi.fn(() => ({ success: true, err: { number: 0, message: '' } }));
+  const armed = { id: 1, GciTsCommit: commit } as unknown as ActiveSession;
+
+  beforeEach(() => {
+    _resetAutoCommitStateForTests();
+    registerSessionAutoCommit(1, true);
+    commit.mockClear();
+  });
+  afterEach(() => _resetAutoCommitStateForTests());
+
+  it('commits a dictionary put back on the symbol list', async () => {
+    await reverseDictionaryEdit(armed, removal());
+
+    expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits nothing when it could not be put back', async () => {
+    vi.mocked(reinsertDictionary).mockReturnValue('stash gone');
+
+    await reverseDictionaryEdit(armed, removal());
+
+    expect(commit).not.toHaveBeenCalled();
   });
 });

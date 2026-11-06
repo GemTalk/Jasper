@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', () => ({
   analyzeInstVar: vi.fn(),
@@ -19,6 +19,11 @@ import { showInstVarRefactorPanel } from '../instVarRefactorPanel';
 import { runInstVarRefactor, InstVarRefactorRequest } from '../instVarRefactorCommand';
 import type { ActiveSession } from '../../sessionManager';
 import type { ApplyResult } from '../instVarRefactorPreview';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+} from '../../autoCommit/autoCommitState';
+import { autoCommitAfterWrite } from '../../autoCommit/autoCommitRunner';
 
 /**
  * Drives the add / remove instance-variable COMMAND orchestrator (not the engine). Pins the
@@ -425,5 +430,77 @@ describe('add / remove instance variable command', () => {
 
     ops.cleanup();
     expect(queries.clearInstVarPreview).toHaveBeenCalledWith(expect.anything(), token);
+  });
+});
+
+/**
+ * Auto-commit (issue #254). A failed apply can strand a partial reshape the panel offers to
+ * abort, so from that failure until the panel closes nothing commits — a save made meanwhile
+ * would otherwise commit the wreckage and leave the Abort nothing to take back.
+ */
+describe('a stranded apply on an auto-commit session', () => {
+  const commit = vi.fn(() => ({ success: true, err: { number: 0, message: '' } }));
+  const session = { id: 1, rbSupportAvailable: true, GciTsCommit: () => commit() };
+  const failedApply = JSON.stringify({
+    applied: 1,
+    failed: [{ id: 'c2', label: 'FooSub', error: 'did not recompile' }],
+    dropped: [],
+    committed: false,
+  });
+
+  beforeEach(() => {
+    _resetAutoCommitStateForTests();
+    registerSessionAutoCommit(1, true);
+    commit.mockClear();
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+    vi.mocked(queries.applyInstVar).mockResolvedValue(failedApply);
+  });
+  afterEach(() => _resetAutoCommitStateForTests());
+
+  /** The panel as the user drives it: Apply fails, they save elsewhere, then `then`. */
+  function panelThat(then: (handlers: { abort: () => void }) => void) {
+    vi.mocked(showInstVarRefactorPanel).mockImplementation(async (_t, _s, handlers) => {
+      await handlers.apply([], false, false);
+      autoCommitAfterWrite(session as unknown as ActiveSession, 'save');
+      expect(commit).not.toHaveBeenCalled();
+      then(handlers);
+      return undefined;
+    });
+  }
+
+  it('commits nothing while the stranded panel is open, nor after it closes unaborted', async () => {
+    panelThat(() => {});
+
+    await runInstVarRefactor(req({ session: session as unknown as ActiveSession }));
+
+    expect(commit).not.toHaveBeenCalled();
+    expect(vi.mocked(vscode.window.showWarningMessage).mock.calls.at(-1)?.[0]).toContain(
+      'nothing was committed while its panel was open',
+    );
+  });
+
+  it('lets commits resume once the stranded reshape has been aborted', async () => {
+    panelThat((handlers) => handlers.abort());
+
+    await runInstVarRefactor(req({ session: session as unknown as ActiveSession }));
+
+    expect(queries.abortSessionTransaction).toHaveBeenCalledOnce();
+    autoCommitAfterWrite(session as unknown as ActiveSession, 'save');
+    expect(commit).toHaveBeenCalled();
+  });
+
+  it('holds nothing back when the apply landed', async () => {
+    vi.mocked(queries.applyInstVar).mockResolvedValue(
+      JSON.stringify({ applied: 2, failed: [], dropped: [], committed: false }),
+    );
+    vi.mocked(showInstVarRefactorPanel).mockImplementation(async (_t, _s, handlers) => {
+      await handlers.apply([], false, false);
+      autoCommitAfterWrite(session as unknown as ActiveSession, 'save');
+      expect(commit).toHaveBeenCalledTimes(1);
+      return undefined;
+    });
+
+    await runInstVarRefactor(req({ session: session as unknown as ActiveSession }));
   });
 });
