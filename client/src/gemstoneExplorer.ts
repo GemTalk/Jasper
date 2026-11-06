@@ -1958,9 +1958,10 @@ export class ExplorerController {
     this.methodProvider.refresh();
     this.syncTitles();
     // Auto-select a default dictionary so the class/category panes are populated on
-    // first open. A programmatic tree selection does NOT fire the view's selection
-    // handler (which is what runs selectDict), so without this the panes stay empty
-    // until the user clicks a dictionary even though one looks highlighted.
+    // first open, instead of staying empty until the user clicks a dictionary. Selecting
+    // it here, not through the dictionary pane's selection handler: the reveal at the end
+    // does fire that handler, but only after a round trip to the window, by which time
+    // the dictionary is already selected and the handler skips it.
     this.autoSelectDefaultDict();
   }
 
