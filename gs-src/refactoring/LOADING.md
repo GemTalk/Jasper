@@ -142,6 +142,11 @@ neither a reinstall nor an uninstall replaces it.
 You can also confirm from the client: the Explorer's rename-instance-variable
 command lights up once the `rbSupportAvailable` probe sees the engine.
 
+A load by hand leaves no receipt of which engine it was, so **GemStone: Show
+Server Support Status** reports the engine as "installed, version unknown" until
+Jasper reinstalls it. (Jasper's install records `#GsRefactoringDigest` and
+`#GsRefactoringInstalledBy` in `GsRefactoring`; every load removes the old pair.)
+
 ## Loading without the bootstrap (advanced)
 
 The bootstrap is only a two-line convenience. Equivalently, from any SystemUser

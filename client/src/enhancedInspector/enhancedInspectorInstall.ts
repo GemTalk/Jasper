@@ -24,6 +24,10 @@
  * Server-side file-in requires the gem to be able to read the files, i.e. share
  * a filesystem with them (a local stone). Remote stones are detected and
  * reported rather than failing cryptically.
+ *
+ * The install also stores a receipt of what was filed in, committed with the
+ * payload, so a later check can tell whether the stone's copy is the one this
+ * Jasper ships (serverPlugin/pluginFingerprint.ts).
  */
 import { ActiveSession } from '../sessionManager';
 import { executeFetchString } from '../browserQueries';
@@ -38,6 +42,7 @@ import {
   yieldToEventLoop,
 } from '../serverPlugin/installHelpers';
 import { explainGciError } from '../gciLibraryError';
+import { Receipt, ReceiptSpec, receiptFor } from '../serverPlugin/pluginFingerprint';
 
 /**
  * Minimum GemStone version the Enhanced Inspector support is limited to.
@@ -107,6 +112,23 @@ export const ENHANCED_INSPECTOR_FILES: readonly string[] = [
   'gt4gemstone.gs',
   'gtoolkit-remote.gs',
 ];
+
+/** Where the Enhanced Inspector's receipt is kept, in its own dictionary. */
+export const ENHANCED_INSPECTOR_RECEIPT: ReceiptSpec = {
+  files: ENHANCED_INSPECTOR_FILES,
+  digestKey: 'GsEnhancedInspectorDigest',
+  installedByKey: 'GsEnhancedInspectorInstalledBy',
+};
+
+/** Server-side snippet storing `receipt` in `GsEnhancedInspector`. */
+function storeReceiptSnippet({ digest, installedBy }: Receipt): string {
+  const { digestKey, installedByKey } = ENHANCED_INSPECTOR_RECEIPT;
+  return `| dict |
+dict := System myUserProfile symbolList detect: [:d | d name == #${ENHANCED_INSPECTOR_DICTIONARY}].
+dict at: #${digestKey} put: ${gsStringLiteral(digest)}.
+dict at: #${installedByKey} put: ${gsStringLiteral(installedBy)}.
+'ok'`;
+}
 
 /**
  * Server-side snippet run once BEFORE the payload file-in: create the dedicated
@@ -374,6 +396,21 @@ export async function installEnhancedInspectorSupport(
     };
   }
 
+  // Hashed from the files the gem is about to read.
+  let receipt: Receipt;
+  try {
+    receipt = receiptFor(ENHANCED_INSPECTOR_RECEIPT, payloadDir);
+  } catch (e: unknown) {
+    return {
+      success: false,
+      committed: false,
+      verified: false,
+      filedIn: [],
+      keptDifferent: [],
+      message: `Could not read the Enhanced Inspector payload in ${payloadDir}: ${messageOf(e)}.`,
+    };
+  }
+
   // Create + share the dedicated dictionary (and migrate any legacy Published
   // copies) before filing in, so the payload's `inDictionary: GsEnhancedInspector`
   // bareword resolves and nothing stale shadows the fresh classes. Then create
@@ -460,6 +497,20 @@ export async function installEnhancedInspectorSupport(
       filedIn,
       keptDifferent: [],
       message: `Could not restore the symbol list order: ${messageOf(e)}. No changes were committed.`,
+    };
+  }
+  // In the same transaction as the file-ins, so it is committed with them.
+  try {
+    executeFetchString(session, storeReceiptSnippet(receipt));
+  } catch (e: unknown) {
+    safeAbort(session);
+    return {
+      success: false,
+      committed: false,
+      verified: false,
+      filedIn,
+      keptDifferent: [],
+      message: `Could not record which payload was installed: ${messageOf(e)}. No changes were committed.`,
     };
   }
   const { success: committed, err } = session.GciTsCommit();

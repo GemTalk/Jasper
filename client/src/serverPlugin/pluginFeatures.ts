@@ -2,12 +2,12 @@
  * Single source of truth for the plugin features the Jasper Server Plugin
  * files into a stone — today the refactoring engine and the Enhanced Inspector.
  *
- * Each entry answers the four questions every consumer needs: which feature is
+ * Each entry answers the questions every consumer needs: which feature is
  * this (`id`/`label`), where does its payload live (`payloadSubdir`, relative to
  * the extension/repo root), does this stone's version support it at all
- * (`isApplicable`), is it actually present right now (`probe`), and how is it
- * filed in (`install`, the bare engine-level installer over an already-elevated
- * SystemUser session).
+ * (`isApplicable`), is it actually present right now (`probe`), is it the one
+ * this Jasper ships (`receipt`), and how is it filed in (`install`, the bare
+ * engine-level installer over an already-elevated SystemUser session).
  *
  * Deliberately `vscode`-free: the CI provisioning script
  * (`bin/install-server-plugin.mjs`) installs from this registry from a plain Node
@@ -25,8 +25,11 @@ import * as path from 'path';
 import { ActiveSession } from '../sessionManager';
 import { checkRefactoringSupportAvailable } from '../browserQueries';
 import { installRefactoringSupport } from '../refactoring/refactoringInstall';
+import { REFACTORING_RECEIPT } from '../refactoring/refactoringPayload';
+import type { ReceiptSpec } from './pluginFingerprint';
 import { uninstallRefactoringSupport } from '../refactoring/refactoringUninstall';
 import {
+  ENHANCED_INSPECTOR_RECEIPT,
   installEnhancedInspectorSupport,
   isEnhancedInspectorInstalled,
   keptDifferentNote,
@@ -72,6 +75,10 @@ export interface PluginFeature {
   isApplicable(stoneVersion: string | undefined): boolean;
   /** Live presence check against the session — a fresh answer, not a cached flag. */
   probe(session: ActiveSession): boolean;
+  /** The session's cached availability flag: no round trip, unlike `probe`. */
+  isAvailable(session: ActiveSession): boolean;
+  /** Which payload files its install fingerprints, and where it keeps the receipt. */
+  receipt: ReceiptSpec;
   /** File the feature in over a write-capable (SystemUser) session. */
   install(
     session: ActiveSession,
@@ -104,6 +111,8 @@ export const pluginFeatures = {
     // signature matches `enhancedInspector.isApplicable` and version-passing callers.
     isApplicable: (_stoneVersion: string | undefined) => true,
     probe: checkRefactoringSupportAvailable,
+    isAvailable: (session: ActiveSession) => session.rbSupportAvailable === true,
+    receipt: REFACTORING_RECEIPT,
     install: async (session: ActiveSession, payloadDir: string, onProgress?: ProgressReporter) => {
       const r = await installRefactoringSupport(session, payloadDir, onProgress);
       return { success: r.success, message: r.message, report: r.report };
@@ -119,6 +128,8 @@ export const pluginFeatures = {
     payloadSubdir: path.join('resources', 'enhancedInspector'),
     isApplicable: (stoneVersion: string | undefined) => supportsEnhancedInspector(stoneVersion),
     probe: isEnhancedInspectorInstalled,
+    isAvailable: (session: ActiveSession) => session.enhancedInspectorAvailable === true,
+    receipt: ENHANCED_INSPECTOR_RECEIPT,
     install: async (session: ActiveSession, payloadDir: string, onProgress?: ProgressReporter) => {
       const r = await installEnhancedInspectorSupport(session, payloadDir, onProgress);
       const report = keptDifferentNote(r.keptDifferent).trim();

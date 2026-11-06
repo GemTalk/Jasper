@@ -12,8 +12,16 @@ vi.mock('../../wslBridge', () => ({
   needsWsl: vi.fn(() => false),
 }));
 
+// The payload directory below doesn't exist; the fingerprint is covered by
+// pluginFingerprint.test.ts against real files.
+vi.mock('../../serverPlugin/pluginFingerprint', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../serverPlugin/pluginFingerprint')>()),
+  receiptFor: vi.fn(() => ({ digest: 'feedface', installedBy: '1.17.0' })),
+}));
+
 import { executeFetchString } from '../../browserQueries';
 import { needsWsl } from '../../wslBridge';
+import { receiptFor } from '../../serverPlugin/pluginFingerprint';
 import {
   installEnhancedInspectorSupport,
   isEnhancedInspectorInstalled,
@@ -123,6 +131,62 @@ describe('installEnhancedInspectorSupport', () => {
     expect(result.verified).toBe(true);
     expect(result.filedIn).toEqual([...ENHANCED_INSPECTOR_FILES]);
     expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  // In the same transaction as the file-ins, so it is committed with them, or
+  // rolled back with them.
+  it('stores the receipt after the last file-in and before the commit', async () => {
+    const { session, commit } = createMockSession();
+    const events: string[] = [];
+    let receiptCode = '';
+    executeFetchStringMock.mockImplementation((s: unknown, code: string) => {
+      if (isFileIn(code)) events.push('file-in');
+      if (code.includes('#GsEnhancedInspectorDigest')) {
+        receiptCode = code;
+        events.push('receipt');
+      }
+      return happyPath(s, code);
+    });
+    commit.mockImplementation(() => {
+      events.push('commit');
+      return { success: true, err: { number: 0, message: '' } };
+    });
+
+    await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
+
+    expect(events.slice(-3)).toEqual(['file-in', 'receipt', 'commit']);
+    expect(receiptCode).toContain("at: #GsEnhancedInspectorDigest put: 'feedface'");
+    expect(receiptCode).toContain("at: #GsEnhancedInspectorInstalledBy put: '1.17.0'");
+  });
+
+  it('commits nothing when the receipt cannot be stored', async () => {
+    const { session, commit, abort } = createMockSession();
+    executeFetchStringMock.mockImplementation((s: unknown, code: string) => {
+      if (code.includes('#GsEnhancedInspectorDigest')) throw new Error('session dropped');
+      return happyPath(s, code);
+    });
+
+    const result = await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
+
+    expect(result.success).toBe(false);
+    expect(commit).not.toHaveBeenCalled();
+    expect(abort).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails without touching the stone when the payload cannot be fingerprinted', async () => {
+    vi.mocked(receiptFor).mockImplementationOnce(() => {
+      throw new Error('EACCES');
+    });
+    const { session, commit } = createMockSession();
+
+    const result = await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
+
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('EACCES');
+    expect(executeFetchStringMock.mock.calls.some(([, code]) => isFileIn(String(code)))).toBe(
+      false,
+    );
+    expect(commit).not.toHaveBeenCalled();
   });
 
   it('creates and shares the dedicated GsEnhancedInspector dictionary before filing in any payload', async () => {

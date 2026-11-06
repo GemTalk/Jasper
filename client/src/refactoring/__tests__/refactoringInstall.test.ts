@@ -10,6 +10,13 @@ vi.mock('../../wslBridge', () => ({
   needsWsl: vi.fn(() => false),
 }));
 
+// The payload directory below doesn't exist; the fingerprint is covered by
+// pluginFingerprint.test.ts against real files.
+vi.mock('../../serverPlugin/pluginFingerprint', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../serverPlugin/pluginFingerprint')>()),
+  receiptFor: vi.fn(() => ({ digest: 'feedface', installedBy: '1.17.0' })),
+}));
+
 import { ActiveSession } from '../../sessionManager';
 import {
   executeFetchString,
@@ -17,6 +24,7 @@ import {
   checkRefactoringSupportAvailable,
 } from '../../browserQueries';
 import { needsWsl } from '../../wslBridge';
+import { receiptFor } from '../../serverPlugin/pluginFingerprint';
 import {
   installRefactoringSupport,
   isRefactoringSupportInstalled,
@@ -168,6 +176,32 @@ describe('installRefactoringSupport', () => {
 
     const runCalls = allCodes().filter((code) => code.includes('loadFromServerDir'));
     expect(runCalls).toHaveLength(1);
+  });
+
+  // The loader stores it in its own transaction, so a failed load (which
+  // aborts) leaves the previous engine's receipt beside the previous engine.
+  it('hands the loader the receipt before it loads', async () => {
+    const { session } = createMockSession();
+
+    await installRefactoringSupport(session, PAYLOAD_DIR);
+
+    const run = findCode((code) => code.includes('loadFromServerDir'));
+    const receiptAt = run.indexOf("receiptDigest: 'feedface' installedBy: '1.17.0'");
+    expect(receiptAt).toBeGreaterThan(-1);
+    expect(receiptAt).toBeLessThan(run.indexOf('loadFromServerDir'));
+  });
+
+  it('fails without touching the stone when the payload cannot be fingerprinted', async () => {
+    vi.mocked(receiptFor).mockImplementationOnce(() => {
+      throw new Error('EACCES');
+    });
+    const { session } = createMockSession();
+
+    const result = await installRefactoringSupport(session, PAYLOAD_DIR);
+
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('EACCES');
+    expect(allCodes().some((code) => code.includes('GsFileIn'))).toBe(false);
   });
 
   it('files in the loader with the UTF-8 signature on a 3.7+ stone', async () => {

@@ -32,6 +32,9 @@
  * filesystem with them (a local stone). Remote stones are detected and reported
  * rather than failing cryptically.
  *
+ * The load also stores a receipt of what was filed in, so a later check can tell
+ * whether the stone's engine is the one this Jasper ships (serverPlugin/pluginFingerprint.ts).
+ *
  * Unlike the Enhanced Inspector, refactoring support is NOT version-gated: the
  * engine and loader are built to load on every supported release (3.6.2 through
  * 3.7.5+). The only version-dependent choice here is the `GsFileIn` signature
@@ -42,6 +45,12 @@ import { executeFetchStringNb, checkRefactoringSupportAvailable } from '../brows
 import { compareGemStoneVersions } from '../gemStoneVersion';
 import { normalizeGemStoneVersion } from '../gemStoneVersionParsing';
 import {
+  REFACTORING_LOADER_FILE,
+  REFACTORING_PAYLOAD_FILES,
+  REFACTORING_RECEIPT,
+} from './refactoringPayload';
+import { receiptFor } from '../serverPlugin/pluginFingerprint';
+import {
   gemCanRead,
   gsStringLiteral,
   messageOf,
@@ -50,26 +59,7 @@ import {
   yieldToEventLoop,
 } from '../serverPlugin/installHelpers';
 
-/**
- * The bootstrap file the client files in itself: it defines `GsRefactoringLoader`
- * (into UserGlobals) and nothing else. Everything after it is filed in by the
- * loader, server-side, in dependency order.
- */
-export const REFACTORING_LOADER_FILE = 'refactoring-loader.gs';
-
-/**
- * Every payload file the gem must be able to read: the loader bootstrap plus the
- * four files `GsRefactoringLoader` files in itself. Used only for the
- * gem-can-read precheck — the client hands the loader the directory and lets it
- * read the rest.
- */
-export const REFACTORING_PAYLOAD_FILES: readonly string[] = [
-  REFACTORING_LOADER_FILE,
-  'ast-core.gs',
-  'compat.gs',
-  'engine.gs',
-  'manifest.gs',
-];
+export { REFACTORING_LOADER_FILE, REFACTORING_PAYLOAD_FILES };
 
 /**
  * First release whose `GsFileIn` understands `#serverUtf8File`. Below it, the
@@ -142,6 +132,18 @@ export async function installRefactoringSupport(
     };
   }
 
+  // Hashed from the files the gem is about to read.
+  let receipt;
+  try {
+    receipt = receiptFor(REFACTORING_RECEIPT, payloadDir);
+  } catch (e: unknown) {
+    return {
+      success: false,
+      report: '',
+      message: `Could not read the refactoring payload in ${payloadDir}: ${messageOf(e)}.`,
+    };
+  }
+
   // Step 1: file in the loader class. Two logical steps (file-in, then run) plus
   // the loader's own work, which reports through the run.
   onProgress('Filing in the refactoring loader…', 25);
@@ -175,7 +177,11 @@ export async function installRefactoringSupport(
       session,
       'refactoring-load',
       '| ldr | ' +
-        `ldr := GsRefactoringLoader loadFromServerDir: ${gsStringLiteral(gemPayloadDir)}. ` +
+        'ldr := GsRefactoringLoader new. ' +
+        // The loader stores the receipt in its own transaction, with the engine.
+        `ldr receiptDigest: ${gsStringLiteral(receipt.digest)} ` +
+        `installedBy: ${gsStringLiteral(receipt.installedBy)}. ` +
+        `ldr loadFromServerDir: ${gsStringLiteral(gemPayloadDir)}. ` +
         "(ldr allOk ifTrue: ['OK'] ifFalse: ['FAIL']), (String with: Character lf), ldr reportString",
     );
   } catch (e: unknown) {

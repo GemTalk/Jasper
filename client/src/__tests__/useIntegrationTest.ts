@@ -1,6 +1,6 @@
 import { GciLibrary } from '../gciLibrary';
 import { createSessionGciLibrary } from '../enhancedInspector/enhancedInspectorPerfTracker';
-import { afterAll, afterEach, beforeAll, beforeEach, expect } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, inject } from 'vitest';
 import { createNativeSocketLibrary } from '../sockets/factory';
 import { NativeSocketLibrary } from '../sockets/nativeSocketLibrary';
 import type { Socket } from 'node:net';
@@ -149,6 +149,10 @@ export function useIntegrationTest(
   beforeAll(async () => {
     const testPath = expect.getState().testPath ?? '';
     configureGemstoneGlobalDir();
+    // From serverPluginMatch.globalSetup.ts; unset in the gci project. Checked
+    // before booking, so a stone with the wrong plugin books no sessions.
+    const pluginMismatch = inject('serverPluginMismatch');
+    if (pluginMismatch) throw new Error(pluginMismatch);
     gate = await acquireSessions(testPath, sessions);
 
     handleIntegrationTestSetupErrorDuring(() => {

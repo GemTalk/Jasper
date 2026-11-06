@@ -126,6 +126,7 @@ import {
   runInstallServerSupport,
   runUninstallServerSupport,
 } from './optionalSupportOffer';
+import { noticeDifferentServerSupport, runShowServerSupportStatus } from './serverSupportStatus';
 import { refreshEnhancedInspectorAvailable } from './enhancedInspector/enhancedInspectorAvailability';
 import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAvailability';
 import { refreshUndoUi } from './undo/undoUi';
@@ -2224,6 +2225,7 @@ export function activate(context: vscode.ExtensionContext) {
     // shows one Install/Always/Never modal, `never` does nothing.
     // Fire-and-forget; no-ops when the stone already has everything applicable.
     void maybeOfferServerSupport(session, sessionManager, context.extensionPath);
+    void noticeDifferentServerSupport(session, context.extensionPath, context.globalState);
   }
 
   context.subscriptions.push(
@@ -2342,6 +2344,10 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.uninstallServerSupport', async () => {
       await runUninstallServerSupport(sessionManager);
+    }),
+
+    vscode.commands.registerCommand('gemstone.showServerSupportStatus', async () => {
+      await runShowServerSupportStatus(sessionManager, context.extensionPath);
     }),
 
     vscode.commands.registerCommand('gemstone.renameTemporary', async (position?: unknown) => {

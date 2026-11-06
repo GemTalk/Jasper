@@ -10,7 +10,7 @@
 doit
 | cls |
 cls := Object subclass: 'GsRefactoringLoader'
-  instVarNames: #('dir' 'report')
+  instVarNames: #('dir' 'report' 'receipt')
   classVars: #()
   classInstVars: #()
   poolDictionaries: #()
@@ -32,6 +32,9 @@ What it does, in order:
      The SAME dictionary object is then shared into every user''s symbol list (the
      Published/Globals mechanism) so the engine is visible to whoever uses the
      client -- not just the installing SystemUser.
+     Then #replaceReceiptIn: removes the old receipt, which Jasper reads to tell
+     whether this is the engine it ships, and stores a new one only when the
+     client sent #receiptDigest:installedBy:. A by-hand load leaves none.
   2. file in the payloads in dependency order, with the dictionary moved to the
      FRONT of the symbol list for the duration (#withDictionaryFirstDo:) and put
      back at the end afterwards. End position is right for normal use but wrong
@@ -94,7 +97,7 @@ stageFromServerDir: aString
 
 	dir := aString.
 	report := OrderedCollection new.
-	[ self ensureDictionary.
+	[ self replaceReceiptIn: self ensureDictionary.
 	  self withDictionaryFirstDo: [
 	    self fileIn: 'ast-core.gs'.
 	    self fileIn: 'compat.gs'.
@@ -106,6 +109,29 @@ stageFromServerDir: aString
 			^self ].
 	self verify.
 	^self
+%
+
+category: 'receipt'
+method: GsRefactoringLoader
+receiptDigest: aDigest installedBy: aVersion
+	"Have this load record a receipt of what it filed in: aDigest, the client's
+	 fingerprint of the payload files, and aVersion, the Jasper version that sent
+	 them. Both are Strings."
+
+	receipt := Array with: aDigest with: aVersion
+%
+
+category: 'receipt'
+method: GsRefactoringLoader
+replaceReceiptIn: aDict
+	"Inside the load's transaction, so an aborted load keeps the previous receipt
+	 beside the previous engine."
+
+	aDict removeKey: #GsRefactoringDigest ifAbsent: [nil].
+	aDict removeKey: #GsRefactoringInstalledBy ifAbsent: [nil].
+	receipt isNil ifTrue: [^self].
+	aDict at: #GsRefactoringDigest put: (receipt at: 1).
+	aDict at: #GsRefactoringInstalledBy put: (receipt at: 2)
 %
 
 category: 'loading'

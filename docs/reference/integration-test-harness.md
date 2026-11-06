@@ -27,12 +27,12 @@ A `login()` from _inside_ a test gets a session of its own, which starts outside
 
 ## Hook order
 
-| Hook         | Does, in order                                                                                                                                                                                                                      |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `beforeAll`  | Book the file's sessions with the session gate → set `GEMSTONE_GLOBAL_DIR` → load the GCI library → login → report its serial to the gate → **arm the commit guard** → `resetNonTransactionalSessionState` → fire `callback`        |
-| `beforeEach` | Poison check (fail fast if a previous test's cleanup failed) → auto re-login if a prior test called `logout()` → `beginTransaction` → open the `allowedCommits` level budget (a no-op at `0`) → `resetNonTransactionalSessionState` |
-| `afterEach`  | **assert the commit guard is still armed** → read the transaction level and unwind every level → `resetNonTransactionalSessionState` → the budget floor check (skipped at `allowedCommits: 0`)                                      |
-| `afterAll`   | logout → **fail if a login was never reported to the gate** → give the booking back → restore `GEMSTONE_GLOBAL_DIR`                                                                                                                 |
+| Hook         | Does, in order                                                                                                                                                                                                                                                                       |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `beforeAll`  | Set `GEMSTONE_GLOBAL_DIR` → fail if the test stone's plugin isn't this checkout's → book the file's sessions with the session gate → load the GCI library → login → report its serial to the gate → **arm the commit guard** → `resetNonTransactionalSessionState` → fire `callback` |
+| `beforeEach` | Poison check (fail fast if a previous test's cleanup failed) → auto re-login if a prior test called `logout()` → `beginTransaction` → open the `allowedCommits` level budget (a no-op at `0`) → `resetNonTransactionalSessionState`                                                  |
+| `afterEach`  | **assert the commit guard is still armed** → read the transaction level and unwind every level → `resetNonTransactionalSessionState` → the budget floor check (skipped at `allowedCommits: 0`)                                                                                       |
+| `afterAll`   | logout → **fail if a login was never reported to the gate** → give the booking back → restore `GEMSTONE_GLOBAL_DIR`                                                                                                                                                                  |
 
 ## `login({ user })` and `withTransientSession`
 
@@ -83,5 +83,8 @@ Declaring `allowedCommits` (see the options table above) opens that many levels 
 ## Running it
 
 - `npm run test:server:start` / `:list` / `:stop` — provision, inspect, and tear down the test stone.
+- `npm run test:server:check-plugin` — check that the test stone's server plugin is this checkout's.
+- `npm run test:server:install-plugin` / `:uninstall-plugin` — install this checkout's server plugin into the test stone, or remove it.
 - `npx vitest run <file>` from `client/` — run a single integration test file.
 - CI runs the suite twice per matrix cell: once against a bare stone, once after installing the Jasper Server Plugin. See `.claude/rules/client/tests.md` for gating a test to one pass.
+- Every run of the `default` project starts with that plugin check (`client/src/__tests__/serverPluginMatch.globalSetup.ts`). A plugin that isn't this checkout's is left alone, since it may be someone's work in progress, and every integration suite fails with the reason; unit tests still run. Install this checkout's with `test:server:install-plugin`. A plugin with no record of which it is gets replaced with this checkout's automatically. Either install commits into the stone, so on a stone shared by several worktrees it changes the plugin the others test against.
