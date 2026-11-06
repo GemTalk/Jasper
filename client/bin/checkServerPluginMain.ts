@@ -9,7 +9,7 @@
 //   2  the stone couldn't be reached; the integration tests report that
 
 import path from 'node:path';
-import dotenv from 'dotenv';
+import { loadTestEnv } from '../src/__tests__/loadTestEnv';
 import { resolveTestConnection } from '../src/__tests__/testConnection';
 import { testActiveSession } from '../src/__tests__/testActiveSession';
 import { GciLibrary } from '../src/gciLibrary';
@@ -22,24 +22,7 @@ import type { ActiveSession } from '../src/activeSession';
 const repoRoot = path.resolve(__dirname, '..', '..');
 const FIX = "Run `npm run test:server:install-plugin` to install this checkout's plugin.";
 
-// The same files, in the same precedence, as vitest reads, so this checks the
-// stone the tests will use: with `override: false` the first file to set a key
-// wins. Every option is pinned because dotenv also reads its options from
-// DOTENV_* variables in the environment, which would otherwise change how these
-// files load; installServerPluginMain.ts has the full explanation.
-for (const file of ['.env.test.local', '.env.test', '.env.local', '.env']) {
-  dotenv.config({
-    path: path.join(repoRoot, 'client', file),
-    encoding: 'utf8',
-    override: false,
-    fast: false,
-    debug: false,
-    quiet: true,
-  });
-}
-if (process.env.VITE_GEMSTONE_GLOBAL_DIR) {
-  process.env.GEMSTONE_GLOBAL_DIR = process.env.VITE_GEMSTONE_GLOBAL_DIR;
-}
+loadTestEnv(path.join(repoRoot, 'client'));
 
 interface Checked {
   label: string;

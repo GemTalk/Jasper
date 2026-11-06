@@ -1,6 +1,6 @@
 // Resolves the connection details the on-demand GCI test suite
 // (`gci/gciTestConfig.ts`), the refactoring integration tests (via
-// `testActiveSession.ts`), and `client/bin/installServerPluginMain.ts` all
+// `testActiveSession.ts`), and the `client/bin` server-plugin scripts all
 // need to reach a live stone.
 //
 // Deliberately imports only `../loginTypes` (verify with a grep on this file
