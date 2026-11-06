@@ -282,6 +282,7 @@ type LoginTreeNode = GemStoneLoginItem | GemStoneSessionItem;
 export class LoginTreeProvider implements vscode.TreeDataProvider<LoginTreeNode> {
   private _onDidChangeTreeData = new vscode.EventEmitter<LoginTreeNode | undefined>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+  private readonly autoCommitListener: { dispose: () => void };
 
   constructor(
     private storage: LoginStorage,
@@ -295,7 +296,12 @@ export class LoginTreeProvider implements vscode.TreeDataProvider<LoginTreeNode>
     // and nothing else would redraw it — the selection has not moved.
     sessionManager?.onDidChangeTransactionState(() => this.refresh());
     // A row carries its session's auto-commit state, so a toggle anywhere has to redraw it.
-    onAutoCommitChanged(() => this.refresh());
+    this.autoCommitListener = onAutoCommitChanged(() => this.refresh());
+  }
+
+  dispose(): void {
+    this.autoCommitListener.dispose();
+    this._onDidChangeTreeData.dispose();
   }
 
   // Logins with a connect attempt in flight, by identity. Held here rather than

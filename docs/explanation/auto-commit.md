@@ -74,7 +74,9 @@ commits once. Three properties matter:
   is not committed yet, so `commitStateNote` answers the not-committed wording whenever the session
   is paused, not only when auto-commit is off.
 - **It nests.** An inner region borrows the outer one's commit, so a file-in that reaches
-  `fileInClass` through `fileInFile` still commits once.
+  `fileInClass` through `fileInFile` still commits once. An inner region that fails is
+  remembered: the outer one then commits nothing either, so a debugger Terminated under another
+  halted one is not committed when the second run finishes.
 
 The rule for a new caller: **if the operation has an all-or-nothing contract, recovers by aborting,
 or is one user gesture that writes several times, it runs deferred.** The third case has a ready-made
@@ -98,8 +100,9 @@ persist half-done work, whoever asked for it:
   halted. When the run finishes, one commit takes all of it; Terminate commits none of it and says
   the next change would.
 - **An instance-variable refactoring whose apply failed.** From the failure until its panel closes,
-  nothing commits, so the panel's **Abort** still has the partial reshape to take back. After an
-  abort, commits resume; closed without one, nothing is committed and the notice says so.
+  nothing commits, so the panel's **Abort** still has the partial reshape to take back. If you
+  saved anything while the panel was up, the Abort asks first, since it discards that too. After
+  an abort, commits resume; closed without one, nothing is committed and the notice says so.
 
 ## What a commit does to Undo (nothing) and to Abort (everything)
 
@@ -175,8 +178,9 @@ third state: armed, and not committing. The row gets its red `!` badge, and the 
 things that are actually useful — abort, read the conflict report, or turn it off. The row's error
 button brings that prompt back; **Toggle Auto-Commit** (palette or right-click) simply turns it off,
 as its name says, and its notice warns that the transaction still conflicts until it is aborted. A manual commit or
-abort that lands settles the transaction, as does a Begin or a transaction-mode switch (both replace
-the session's view), and auto-commit resumes on its own.
+abort that lands settles the transaction, as do the instance-variable panel's Abort, Claude's
+`commit` and `abort` tools, a Begin, and a transaction-mode switch that replaced the session's
+view; auto-commit then resumes on its own.
 
 Jadeite draws the same three-state distinction, with the same abort-or-see-the-conflicts choice, and
 for the same reasons; the vocabulary here is deliberately close to it.

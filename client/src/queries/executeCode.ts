@@ -20,7 +20,8 @@ export function wrapExecuteCode(code: string): string {
 }
 
 /** Whether an answer from {@link wrapExecuteCode} is one of its handlers' error strings. A
- *  successful String answer is a printString, so it starts with a quote, never with this. */
+ *  heuristic: a successful answer whose printString happens to start with `Error: ` (a domain
+ *  object's `printOn:` can write that) reads as raised too, and so is not auto-committed. */
 export function executeCodeRaised(answer: string): boolean {
   return answer.startsWith('Error: ');
 }

@@ -139,6 +139,18 @@ describe('LoginTreeProvider', () => {
       expect(listener).toHaveBeenCalledWith(undefined);
     });
 
+    it('redraws when auto-commit changes, and stops once disposed', () => {
+      const own = new LoginTreeProvider(storage);
+      const refresh = vi.spyOn(own, 'refresh');
+
+      setAutoCommitStatus(41, 'on');
+      expect(refresh).toHaveBeenCalledTimes(1);
+
+      own.dispose();
+      setAutoCommitStatus(41, 'off');
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
+
     it('subscribes to session selection changes', () => {
       const manager = stubSessionManager();
       new LoginTreeProvider(storage, manager);

@@ -17,7 +17,8 @@
 import * as vscode from 'vscode';
 import { ActiveSession } from '../sessionManager';
 import * as queries from '../browserQueries';
-import { holdAutoCommit } from '../autoCommit/autoCommitRunner';
+import { autoCommitTransactionSettled, holdAutoCommit } from '../autoCommit/autoCommitRunner';
+import { hasAutoCommitPending } from '../autoCommit/autoCommitState';
 import { InstVarOp } from './queries/previewInstVar';
 import { Accessor } from './queries/addAccessors';
 import { PREVIEW_PAGE_BYTES } from './queries/previewRenameMethod';
@@ -242,9 +243,23 @@ export async function runInstVarRefactor(
         // the user's other in-flight work). The panel surfaces the failure in place and, when a
         // partial reshape is stranded, offers this abort directly — no toast, no second
         // confirmation.
-        abort: () => {
+        abort: async () => {
+          // The banner priced the abort before anything else was written; a save made since,
+          // held back by the hold above, would be discarded with the reshape.
+          if (hasAutoCommitPending(session.id)) {
+            const DISCARD = 'Abort and Discard';
+            const choice = await vscode.window.showWarningMessage(
+              'Changes you made since the refactoring failed are not committed yet, and Abort ' +
+                'discards them along with the partial reshape.',
+              { modal: true },
+              DISCARD,
+            );
+            if (choice !== DISCARD) return false;
+          }
           queries.abortSessionTransaction(session);
           aborted = true;
+          autoCommitTransactionSettled(session.id);
+          return true;
         },
         // Live re-probe for the commit-confirmation warning — see the panel handler's doc.
         sessionNeedsCommit: () => queries.sessionNeedsCommit(session),

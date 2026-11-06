@@ -146,11 +146,11 @@ import {
   getAutoCommitStatus,
 } from './autoCommit/autoCommitState';
 import {
+  autoCommitTransactionSettled,
   setAutoCommitCommittedHandler,
   setAutoCommitFailureHandler,
 } from './autoCommit/autoCommitRunner';
 import {
-  autoCommitTransactionSettled,
   reportAutoCommitFailure,
   registerAutoCommitSessionHooks,
   setAutoCommitAbortHandler,
@@ -1037,6 +1037,7 @@ export function activate(context: vscode.ExtensionContext) {
   // the rows show no MCP state at all.
   let mcpOwnership: () => McpOwnership | undefined = () => undefined;
   const treeProvider = new LoginTreeProvider(storage, sessionManager, () => mcpOwnership());
+  context.subscriptions.push(treeProvider);
   // The acceptance harness seeds a plain-text login into most runs, and this
   // toast would sit over every one of them.
   if (!process.env.GEMSTONE_SUPPRESS_PASSWORD_OFFER) {

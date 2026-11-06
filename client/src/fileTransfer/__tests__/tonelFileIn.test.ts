@@ -86,6 +86,15 @@ beforeEach(() => {
 });
 
 describe('applyTonelClass — the class definition', () => {
+  // A file with no methods still wrote the class, and the report needs to know it did.
+  it('says whether the definition went in', () => {
+    expect(applyTonelClass(SESSION, widget(), 'UserGlobals').defined).toBe(true);
+    vi.mocked(queries.compileClassDefinition).mockImplementationOnce(() => {
+      throw new Error('bad superclass');
+    });
+    expect(applyTonelClass(SESSION, widget(), 'UserGlobals').defined).toBe(false);
+  });
+
   it('creates the class in the dictionary it was given', () => {
     applyTonelClass(SESSION, widget(), 'UserGlobals');
     expect(definitionSource()).toContain('inDictionary: UserGlobals');

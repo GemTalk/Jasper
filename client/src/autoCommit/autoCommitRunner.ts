@@ -14,9 +14,11 @@ import {
   isAutoCommitArmed,
   isAutoCommitSuspended,
   markAutoCommitPending,
+  markAutoCommitRegionFailed,
   resumeAutoCommit,
   setAutoCommitStatus,
   suspendAutoCommit,
+  takeAutoCommitRegionFailed,
 } from './autoCommitState';
 
 /** What a write did about auto-commit. Only tests read it. */
@@ -133,26 +135,31 @@ export function autoCommitAfterWrite(session: ActiveSession, what: string): Auto
  *
  * A region that FAILED commits nothing, deliberately: its caller may be about to abort as a
  * rollback, and a commit on the way out would leave that abort rewinding to a repository that
- * already held the half-applied change.
+ * already held the half-applied change. An inner failure is remembered, so an outer region
+ * that succeeds (a second debugger's run finishing) does not commit it after all.
  */
 function settleDeferred(session: ActiveSession, succeeded: boolean, what: string): boolean {
-  // False for an inner level, and for a session logged out mid-region (a logout clears its
-  // suspension), which must not be committed on.
-  if (!resumeAutoCommit(session.id)) return false;
+  if (!resumeAutoCommit(session.id)) {
+    // An inner level. (Also a session logged out mid-region, which is no longer suspended.)
+    if (succeeded || !isAutoCommitSuspended(session.id)) return false;
+    markAutoCommitRegionFailed(session.id);
+    return hasAutoCommitPending(session.id);
+  }
+  const ok = !takeAutoCommitRegionFailed(session.id) && succeeded;
   const owed = hasAutoCommitPending(session.id);
   clearAutoCommitPending(session.id);
   if (!owed) return false;
-  if (succeeded && isAutoCommitArmed(session.id)) {
+  if (ok && isAutoCommitArmed(session.id)) {
     commitNow(session, what);
     return false;
   }
-  if (!succeeded) {
+  if (!ok) {
     logWarning(
       `[autoCommit] session ${session.id}: the ${what} failed, so its changes were ` +
         'left uncommitted for the caller to abort or retry',
     );
   }
-  return !succeeded;
+  return !ok;
 }
 
 /**
@@ -176,6 +183,21 @@ export function holdAutoCommit(
   };
 }
 
+/** The part both region forms share: a hold, closed by whether the answer was accepted. */
+function openRegion<T>(session: ActiveSession, what: string, succeeded: (answer: T) => boolean) {
+  const release = holdAutoCommit(session, what);
+  let ok = false;
+  return {
+    landed(answer: T): T {
+      ok = succeeded(answer);
+      return answer;
+    },
+    close(): void {
+      release(ok);
+    },
+  };
+}
+
 /**
  * Run an operation that must commit as one unit, or not at all: one commit when it finishes
  * and `succeeded` accepts its answer, none when it throws or is rejected. Nests: an inner
@@ -187,14 +209,11 @@ export async function runWithAutoCommitDeferred<T>(
   run: () => T | Promise<T>,
   succeeded: (answer: T) => boolean = () => true,
 ): Promise<T> {
-  const release = holdAutoCommit(session, what);
-  let ok = false;
+  const region = openRegion(session, what, succeeded);
   try {
-    const answer = await run();
-    ok = succeeded(answer);
-    return answer;
+    return region.landed(await run());
   } finally {
-    release(ok);
+    region.close();
   }
 }
 
@@ -208,14 +227,11 @@ export function runWithAutoCommitDeferredSync<T>(
   run: () => T,
   succeeded: (answer: T) => boolean = () => true,
 ): T {
-  const release = holdAutoCommit(session, what);
-  let ok = false;
+  const region = openRegion(session, what, succeeded);
   try {
-    const answer = run();
-    ok = succeeded(answer);
-    return answer;
+    return region.landed(run());
   } finally {
-    release(ok);
+    region.close();
   }
 }
 
@@ -240,4 +256,15 @@ export function runRawWritesWithAutoCommit<T>(
     },
     succeeded,
   );
+}
+
+/**
+ * A commit or abort that succeeded has settled the transaction the auto-commit failure was
+ * stuck on, so auto-commit resumes. Called wherever a commit or abort runs outside auto-commit:
+ * the Commit and Abort commands, the inst-var panel's Abort, and MCP's commit and abort tools.
+ */
+export function autoCommitTransactionSettled(sessionId: number): void {
+  if (getAutoCommitStatus(sessionId) !== 'failed') return;
+  setAutoCommitStatus(sessionId, 'on');
+  logInfo(`[autoCommit] session ${sessionId}: transaction settled, auto-commit resumed`);
 }

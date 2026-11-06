@@ -21,10 +21,10 @@ import {
   registerSessionAutoCommit,
   setAutoCommitStatus,
 } from '../autoCommitState';
+import { autoCommitTransactionSettled } from '../autoCommitRunner';
 import {
   AUTO_COMMIT_DEFAULT_SETTING,
   autoCommitDefaultForNewSessions,
-  autoCommitTransactionSettled,
   autoCommitTransactionModeChanged,
   offerAutoCommitRecovery,
   recoverAutoCommit,

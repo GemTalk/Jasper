@@ -505,3 +505,52 @@ describe('the commit-state notes', () => {
     expect(heldBackNote(1)).toContain('Nothing was committed. Abort to discard it');
   });
 });
+
+/**
+ * An inner region that failed must not be committed by an outer one that succeeds: two halted
+ * debuggers, the first Terminated, the second run to the end.
+ */
+describe('a failed region nested in one that succeeds', () => {
+  it('commits nothing when the outer region closes, and says the inner one held work back', () => {
+    const commit = vi.fn(() => OK);
+    registerSessionAutoCommit(1, true);
+    const session = makeSession(1, commit);
+    const outer = holdAutoCommit(session, 'run finished in the Debugger');
+    const inner = holdAutoCommit(session, 'run finished in the Debugger');
+    autoCommitAfterWrite(session, 'halted run');
+
+    expect(inner(false)).toBe(true);
+    outer(true);
+
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('commits again normally once that outermost region has closed', () => {
+    const commit = vi.fn(() => OK);
+    registerSessionAutoCommit(1, true);
+    const session = makeSession(1, commit);
+    const outer = holdAutoCommit(session, 'x');
+    holdAutoCommit(session, 'y')(false);
+    outer(true);
+
+    autoCommitAfterWrite(session, 'save');
+    expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies to the region forms too, sync inside async', async () => {
+    const commit = vi.fn(() => OK);
+    registerSessionAutoCommit(1, true);
+    const session = makeSession(1, commit);
+
+    await runWithAutoCommitDeferred(session, 'outer', () =>
+      runWithAutoCommitDeferredSync(
+        session,
+        'inner',
+        () => autoCommitAfterWrite(session, 'w'),
+        () => false,
+      ),
+    );
+
+    expect(commit).not.toHaveBeenCalled();
+  });
+});

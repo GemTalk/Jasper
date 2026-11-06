@@ -69,7 +69,9 @@ import { registerMcpTools } from '../mcpTools';
 import { ActiveSession } from '../sessionManager';
 import {
   _resetAutoCommitStateForTests,
+  getAutoCommitStatus,
   registerSessionAutoCommit,
+  setAutoCommitStatus,
 } from '../autoCommit/autoCommitState';
 import { setAutoCommitFailureHandler } from '../autoCommit/autoCommitRunner';
 import { fakeActiveSession } from './fakeActiveSession';
@@ -1000,6 +1002,38 @@ describe('registerMcpTools', () => {
       await server.getTool('execute_code')!.handler({ code: 'nil foo' });
 
       expect(commit).not.toHaveBeenCalled();
+    });
+
+    // A commit or abort from Claude settles a failed auto-commit, as the Commit and Abort
+    // commands do.
+    it('resumes a failed auto-commit after the commit tool lands', async () => {
+      registerSessionAutoCommit(1, true);
+      setAutoCommitStatus(1, 'failed');
+      vi.mocked(queries.executeFetchString).mockReturnValue('committed');
+
+      await server.getTool('commit')!.handler({});
+
+      expect(getAutoCommitStatus(1)).toBe('on');
+    });
+
+    it('leaves a failed auto-commit failed when the commit tool is refused', async () => {
+      registerSessionAutoCommit(1, true);
+      setAutoCommitStatus(1, 'failed');
+      vi.mocked(queries.executeFetchString).mockReturnValue('refused');
+
+      await server.getTool('commit')!.handler({});
+
+      expect(getAutoCommitStatus(1)).toBe('failed');
+    });
+
+    it('resumes a failed auto-commit after the abort tool', async () => {
+      registerSessionAutoCommit(1, true);
+      setAutoCommitStatus(1, 'failed');
+      vi.mocked(queries.executeFetchString).mockReturnValue('Transaction aborted');
+
+      await server.getTool('abort')!.handler({});
+
+      expect(getAutoCommitStatus(1)).toBe('on');
     });
 
     it('commits nothing on a session that never armed it', async () => {

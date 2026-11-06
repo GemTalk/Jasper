@@ -29,6 +29,7 @@ import { releaseObjs } from '../debugger/debugQueries';
 import type { ActiveSession } from '../activeSession';
 import { SessionManager } from '../sessionManager';
 import { fakeActiveSession } from './fakeActiveSession';
+import { getAutoCommitStatus, registerSessionAutoCommit } from '../autoCommit/autoCommitState';
 
 const panels = {
   EnhancedInspector,
@@ -72,6 +73,20 @@ describe('registerSessionTeardown', () => {
     }
     expect(breakpoints.clearAllForSession.mock.calls).toEqual([[7]]);
     expect(stepPointHints.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  // A debugger that closes at logout must not tell the user to Abort a session that is gone.
+  it('forgets the session’s auto-commit state before its debuggers close', () => {
+    registerSessionTeardown(sessions, breakpoints, stepPointHints);
+    registerSessionAutoCommit(7, true);
+    let statusWhenDebuggersClosed: string | undefined;
+    vi.mocked(DebuggerPanel.disposeForSession).mockImplementationOnce(() => {
+      statusWhenDebuggersClosed = getAutoCommitStatus(7);
+    });
+
+    removeSession(7);
+
+    expect(statusWhenDebuggersClosed).toBe('off');
   });
 
   it('forgets the session’s pins, and only that session’s', () => {

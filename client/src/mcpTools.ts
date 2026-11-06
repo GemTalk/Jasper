@@ -6,7 +6,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { ActiveSession } from './sessionManager';
 import * as queries from './browserQueries';
-import { autoCommitAfterWrite } from './autoCommit/autoCommitRunner';
+import { autoCommitAfterWrite, autoCommitTransactionSettled } from './autoCommit/autoCommitRunner';
 import { isAutoCommitArmed } from './autoCommit/autoCommitState';
 import * as sunit from './sunitQueries';
 import * as python from './pythonQueries';
@@ -205,7 +205,9 @@ export function registerMcpTools(
     {},
     async () =>
       wrapMoving<Record<string, unknown>>((session) => {
-        return executeString(session, `System abortTransaction. 'Transaction aborted'`);
+        const answer = executeString(session, `System abortTransaction. 'Transaction aborted'`);
+        autoCommitTransactionSettled(session.id);
+        return answer;
       })({}),
   );
 
@@ -228,7 +230,9 @@ export function registerMcpTools(
       wrapMoving<Record<string, unknown>>((session) => {
         // Through the shared query rather than inline, so a refusal here names the
         // conflicting objects exactly as the session-row Commit does.
-        return commitTransaction((code) => executeString(session, code));
+        const answer = commitTransaction((code) => executeString(session, code));
+        if (answer === 'Transaction committed') autoCommitTransactionSettled(session.id);
+        return answer;
       })({}),
   );
 

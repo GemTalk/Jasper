@@ -65,6 +65,9 @@ export interface FileInOutcome {
   compiled: number;
   /** `removeAllMethods` directives applied. */
   removed: number;
+  /** Class definitions a Tonel file wrote. Absent for the chunk path, which counts them as
+   *  chunks run. */
+  defined?: number;
   /** Files read, including any reached through `input`. */
   files: number;
   /** Topaz commands recognised as the topaz program's own — `login`, `output`,
@@ -117,6 +120,7 @@ function absorb(into: FileInOutcome, from: FileInOutcome): void {
   into.executed += from.executed;
   into.compiled += from.compiled;
   into.removed += from.removed;
+  into.defined = (into.defined ?? 0) + (from.defined ?? 0);
   into.files += from.files;
   into.ignored.push(...from.ignored);
   into.skipped.push(...from.skipped);
@@ -428,7 +432,7 @@ async function report(session: ActiveSession, outcome: FileInOutcome): Promise<v
     `${outcome.compiled} method(s), ${outcome.executed} chunk(s) from ` +
     `${outcome.files} file(s)`;
   const SHOW_LOG = 'Show Log';
-  const wrote = outcome.executed + outcome.compiled + outcome.removed > 0;
+  const wrote = outcome.executed + outcome.compiled + outcome.removed + (outcome.defined ?? 0) > 0;
 
   if (outcome.errors.length > 0) {
     const first = outcome.errors[0];

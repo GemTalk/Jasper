@@ -21,7 +21,9 @@ import type { ActiveSession } from '../../sessionManager';
 import type { ApplyResult } from '../instVarRefactorPreview';
 import {
   _resetAutoCommitStateForTests,
+  getAutoCommitStatus,
   registerSessionAutoCommit,
+  setAutoCommitStatus,
 } from '../../autoCommit/autoCommitState';
 import { autoCommitAfterWrite } from '../../autoCommit/autoCommitRunner';
 
@@ -206,7 +208,7 @@ describe('add / remove instance variable command', () => {
     vi.mocked(showInstVarRefactorPanel).mockResolvedValue(undefined);
 
     await runInstVarRefactor(req());
-    vi.mocked(showInstVarRefactorPanel).mock.calls[0][2].abort();
+    await vi.mocked(showInstVarRefactorPanel).mock.calls[0][2].abort();
 
     expect(queries.abortSessionTransaction).toHaveBeenCalledOnce();
   });
@@ -481,13 +483,65 @@ describe('a stranded apply on an auto-commit session', () => {
   });
 
   it('lets commits resume once the stranded reshape has been aborted', async () => {
-    panelThat((handlers) => handlers.abort());
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce('Abort and Discard' as never);
+    let done: unknown;
+    panelThat((handlers) => {
+      done = handlers.abort();
+    });
+    await Promise.resolve();
 
     await runInstVarRefactor(req({ session: session as unknown as ActiveSession }));
+    await done;
 
     expect(queries.abortSessionTransaction).toHaveBeenCalledOnce();
     autoCommitAfterWrite(session as unknown as ActiveSession, 'save');
     expect(commit).toHaveBeenCalled();
+  });
+
+  it('asks before an Abort that would discard saves made since the failure', async () => {
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce(undefined);
+    let answered: unknown;
+    panelThat((handlers) => {
+      answered = handlers.abort();
+    });
+
+    await runInstVarRefactor(req({ session: session as unknown as ActiveSession }));
+
+    expect(await answered).toBe(false);
+    expect(vi.mocked(vscode.window.showWarningMessage).mock.calls[0][0]).toContain(
+      'Changes you made since the refactoring failed are not committed yet',
+    );
+    expect(queries.abortSessionTransaction).not.toHaveBeenCalled();
+  });
+
+  it('aborts without asking when nothing was saved since the failure', async () => {
+    vi.mocked(showInstVarRefactorPanel).mockImplementation(async (_t, _s, handlers) => {
+      await handlers.apply([], false, false);
+      await handlers.abort();
+      return undefined;
+    });
+
+    await runInstVarRefactor(req({ session: session as unknown as ActiveSession }));
+
+    expect(vscode.window.showWarningMessage).not.toHaveBeenCalledWith(
+      expect.stringContaining('not committed yet'),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(queries.abortSessionTransaction).toHaveBeenCalledOnce();
+  });
+
+  it('lets a failed auto-commit resume after its Abort', async () => {
+    setAutoCommitStatus(1, 'failed');
+    vi.mocked(showInstVarRefactorPanel).mockImplementation(async (_t, _s, handlers) => {
+      await handlers.apply([], false, false);
+      await handlers.abort();
+      return undefined;
+    });
+
+    await runInstVarRefactor(req({ session: session as unknown as ActiveSession }));
+
+    expect(getAutoCommitStatus(1)).toBe('on');
   });
 
   it('holds nothing back when the apply landed', async () => {

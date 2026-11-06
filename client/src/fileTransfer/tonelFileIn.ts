@@ -53,6 +53,8 @@ export interface TonelApplyOutcome {
   className: string;
   /** The symbol dictionary written to. */
   dictionary: string;
+  /** Whether the class definition compiled, so the class itself was written. */
+  defined: boolean;
   /** Methods compiled. */
   compiled: number;
   /** Everything that went wrong, in the order it was found. */
@@ -151,6 +153,7 @@ export function applyTonelClass(
   const outcome: TonelApplyOutcome = {
     className: tonelClass.name,
     dictionary,
+    defined: false,
     compiled: 0,
     errors: [],
   };
@@ -211,6 +214,7 @@ export function applyTonelClass(
   } catch (e) {
     return fail(`Could not define ${tonelClass.name}: ${message(e)}`);
   }
+  outcome.defined = true;
 
   // Tonel's #category is not carried by any creation selector — GemStone ships no
   // `…inDictionary:category:` form (verified on a 3.7.5 rowan3 stone) — so it is
@@ -409,6 +413,7 @@ export function fileInPreparedTonel(
     'file-in',
     () => {
       const applied = applyTonelClass(session, tonelClass, dictionary);
+      outcome.defined = applied.defined ? 1 : 0;
       outcome.compiled = applied.compiled;
       outcome.errors.push(
         ...applied.errors.map((e) => ({

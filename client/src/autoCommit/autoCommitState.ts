@@ -19,6 +19,9 @@ const suspensions = new Map<number, number>();
  *  outermost suspension lifts. */
 const pending = new Set<number>();
 
+/** Sessions where an inner region closed as failed, so the outermost one must not commit. */
+const failedRegions = new Set<number>();
+
 const listeners = new Set<AutoCommitListener>();
 
 function notify(): void {
@@ -64,6 +67,7 @@ export function registerSessionAutoCommit(sessionId: number, enabled: boolean): 
   statuses.set(sessionId, enabled ? 'on' : 'off');
   suspensions.delete(sessionId);
   pending.delete(sessionId);
+  failedRegions.delete(sessionId);
   notify();
 }
 
@@ -73,6 +77,7 @@ export function forgetSessionAutoCommit(sessionId: number): void {
   statuses.delete(sessionId);
   suspensions.delete(sessionId);
   pending.delete(sessionId);
+  failedRegions.delete(sessionId);
   if (had) notify();
 }
 
@@ -108,11 +113,21 @@ export function clearAutoCommitPending(sessionId: number): void {
   pending.delete(sessionId);
 }
 
+export function markAutoCommitRegionFailed(sessionId: number): void {
+  failedRegions.add(sessionId);
+}
+
+/** Whether an inner region failed since the outermost one opened; clears the mark. */
+export function takeAutoCommitRegionFailed(sessionId: number): boolean {
+  return failedRegions.delete(sessionId);
+}
+
 /** Wipe every session's state. Tests only. */
 export function _resetAutoCommitStateForTests(): void {
   statuses.clear();
   suspensions.clear();
   pending.clear();
+  failedRegions.clear();
   listeners.clear();
 }
 

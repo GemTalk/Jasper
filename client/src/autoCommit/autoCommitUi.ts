@@ -347,13 +347,3 @@ export function reportAutoCommitFailure(
   }
   void offerAutoCommitRecovery(session, reason, abortHandler, kind);
 }
-
-/**
- * A manual commit or abort that succeeded has settled the transaction the auto-commit
- * failure was stuck on, so auto-commit resumes. Called from the Commit and Abort commands.
- */
-export function autoCommitTransactionSettled(sessionId: number): void {
-  if (getAutoCommitStatus(sessionId) !== 'failed') return;
-  setAutoCommitStatus(sessionId, 'on');
-  logInfo(`[autoCommit] session ${sessionId}: transaction settled, auto-commit resumed`);
-}

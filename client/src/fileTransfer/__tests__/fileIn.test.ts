@@ -723,6 +723,8 @@ describe('choosing a reader by file type', () => {
     resolveSession: () => Promise.resolve(SESSION),
   } as unknown as SessionManager;
 
+  beforeEach(() => resetAutoCommit());
+
   // Through `at()`, like every other fixture path in this file. A raw '/tmp/x.gs'
   // string is keyed by `path.resolve` as `D:\tmp\x.gs` on Windows while the Uri the
   // code under test receives answers `d:\tmp\x.gs` — so the mock filesystem never
@@ -793,6 +795,31 @@ describe('choosing a reader by file type', () => {
 
     expect(queries.fileInChunk).toHaveBeenCalled();
     expect(tonel.prepareTonelFile).toHaveBeenCalled();
+  });
+
+  // A Tonel file that only redefines the class (no methods) still wrote something, and the
+  // note telling the user to commit it must stay.
+  it('says a Tonel file that only redefined the class is not committed', async () => {
+    withFiles({ [WIDGET_ST]: "Class {\n\t#name : 'Widget'\n}\n" });
+    tonelAnswers({
+      executed: 0,
+      compiled: 0,
+      removed: 0,
+      defined: 1,
+      files: 1,
+      ignored: [],
+      askedToCommit: false,
+      skipped: [],
+      errors: [],
+      stopped: false,
+      cancelled: false,
+    });
+
+    await fileInUris(manager, [vscode.Uri.file(WIDGET_ST)], undefined, SESSION);
+
+    expect(vi.mocked(vscode.window.showInformationMessage).mock.calls.at(-1)?.[0]).toContain(
+      'Not committed — commit the session to keep it.',
+    );
   });
 
   // Every Tonel question is asked before anything is written, so dismissing one files in
