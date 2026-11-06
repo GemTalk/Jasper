@@ -30,5 +30,6 @@ export function endGemAfterTest(admin: () => ActiveSession, own: ActiveSession):
     while (stillOnStone(admin(), serial) && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 25));
     }
-  });
+    // vitest's default 10 s hookTimeout would end this hook before its own 10 s deadline.
+  }, 15_000);
 }

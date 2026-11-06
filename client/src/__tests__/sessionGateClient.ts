@@ -11,6 +11,23 @@ declare module 'vitest' {
   }
 }
 
+/** Sends `message` to the gate and resolves with its one-line reply. */
+function request<T>(socket: Socket, message: object): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let buffer = '';
+    const onData = (chunk: Buffer) => {
+      buffer += chunk.toString();
+      const nl = buffer.indexOf('\n');
+      if (nl < 0) return;
+      socket.off('data', onData);
+      resolve(JSON.parse(buffer.slice(0, nl)) as T);
+    };
+    socket.on('data', onData);
+    socket.once('error', reject);
+    socket.write(JSON.stringify(message) + '\n');
+  });
+}
+
 // One per useIntegrationTest call that is running; nested describes can hold several.
 const held: Socket[] = [];
 
@@ -19,15 +36,11 @@ export async function acquireSessions(file: string, n: number): Promise<Socket |
   const path = inject('sessionGateSocket');
   if (!path) return undefined;
   const socket = createConnection(path);
-  const answer = await new Promise<{ granted?: boolean; error?: string }>((resolve, reject) => {
-    let buffer = '';
-    socket.on('data', (chunk) => {
-      buffer += chunk.toString();
-      const nl = buffer.indexOf('\n');
-      if (nl >= 0) resolve(JSON.parse(buffer.slice(0, nl)));
-    });
-    socket.on('error', reject);
-    socket.write(JSON.stringify({ op: 'acquire', file, n, pid: process.pid }) + '\n');
+  const answer = await request<{ granted?: boolean; error?: string }>(socket, {
+    op: 'acquire',
+    file,
+    n,
+    pid: process.pid,
   });
   if (answer.error) {
     socket.destroy();
@@ -143,19 +156,7 @@ type GateVerdict = {
  */
 export async function assertBookingKept(socket: Socket | undefined): Promise<void> {
   if (!socket) return;
-  const answer = await new Promise<GateVerdict>((resolve, reject) => {
-    let buffer = '';
-    const onData = (chunk: Buffer) => {
-      buffer += chunk.toString();
-      const nl = buffer.indexOf('\n');
-      if (nl < 0) return;
-      socket.off('data', onData);
-      resolve(JSON.parse(buffer.slice(0, nl)));
-    };
-    socket.on('data', onData);
-    socket.once('error', reject);
-    socket.write(JSON.stringify({ op: 'check' }) + '\n');
-  });
+  const answer = await request<GateVerdict>(socket, { op: 'check' });
   if (answer.error) throw new Error(`Session gate: ${answer.error}`);
   const problems: string[] = [];
   if (answer.unreported.length > 0) {

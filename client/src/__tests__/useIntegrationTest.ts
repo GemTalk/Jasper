@@ -148,8 +148,8 @@ export function useIntegrationTest(
   // callers assign the values into their own variables before any test runs.
   beforeAll(async () => {
     const testPath = expect.getState().testPath ?? '';
-    gate = await acquireSessions(testPath, sessions);
     configureGemstoneGlobalDir();
+    gate = await acquireSessions(testPath, sessions);
 
     handleIntegrationTestSetupErrorDuring(() => {
       nativeSocketLibrary = createNativeSocketLibrary();

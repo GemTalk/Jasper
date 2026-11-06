@@ -318,7 +318,6 @@ function startGciWatcher(
   const lookMs: number[] = [];
   let timer: NodeJS.Timeout | undefined;
   let stopped = false;
-  let failed = false;
 
   const look = () => {
     const started = performance.now();
@@ -336,7 +335,6 @@ function startGciWatcher(
     try {
       look();
     } catch (error) {
-      failed = true;
       onFail(error);
       return;
     }
@@ -352,12 +350,7 @@ function startGciWatcher(
     stop: () => {
       stopped = true;
       clearTimeout(timer);
-      try {
-        gci.logout(session);
-      } catch (error) {
-        // After a failed look the session is usually already gone.
-        if (!failed) throw error;
-      }
+      gci.logout(session);
     },
     freshLoginSerial: () => {
       const fresh = login();
