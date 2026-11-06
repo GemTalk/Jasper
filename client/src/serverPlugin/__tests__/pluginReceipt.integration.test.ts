@@ -28,7 +28,7 @@ describe('server plugin receipts (integration)', () => {
       handle = testContext.session;
       login = testContext.login;
     },
-    { allowedCommits: 1 },
+    { allowedCommits: 1, sessions: 2 },
   );
   const session = (): ActiveSession => testActiveSession(gci, handle);
   const repoRoot = path.resolve(__dirname, '..', '..', '..', '..');

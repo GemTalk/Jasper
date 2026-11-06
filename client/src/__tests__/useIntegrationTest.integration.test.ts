@@ -17,13 +17,16 @@ describe('integration test harness commit guard (integration)', () => {
   let logout: GciTestContext['logout'];
   let withTransientSession: GciTestContext['withTransientSession'];
 
-  useIntegrationTest((testContext) => {
-    gci = testContext.gciLibrary;
-    session = testContext.session;
-    login = testContext.login;
-    logout = testContext.logout;
-    withTransientSession = testContext.withTransientSession;
-  });
+  useIntegrationTest(
+    (testContext) => {
+      gci = testContext.gciLibrary;
+      session = testContext.session;
+      login = testContext.login;
+      logout = testContext.logout;
+      withTransientSession = testContext.withTransientSession;
+    },
+    { sessions: 2 },
+  );
 
   const commitGuardIsArmedOn = (aSession: unknown) => gci.areCommitsDisabledUntilLogout(aSession);
 
@@ -109,7 +112,7 @@ describe('allowedCommits budget (integration)', () => {
       logout = testContext.logout;
       withTransientSession = testContext.withTransientSession;
     },
-    { allowedCommits: 3 },
+    { allowedCommits: 3, sessions: 2 },
   );
 
   const isVisibleToOtherSessions = (key: string): boolean => {
@@ -175,6 +178,20 @@ describe('allowedCommits configuration', () => {
     (allowedCommits) => {
       expect(declaringASuiteWithAllowedCommits(allowedCommits)).toThrow(
         `allowedCommits must be a non-negative whole number, but got ${allowedCommits}`,
+      );
+    },
+  );
+});
+
+describe('sessions configuration', () => {
+  const declaringASuiteWithSessions = (sessions: number) => () =>
+    useIntegrationTest(() => {}, { sessions });
+
+  it.each([0, -1, 1.5, NaN, Infinity])(
+    'refuses to book %s sessions, which is not a whole count of at least one',
+    (sessions) => {
+      expect(declaringASuiteWithSessions(sessions)).toThrow(
+        `sessions must be a whole number of at least 1, but got ${sessions}`,
       );
     },
   );

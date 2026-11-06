@@ -1,0 +1,420 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import { REFUSAL_REPORT_SLACK_MS, SessionLedger, testFileName } from './sessionGateLedger';
+
+// Watcher samples are login serial -> GCI client process id.
+const stone = (...sessions: [serial: string, pid: number][]) => new Map(sessions);
+
+describe('the session gate ledger', () => {
+  let now: number;
+  let ledger: SessionLedger<string>;
+
+  beforeEach(() => {
+    now = 1_000;
+    ledger = new SessionLedger<string>(9, () => now);
+    ledger.sample(stone());
+  });
+
+  const book = (key: string, n: number, pid = 100) => {
+    ledger.request(key, { file: `/x/client/${key}.test.ts`, pid, n });
+    return ledger.grant();
+  };
+
+  describe('booking', () => {
+    it('books nothing before the watcher has looked at the stone', () => {
+      const fresh = new SessionLedger<string>(9, () => now);
+      fresh.request('a', { file: 'a', pid: 1, n: 1 });
+
+      const granted = fresh.grant();
+
+      expect(granted).toEqual([]);
+    });
+
+    it('books files in arrival order while they fit', () => {
+      const first = book('a', 4);
+      const second = book('b', 4);
+
+      expect([first, second]).toEqual([['a'], ['b']]);
+      expect(ledger.committed()).toBe(8);
+    });
+
+    it('keeps a file waiting when its booking does not fit', () => {
+      book('a', 4);
+      book('b', 4);
+
+      const granted = book('c', 2);
+
+      expect(granted).toEqual([]);
+    });
+
+    it('keeps a small request behind a large one that does not fit yet', () => {
+      book('a', 8);
+      book('big', 3);
+
+      const granted = book('small', 1);
+
+      expect(granted).toEqual([]);
+    });
+
+    it('books the waiting files in arrival order once there is room', () => {
+      book('a', 8);
+      book('big', 3);
+      book('small', 1);
+
+      ledger.release('a');
+
+      expect(ledger.grant()).toEqual(['big', 'small']);
+    });
+
+    it('gives a released booking to the next in line', () => {
+      book('a', 9);
+      book('b', 2);
+
+      ledger.release('a');
+
+      expect(ledger.grant()).toEqual(['b']);
+    });
+
+    it('drops a request that is withdrawn before it is booked', () => {
+      book('a', 9);
+      book('b', 2);
+
+      const withdrawn = ledger.withdraw('b');
+      ledger.release('a');
+
+      expect(withdrawn).toBe(true);
+      expect(ledger.grant()).toEqual([]);
+    });
+
+    it('counts a session no running file reported as taken', () => {
+      ledger.sample(stone(['7', 999], ['8', 999]));
+
+      const granted = book('a', 8);
+
+      expect(ledger.committed()).toBe(2);
+      expect(granted).toEqual([]);
+    });
+
+    it("keeps counting a released file's gem while it is on the stone", () => {
+      book('a', 2);
+      ledger.opened('a', '10');
+      ledger.sample(stone(['10', 100]));
+
+      ledger.release('a');
+
+      expect(ledger.committed()).toBe(1);
+    });
+
+    it("stops counting a released file's gem once it has left the stone", () => {
+      book('a', 2);
+      ledger.opened('a', '10');
+      ledger.sample(stone(['10', 100]));
+      ledger.release('a');
+
+      ledger.sample(stone());
+
+      expect(ledger.committed()).toBe(0);
+    });
+  });
+
+  describe('a file over its booking', () => {
+    // A books 2, B 3, C 4: all 9. B has 2 of its 3 open, so A's 3rd login fits on the stone.
+    beforeEach(() => {
+      book('A', 2, 1);
+      book('B', 3, 2);
+      book('C', 4, 3);
+      for (const [key, serials] of [
+        ['A', ['1', '2', '3']],
+        ['B', ['4', '5']],
+        ['C', ['6', '7', '8', '9']],
+      ] as const) {
+        for (const serial of serials) ledger.opened(key, serial);
+      }
+      ledger.sample(
+        stone(
+          ['1', 1],
+          ['2', 1],
+          ['3', 1],
+          ['4', 2],
+          ['5', 2],
+          ['6', 3],
+          ['7', 3],
+          ['8', 3],
+          ['9', 3],
+        ),
+      );
+    });
+
+    it('counts what it has on the stone, not what it booked', () => {
+      const committed = ledger.committed();
+
+      expect(committed).toBe(10);
+    });
+
+    it("doesn't give the next file the slot it is using", () => {
+      ledger.release('B');
+      ledger.sample(stone(['1', 1], ['2', 1], ['3', 1], ['6', 3], ['7', 3], ['8', 3], ['9', 3]));
+
+      const granted = [book('D', 3, 4), book('E', 2, 5)];
+
+      expect(granted).toEqual([[], []]);
+    });
+
+    it('is reported with what it booked and the most it had logged in', () => {
+      const ofFile = ledger.overBudgetOf('A');
+      const ofRun = ledger.overBudget().get('/x/client/A.test.ts');
+
+      expect(ofFile).toEqual({ booked: 2, seen: 3 });
+      expect(ofRun).toEqual({ booked: 2, seen: 3 });
+    });
+
+    it('stays reported after it drops back within its booking', () => {
+      ledger.sample(stone(['1', 1]));
+
+      const reported = ledger.overBudgetOf('A');
+
+      expect(reported).toEqual({ booked: 2, seen: 3 });
+    });
+
+    it('is the only one reported', () => {
+      const others = [ledger.overBudgetOf('B'), ledger.overBudgetOf('C')];
+
+      expect(others).toEqual([undefined, undefined]);
+    });
+  });
+
+  describe('a session that has logged out but whose gem is still on the stone', () => {
+    beforeEach(() => {
+      book('a', 1);
+      ledger.opened('a', '10');
+      ledger.sample(stone(['10', 100]));
+      ledger.closed('a', '10');
+      ledger.opened('a', '11');
+      ledger.sample(stone(['10', 100], ['11', 100]));
+    });
+
+    it("doesn't count against its file's booking", () => {
+      const overBudget = ledger.overBudgetOf('a');
+
+      expect(overBudget).toBeUndefined();
+    });
+
+    it('still counts as taken', () => {
+      const committed = ledger.committed();
+
+      expect(committed).toBe(2);
+    });
+
+    it('counts against the booking while still logged in', () => {
+      ledger.opened('a', '12');
+
+      ledger.sample(stone(['10', 100], ['11', 100], ['12', 100]));
+
+      expect(ledger.overBudgetOf('a')).toEqual({ booked: 1, seen: 2 });
+    });
+  });
+
+  describe('unreported logins', () => {
+    beforeEach(() => {
+      book('a', 2, 100);
+      book('b', 2, 200);
+      ledger.opened('a', '10');
+      ledger.sample(stone(['10', 100], ['11', 100], ['12', 200]));
+    });
+
+    it('are answered for the file whose worker made them', () => {
+      const answers = [ledger.unreportedFrom('a'), ledger.unreportedFrom('b')];
+
+      expect(answers.map((a) => a.map((u) => u.serial))).toEqual([['11'], ['12']]);
+    });
+
+    it('are answered only once', () => {
+      ledger.unreportedFrom('a');
+
+      const again = ledger.unreportedFrom('a');
+
+      expect(again).toEqual([]);
+    });
+  });
+
+  describe('logins outside the bookings', () => {
+    it('are not blamed on a file for sessions already on the stone before the run', () => {
+      const fresh = new SessionLedger<string>(9, () => now);
+      fresh.sample(stone(['5', 100]));
+      fresh.request('a', { file: 'a', pid: 100, n: 1 });
+      fresh.grant();
+      fresh.sample(stone(['5', 100]));
+
+      const unreported = fresh.unreportedFrom('a');
+
+      expect(unreported).toEqual([]);
+    });
+
+    it('are answered as already on the stone by the first look', () => {
+      const fresh = new SessionLedger<string>(9, () => now);
+
+      const leftOver = fresh.sample(stone(['5', 100]));
+
+      expect(leftOver).toEqual(stone(['5', 100]));
+    });
+
+    it('made by a test worker after its booking are left as stray', () => {
+      book('a', 1, 100);
+      ledger.release('a');
+
+      ledger.sample(stone(['20', 100], ['21', 555]));
+
+      expect(ledger.stray()).toEqual([{ serial: '20', pid: 100 }]);
+    });
+  });
+
+  describe('a refused login', () => {
+    it('seen on the stone before it was refused is not an unreported login', () => {
+      book('a', 1, 100);
+      ledger.sample(stone(['11', 100]));
+      ledger.refused('a');
+
+      const unreported = ledger.unreportedFrom('a');
+
+      expect(unreported).toEqual([]);
+      expect(ledger.stray()).toEqual([]);
+    });
+
+    it("excuses only one session, and only its own worker's", () => {
+      book('a', 2, 100);
+      book('b', 2, 200);
+      ledger.sample(stone(['11', 100], ['12', 100], ['13', 200]));
+      ledger.refused('a');
+
+      const answers = [ledger.unreportedFrom('a'), ledger.unreportedFrom('b')];
+
+      expect(answers.map((a) => a.map((u) => u.serial))).toEqual([['12'], ['13']]);
+    });
+
+    it('once matched to a session, no longer excuses a gap', () => {
+      book('a', 1, 100);
+      ledger.opened('a', '10');
+      ledger.sample(stone(['10', 100], ['11', 100]));
+      ledger.refused('a');
+      ledger.unreportedFrom('a');
+      now += 100;
+      ledger.opened('a', '13');
+
+      const unseen = ledger.loginsNeverSeen(9, 14);
+
+      expect(unseen.map((m) => m.serial)).toEqual([12]);
+    });
+  });
+
+  describe('logins too short for the watcher to see', () => {
+    it('ignore a session the watcher saw with no serial yet', () => {
+      book('a', 1);
+      ledger.opened('a', '11');
+      ledger.sample(stone(['0', 100], ['11', 100]));
+
+      const unseen = ledger.loginsNeverSeen(10, 12);
+
+      expect(unseen).toEqual([]);
+    });
+
+    it('are found as gaps in the login serials, with the files running then', () => {
+      book('a', 2);
+      ledger.opened('a', '11');
+      now += 100;
+      ledger.opened('a', '13');
+
+      const unseen = ledger.loginsNeverSeen(10, 14);
+
+      expect(unseen.map(({ serial, running }) => ({ serial, running }))).toEqual([
+        { serial: 12, running: ['a.test.ts'] },
+      ]);
+    });
+
+    it('are answered with the known serials either side, and how each became known', () => {
+      book('a', 2);
+      ledger.opened('a', '11');
+      now += 100;
+      ledger.sample(stone(['13', 100]));
+
+      const [unseen] = ledger.loginsNeverSeen(10, 14);
+
+      expect([unseen.after, unseen.before]).toEqual([
+        { serial: 11, at: 1_000, how: 'reported' },
+        { serial: 13, at: 1_100, how: 'seen' },
+      ]);
+    });
+
+    it('are excused one each by a refusal reported near them', () => {
+      book('a', 2);
+      ledger.opened('a', '11');
+      now += 100;
+      ledger.refused('a');
+      ledger.opened('a', '14');
+
+      const unseen = ledger.loginsNeverSeen(10, 15);
+
+      expect(unseen.map((m) => m.serial)).toEqual([13]);
+    });
+
+    it('are not excused by a refusal long before them', () => {
+      book('a', 2);
+      ledger.refused('a');
+      now += REFUSAL_REPORT_SLACK_MS + 1_000;
+      ledger.opened('a', '11');
+      now += 100;
+      ledger.opened('a', '13');
+
+      const unseen = ledger.loginsNeverSeen(undefined, 14);
+
+      expect(unseen.map((m) => m.serial)).toEqual([12]);
+    });
+
+    it('list the refusals reported near them, with what each was matched to', () => {
+      book('a', 2);
+      ledger.sample(stone(['11', 100]));
+      ledger.refused('a');
+      ledger.unreportedFrom('a');
+      ledger.refused('a');
+      now += REFUSAL_REPORT_SLACK_MS + 1_000;
+      ledger.opened('a', '12');
+      now += 100;
+      ledger.opened('a', '14');
+
+      const [unseen] = ledger.loginsNeverSeen(10, 15);
+
+      expect(unseen.serial).toBe(13);
+      expect(unseen.refusalsNearby).toEqual([
+        {
+          at: 1_000,
+          pid: 100,
+          file: '/x/client/a.test.ts',
+          matchedTo: 'login serial 11, seen on the stone',
+        },
+        { at: 1_000, pid: 100, file: '/x/client/a.test.ts' },
+      ]);
+    });
+  });
+
+  describe('times', () => {
+    it('are given as seconds into the run', () => {
+      now += 1_234;
+
+      const text = ledger.secondsIn(now);
+
+      expect(text).toBe('1.23 s');
+    });
+  });
+});
+
+describe('a test file name', () => {
+  it('is its path from the client folder on', () => {
+    const name = testFileName('/home/runner/work/Jasper/Jasper/client/src/a.test.ts');
+
+    expect(name).toBe('src/a.test.ts');
+  });
+
+  it('is the whole path when it is outside the client folder', () => {
+    const name = testFileName('/elsewhere/a.test.ts');
+
+    expect(name).toBe('/elsewhere/a.test.ts');
+  });
+});

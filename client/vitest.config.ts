@@ -87,7 +87,9 @@ export default defineConfig({
           exclude: ['src/__tests__/gci/**'],
           globalSetup: [
             'src/__tests__/gciTraceLogs.globalSetup.ts',
+            // Before the gate: the check's own login would count as one no file reported.
             'src/__tests__/serverPluginMatch.globalSetup.ts',
+            'src/__tests__/sessionGate.globalSetup.ts',
           ],
           setupFiles: [
             'src/__tests__/vitest.windowSetup.cjs',

@@ -10,13 +10,16 @@ describe('GCI session utilities (integration)', () => {
   let logout: GciTestContext['logout'];
   let withTransientSession: GciTestContext['withTransientSession'];
 
-  useIntegrationTest((testContext) => {
-    gci = testContext.gciLibrary;
-    session = testContext.session;
-    login = testContext.login;
-    logout = testContext.logout;
-    withTransientSession = testContext.withTransientSession;
-  });
+  useIntegrationTest(
+    (testContext) => {
+      gci = testContext.gciLibrary;
+      session = testContext.session;
+      login = testContext.login;
+      logout = testContext.logout;
+      withTransientSession = testContext.withTransientSession;
+    },
+    { sessions: 2 },
+  );
 
   // GciTsKeyfilePermissions requires SystemUser. Runs after the harness's own
   // beforeAll, so this swaps its default login for a SystemUser one that the

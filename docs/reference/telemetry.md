@@ -7,6 +7,10 @@ stored, and how users turn it off, see
 Events go to Azure Application Insights and are kept for 90 days. Nothing is
 sent when a user sets VS Code's `telemetry.telemetryLevel` to `off`.
 
+The dashboards (Azure Workbooks) and saved queries over these events are kept
+in an internal GemTalk repo; ask the team for access. A change to an event or
+property here needs the matching dashboard queries updated there.
+
 ## On every event
 
 | Property        | Values                                                                             | Meaning                                                                  |
