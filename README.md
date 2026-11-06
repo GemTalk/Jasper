@@ -301,7 +301,8 @@ Installing the support does not by itself change what **Inspect It** opens. The 
 
 When code execution hits an error, a **Debug** button opens the GemStone
 Debugger — a Smalltalk-style panel in its own editor column, with the frame's
-source in the pane directly below it:
+source in the pane directly below it. A halt in a Smalltalk notebook cell, or a
+breakpoint in a method the cell calls, opens it directly:
 
 - Full stack trace with `ClassName >> #selector` frame names
 - The top frame's source opens with the debugger; selecting another frame swaps it
@@ -546,6 +547,8 @@ Jasper registers notebook kernels for `.ipynb` files, in two languages: GemStone
 **Open Notebook**, next to **Open Workspace** in the **Logins & Sessions** title bar, opens a blank untitled Smalltalk notebook. A notebook running a GemStone kernel, other than the tutorial itself, has **Learn Smalltalk** in its toolbar, which opens the Smalltalk syntax tutorial (also **GemStone: Learn Smalltalk** in the Command Palette).
 
 **GemStone Smalltalk** runs each cell as an independent doit — multi-statement bodies are fine, and the value of the last statement is printed as the cell output. There is no notebook-local variable scope (Smalltalk has no REPL globals concept); state persists the way it does everywhere else in the session, e.g. `UserGlobals at: #x put: ...`, class definitions, and commits.
+
+A Smalltalk cell that calls a method with a breakpoint in it, or runs `self halt`, opens the GemStone Debugger, and the cell waits while you debug. Resume or step to the end and the cell shows its result; close the debugger and the cell says "Stopped.". Other errors are still reported in the cell's output.
 
 **Grail (GemStone Python)** requires [Grail](https://github.com/GemTalk/Grail) (GemStone-Python) in your stone:
 

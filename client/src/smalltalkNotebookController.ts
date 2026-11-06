@@ -1,21 +1,37 @@
 import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from './sessionManager';
-import { wrapExecuteCode } from './queries/executeCode';
+import { wrapCellCode } from './queries/executeCode';
 import { GemStoneNotebookKernel, GEMSTONE_NOTEBOOK_TYPE } from './gemstoneNotebookKernel';
 import { startClientForwarderMode, endClientForwarderMode, settleNbResult } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
-import { NbRunOptions, runNbCall, whenSessionFree } from './nbRunner';
+import { NbCancelledError, NbRunOptions, runNbCall, whenSessionFree } from './nbRunner';
 import { failCell, fetchCellResult } from './notebookCellResult';
-import { OOP_ILLEGAL, OOP_NIL, OOP_CLASS_UTF8 } from './gciConstants';
+import {
+  GCI_PERFORM_FLAG_ENABLE_DEBUG,
+  GCI_PERFORM_FLAG_INTERPRETED,
+  GS_ERR_HALT,
+  OOP_ILLEGAL,
+  OOP_NIL,
+  OOP_CLASS_UTF8,
+  toBigInt,
+} from './gciConstants';
 import { SMALLTALK_LANGUAGE } from './languageIds';
 import { sessionKernelId } from './sessionKernels';
 import { SESSION_BUSY_MESSAGE } from './gciLibraryError';
+import {
+  BREAKPOINT_ERROR,
+  CONTINUE_FLAGS,
+  resolveBreakpointStop,
+} from './debugger/conditionalBreakpoints';
+import { clearStack } from './debugger/debugQueries';
+import { DebuggerPanel } from './debugger/debuggerPanel';
 
 // GemStone Smalltalk as a Jupyter kernel — see gemstoneNotebookKernel.ts for
-// the Jupyter integration mechanics. Each cell is an independent doit (the
-// same contract as the MCP execute_code tool): the cell's last statement
-// value is printed as the output, and wrapExecuteCode's guards report
-// compile/runtime errors inline as `Error: <class> — <messageText>`.
+// the Jupyter integration mechanics. Each cell is an independent doit: the
+// cell's last statement value is printed as the output, and wrapCellCode's
+// guards report runtime errors inline as `Error: <class> — <messageText>`.
+// A halt or a breakpoint opens the GemStone Debugger instead, and the cell
+// waits on it: resumed to completion, it shows the result; closed, it stops.
 //
 // Unlike the Grail kernel there is no synthetic cross-cell scope: Smalltalk
 // has no REPL module-scope concept — undeclared variables are compile-time
@@ -31,6 +47,40 @@ export const SMALLTALK_CONTROLLER_LABEL = 'GemStone Smalltalk';
 // offered no breakpoint gutter (see client/src/languageIds.ts).
 export const SMALLTALK_LANGUAGE_ID = SMALLTALK_LANGUAGE;
 
+/** A debugger a stopped cell waits on. */
+export interface CellDebugSession {
+  /** The cell's result oop once the process runs to completion; rejects with NbCancelledError once it is terminated. */
+  result: Promise<bigint>;
+  close(): void;
+}
+
+export type OpenCellDebugger = (
+  session: ActiveSession,
+  gsProcess: bigint,
+  message: string,
+) => CellDebugSession;
+
+export const openCellDebugger: OpenCellDebugger = (session, gsProcess, message) => {
+  let panel: DebuggerPanel | undefined;
+  const result = new Promise<bigint>((resolve, reject) => {
+    try {
+      panel = DebuggerPanel.create(session, gsProcess, message, resolve, () =>
+        reject(new NbCancelledError()),
+      );
+    } catch (e) {
+      // Nothing owns the suspended process, so release it.
+      const fail = (): void => reject(e);
+      void clearStack(session, gsProcess).then(fail, fail);
+    }
+  });
+  return { result, close: () => panel?.close() };
+};
+
+interface CellStop {
+  gsProcess: bigint;
+  message: string;
+}
+
 // Cells run on the NON-BLOCKING execute path in clientForwarder mode, so
 // `Transcript show:` output streams to the GemStone Transcript channel while
 // the cell runs (and a long cell doesn't freeze the extension host).
@@ -38,64 +88,84 @@ export async function evalSmalltalk(
   session: ActiveSession,
   source: string,
   onStart?: NbRunOptions['onStart'],
+  openDebugger: OpenCellDebugger = openCellDebugger,
 ): Promise<string> {
   // Before any GCI call: a stopped call still on the session would make GemStone
   // refuse clientForwarder mode's start, and while a worker still owns the
   // session a call from here could kill the process.
-  return await whenSessionFree(session, () => runCell(session, source, onStart));
+  const outcome = await whenSessionFree(session, () => runCell(session, source, onStart));
+  if (typeof outcome === 'string') return outcome;
+
+  const debugging = openDebugger(session, outcome.gsProcess, outcome.message);
+  let stopped = false;
+  onStart?.(
+    () => {
+      stopped = true;
+      debugging.close();
+    },
+    () => stopped,
+  );
+  return fetchCellResult(session, await debugging.result);
 }
 
 async function runCell(
   session: ActiveSession,
   source: string,
   onStart: NbRunOptions['onStart'],
-): Promise<string> {
+): Promise<string | CellStop> {
   if (session.isBusy()) {
     throw new Error(SESSION_BUSY_MESSAGE);
   }
 
-  const code = wrapExecuteCode(source);
+  const code = wrapCellCode(source);
   appendTranscriptOutput(startClientForwarderMode(session, code));
   try {
-    const resultOop = await runNbCall(
+    const outcome = await runNbCall(
       session,
       () => {
         // OOP_CLASS_UTF8 declares the source bytes UTF-8, so cells with
         // non-ASCII literals compile correctly (same convention as
-        // browserQueries.executeFetchString).
+        // browserQueries.executeFetchString). INTERPRETED as well as
+        // ENABLE_DEBUG: GemStone can't step a process that started native.
         const { success, err } = session.GciTsNbExecute(
           code,
           OOP_CLASS_UTF8,
           OOP_ILLEGAL,
           OOP_NIL,
-          0,
+          GCI_PERFORM_FLAG_ENABLE_DEBUG | GCI_PERFORM_FLAG_INTERPRETED,
           0,
         );
         return { success, err };
       },
-      async (signal) => {
-        const { result, err } = await settleNbResult(
-          session,
-          (text) => appendTranscriptOutput(text),
-          signal,
-        );
-        if (err.number !== 0) {
-          // Clear the stopped process before giving up on it. This is
-          // defensive: wrapExecuteCode wraps every cell in `on: AbstractException
-          // do:`, so an ordinary error -- doesNotUnderstand, halt, ZeroDivide,
-          // even a cancel -- comes back inline with err.number 0 and never gets
-          // here (all four checked against a live 3.6.2 stone). What does get
-          // here is a stop that bypasses Smalltalk handlers -- not a method
-          // breakpoint, though: the 0 flags above run the cell with debugging
-          // disabled, so a breakpoint never stops it (notebookBreakpointHint.ts
-          // says so in each cell). If a stop that bypasses the handlers lands
-          // inside a Transcript write, the process holds the session's Transcript
-          // semaphore, and there is no notebook debugger to hand it to, so
-          // leaving it suspended leaks both (#646). Execute It makes the same
-          // call after the user declines its Debug prompt.
-          return await failCell(session, err);
+      async (signal): Promise<bigint | CellStop> => {
+        const onTranscript = (text: string): void => appendTranscriptOutput(text);
+        // Resuming after a Transcript write with flags 0 would disarm every
+        // breakpoint after the first write.
+        const { result, err } = await settleNbResult(session, onTranscript, signal, CONTINUE_FLAGS);
+        if (err.number === 0) return result;
+        const context = toBigInt(err.context);
+        const message = err.message || `GCI error ${err.number}`;
+        if (err.number === GS_ERR_HALT && context !== OOP_NIL && context !== 0n) {
+          return { gsProcess: context, message };
         }
-        return result;
+        if (err.number === BREAKPOINT_ERROR && context !== OOP_NIL && context !== 0n) {
+          // A breakpoint's rules may pass this stop, moving the run on to
+          // another stop or to completion.
+          const stop = await resolveBreakpointStop(session, context, message, {
+            signal,
+            onTranscript,
+          });
+          if (stop.kind === 'completed') return stop.resultOop;
+          if (stop.cancelled) {
+            await clearStack(session, stop.context);
+            throw new NbCancelledError();
+          }
+          return { gsProcess: stop.context, message: stop.message };
+        }
+        // wrapCellCode reports every other Smalltalk error inline, so this is
+        // a stop that got past its handlers. Left suspended inside a Transcript
+        // write, the process would keep the session's Transcript semaphore (#646).
+        return await failCell(session, err);
       },
       {
         title: 'GemStone: Running cell…',
@@ -108,8 +178,8 @@ async function runCell(
       },
     );
 
-    // wrapExecuteCode printStrings server-side, so the result IS a string.
-    return fetchCellResult(session, resultOop);
+    // wrapCellCode printStrings server-side, so the result IS a string.
+    return typeof outcome === 'bigint' ? fetchCellResult(session, outcome) : outcome;
   } finally {
     appendTranscriptOutput(endClientForwarderMode(session));
   }

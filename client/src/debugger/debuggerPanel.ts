@@ -1576,6 +1576,7 @@ export class DebuggerPanel {
   private activeNbCancel: (() => void) | undefined;
   /** Cancel was clicked for the current op; later clicks do nothing. */
   private cancelRequested = false;
+  private resultHandedOver = false;
   /** Set in dispose() so an in-flight Nb op's continuation skips touching a dead panel. */
   private disposed = false;
 
@@ -1600,13 +1601,16 @@ export class DebuggerPanel {
    *   completes via Resume or step-to-completion (e.g. so a halted Display It
    *   can render its result back in the workspace). Omitted when there's no
    *   result to surface (Execute It, or a halt not originating from a doit).
+   * @param onClosed called when the panel closes without having handed a result
+   *   to `onComplete`, once the process it owned has been cleared.
    */
   static create(
     session: ActiveSession,
     gsProcess: bigint,
     errorMessage: string,
     onComplete?: (resultOop: bigint) => void,
-  ): void {
+    onClosed?: () => void,
+  ): DebuggerPanel {
     // Placement is decided here, once, rather than assembled from focus-dependent
     // steps: open into a brand-new group at the END of the grid (an explicit
     // column number — never ViewColumn.Beside, whose direction is the user's
@@ -1627,7 +1631,14 @@ export class DebuggerPanel {
     );
     const icon = DebuggerPanel.tabIcon();
     if (icon) panel.iconPath = icon;
-    const debugger_ = new DebuggerPanel(panel, session, gsProcess, errorMessage, onComplete);
+    const debugger_ = new DebuggerPanel(
+      panel,
+      session,
+      gsProcess,
+      errorMessage,
+      onComplete,
+      onClosed,
+    );
     // Seed the remembered column from the one we asked for, so teardown has an
     // answer even for a panel that closed before anything read it off the panel.
     debugger_.cachedPanelColumn = panelColumn;
@@ -1651,6 +1662,12 @@ export class DebuggerPanel {
     // started interpreted (GCI_PERFORM_FLAG_INTERPRETED at execution start —
     // GemStone can't step native code, error 6014) and every step/continue
     // perform carries the same flag (STEP_FLAGS in debugQueries).
+    return debugger_;
+  }
+
+  /** Close the panel, terminating the process it owns. */
+  close(): void {
+    this.panel.dispose();
   }
 
   static disposeForSession(sessionId: number): void {
@@ -1668,6 +1685,7 @@ export class DebuggerPanel {
     // Mutable: resume-into-another-error updates it; step/restart clear it.
     private errorMessage: string,
     private readonly onComplete?: (resultOop: bigint) => void,
+    private readonly onClosed?: () => void,
   ) {
     this.panel = panel;
     this.sessionId = session.id;
@@ -3468,7 +3486,10 @@ export class DebuggerPanel {
     // Show Transcript output the completing run buffered (harmlessly empty if
     // an onComplete callback drains again).
     appendTranscriptOutput(drainTranscript(this.session));
-    if (result.resultOop != null) this.onComplete?.(result.resultOop);
+    if (result.resultOop != null && this.onComplete) {
+      this.resultHandedOver = true;
+      this.onComplete(result.resultOop);
+    }
     this.panel.dispose();
   }
 
@@ -5283,7 +5304,8 @@ export class DebuggerPanel {
     // Closing the panel implicitly terminates the suspended process it owned,
     // releasing the stalled GsProcess on the server (same as dismissing the
     // error notifier). clearStack is best-effort: the session may already be gone.
-    void debug.clearStack(this.session, this.gsProcess);
+    const closed = this.resultHandedOver ? undefined : this.onClosed;
+    void debug.clearStack(this.session, this.gsProcess).then(closed, closed);
   }
 
   /**

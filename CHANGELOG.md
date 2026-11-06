@@ -4,6 +4,10 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Added
+
+- **A Smalltalk notebook cell stops at breakpoints and `self halt`.** A cell that calls a method with a breakpoint in it, or runs `self halt`, opens the GemStone Debugger, the same way Execute It does, and waits while you step or inspect. Resume or step to the end, and the cell shows the result it would have shown. Close the debugger or press the cell's stop, and the cell says "Stopped." and the cells queued after it don't run. Errors such as `doesNotUnderstand` or `ZeroDivide` still appear in the cell's output, as before. The **Breakpoints not honored** note on each Smalltalk cell is gone. ([#559](https://github.com/GemTalk/Jasper/issues/559))
+
 ### Changed
 
 - **Logins live only in your user settings.** A folder that kept its own list of logins in `.vscode/settings.json` used to hide yours, while Jasper went on saving to yours: a login you added seemed to vanish, an edit didn't show, and a deleted login stayed in the list. Jasper and VS Code now ignore a login list in a folder's settings, so Logins & Sessions always shows the logins it saves. If you kept logins in a folder's settings, add them again in Logins & Sessions, then delete the list from that folder's `.vscode/settings.json`, especially if it holds passwords and the file is shared through git. The `gemstone.logins` setting now says how to copy your logins to another machine. ([#794](https://github.com/GemTalk/Jasper/issues/794))

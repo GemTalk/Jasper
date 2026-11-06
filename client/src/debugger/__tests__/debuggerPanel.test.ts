@@ -76,7 +76,7 @@ vi.mock('../debugQueries', () => ({
   stepThruNb: vi.fn(async () => ({ completed: false })),
   trimStackToLevel: vi.fn(),
   trimStackToLevelNb: vi.fn(async () => {}),
-  clearStack: vi.fn(),
+  clearStack: vi.fn(() => Promise.resolve()),
   // Create-method-from-DNU detection — defaults to "not a DNU" (no Create button).
   getDoesNotUnderstandInfo: vi.fn(() => undefined),
   // Implement-in-receiver (override): the receiver's inheritance chain (default
@@ -4451,6 +4451,47 @@ describe('DebuggerPanel', () => {
 
       expect(onComplete).not.toHaveBeenCalled();
       expect(panel.dispose).not.toHaveBeenCalled();
+    });
+
+    // A notebook cell waits on its debugger: it has to hear that the process
+    // was terminated, and only once it is, so the next cell finds the session free.
+    it('calls onClosed once the process is cleared when the panel closes without finishing', async () => {
+      let cleared = (): void => {};
+      vi.mocked(debug.clearStack).mockReturnValueOnce(
+        new Promise((resolve) => (cleared = resolve)),
+      );
+      const onComplete = vi.fn();
+      const onClosed = vi.fn();
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG, onComplete, onClosed);
+
+      closePanel(lastPanel());
+      await tick();
+      expect(onClosed).not.toHaveBeenCalled();
+      cleared();
+      await tick();
+
+      expect(onClosed).toHaveBeenCalledTimes(1);
+      expect(onComplete).not.toHaveBeenCalled();
+    });
+
+    it('does NOT call onClosed after handing a result to onComplete', async () => {
+      vi.mocked(resumeOnWorker).mockResolvedValueOnce({ completed: true, resultOop: 0x55n });
+      const onClosed = vi.fn();
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG, vi.fn(), onClosed);
+      sendReady(lastPanel());
+      sendMessage(lastPanel(), { command: 'resume' });
+      await tick();
+      await tick();
+
+      expect(onClosed).not.toHaveBeenCalled();
+    });
+
+    it('close() closes the panel', () => {
+      const handle = DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+
+      handle.close();
+
+      expect(lastPanel().dispose).toHaveBeenCalled();
     });
 
     it('does NOT silently drop a second op while one is in flight — it posts a busy notice', async () => {

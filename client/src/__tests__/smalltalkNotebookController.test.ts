@@ -10,6 +10,9 @@ vi.mock('../nbRunner', async (orig) => {
   const actual = await orig<typeof import('../nbRunner')>();
   return { ...actual, runNbCall: vi.fn(actual.runNbCall) };
 });
+vi.mock('../debugger/debuggerPanel', () => ({
+  DebuggerPanel: { create: vi.fn(() => ({ close: vi.fn() })) },
+}));
 
 import {
   notebooks,
@@ -27,6 +30,8 @@ import { MAX_CELL_RESULT } from '../notebookCellResult';
 import { runNbCall, type NbRunOptions } from '../nbRunner';
 import { SessionManager } from '../sessionManager';
 import { SMALLTALK_LANGUAGE } from '../languageIds';
+import { DebuggerPanel } from '../debugger/debuggerPanel';
+import { GCI_PERFORM_FLAG_ENABLE_DEBUG, GCI_PERFORM_FLAG_INTERPRETED } from '../gciConstants';
 import { fakeActiveSession, startNonBlockingCall } from './fakeActiveSession';
 
 // Cells run on the non-blocking execute path in clientForwarder mode. The mock
@@ -107,9 +112,8 @@ describe('SmalltalkNotebookController', () => {
     ctrl.dispose();
   });
 
-  // Each cell is an independent doit through wrapExecuteCode — the same
-  // contract as the MCP execute_code tool: block-wrapped, stack-guarded,
-  // printString of the last statement's value.
+  // Each cell is an independent doit through wrapCellCode: block-wrapped,
+  // stack-guarded, printString of the last statement's value.
   it('executes a cell as a guarded doit and shows the printString result', async () => {
     const gci = makeGci();
     const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
@@ -191,11 +195,73 @@ describe('SmalltalkNotebookController', () => {
     ctrl.dispose();
   });
 
+  it('runs the cell with debugging on, interpreted so the debugger can step it', async () => {
+    const gci = makeGci();
+    const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
+
+    await runCells([makeCell('3 + 4')]);
+
+    expect(gci.GciTsNbExecute.mock.calls[0][5]).toBe(
+      GCI_PERFORM_FLAG_ENABLE_DEBUG | GCI_PERFORM_FLAG_INTERPRETED,
+    );
+    ctrl.dispose();
+  });
+
+  describe('a cell that reaches a halt', () => {
+    const halted = () =>
+      makeGci({
+        GciTsNbResult: vi.fn(() => ({
+          result: 0n,
+          err: { number: 2709, message: 'a Halt occurred (error 2709)', context: 0x99n },
+        })),
+        GciTsFetchUtf8: vi.fn(() => ({ data: '3', err: { number: 0 } })),
+      });
+    const debuggerCallbacks = () => {
+      const call = vi.mocked(DebuggerPanel.create).mock.lastCall!;
+      return { onComplete: call[3]!, onClosed: call[4]! };
+    };
+
+    it('opens the debugger on the halted process, and shows the result it resumes to', async () => {
+      const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(halted())));
+
+      const running = runCells([makeCell('self halt. 3')]);
+      await vi.waitFor(() => expect(DebuggerPanel.create).toHaveBeenCalled());
+      expect(vi.mocked(DebuggerPanel.create).mock.lastCall![1]).toBe(0x99n);
+      expect(executionAt(0).end).not.toHaveBeenCalled();
+      debuggerCallbacks().onComplete(0x55n);
+      await running;
+
+      const execution = executionAt(0);
+      expect(execution.end).toHaveBeenCalledWith(true, expect.any(Number));
+      const item = execution.replaceOutput.mock.lastCall[0][0].items[0];
+      expect(new TextDecoder().decode(item.data)).toBe('3');
+      ctrl.dispose();
+    });
+
+    // As the cell's own stop does: a run the user ended stops the cells after it.
+    it('ends the cell as Stopped, and runs no more cells, when the debugger is closed', async () => {
+      const gci = halted();
+      const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
+
+      const running = runCells([makeCell('self halt. 3'), makeCell('4')]);
+      await vi.waitFor(() => expect(DebuggerPanel.create).toHaveBeenCalled());
+      debuggerCallbacks().onClosed();
+      await running;
+
+      const execution = executionAt(0);
+      expect(execution.end).toHaveBeenCalledWith(undefined, expect.any(Number));
+      const item = execution.replaceOutput.mock.lastCall[0][0].items[0];
+      expect(new TextDecoder().decode(item.data)).toBe('Stopped.');
+      expect(gci.GciTsNbExecute).toHaveBeenCalledTimes(1);
+      ctrl.dispose();
+    });
+  });
+
   it('clears the stopped process when an error escapes the cell wrapper', async () => {
-    // wrapExecuteCode reports ordinary errors inline, so a non-zero err here
-    // escaped it -- possibly raised inside a Transcript write, where the
-    // process holds the session's Transcript semaphore. Left suspended it leaks
-    // and keeps that semaphore; there is no notebook debugger to hand it to.
+    // wrapCellCode reports ordinary errors inline and passes only halts on, so
+    // any other non-zero err here escaped it -- possibly raised inside a
+    // Transcript write, where the process holds the session's Transcript
+    // semaphore. Left suspended it leaks and keeps that semaphore.
     const clearStack = vi.fn((_handle: unknown, _gsProcess: bigint) => ({
       success: true,
       err: { number: 0 },
@@ -203,7 +269,7 @@ describe('SmalltalkNotebookController', () => {
     const gci = makeGci({
       GciTsNbResult: vi.fn(() => ({
         result: 0n,
-        err: { number: 2010, message: 'a Halt occurred', context: 0x99n },
+        err: { number: 2010, message: 'an error past the cell wrapper', context: 0x99n },
       })),
       GciTsClearStackAsync: clearStack,
     });
@@ -225,7 +291,7 @@ describe('SmalltalkNotebookController', () => {
     const gci = makeGci({
       GciTsNbResult: vi.fn(() => ({
         result: 0n,
-        err: { number: 2010, message: 'a Halt occurred', context: 0x99n },
+        err: { number: 2010, message: 'an error past the cell wrapper', context: 0x99n },
       })),
       GciTsClearStackAsync: clearStack,
     });
@@ -250,7 +316,7 @@ describe('SmalltalkNotebookController', () => {
     const gci = makeGci({
       GciTsNbResult: vi.fn(() => ({
         result: 0n,
-        err: { number: 2010, message: 'a Halt occurred', context: 0n },
+        err: { number: 2010, message: 'an error past the cell wrapper', context: 0n },
       })),
       GciTsClearStackAsync: clearStack,
     });
