@@ -19,37 +19,32 @@ import { isThisMachine } from '../../thisMachine';
 import { needsWsl, refreshWslNetworkInfo, wslExec, wslExecSync } from '../../wslBridge';
 import { testActiveSession } from '../../__tests__/testActiveSession';
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
-import { endGemAfterTest, loginSerialOf, stillOnStone } from '../../__tests__/leftoverGem';
+import { endGemAfterTest, stillOnStone } from '../../__tests__/leftoverGem';
+import { reportedSerialOf, reportedTransientLogin } from '../../__tests__/sessionGateClient';
 
 describe('Stone sessions (integration)', () => {
   let session: ActiveSession;
 
-  useIntegrationTest((testContext) => {
-    session = testActiveSession(testContext.gciLibrary, testContext.session);
-  });
+  useIntegrationTest(
+    (testContext) => {
+      session = testActiveSession(testContext.gciLibrary, testContext.session);
+    },
+    { sessions: 4 },
+  );
 
-  // Other files' sessions share the test stone, whose session limit is small,
-  // and a logout frees its slot only a moment after it returns, so a login
-  // refused for lack of a slot waits for one.
   const loginAs =
     (login = session.login): TransientLogin =>
     () => {
-      const deadline = Date.now() + 15_000;
-      for (;;) {
-        const { session: own, err } = session.transientLogin(login);
-        if (own) return { session: own, logout: () => void own.logout() };
-        if (!/maximum number of users/.test(err.message) || Date.now() >= deadline) {
-          throw new Error(`Login failed: ${err.message}`);
-        }
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
-      }
+      const { session: own, err } = reportedTransientLogin(session, login);
+      if (!own) throw new Error(`Login failed: ${err.message}`);
+      return { session: own, logout: () => void own.logout() };
     };
 
   /** A session of its own, whose gem is ended whatever the test does. */
   function otherSession(): { own: ActiveSession; serial: number } {
     const { session: own } = loginAs()();
     endGemAfterTest(() => session, own);
-    return { own, serial: Number(loginSerialOf(own)) };
+    return { own, serial: Number(reportedSerialOf(own)) };
   }
 
   function rowFor(list: StoneSessionList, serial: number): StoneSession | undefined {

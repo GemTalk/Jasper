@@ -10,14 +10,18 @@ import { endServerSession } from '../forceStop';
 import { testActiveSession } from './testActiveSession';
 import { useIntegrationTest } from './useIntegrationTest';
 import { forceStopSupport } from './forceStopSupport';
-import { endGemAfterTest, loginSerialOf } from './leftoverGem';
+import { endGemAfterTest } from './leftoverGem';
+import { reportedSerialOf, reportedTransientLogin, reportingLoginsOf } from './sessionGateClient';
 
 describe('Force Stop at logout (integration)', () => {
   let session: ActiveSession;
 
-  useIntegrationTest((testContext) => {
-    session = testActiveSession(testContext.gciLibrary, testContext.session);
-  });
+  useIntegrationTest(
+    (testContext) => {
+      session = testActiveSession(testContext.gciLibrary, testContext.session);
+    },
+    { sessions: 3 },
+  );
 
   afterEach(() => {
     setStoppedRunCollectedHandler(undefined);
@@ -31,13 +35,13 @@ describe('Force Stop at logout (integration)', () => {
   // to end the gone gem under another live login's number.
   it("does not end another login that has taken a gone gem's session number", async () => {
     const own = armedSession();
-    const serial = loginSerialOf(own);
+    const serial = reportedSerialOf(own);
     own.logout();
     for (let i = 0; i < 40 && onStone(serial); i++) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     expect(onStone(serial)).toBe(false);
-    const { session: other } = session.transientLogin(session.login);
+    const { session: other } = reportedTransientLogin(session);
     onTestFinished(() => void other!.logout());
     const othersNumber = other!.executeAndFetchString('System session printString');
 
@@ -54,7 +58,7 @@ describe('Force Stop at logout (integration)', () => {
       stop: (own: ActiveSession, code: string) => Promise<void> = stopAndAbandon,
     ) {
       const own = manager.login(session.login, process.env.VITE_GEMSTONE_GCI_LIBRARY_PATH!);
-      const serial = loginSerialOf(own);
+      const serial = reportedSerialOf(own);
       endGemAfterTest(() => session, own);
       await stop(own, code);
       return { own, serial };
@@ -69,7 +73,7 @@ describe('Force Stop at logout (integration)', () => {
     }
 
     it('ends the gem of a run that ignores the stop', async () => {
-      const manager = new SessionManager();
+      const manager = reportingLoginsOf(new SessionManager());
       const { own, serial } = await loggedInAndStopped(
         manager,
         '[[true] whileTrue: [nil]] on: Break do: [:e | e resume]',
@@ -84,7 +88,7 @@ describe('Force Stop at logout (integration)', () => {
       // The clean-up runs only once the run is stopped and thrown away, so the
       // Force Stop signal has already been used on the run; logging out is the
       // way out, as for any run Force Stop can't end.
-      const manager = new SessionManager();
+      const manager = reportingLoginsOf(new SessionManager());
       const ignoresStop = '[[true] whileTrue: [nil]] on: Break do: [:e | e resume]';
       // A Break that lands outside the handler can stop the run outright; the
       // logout must end the gem either way.
@@ -113,7 +117,7 @@ describe('Force Stop at logout (integration)', () => {
     }, 60_000);
 
     it('ends the gem of a run that ignores Force Stop too', async () => {
-      const manager = new SessionManager();
+      const manager = reportingLoginsOf(new SessionManager());
       const { own, serial } = await loggedInAndStopped(
         manager,
         '[[true] whileTrue: [nil]] on: Exception do: [:e | e resume]',

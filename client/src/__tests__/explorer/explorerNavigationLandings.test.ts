@@ -25,6 +25,7 @@ vi.mock('../../browserQueries', () => ({
   getClassDescendantNames: vi.fn(() => []),
   getMethodInstVarAccess: vi.fn(() => []),
   isKernelClass: vi.fn(() => false),
+  getClassVersions: vi.fn(() => new Map()),
 }));
 vi.mock('../../gciLog', () => ({
   logInfo: vi.fn(),

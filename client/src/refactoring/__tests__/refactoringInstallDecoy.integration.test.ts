@@ -40,7 +40,7 @@ describe('refactoring engine install beside a dictionary that already binds RBSc
       login = testContext.login;
     },
     // The loader's one commit, or its one abort.
-    { allowedCommits: 1 },
+    { allowedCommits: 1, sessions: 2 },
   );
   const session = (): ActiveSession => testActiveSession(gci, handle);
   const exec = (code: string): string => q.executeFetchString(session(), code).trim();

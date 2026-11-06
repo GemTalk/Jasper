@@ -5,10 +5,11 @@ import { GciLibrary } from '../../gciLibrary';
 import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../../gciConstants';
 import { runNbCall } from '../../nbRunner';
 import * as queries from '../../browserQueries';
-import { ExplorerController } from '../../gemstoneExplorer';
+import { ClassItem, ExplorerController } from '../../gemstoneExplorer';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 import { useIntegrationTest } from '../useIntegrationTest';
 import { testActiveSession } from '../testActiveSession';
+import { reportedTransientLogin } from '../sessionGateClient';
 
 /**
  * The Classes pane remembers each class's variables and subclasses. A query
@@ -21,10 +22,13 @@ describe("the Classes pane's lookups (integration)", () => {
   let gci: GciLibrary;
   let handle: unknown;
 
-  useIntegrationTest((testContext) => {
-    gci = testContext.gciLibrary;
-    handle = testContext.session;
-  });
+  useIntegrationTest(
+    (testContext) => {
+      gci = testContext.gciLibrary;
+      handle = testContext.session;
+    },
+    { sessions: 2 },
+  );
 
   const session = (): ActiveSession => testActiveSession(gci, handle);
 
@@ -32,7 +36,7 @@ describe("the Classes pane's lookups (integration)", () => {
   const CHILD = 'VsCodeExplorerBusyChild';
 
   function transientSession(): ActiveSession {
-    const { session: transient, err } = session().transientLogin(session().login);
+    const { session: transient, err } = reportedTransientLogin(session());
     if (!transient) throw new Error(`Transient login failed: ${err.message}`);
     return transient;
   }
@@ -135,6 +139,68 @@ describe("the Classes pane's lookups (integration)", () => {
 
     expect(nonBlocking).toHaveBeenCalledTimes(1);
     expect(blocking).not.toHaveBeenCalled();
+  });
+
+  it('keeps the selected class when a click is refused during a run', () => {
+    const transient = transientSession();
+    defineFixture(transient);
+    const ctl = controllerOn(transient);
+    ctl.selectClass(new ClassItem(PARENT), false);
+    void runFor(transient, 1);
+
+    ctl.selectClassFromTree(new ClassItem(CHILD));
+
+    expect(ctl.state.className).toBe(PARENT);
+  });
+
+  it('keeps the selected dictionary when a click is refused during a run', () => {
+    const transient = transientSession();
+    const ctl = controllerOn(transient);
+    const globals = queries.getDictionaryNames(transient).indexOf('Globals') + 1;
+    void runFor(transient, 1);
+
+    ctl.selectDictFromTree({ dictName: 'Globals', dictIndex: globals });
+
+    expect(ctl.state.dictName).toBe('UserGlobals');
+  });
+
+  it('selects a dictionary clicked again once the run that refused it ends', async () => {
+    const transient = transientSession();
+    const ctl = controllerOn(transient);
+    const globals = queries.getDictionaryNames(transient).indexOf('Globals') + 1;
+    const run = runFor(transient, 1);
+    ctl.selectDictFromTree({ dictName: 'Globals', dictIndex: globals });
+    await run;
+
+    ctl.selectDictFromTree({ dictName: 'Globals', dictIndex: globals });
+
+    expect(ctl.state.dictName).toBe('Globals');
+  });
+
+  it('keeps the Hierarchy pane when a refresh is refused during a run', async () => {
+    const transient = transientSession();
+    defineFixture(transient);
+    const ctl = controllerOn(transient);
+    ctl.selectClass(new ClassItem(CHILD), false);
+    void runFor(transient, 1);
+
+    await ctl.refreshRetainingSelection({ reveal: false });
+
+    expect(ctl.hierarchyChildren()).not.toEqual([]);
+  });
+
+  it('selects a class clicked again once the run that refused it ends', async () => {
+    const transient = transientSession();
+    defineFixture(transient);
+    const ctl = controllerOn(transient);
+    ctl.selectClass(new ClassItem(PARENT), false);
+    const run = runFor(transient, 1);
+    ctl.selectClassFromTree(new ClassItem(CHILD));
+    await run;
+
+    ctl.selectClassFromTree(new ClassItem(CHILD));
+
+    expect(ctl.state.className).toBe(CHILD);
   });
 
   it('remembers a class row that failed for a reason other than a busy session', async () => {

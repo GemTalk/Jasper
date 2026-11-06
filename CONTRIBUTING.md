@@ -70,6 +70,8 @@ The dev toolchain supports Node LTS lines 22 and 24 only (`devEngines.runtime` i
 
 See [docs/how-to/raising-the-version-floor.md](docs/how-to/raising-the-version-floor.md) for the policy behind this floor and the steps to raise it.
 
+Only Microsoft's VS Code is actively tested. Fork support is on a best-effort basis.
+
 ## npm version
 
 Separately from the runtime floor above, this repo requires **npm ≥ 11.16.0** on the dev toolchain (enforced by `devEngines` in `package.json`). `nvm use` satisfies it via `.nvmrc`; if you manage Node another way, run `npm i -g npm@11` instead. An npm below the floor fails with `EBADDEVENGINES`.
@@ -129,7 +131,7 @@ All variables must be prefixed with `VITE_` to be accessible in test code (e.g. 
 
 ## Continuous integration
 
-CI runs on **GitHub Actions**. The [Health Check workflow](.github/workflows/health-check.yml) runs on every push, as a matrix job once per GemStone version listed in `client/.gemstone-integration-releases.json`. Most jobs run on the Node version pinned by `.nvmrc` (the common recent-VS-Code case); one additional job pins the supported-floor Node (see [Supported VS Code & Node versions](#supported-vs-code--node-versions)) against the oldest GemStone version, as a retrocompatibility smoke test. To add a GemStone version to the matrix, add an entry to `client/.gemstone-integration-releases.json`; the `reasons` array is human-readable documentation and is not parsed by any script.
+CI runs on **GitHub Actions**. The [Health Check workflow](.github/workflows/health-check.yml) runs on pull requests, in the merge queue, and on pushes to `main` and `*/wip/*` branches. It runs a matrix job on Linux and Windows once per GemStone version listed in `client/.gemstone-integration-releases.json`, plus a single macOS job against the oldest of those versions. Most jobs run on the Node version pinned by `.nvmrc` (the common recent-VS-Code case); one additional Linux job pins the supported-floor Node (see [Supported VS Code & Node versions](#supported-vs-code--node-versions)) against the oldest GemStone version, as a retrocompatibility smoke test. To add a GemStone version to the matrix, add an entry to `client/.gemstone-integration-releases.json`; the `reasons` array is human-readable documentation and is not parsed by any script. For the reasoning behind how CI is set up, see [docs/explanation/ci-pipeline.md](docs/explanation/ci-pipeline.md).
 
 ## Publishing a release
 

@@ -19,6 +19,9 @@ vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', () => ({
   getClassesWithCategory: vi.fn(() => []),
   getDictionaryNames: vi.fn(() => ['UserGlobals']),
+  getDefinedInstVarCounts: vi.fn(() => new Map()),
+  getDefinedClassVarCounts: vi.fn(() => new Map()),
+  getClassVersions: vi.fn(() => new Map()),
 }));
 vi.mock('../../gciLog', () => ({
   logInfo: vi.fn(),

@@ -9,6 +9,9 @@ vi.mock('../../browserQueries', () => ({
   getClassesWithCategory: vi.fn(() => [] as unknown[]),
   getClassEnvironments: vi.fn(() => []),
   canClassBeWritten: vi.fn(() => true),
+  getDefinedInstVarCounts: vi.fn(() => new Map()),
+  getDefinedClassVarCounts: vi.fn(() => new Map()),
+  getClassVersions: vi.fn(() => new Map()),
 }));
 
 import * as vscode from 'vscode';

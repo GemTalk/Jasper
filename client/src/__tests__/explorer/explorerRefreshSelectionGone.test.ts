@@ -9,6 +9,10 @@ vi.mock('../../browserQueries', () => ({
   getDictionaryNames: vi.fn(() => [] as string[]),
   getClassesWithCategory: vi.fn(() => [] as unknown[]),
   getClassEnvironments: vi.fn(() => [] as unknown[]),
+  getClassHierarchy: vi.fn(() => [] as unknown[]),
+  getDefinedInstVarCounts: vi.fn(() => new Map()),
+  getDefinedClassVarCounts: vi.fn(() => new Map()),
+  getClassVersions: vi.fn(() => new Map()),
 }));
 
 import { window } from '../../__mocks__/vscode';

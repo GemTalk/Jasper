@@ -262,6 +262,13 @@ jobs:
           # dropped legs were the only place a newer release's darwin GCI
           # client got exercised.
           #
+          # There is a second reason to keep it at one: GitHub runs at most 5
+          # macOS jobs at once across the whole GemTalk organization, shared
+          # with its other repos. Legs run in parallel, so extra macOS legs
+          # barely lengthen a run, but each one cuts how many PRs can run
+          # macOS CI at the same time. With few people pushing at once that
+          # limit matters less, and the legs could return.
+          #
           # It runs the *oldest* supported version, not the newest: the newest
           # is already exercised on ubuntu and windows, whereas the oldest is
           # where GCI API gaps surface, and pairing that with the platform
@@ -512,7 +519,7 @@ jobs:
     name: ci-complete
     if: always()
     needs: [prepare, lint-workflows, lint, health-check, package-check]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:
       - name: Verify all CI jobs succeeded
