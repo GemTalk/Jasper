@@ -7,7 +7,8 @@ import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL, GS_ERR_HALT } from '../gciConstan
 import { pollNbResultReady, runNbCall } from '../nbRunner';
 import { testActiveSession } from './testActiveSession';
 import { useIntegrationTest } from './useIntegrationTest';
-import { endGemAfterTest, loginSerialOf, stillOnStone } from './leftoverGem';
+import { endGemAfterTest, stillOnStone } from './leftoverGem';
+import { reportedSerialOf, reportedTransientLogin } from './sessionGateClient';
 
 /**
  * Each call below would hand a freed native session to the GCI library if it
@@ -18,12 +19,15 @@ import { endGemAfterTest, loginSerialOf, stillOnStone } from './leftoverGem';
 describe('a logged-out session (integration)', () => {
   let session: ActiveSession;
 
-  useIntegrationTest((testContext) => {
-    session = testActiveSession(testContext.gciLibrary, testContext.session);
-  });
+  useIntegrationTest(
+    (testContext) => {
+      session = testActiveSession(testContext.gciLibrary, testContext.session);
+    },
+    { sessions: 4 },
+  );
 
   function transientSession(): ActiveSession {
-    const { session: transient, err } = session.transientLogin(session.login);
+    const { session: transient, err } = reportedTransientLogin(session);
     if (!transient) throw new Error(`Transient login failed: ${err.message}`);
     return transient;
   }
@@ -63,7 +67,7 @@ describe('a logged-out session (integration)', () => {
   it('refuses calls once a gem the stone already stopped is logged out', async () => {
     const stopped = transientSession();
     const id = stopped.executeAndFetchString('System session printString');
-    const serial = loginSerialOf(stopped);
+    const serial = reportedSerialOf(stopped);
     session.executeAndFetchString(`System stopSession: ${id}. 'ok'`);
     // The stone deregisters the stopped gem asynchronously: about half a second on
     // CI, but a loaded runner has taken past 4s. 15s stays inside the test's own 20s.
@@ -130,9 +134,12 @@ describe('a logged-out session (integration)', () => {
 describe('logging out never waits for the gem (integration)', () => {
   let session: ActiveSession;
 
-  useIntegrationTest((testContext) => {
-    session = testActiveSession(testContext.gciLibrary, testContext.session);
-  });
+  useIntegrationTest(
+    (testContext) => {
+      session = testActiveSession(testContext.gciLibrary, testContext.session);
+    },
+    { sessions: 4 },
+  );
 
   /**
    * Polls until `serial` is off the stone, or fails after `ms`; never a hung test.
@@ -147,9 +154,9 @@ describe('logging out never waits for the gem (integration)', () => {
   }
 
   function transientWithSerial(): { transient: ActiveSession; serial: string } {
-    const { session: transient, err } = session.transientLogin(session.login);
+    const { session: transient, err } = reportedTransientLogin(session);
     if (!transient) throw new Error(`Transient login failed: ${err.message}`);
-    const serial = loginSerialOf(transient);
+    const serial = reportedSerialOf(transient);
     // Ends a gem the test leaves behind, so a failure can't strand it.
     endGemAfterTest(() => session, transient);
     return { transient, serial };
@@ -193,14 +200,17 @@ describe('logging out never waits for the gem (integration)', () => {
 describe('whether a session is busy (integration)', () => {
   let session: ActiveSession;
 
-  useIntegrationTest((testContext) => {
-    session = testActiveSession(testContext.gciLibrary, testContext.session);
-  });
+  useIntegrationTest(
+    (testContext) => {
+      session = testActiveSession(testContext.gciLibrary, testContext.session);
+    },
+    { sessions: 4 },
+  );
 
   // Logging out with a non-blocking call outstanding frees the session too, so
   // a test can leave one behind.
   function transientSession(): ActiveSession {
-    const { session: transient, err } = session.transientLogin(session.login);
+    const { session: transient, err } = reportedTransientLogin(session);
     if (!transient) throw new Error(`Transient login failed: ${err.message}`);
     onTestFinished(() => {
       transient.logout();

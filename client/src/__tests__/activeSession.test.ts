@@ -30,6 +30,7 @@ describe('a transient login', () => {
     const gci = libraryWhoseLoginAnswers({ session: {}, err: { number: 0, message: '' } });
     const session = sessionOn(gci);
 
+    // eslint-disable-next-line no-restricted-syntax -- transientLogin itself is under test, on a mocked library
     session.transientLogin({ ...login, gs_user: 'SystemUser', gs_password: 'secret' });
 
     expect(gci.GciTsLogin).toHaveBeenCalledWith(
@@ -51,6 +52,7 @@ describe('a transient login', () => {
     const session = sessionOn(gci);
     const systemUser = { ...login, gs_user: 'SystemUser' };
 
+    // eslint-disable-next-line no-restricted-syntax -- transientLogin itself is under test, on a mocked library
     const transient = session.transientLogin(systemUser).session!;
     // Logging out is the only way left to observe which handle the session holds.
     transient.logout();
@@ -66,7 +68,9 @@ describe('a transient login', () => {
       libraryWhoseLoginAnswers({ session: {}, err: { number: 0, message: '' } }),
     );
 
+    // eslint-disable-next-line no-restricted-syntax -- transientLogin itself is under test, on a mocked library
     const first = session.transientLogin(login).session!;
+    // eslint-disable-next-line no-restricted-syntax -- transientLogin itself is under test, on a mocked library
     const second = session.transientLogin(login).session!;
 
     expect(first.id).toBeLessThan(0);
@@ -78,6 +82,7 @@ describe('a transient login', () => {
     const err = { number: 4051, message: 'Login denied' };
     const session = sessionOn(libraryWhoseLoginAnswers({ session: null, err }));
 
+    // eslint-disable-next-line no-restricted-syntax -- transientLogin itself is under test, on a mocked library
     const refused = session.transientLogin(login);
 
     expect(refused.session).toBeUndefined();
@@ -214,6 +219,7 @@ describe('logging a session out', () => {
     const session = sessionOn(gci);
     session.logout();
 
+    // eslint-disable-next-line no-restricted-syntax -- transientLogin itself is under test, on a mocked library
     const transient = session.transientLogin(login);
 
     expect(transient.session).toBeDefined();

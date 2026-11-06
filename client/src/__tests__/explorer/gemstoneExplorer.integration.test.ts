@@ -9,6 +9,7 @@ import { ClassItem, ExplorerController } from '../../gemstoneExplorer';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 import { useIntegrationTest } from '../useIntegrationTest';
 import { testActiveSession } from '../testActiveSession';
+import { reportedTransientLogin } from '../sessionGateClient';
 
 /**
  * The Classes pane remembers each class's variables and subclasses. A query
@@ -21,10 +22,13 @@ describe("the Classes pane's lookups (integration)", () => {
   let gci: GciLibrary;
   let handle: unknown;
 
-  useIntegrationTest((testContext) => {
-    gci = testContext.gciLibrary;
-    handle = testContext.session;
-  });
+  useIntegrationTest(
+    (testContext) => {
+      gci = testContext.gciLibrary;
+      handle = testContext.session;
+    },
+    { sessions: 2 },
+  );
 
   const session = (): ActiveSession => testActiveSession(gci, handle);
 
@@ -32,7 +36,7 @@ describe("the Classes pane's lookups (integration)", () => {
   const CHILD = 'VsCodeExplorerBusyChild';
 
   function transientSession(): ActiveSession {
-    const { session: transient, err } = session().transientLogin(session().login);
+    const { session: transient, err } = reportedTransientLogin(session());
     if (!transient) throw new Error(`Transient login failed: ${err.message}`);
     return transient;
   }

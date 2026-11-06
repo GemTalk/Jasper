@@ -9,11 +9,14 @@ describe('GCI async execution, break, and debugging (integration)', () => {
   let session: unknown;
   let withTransientSession: GciTestContext['withTransientSession'];
 
-  useIntegrationTest((testContext) => {
-    gci = testContext.gciLibrary;
-    session = testContext.session;
-    withTransientSession = testContext.withTransientSession;
-  });
+  useIntegrationTest(
+    (testContext) => {
+      gci = testContext.gciLibrary;
+      session = testContext.session;
+      withTransientSession = testContext.withTransientSession;
+    },
+    { sessions: 2 },
+  );
 
   describe('GciTsSocket', () => {
     it('returns a valid file descriptor for the session', () => {

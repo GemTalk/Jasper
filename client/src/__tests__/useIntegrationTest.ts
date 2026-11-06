@@ -3,6 +3,17 @@ import { createSessionGciLibrary } from '../enhancedInspector/enhancedInspectorP
 import { afterAll, afterEach, beforeAll, beforeEach, expect } from 'vitest';
 import { createNativeSocketLibrary } from '../sockets/factory';
 import { NativeSocketLibrary } from '../sockets/nativeSocketLibrary';
+import type { Socket } from 'node:net';
+import {
+  acquireSessions,
+  assertBookingKept,
+  noteTestStarted,
+  releaseSessions,
+  reportingRefusal,
+  reportSession,
+  reportSessionClosed,
+} from './sessionGateClient';
+import { LOGIN_SERIAL_CODE } from './sessionGateLedger';
 
 /** The live GCI state handed to a `useIntegrationTest` callback on every login. */
 export type GciTestContext = {
@@ -49,6 +60,13 @@ type UseIntegrationTestOptions = {
    * `docs/reference/integration-test-harness.md` for the full contract.
    */
   allowedCommits?: number;
+  /**
+   * How many sessions this suite has logged in on the stone at once: its own,
+   * plus any second session a test logs in, through `withTransientSession` or
+   * otherwise. Defaults to 1. The session gate books this many before the
+   * suite logs in, and fails the file if the suite holds more.
+   */
+  sessions?: number;
 };
 
 /**
@@ -58,7 +76,11 @@ type UseIntegrationTestOptions = {
  * - Loads the GCI shared library and logs in before any tests run.
  * - Wraps each test in a transaction that is always aborted afterward,
  *   so database changes never leak between tests.
- * - Logs out and closes the library after all tests finish.
+ * - Books `options.sessions` with the session gate before logging in, and gives
+ *   them back after logging out, failing the file first if any login it made,
+ *   or app code made for it, was never reported to the gate, or if it had more
+ *   sessions on the stone at once than it booked (see sessionGateClient.ts).
+ * - Logs out after all tests finish.
  *
  * The `callback` fires after every login, starting with the one at the end of
  * `beforeAll` — use it to capture the {@link GciTestContext} fields you need
@@ -96,6 +118,8 @@ export function useIntegrationTest(
   let session: unknown;
   let originalGemstoneGlobalDir: string | undefined;
   let sessionCleanupFailed = false;
+  let gate: Socket | undefined;
+  let sessionSerial: bigint | undefined;
   // The transaction level a currently-open commit budget sits on top of, or
   // undefined when no budget is open right now -- nothing is nested, so no
   // floor applies. Inferred by subtraction after opening the nested levels,
@@ -109,6 +133,8 @@ export function useIntegrationTest(
 
   const allowedCommits = options?.allowedCommits ?? 0;
   assertUsableAllowedCommits(allowedCommits);
+  const sessions = options?.sessions ?? 1;
+  assertUsableSessions(sessions);
 
   // One nested level per allowed commit, plus one of headroom so the teardown
   // check can catch an overrun before a real commit is ever attempted against
@@ -120,8 +146,10 @@ export function useIntegrationTest(
   // gciLibrary and session are created inside a beforeAll hook, so they don't
   // exist at call time. The callback fires at the end of that hook, letting
   // callers assign the values into their own variables before any test runs.
-  beforeAll(() => {
+  beforeAll(async () => {
+    const testPath = expect.getState().testPath ?? '';
     configureGemstoneGlobalDir();
+    gate = await acquireSessions(testPath, sessions);
 
     handleIntegrationTestSetupErrorDuring(() => {
       nativeSocketLibrary = createNativeSocketLibrary();
@@ -134,14 +162,17 @@ export function useIntegrationTest(
       );
       login();
     });
-  });
+  }, 70_000);
 
-  afterAll(() => {
+  afterAll(async () => {
     try {
       if (session) {
         logout();
       }
+      await assertBookingKept(gate);
     } finally {
+      releaseSessions(gate);
+      gate = undefined;
       restoreGemstoneGlobalDir();
     }
   });
@@ -149,6 +180,7 @@ export function useIntegrationTest(
   // Wrap each test in a GCI transaction. Always abort (never commit) so
   // database changes from one test don't leak into the next.
   beforeEach(() => {
+    noteTestStarted(expect.getState().currentTestName ?? '');
     if (sessionCleanupFailed) {
       throw new Error(
         `useIntegrationTest: skipping this test — a previous test's cleanup failed, leaving the GemStone session in an unknown state. See the earlier failure in this file for the actual error.`,
@@ -216,12 +248,18 @@ export function useIntegrationTest(
    * @throws {GciLibraryError} If login fails (see `GciLibrary.login`).
    */
   function login(loginOptions?: LoginOptions) {
-    session = gciLibrary.login(
-      process.env.VITE_GEMSTONE_STONE_NRS!,
-      process.env.VITE_GEMSTONE_GEM_NRS!,
-      loginOptions?.user ?? process.env.VITE_GEMSTONE_USER!,
-      process.env.VITE_GEMSTONE_PASSWORD!,
+    session = reportingRefusal(
+      () =>
+        gciLibrary.login(
+          process.env.VITE_GEMSTONE_STONE_NRS!,
+          process.env.VITE_GEMSTONE_GEM_NRS!,
+          loginOptions?.user ?? process.env.VITE_GEMSTONE_USER!,
+          process.env.VITE_GEMSTONE_PASSWORD!,
+        ),
+      gate,
     );
+    sessionSerial = serialOf(session);
+    reportSession(sessionSerial, gate);
     armCommitGuard(session);
 
     // A test that logs out and back in gets a session of its own: it is not
@@ -314,7 +352,8 @@ export function useIntegrationTest(
    *   shared one.
    */
   function logout() {
-    gciLibrary.logout(session);
+    const { sessionFreed } = gciLibrary.logout(session);
+    if (sessionFreed && sessionSerial !== undefined) reportSessionClosed(sessionSerial, gate);
     const loggedOutSession = session;
 
     session = undefined;
@@ -333,19 +372,33 @@ export function useIntegrationTest(
    * @throws {GciLibraryError} If logging into the transient session fails.
    */
   function withTransientSession(callback: (transientSession: unknown) => void) {
-    const transientSession = gciLibrary.login(
-      process.env.VITE_GEMSTONE_STONE_NRS!,
-      process.env.VITE_GEMSTONE_GEM_NRS!,
-      process.env.VITE_GEMSTONE_USER!,
-      process.env.VITE_GEMSTONE_PASSWORD!,
+    const transientSession = reportingRefusal(
+      () =>
+        gciLibrary.login(
+          process.env.VITE_GEMSTONE_STONE_NRS!,
+          process.env.VITE_GEMSTONE_GEM_NRS!,
+          process.env.VITE_GEMSTONE_USER!,
+          process.env.VITE_GEMSTONE_PASSWORD!,
+        ),
+      gate,
     );
 
+    let transientSerial: bigint | undefined;
     try {
+      transientSerial = serialOf(transientSession);
+      reportSession(transientSerial, gate);
       armCommitGuard(transientSession);
       callback(transientSession);
     } finally {
-      gciLibrary.logout(transientSession);
+      if (gciLibrary.logout(transientSession).sessionFreed && transientSerial !== undefined) {
+        reportSessionClosed(transientSerial, gate);
+      }
     }
+  }
+
+  /** The login serial of `aSession`, so the session gate can tell its sessions apart. */
+  function serialOf(aSession: unknown): bigint {
+    return gciLibrary.executeAndFetchInteger(aSession, LOGIN_SERIAL_CODE);
   }
 
   /**
@@ -474,6 +527,14 @@ export function useIntegrationTest(
  * commit too many, would fail every test in the suite for a budget that was
  * never openable in the first place.
  */
+function assertUsableSessions(sessions: number) {
+  if (Number.isInteger(sessions) && sessions >= 1) return;
+
+  throw new Error(
+    `useIntegrationTest: sessions must be a whole number of at least 1, but got ${sessions}.`,
+  );
+}
+
 function assertUsableAllowedCommits(allowedCommits: number) {
   if (Number.isInteger(allowedCommits) && allowedCommits >= 0) return;
 

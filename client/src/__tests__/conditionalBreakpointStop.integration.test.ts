@@ -29,9 +29,12 @@ import { forceStopSupport } from './forceStopSupport';
 describe('stopping a run that skips conditional breakpoints (integration)', () => {
   let session: ActiveSession;
 
-  useIntegrationTest((testContext) => {
-    session = testActiveSession(testContext.gciLibrary, testContext.session);
-  });
+  useIntegrationTest(
+    (testContext) => {
+      session = testActiveSession(testContext.gciLibrary, testContext.session);
+    },
+    { sessions: 3 },
+  );
 
   afterEach(() => {
     setStoppedRunCollectedHandler(undefined);
