@@ -75,6 +75,8 @@ export interface PluginFeature {
   isApplicable(stoneVersion: string | undefined): boolean;
   /** Live presence check against the session — a fresh answer, not a cached flag. */
   probe(session: ActiveSession): boolean;
+  /** The session's cached availability flag: no round trip, unlike `probe`. */
+  isAvailable(session: ActiveSession): boolean;
   /** Which payload files its install fingerprints, and where it keeps the receipt. */
   receipt: ReceiptSpec;
   /** File the feature in over a write-capable (SystemUser) session. */
@@ -109,6 +111,7 @@ export const pluginFeatures = {
     // signature matches `enhancedInspector.isApplicable` and version-passing callers.
     isApplicable: (_stoneVersion: string | undefined) => true,
     probe: checkRefactoringSupportAvailable,
+    isAvailable: (session: ActiveSession) => session.rbSupportAvailable === true,
     receipt: REFACTORING_RECEIPT,
     install: async (session: ActiveSession, payloadDir: string, onProgress?: ProgressReporter) => {
       const r = await installRefactoringSupport(session, payloadDir, onProgress);
@@ -125,6 +128,7 @@ export const pluginFeatures = {
     payloadSubdir: path.join('resources', 'enhancedInspector'),
     isApplicable: (stoneVersion: string | undefined) => supportsEnhancedInspector(stoneVersion),
     probe: isEnhancedInspectorInstalled,
+    isAvailable: (session: ActiveSession) => session.enhancedInspectorAvailable === true,
     receipt: ENHANCED_INSPECTOR_RECEIPT,
     install: async (session: ActiveSession, payloadDir: string, onProgress?: ProgressReporter) => {
       const r = await installEnhancedInspectorSupport(session, payloadDir, onProgress);

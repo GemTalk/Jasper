@@ -98,13 +98,6 @@ export async function runShowServerSupportStatus(
   channel.show(true);
 }
 
-/** The login-time availability latch for each feature, by id. */
-function latchedInstalled(base: ActiveSession, feature: PluginFeature): boolean {
-  return feature.id === 'refactoring'
-    ? base.rbSupportAvailable === true
-    : base.enhancedInspectorAvailable === true;
-}
-
 /**
  * After login, tell the user once if the stone's server support is not the one
  * this Jasper ships, and offer to reinstall it. The two features are installed
@@ -120,7 +113,7 @@ export async function noticeDifferentServerSupport(
   extensionPath: string,
   memento: vscode.Memento,
 ): Promise<void> {
-  const different = PLUGIN_FEATURES.filter((f) => latchedInstalled(base, f))
+  const different = PLUGIN_FEATURES.filter((f) => f.isAvailable(base))
     .map((feature) => ({ feature, status: statusOf(base, feature, true, extensionPath) }))
     .filter(({ status }) => status.state === 'different');
   if (different.length === 0) return;
