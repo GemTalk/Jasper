@@ -29,12 +29,16 @@ import { getClassNames as sharedGetClassNames } from './queries/getClassNames';
 import {
   ClassCategoryEntry,
   getClassesWithCategory as sharedGetClassesWithCategory,
+  getClassesWithCategoryAsync as sharedGetClassesWithCategoryAsync,
 } from './queries/getClassesWithCategory';
 import { getDictionaryClassFileOutOrder as sharedGetDictionaryClassFileOutOrder } from './queries/getDictionaryClassFileOutOrder';
 import { getDictionaryEntries as sharedGetDictionaryEntries } from './queries/getDictionaryEntries';
 import { getGlobalsForDictionary as sharedGetGlobalsForDictionary } from './queries/getGlobalsForDictionary';
 import { getMethodCategories as sharedGetMethodCategories } from './queries/getMethodCategories';
-import { getClassEnvironments as sharedGetClassEnvironments } from './queries/getClassEnvironments';
+import {
+  getClassEnvironments as sharedGetClassEnvironments,
+  getClassEnvironmentsAsync as sharedGetClassEnvironmentsAsync,
+} from './queries/getClassEnvironments';
 import { getMethodInstVarAccess as sharedGetMethodInstVarAccess } from './queries/getMethodInstVarAccess';
 import { getClassDefinition as sharedGetClassDefinition } from './queries/getClassDefinition';
 import {
@@ -45,7 +49,10 @@ import { getClassComment as sharedGetClassComment } from './queries/getClassComm
 import { getStoredClassComment as sharedGetStoredClassComment } from './queries/getStoredClassComment';
 import { canClassBeWritten as sharedCanClassBeWritten } from './queries/canClassBeWritten';
 import { getAllClassNames as sharedGetAllClassNames } from './queries/getAllClassNames';
-import { getClassHierarchy as sharedGetClassHierarchy } from './queries/getClassHierarchy';
+import {
+  getClassHierarchy as sharedGetClassHierarchy,
+  getClassHierarchyAsync as sharedGetClassHierarchyAsync,
+} from './queries/getClassHierarchy';
 import { dictionariesContainingClass as sharedDictionariesContainingClass } from './queries/dictionariesContainingClass';
 import {
   tonelCapability as sharedTonelCapability,
@@ -84,16 +91,23 @@ import {
   ShadowingHolder,
 } from './refactoring/queries/dictionariesShadowedByRename';
 export type { ShadowingHolder };
-import { getDefinedInstVarCounts as sharedGetDefinedInstVarCounts } from './queries/getDefinedInstVarCounts';
+import {
+  getDefinedInstVarCounts as sharedGetDefinedInstVarCounts,
+  getDefinedInstVarCountsAsync as sharedGetDefinedInstVarCountsAsync,
+} from './queries/getDefinedInstVarCounts';
 import {
   classRowContents as sharedClassRowContents,
   type ClassRowContents,
 } from './queries/classRowContents';
 import { getDefinedClassVarNames as sharedGetDefinedClassVarNames } from './refactoring/queries/getDefinedClassVarNames';
 import { getVisibleClassVarNames as sharedGetVisibleClassVarNames } from './refactoring/queries/getVisibleClassVarNames';
-import { getDefinedClassVarCounts as sharedGetDefinedClassVarCounts } from './refactoring/queries/getDefinedClassVarCounts';
+import {
+  getDefinedClassVarCounts as sharedGetDefinedClassVarCounts,
+  getDefinedClassVarCountsAsync as sharedGetDefinedClassVarCountsAsync,
+} from './refactoring/queries/getDefinedClassVarCounts';
 import {
   getClassVersions as sharedGetClassVersions,
+  getClassVersionsAsync as sharedGetClassVersionsAsync,
   ClassVersionInfo,
 } from './refactoring/queries/getClassVersions';
 import {
@@ -799,6 +813,13 @@ export function getClassesWithCategory(
   return sharedGetClassesWithCategory(defaultQueryExecutorUsing(session), dict);
 }
 
+export function getClassesWithCategoryAsync(session: ActiveSession, dict: number | string) {
+  return sharedGetClassesWithCategoryAsync(
+    nbQueryExecutorUsing(session, 'GemStone: Loading classes…'),
+    dict,
+  );
+}
+
 export function getDictionaryClassFileOutOrder(
   session: ActiveSession,
   dict: number | string,
@@ -831,6 +852,20 @@ export function getClassEnvironments(
 ) {
   return sharedGetClassEnvironments(
     defaultQueryExecutorUsing(session),
+    dictIndex,
+    className,
+    maxEnv,
+  );
+}
+
+export function getClassEnvironmentsAsync(
+  session: ActiveSession,
+  dictIndex: number,
+  className: string,
+  maxEnv: number,
+) {
+  return sharedGetClassEnvironmentsAsync(
+    nbQueryExecutorUsing(session, 'GemStone: Loading methods…'),
     dictIndex,
     className,
     maxEnv,
@@ -945,6 +980,18 @@ export function getClassHierarchy(
   dict?: number | string,
 ) {
   return sharedGetClassHierarchy(defaultQueryExecutorUsing(session), className, dict);
+}
+
+export function getClassHierarchyAsync(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+) {
+  return sharedGetClassHierarchyAsync(
+    nbQueryExecutorUsing(session, 'GemStone: Loading class hierarchy…'),
+    className,
+    dict,
+  );
 }
 
 export function getClassDescendantNames(
@@ -1096,6 +1143,13 @@ export function getDefinedInstVarCounts(
   return sharedGetDefinedInstVarCounts(defaultQueryExecutorUsing(session), dict);
 }
 
+export function getDefinedInstVarCountsAsync(session: ActiveSession, dict: number | string) {
+  return sharedGetDefinedInstVarCountsAsync(
+    nbQueryExecutorUsing(session, 'GemStone: Loading classes…'),
+    dict,
+  );
+}
+
 export function getDefiningClassOfInstVar(
   session: ActiveSession,
   className: string,
@@ -1195,11 +1249,25 @@ export function getDefinedClassVarCounts(
   return sharedGetDefinedClassVarCounts(defaultQueryExecutorUsing(session), dict);
 }
 
+export function getDefinedClassVarCountsAsync(session: ActiveSession, dict: number | string) {
+  return sharedGetDefinedClassVarCountsAsync(
+    nbQueryExecutorUsing(session, 'GemStone: Loading classes…'),
+    dict,
+  );
+}
+
 export function getClassVersions(
   session: ActiveSession,
   dict: number | string,
 ): Map<string, ClassVersionInfo> {
   return sharedGetClassVersions(defaultQueryExecutorUsing(session), dict);
+}
+
+export function getClassVersionsAsync(session: ActiveSession, dict: number | string) {
+  return sharedGetClassVersionsAsync(
+    nbQueryExecutorUsing(session, 'GemStone: Loading classes…'),
+    dict,
+  );
 }
 
 export function startRenameInstVarPreview(

@@ -4,10 +4,12 @@ vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', async (orig) => ({
   ...(await orig()),
   getClassHierarchy: vi.fn(() => []),
+  getClassEnvironmentsAsync: vi.fn(async () => []),
+  getClassHierarchyAsync: vi.fn(async () => []),
 }));
 
 import { ExplorerController } from '../../gemstoneExplorer';
-import { getClassHierarchy } from '../../browserQueries';
+import { getClassHierarchy, getClassHierarchyAsync } from '../../browserQueries';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 
 function makeController(): ExplorerController {
@@ -30,25 +32,24 @@ beforeEach(() => {
 // handleClassClick (fired on every click) must re-select the class so the hierarchy
 // reloads for the newly-selected dictionary.
 describe('handleClassClick re-selects a shadowed class after a dictionary switch', () => {
-  it('selects the class when the controller has no class selected (stale highlight)', () => {
+  it('selects the class when the controller has no class selected (stale highlight)', async () => {
     const ctl = makeController();
     ctl.state.className = undefined; // as left by selectDict
-    const selectClass = vi.spyOn(ctl, 'selectClass').mockImplementation(() => {});
 
     ctl.handleClassClick('Issue328Shadow');
 
-    expect(selectClass).toHaveBeenCalledTimes(1);
-    expect(selectClass.mock.calls[0][0].className).toBe('Issue328Shadow');
+    await vi.waitFor(() => expect(ctl.state.className).toBe('Issue328Shadow'));
+    expect(getClassHierarchyAsync).toHaveBeenCalledWith(expect.anything(), 'Issue328Shadow', 2);
   });
 
-  it('does not re-select when the class is already the selected one (no double reload)', () => {
+  it('does not re-select when the class is already the selected one (no double reload)', async () => {
     const ctl = makeController();
     ctl.state.className = 'Issue328Shadow';
-    const selectClass = vi.spyOn(ctl, 'selectClass').mockImplementation(() => {});
 
     ctl.handleClassClick('Issue328Shadow');
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(selectClass).not.toHaveBeenCalled();
+    expect(getClassHierarchyAsync).not.toHaveBeenCalled();
   });
 
   // The Hierarchy pane must scope the lookup to the SELECTED dictionary; otherwise a
