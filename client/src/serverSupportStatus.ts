@@ -98,6 +98,12 @@ export async function runShowServerSupportStatus(
   channel.show(true);
 }
 
+function differentSupports(base: ActiveSession, extensionPath: string) {
+  return PLUGIN_FEATURES.filter((f) => f.isAvailable(base))
+    .map((feature) => ({ feature, status: statusOf(base, feature, true, extensionPath) }))
+    .filter(({ status }) => status.state === 'different');
+}
+
 /**
  * After login, tell the user once if the stone's server support is not the one
  * this Jasper ships, and offer to reinstall it. The two features are installed
@@ -106,16 +112,15 @@ export async function runShowServerSupportStatus(
  * Silent for every other state, including a read that failed.
  *
  * Shown once per stone and set of fingerprints, so a dismissed notice comes back
- * only when the stone's support or this Jasper's changes.
+ * only when the stone's support or this Jasper's changes, or after a Reinstall
+ * that left it different (cancelled at the password prompt, or failed).
  */
 export async function noticeDifferentServerSupport(
   base: ActiveSession,
   extensionPath: string,
   memento: vscode.Memento,
 ): Promise<void> {
-  const different = PLUGIN_FEATURES.filter((f) => f.isAvailable(base))
-    .map((feature) => ({ feature, status: statusOf(base, feature, true, extensionPath) }))
-    .filter(({ status }) => status.state === 'different');
+  const different = differentSupports(base, extensionPath);
   if (different.length === 0) return;
 
   const key = `gemstone.differentServerSupportNoticed:${stoneNrsFor(base.login)}`;
@@ -136,6 +141,9 @@ export async function noticeDifferentServerSupport(
   );
   if (choice === REINSTALL) {
     await vscode.commands.executeCommand('gemstone.installServerSupport');
+    // Clearing too eagerly is harmless: if this session can't see the install's
+    // commit yet, the next login reads it fresh and stays quiet.
+    if (differentSupports(base, extensionPath).length > 0) await memento.update(key, undefined);
   } else if (choice === SHOW_STATUS) {
     await vscode.commands.executeCommand('gemstone.showServerSupportStatus');
   }

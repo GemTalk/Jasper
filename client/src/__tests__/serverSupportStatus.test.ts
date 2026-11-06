@@ -125,6 +125,17 @@ describe('noticeDifferentServerSupport', () => {
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith('gemstone.installServerSupport');
   });
 
+  it('notices again at the next login when the reinstall leaves it different', async () => {
+    const seen = memento();
+    respond(different('aaaa'));
+    warn.mockResolvedValue('Reinstall' as never);
+
+    await noticeDifferentServerSupport(session(), '/ext', seen);
+    await noticeDifferentServerSupport(session(), '/ext', seen);
+
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+
   it('opens the status when asked', async () => {
     respond(different('aaaa'));
     warn.mockResolvedValue('Show Status' as never);
