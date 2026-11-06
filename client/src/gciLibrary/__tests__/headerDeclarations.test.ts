@@ -709,10 +709,10 @@ describe('parseDeclarations (inline fixtures)', () => {
 });
 
 describe('vendoredRevisions', () => {
-  // An inventory tripwire against the real tree, not a sort test: these ten
+  // An inventory tripwire against the real tree, not a sort test: these eleven
   // names happen to sort the same lexicographically, so ordering is covered
   // separately below.
-  it('finds exactly the 10 vendored revisions', () => {
+  it('finds exactly the 11 vendored revisions', () => {
     expect(vendoredRevisions()).toEqual([
       '3.6.2',
       '3.6.3',
@@ -724,6 +724,7 @@ describe('vendoredRevisions', () => {
       '3.7.2',
       '3.7.4.1',
       '3.7.5',
+      '3.7.6',
     ]);
   });
 
@@ -749,8 +750,8 @@ describe('vendoredRevisions', () => {
 
 describe('parseDeclarations (real vendor/gci-headers snapshot)', () => {
   // Every revision, not just the endpoints: the parser's preprocessor handling
-  // applies to all ten files, so a change that shifts one of the middle ones
-  // should fail here rather than hide between 3.6.2 and 3.7.5.
+  // applies to every file, so a change that shifts one of the middle ones
+  // should fail here rather than hide between the two ends.
   it.each([
     ['3.6.2', 90, 2],
     ['3.6.3', 90, 2],
@@ -762,6 +763,7 @@ describe('parseDeclarations (real vendor/gci-headers snapshot)', () => {
     ['3.7.2', 104, 4],
     ['3.7.4.1', 106, 5],
     ['3.7.5', 106, 5],
+    ['3.7.6', 106, 5],
   ])('parses %s into %i declarations, %i of them UNIX-only', (revision, total, unixOnly) => {
     const declared = declaredFunctions(revision);
     expect(declared.size).toBe(total);
@@ -783,7 +785,7 @@ describe('parseDeclarations (real vendor/gci-headers snapshot)', () => {
   it.each([
     ['3.6.2', ['GciTsNbLogin', 'GciTsNbLoginFinished']],
     [
-      '3.7.5',
+      '3.7.6',
       [
         'GciTsDebugConnectToGem',
         'GciTsDebugStartDebugService',

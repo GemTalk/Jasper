@@ -4,7 +4,7 @@ How Jasper tracks which GCI symbols are missing on which release or platform: ve
 
 ## The problem
 
-Jasper binds `libgcits`, which ships inside each GemStone distribution, and must work against every release it supports — 3.6.2 through 3.7.5, on Linux, macOS and Windows. **The exported symbol set is not the same across them.**
+Jasper binds `libgcits`, which ships inside each GemStone distribution, and must work against every release it supports — 3.6.2 through 3.7.6, on Linux, macOS and Windows. **The exported symbol set is not the same across them.**
 
 `gciLibrary.ts` binds symbols by name at construction time, giving two failure modes:
 
@@ -27,7 +27,7 @@ The headers carry no per-symbol version metadata (`GCI_FEATURE_LEVEL` is `360` f
 
 Four links, each checked by a _different_ mechanism, because each catches mistakes the others structurally cannot.
 
-**1. `vendor/gci-headers/` — ground truth.** Ten distinct header revisions spanning 3.6.2 → 3.7.5, copied verbatim, one folder per content revision. `versions.md` maps each GemStone version to its folder with a sha256 per file; `scripts/lint-gci-header-versions.mjs` checks that table against disk in both directions.
+**1. `vendor/gci-headers/` — ground truth.** Eleven distinct header revisions spanning 3.6.2 → 3.7.6, copied verbatim, one folder per content revision. `versions.md` maps each GemStone version to its folder with a sha256 per file; `scripts/lint-gci-header-versions.mjs` checks that table against disk in both directions.
 
 **2. `headerDeclarations.ts` — the parser.** Walks `EXTERN_GCI_DEC` declarations tracking `#if` nesting, reporting both the name and whether it is platform-guarded. Not a regex — multi-line declarations are the norm.
 
@@ -58,7 +58,7 @@ Both directions are compile errors: an entry with no binding, and an `optionalFu
 | Typo a name in `isAvailable(...)`                                          | Compile error                                                                                                                                                      | `npm run compile`                                 |
 | Call any registry symbol from production code                              | `eslint.config.mjs`'s `OPTIONAL_GCI_CALL` block fails, naming the hazard; the remedy is a helper in `client/src/gciLibrary/` — see `.claude/rules/client/gci.md`   | `npm run lint`                                    |
 | Add a registry entry but no absent-world assertion                         | Compile error — [`missingGciFunctions.test.ts`](../../client/src/gciLibrary/__tests__/missingGciFunctions.test.ts)'s invocation map is an exhaustive `Record`      | `npm run compile`                                 |
-| Break the Windows non-blocking-login path                                  | `gciSpecials.integration.test.ts` asserts `supportsNonBlockingLogin() === (process.platform !== 'win32')`                                                          | CI, on all five Windows and five Linux cells      |
+| Break the Windows non-blocking-login path                                  | `gciSpecials.integration.test.ts` asserts `supportsNonBlockingLogin() === (process.platform !== 'win32')`                                                          | CI, on each Windows cell and each Linux cell      |
 | Vendor a revision declaring a symbol Jasper doesn't bind                   | The generator adds an entry (it scopes over what the _headers_ gate), which is a compile error until it has a binding                                              | `npm run compile`, after regenerating             |
 | Vendor a revision and forget to regenerate                                 | CI fails on the diff. **`npm test` alone does not catch this**                                                                                                     | CI's "GCI optional-functions registry" step       |
 | Add a header revision whose `versions.md` row lies                         | `scripts/lint-gci-header-versions.mjs`                                                                                                                             | CI's "GCI header version map" step                |

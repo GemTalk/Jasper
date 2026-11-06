@@ -23,7 +23,7 @@ import { NativeSocketLibrary } from '../../sockets/nativeSocketLibrary';
  */
 describe('GCI session lifecycle (integration)', () => {
   // RT_ERR_NO_PROCESS_TO_CONTINUE in gcierr.ht -- same value in every vendored
-  // release from 3.6.2 through 3.7.5. GemStone's message is "The Process nil to
+  // release from 3.6.2 through 3.7.6. GemStone's message is "The Process nil to
   // continue from is invalid,'argument is not a GsProcess'".
   const RT_ERR_NO_PROCESS_TO_CONTINUE = 2092;
 

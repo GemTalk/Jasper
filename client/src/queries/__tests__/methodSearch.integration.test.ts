@@ -1,6 +1,5 @@
-// Integration tests for the method-search queries against a live stone, over the release matrix
-// (3.6.2 and 3.7.5). Base-image reflection only — no server plugin — so they run in both the bare
-// and plugin CI passes.
+// Integration tests for the method-search queries against a live stone, over the release matrix.
+// Base-image reflection only — no server plugin — so they run in both the bare and plugin CI passes.
 //
 // Two suites, each guarding a case where the generated Smalltalk compiled and ran but the ENGINE
 // API underneath it did not mean what the query assumed. A unit test that asserts on the generated

@@ -1,6 +1,6 @@
 // Integration test for the RELEVANCE of the Methods-scope selector scan against a live stone, over the
-// release matrix (3.6.2 and 3.7.5). Base-image reflection only — no server plugin, no fixture — so it
-// runs in both the bare and plugin CI passes.
+// release matrix. Base-image reflection only — no server plugin, no fixture — so it runs in both the
+// bare and plugin CI passes.
 //
 // Regression guard for issue #517: typing `at:` returned no `Array>>at:` anywhere in the results. The
 // old scan collected the first `limit` selectors CONTAINING the term, walking the symbol list in
