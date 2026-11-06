@@ -4,11 +4,16 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 vi.mock('../gciLog', () => ({
   logError: vi.fn(),
+  logInfo: vi.fn(),
 }));
 // Call-through spy, so a test can read the options a cell hands the runner.
 vi.mock('../nbRunner', async (orig) => {
   const actual = await orig<typeof import('../nbRunner')>();
   return { ...actual, runNbCall: vi.fn(actual.runNbCall) };
+});
+vi.mock('../debugger/conditionalBreakpoints', async (orig) => {
+  const actual = await orig<typeof import('../debugger/conditionalBreakpoints')>();
+  return { ...actual, resolveBreakpointStop: vi.fn(actual.resolveBreakpointStop) };
 });
 vi.mock('../debugger/debuggerPanel', () => ({
   DebuggerPanel: { create: vi.fn(() => ({ close: vi.fn() })) },
@@ -31,6 +36,7 @@ import { runNbCall, type NbRunOptions } from '../nbRunner';
 import { SessionManager } from '../sessionManager';
 import { SMALLTALK_LANGUAGE } from '../languageIds';
 import { DebuggerPanel } from '../debugger/debuggerPanel';
+import { resolveBreakpointStop } from '../debugger/conditionalBreakpoints';
 import { GCI_PERFORM_FLAG_ENABLE_DEBUG, GCI_PERFORM_FLAG_INTERPRETED } from '../gciConstants';
 import { fakeActiveSession, startNonBlockingCall } from './fakeActiveSession';
 
@@ -208,14 +214,23 @@ describe('SmalltalkNotebookController', () => {
   });
 
   describe('a cell that reaches a halt', () => {
-    const halted = () =>
-      makeGci({
+    const halted = (errorNumber = 2709) => {
+      const GciTsClearStackAsync = vi.fn((_handle: unknown, _gsProcess: bigint) => ({
+        success: true,
+        err: { number: 0 },
+      }));
+      const gci = makeGci({
         GciTsNbResult: vi.fn(() => ({
           result: 0n,
-          err: { number: 2709, message: 'a Halt occurred (error 2709)', context: 0x99n },
+          err: { number: errorNumber, message: `a stop (error ${errorNumber})`, context: 0x99n },
         })),
         GciTsFetchUtf8: vi.fn(() => ({ data: '3', err: { number: 0 } })),
+        GciTsClearStackAsync,
       });
+      return { ...gci, GciTsClearStackAsync };
+    };
+    const outputText = (execution: ReturnType<typeof executionAt>): string =>
+      new TextDecoder().decode(execution.replaceOutput.mock.lastCall[0][0].items[0].data);
     const debuggerCallbacks = () => {
       const call = vi.mocked(DebuggerPanel.create).mock.lastCall!;
       return { onComplete: call[3]!, onClosed: call[4]! };
@@ -239,6 +254,56 @@ describe('SmalltalkNotebookController', () => {
       expect(execution.end).toHaveBeenCalledWith(true, expect.any(Number));
       const item = execution.replaceOutput.mock.lastCall[0][0].items[0];
       expect(new TextDecoder().decode(item.data)).toBe('3');
+      ctrl.dispose();
+    });
+
+    it("closes the debugger when the cell's own stop is pressed while it is paused", async () => {
+      const close = vi.fn();
+      vi.mocked(DebuggerPanel.create).mockReturnValueOnce({ close } as never);
+      const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(halted())));
+
+      const running = runCells([makeCell('self halt. 3')]);
+      await vi.waitFor(() => expect(DebuggerPanel.create).toHaveBeenCalled());
+      executionAt(0).stop.cancel();
+
+      expect(close).toHaveBeenCalledTimes(1);
+      debuggerCallbacks().onClosed();
+      await running;
+      expect(outputText(executionAt(0))).toBe('Stopped.');
+      ctrl.dispose();
+    });
+
+    it('releases the halted process and fails the cell when the debugger cannot open', async () => {
+      vi.mocked(DebuggerPanel.create).mockImplementationOnce(() => {
+        throw new Error('no editor column');
+      });
+      const gci = halted();
+      const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
+
+      await runCells([makeCell('self halt. 3')]);
+
+      expect(gci.GciTsClearStackAsync.mock.calls[0][1]).toBe(0x99n);
+      expect(executionAt(0).end).toHaveBeenCalledWith(false, expect.any(Number));
+      expect(outputText(executionAt(0))).toContain('no editor column');
+      ctrl.dispose();
+    });
+
+    it('releases the process when the user cancels while breakpoint rules are applied', async () => {
+      vi.mocked(resolveBreakpointStop).mockResolvedValueOnce({
+        kind: 'stopped',
+        message: 'Method breakpoint encountered',
+        context: 0x77n,
+        errorNumber: 6005,
+        cancelled: true,
+      });
+      const gci = halted(6005);
+      const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
+
+      await runCells([makeCell('Foo new bar')]);
+
+      expect(gci.GciTsClearStackAsync.mock.calls[0][1]).toBe(0x77n);
+      expect(DebuggerPanel.create).not.toHaveBeenCalled();
+      expect(outputText(executionAt(0))).toBe('Stopped.');
       ctrl.dispose();
     });
 

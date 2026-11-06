@@ -29,7 +29,7 @@ import { DebuggerPanel } from './debugger/debuggerPanel';
 // GemStone Smalltalk as a Jupyter kernel — see gemstoneNotebookKernel.ts for
 // the Jupyter integration mechanics. Each cell is an independent doit: the
 // cell's last statement value is printed as the output, and wrapCellCode's
-// guards report runtime errors inline as `Error: <class> — <messageText>`.
+// guards report runtime errors inline as `Error: <class> - <messageText>`.
 // A halt or a breakpoint opens the GemStone Debugger instead, and the cell
 // waits on it: resumed to completion, it shows the result; closed, it stops.
 //

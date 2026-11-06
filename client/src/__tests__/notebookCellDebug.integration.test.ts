@@ -1,12 +1,17 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
+vi.mock('../transcriptChannel', async (orig) => {
+  const actual = await orig<typeof import('../transcriptChannel')>();
+  return { ...actual, appendTranscriptOutput: vi.fn(actual.appendTranscriptOutput) };
+});
 
 import type { ActiveSession } from '../activeSession';
 import { OOP_ILLEGAL } from '../gciConstants';
 import { fetchCellResult } from '../notebookCellResult';
 import { NbCancelledError } from '../nbRunner';
 import { installTranscriptSink } from '../transcriptSink';
+import { appendTranscriptOutput } from '../transcriptChannel';
 import * as queries from '../browserQueries';
 import { CONTINUE_FLAGS } from '../debugger/conditionalBreakpoints';
 import { clearStack } from '../debugger/debugQueries';
@@ -63,7 +68,6 @@ describe('debugging a Smalltalk notebook cell (integration)', () => {
 
   useIntegrationTest((testContext) => {
     session = testActiveSession(testContext.gciLibrary, testContext.session);
-    installTranscriptSink(session);
   });
 
   afterEach(() => {
@@ -135,7 +139,10 @@ describe('debugging a Smalltalk notebook cell (integration)', () => {
   // Each Transcript write pauses the cell and resumes it; the resume must keep
   // debugging on, or every breakpoint after the first write is skipped.
   it('still stops at a breakpoint reached after the cell writes to the Transcript', async () => {
+    // Each test's abort undoes the sink, so it is installed here, where the write needs it.
+    expect(installTranscriptSink(session)).toBe(true);
     armBreakpointInTwice();
+    vi.mocked(appendTranscriptOutput).mockClear();
     const stops: Stop[] = [];
 
     const answer = await evalSmalltalk(
@@ -145,6 +152,7 @@ describe('debugging a Smalltalk notebook cell (integration)', () => {
       resumingDebugger(stops),
     );
 
+    expect(vi.mocked(appendTranscriptOutput).mock.calls.join('')).toContain('before');
     expect(stops).toHaveLength(1);
     expect(answer).toBe('10');
   }, 30_000);
