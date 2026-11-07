@@ -163,6 +163,58 @@ describe('logging a session out', () => {
     expect(session.isLoggedOut()).toBe(true);
   });
 
+  // GemStone 3.7.6 answers a refused logout with FALSE and no error number.
+  const unexplained = { sessionFreed: true, failure: { number: 0, message: '' } };
+
+  it('takes an unexplained failed logout as refused while one of its calls runs on a worker thread', async () => {
+    let finish: (value: { result: bigint; err: object }) => void = () => {};
+    const gci = {
+      logout: vi
+        .fn((_session: unknown): object => ({ sessionFreed: true }))
+        .mockReturnValueOnce(unexplained),
+      GciTsPerformAsync: vi.fn(
+        () =>
+          new Promise<{ result: bigint; err: object }>((resolve) => {
+            finish = resolve;
+          }),
+      ),
+    };
+    const session = sessionOn(gci);
+    const call = session.GciTsPerformAsync(1n, 1n, null, [], 0, 0);
+
+    const whileRunning = session.logout();
+    finish({ result: 1n, err: {} });
+    await call;
+    const afterwards = session.logout();
+
+    expect([whileRunning, afterwards]).toEqual([false, true]);
+  });
+
+  it('takes an unexplained failed logout as gone when none of its calls is running', () => {
+    const session = sessionOn({ logout: vi.fn(() => unexplained) });
+
+    expect(session.logout()).toBe(true);
+    expect(session.isLoggedOut()).toBe(true);
+  });
+
+  it("keeps GemStone's error from a failed logout, and clears it after one that succeeds", () => {
+    const failure = { number: 0, message: '' };
+    const gci = {
+      logout: vi
+        .fn((_session: unknown): object => ({ sessionFreed: false, failure }))
+        .mockReturnValueOnce({ sessionFreed: false, failure })
+        .mockReturnValueOnce({ sessionFreed: true }),
+    };
+    const session = sessionOn(gci);
+
+    session.logout();
+    const afterFailure = session.lastLogoutFailure;
+    session.logout();
+
+    expect(afterFailure).toBe(failure);
+    expect(session.lastLogoutFailure).toBeUndefined();
+  });
+
   it('keeps the session usable when the logout leaves it alive', () => {
     const gci = {
       logout: vi.fn((_session: unknown) => ({ sessionFreed: false })),

@@ -63,7 +63,13 @@ const gciTsFetchSize = vi.fn((..._args: unknown[]) => ({
   result: pingErrNumber ? -1n : 0n,
   err: { number: pingErrNumber, message: pingErrNumber ? 'boom' : '' },
 }));
-const gciLogout = vi.fn((..._args: unknown[]) => ({ sessionFreed: true }));
+const gciLogout = vi.fn(
+  (
+    ..._args: unknown[]
+  ): { sessionFreed: boolean; failure?: { number: number; message: string } } => ({
+    sessionFreed: true,
+  }),
+);
 // login() aborts once after setup to drop the session-method-policy's spurious
 // write; capture those calls so tests can assert on them.
 const gciTsBegin = vi.fn((..._args: unknown[]) => ({
@@ -715,8 +721,8 @@ describe('SessionManager', () => {
     });
   });
 
-  // GemStone refuses a logout while a worker thread owns the session. Dropping
-  // the session anyway would leave its gem running with nothing to reach it.
+  // A logout is refused while a worker thread owns the session. Dropping the
+  // session anyway would leave its gem running with nothing to reach it.
   /** Whether the code the gem was asked to run includes `fragment`. */
   const ran = (fragment: string): boolean =>
     executeAndFetchStringMock.mock.calls.some((args) => String(args[1]).includes(fragment));
@@ -800,6 +806,28 @@ describe('SessionManager', () => {
       expect(stopCallsOn).not.toHaveBeenCalled();
       expect(vscode.window.withProgress).not.toHaveBeenCalled();
       expect(ran('System sendSignal:')).toBe(false);
+    });
+  });
+
+  // GemStone 3.7.6 refuses a logout without saying why (GemStone bug 52223),
+  // which reads as a session already gone while its gem is still logged in.
+  describe('a logout GemStone fails without a refusal', () => {
+    it('ends the gem if it is still on the server', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Unexplained' }, '/mock/lib');
+      gciLogout.mockReturnValueOnce({ sessionFreed: true, failure: { number: 0, message: '' } });
+
+      await expect(manager.logout(session.id)).resolves.toBe(true);
+
+      expect(ran('descriptionOfSessionSerialNum: 7')).toBe(true);
+      expect(manager.getSession(session.id)).toBeUndefined();
+    });
+
+    it('leaves the server alone after a logout GemStone confirmed', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Clean' }, '/mock/lib');
+
+      await manager.logout(session.id);
+
+      expect(ran('descriptionOfSessionSerialNum:')).toBe(false);
     });
   });
 

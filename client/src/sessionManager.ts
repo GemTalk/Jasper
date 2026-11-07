@@ -34,9 +34,8 @@ import {
 const LOGIN_POLL_INTERVAL_MS = 25;
 
 /**
- * Log `session` out, answering false only when GemStone refused because a
- * call is still in progress. A session that is already logged out counts as
- * gone.
+ * Log `session` out, answering false only when it was refused because a call
+ * is still in progress. A session that is already logged out counts as gone.
  */
 export function logOutOrFindGone(session: ActiveSession): boolean {
   try {
@@ -494,7 +493,7 @@ export class SessionManager {
    *   that the run ignores every stop, so it is not stopped again.
    * @returns whether this call logged the session out: false when the session
    *   was already gone or another logout of it did the work.
-   * @throws {Error} when GemStone refuses the logout (a koffi worker thread
+   * @throws {Error} when the logout is refused (a call on a worker thread
    *   still owns the session); the session stays open and registered.
    */
   async logout(id: number, stopAlreadyTried = false): Promise<boolean> {
@@ -524,8 +523,8 @@ export class SessionManager {
       await stopCallsOn(s);
       if (!logOutOrFindGone(s)) {
         throw new Error(
-          `Session ${id} could not be logged out: its run is ignoring every stop, and GemStone ` +
-            "won't log out a session while that run goes on. The session is still open. " +
+          `Session ${id} could not be logged out: its run is ignoring every stop, and a ` +
+            "session can't be logged out while that run goes on. The session is still open. " +
             `An administrator can end it with: System stopSession: ${serverSession ?? '<its number>'}`,
         );
       }
@@ -533,7 +532,20 @@ export class SessionManager {
       // moment: the run can still be going.
       if (ended) stillRunning = false;
     }
-    if (stillRunning) this.endLeftoverRun(s, serverSession);
+    if (stillRunning) {
+      this.endLeftoverGem(
+        s,
+        serverSession,
+        'its run ignored every stop and is still running on the server',
+      );
+    } else if (s.lastLogoutFailure) {
+      // A failed logout can leave the gem logged in; see ActiveSession.logout.
+      this.endLeftoverGem(
+        s,
+        serverSession,
+        'GemStone did not confirm the logout, so its gem may still be on the server',
+      );
+    }
     forgetSession(id);
     forgetForceStop(id);
     this.sessions.delete(id);
@@ -782,9 +794,9 @@ export class SessionManager {
     }
   }
 
-  /** End a logged-out session's gem whose run ignored every stop, or say why not. */
-  private endLeftoverRun(s: ActiveSession, serverSession: string | undefined): void {
-    const left = `Session ${s.id} is logged out, but its run ignored every stop and is still running on the server.`;
+  /** End a logged-out session's gem if it is still on the server, or say why not. */
+  private endLeftoverGem(s: ActiveSession, serverSession: string | undefined, why: string): void {
+    const left = `Session ${s.id} is logged out, but ${why}.`;
     if (serverSession === undefined) {
       void vscode.window.showWarningMessage(`${left} An administrator can end it.`);
       return;

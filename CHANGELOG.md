@@ -14,6 +14,10 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 - **Developer tooling and test-suite work.** No user-facing behavior change: CI now also tests against GemStone 3.7.6, the newest release, on Linux and Windows, and keeps testing 3.7.5 alongside it. 3.7.6 adds no GCI functions. ([#879](https://github.com/GemTalk/Jasper/issues/879))
 
+### Fixed
+
+- **Logging out on GemStone 3.7.6 no longer leaves the session running on the server.** When a logout reached GemStone while a call on that session was still going, GemStone 3.7.6 refused it without saying why, and Jasper took the session as already gone: it disappeared from Jasper but stayed logged in on the stone, holding its slot until an administrator stopped it. Jasper now reads that answer as the refusal it is while one of its own calls is running, waits for the call, and logs out again; and after any logout GemStone doesn't confirm, it checks the stone and ends the session if it is still there. Ending it needs the SessionAccess and SystemControl privileges; without them Jasper says what is left running. The 3.7.6 behaviour is reported to GemTalk as bug 52223. ([#879](https://github.com/GemTalk/Jasper/issues/879))
+
 ## [1.17.0] - 2026-10-30
 
 ### Added

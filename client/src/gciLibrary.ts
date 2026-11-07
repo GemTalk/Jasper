@@ -2261,14 +2261,15 @@ export class GciLibrary {
    *   it too. Only a refusal because a call is still in progress on another
    *   thread (`GCI_ERR_OP_IN_PROGRESS`) leaves it usable. Other failures count
    *   as freed, so an unforeseen one costs a live session rather than a call
-   *   on a freed handle.
+   *   on a freed handle. `failure` is GemStone's error whenever the logout
+   *   failed, when its gem may still be logged in (see `ActiveSession.logout`).
    */
-  public logout(session: unknown): { sessionFreed: boolean } {
+  public logout(session: unknown): { sessionFreed: boolean; failure?: GciError } {
     const { success, err } = this.GciTsNbLogout(session);
     if (!success) console.warn(`GciTsNbLogout failed [${err.number}]: ${err.message}`);
     const sessionFreed = success || err.number !== GCI_ERR_OP_IN_PROGRESS;
     if (sessionFreed) this.deleteCachedUtf8OopFor(session);
-    return { sessionFreed };
+    return success ? { sessionFreed } : { sessionFreed, failure: err };
   }
 
   /**
