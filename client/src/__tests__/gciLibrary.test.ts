@@ -21,11 +21,14 @@ describe('GciLibrary', () => {
   let session: unknown;
   let testContext: GciTestContext;
 
-  useIntegrationTest((testContextToUse) => {
-    gciLibrary = testContextToUse.gciLibrary;
-    session = testContextToUse.session;
-    testContext = testContextToUse;
-  });
+  useIntegrationTest(
+    (testContextToUse) => {
+      gciLibrary = testContextToUse.gciLibrary;
+      session = testContextToUse.session;
+      testContext = testContextToUse;
+    },
+    { sessions: 2 },
+  );
 
   /** Asserts that `oop` is GemStone's `true` singleton. */
   function expectOopToBeTrue(oop: bigint) {

@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from './sessionManager';
-import { wrapCellCode } from './queries/executeCode';
+import { executeCodeRaised, wrapCellCode } from './queries/executeCode';
 import { GemStoneNotebookKernel, GEMSTONE_NOTEBOOK_TYPE } from './gemstoneNotebookKernel';
 import { startClientForwarderMode, endClientForwarderMode, settleNbResult } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
 import { NbCancelledError, NbRunOptions, runNbCall, whenSessionFree } from './nbRunner';
 import { failCell, fetchCellResult } from './notebookCellResult';
+import { autoCommitAfterWrite } from './autoCommit/autoCommitRunner';
 import {
   GCI_PERFORM_FLAG_ENABLE_DEBUG,
   GCI_PERFORM_FLAG_INTERPRETED,
@@ -192,8 +193,12 @@ async function runCell(
       },
     );
 
+    if (typeof outcome !== 'bigint') return outcome;
     // wrapCellCode printStrings server-side, so the result IS a string.
-    return typeof outcome === 'bigint' ? fetchCellResult(session, outcome) : outcome;
+    const data = fetchCellResult(session, outcome);
+    // A cell that raised answers its error inline, so only a clean answer commits.
+    if (!executeCodeRaised(data)) autoCommitAfterWrite(session, 'notebook cell');
+    return data;
   } finally {
     endForwarding();
   }

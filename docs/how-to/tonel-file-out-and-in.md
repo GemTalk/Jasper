@@ -79,8 +79,10 @@ Three things worth knowing before you do:
 1. **It REPLACES.** The file is taken as the intended state of the class, so a
    method the image has that the file does not carry is removed. This is the same
    behaviour as chunk file in.
-2. **It never commits.** The session is left dirty and you decide — commit it to
-   keep the change.
+2. **It doesn't commit on its own.** The session is left dirty and you decide —
+   commit it to keep the change. The exception is a session with auto-commit on,
+   where the whole file commits as one change, and nothing commits if it had an
+   error.
 3. **It asks which symbol dictionary** only when it has to. Tonel carries no
    dictionary (its `#category` is a *package*, not a SymbolDictionary), so Jasper
    defaults to the dictionary the class already lives in, and prompts only when the

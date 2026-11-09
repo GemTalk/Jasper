@@ -9,7 +9,7 @@
 // world. Run after `npm run test:server:start` (which writes
 // `client/.env.test`).
 //
-// Logs in as `VITE_GEMSTONE_USER` (from .env.test), elevates to a transient
+// Logs in as `VITE_GEMSTONE_USER` (see loadTestEnv), elevates to a transient
 // SystemUser session on the same connection — install requires write access to
 // kernel classes — and delegates to `installServerPlugin`, which files in every
 // plugin feature applicable to this stone's version and then re-verifies the
@@ -23,7 +23,7 @@
 // indistinguishable "feature not installed" skip in the second test pass.
 
 import path from 'node:path';
-import dotenv from 'dotenv';
+import { loadTestEnv } from '../src/__tests__/loadTestEnv';
 import { resolveTestConnection } from '../src/__tests__/testConnection';
 import { testActiveSession } from '../src/__tests__/testActiveSession';
 import { GciLibrary } from '../src/gciLibrary';
@@ -33,35 +33,8 @@ import { loginAsSystemUser, DEFAULT_SYSTEMUSER_PW } from '../src/serverPlugin/in
 
 const repoRoot = path.resolve(__dirname, '..', '..');
 
-// Loads `client/.env.test` into process.env (vite/vitest do this automatically;
-// a plain Node script has to do it itself). Missing file is fine —
-// `resolveTestConnection` (called below) reports it with actionable guidance.
-// Real environment variables win: dotenv never overwrites an already-set
-// process.env value unless told to.
-//
-// Every option is pinned because dotenv also reads its options from ambient
-// DOTENV_* / DOTENV_CONFIG_* variables, and an explicit option beats them. A
-// stray DOTENV_OVERRIDE would otherwise let the file clobber real variables,
-// and DOTENV_FAST would switch to a different parser.
-function loadEnvTestFile() {
-  dotenv.config({
-    path: path.join(repoRoot, 'client', '.env.test'),
-    encoding: 'utf8',
-    override: false,
-    fast: false,
-    debug: false,
-    // Suppresses the "injected env" line dotenv writes to stderr: noise in CI logs.
-    quiet: true,
-  });
-}
-
 async function main() {
-  loadEnvTestFile();
-  // GCI finds a local stone through GEMSTONE_GLOBAL_DIR (its locks/registry);
-  // copy the VITE_-prefixed variant over, same as gciTestConfig.ts.
-  if (process.env.VITE_GEMSTONE_GLOBAL_DIR) {
-    process.env.GEMSTONE_GLOBAL_DIR = process.env.VITE_GEMSTONE_GLOBAL_DIR;
-  }
+  loadTestEnv(path.join(repoRoot, 'client'));
 
   const connection = resolveTestConnection();
 

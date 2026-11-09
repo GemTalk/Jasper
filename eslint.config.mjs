@@ -61,6 +61,13 @@ const RAW_GCI_LOGIN =
   'Prefer the session on the test context (`testContext.session`), or `withTransientSession(...)` for a second one. The raw GciTs*Login* wrappers return a session the harness never armed with the commit guard.';
 const GCI_LIBRARY_LOGIN =
   'Prefer the session on the test context (`testContext.session`), or `withTransientSession(...)` for a second one. `GciLibrary.login` returns a session the harness never armed with the commit guard.';
+const UNREPORTED_TRANSIENT_LOGIN =
+  "Prefer `reportedTransientLogin(...)` from sessionGateClient.ts. The session gate books the test stone's few session slots, and a login it is not told about can take a slot it has just given to another file, whose login the stone then refuses.";
+// Shared by the test-file and test-helper blocks below.
+const TRANSIENT_LOGIN_SELECTOR = {
+  selector: "CallExpression[callee.property.name='transientLogin']",
+  message: UNREPORTED_TRANSIENT_LOGIN,
+};
 const LOGIN_CREDENTIALS =
   'Prefer letting `useIntegrationTest` read the connection environment. A test reaching for the password is assembling its own login, and that session is not armed with the commit guard.';
 const TELEMETRY_OUTSIDE_EXTENSION_HOST =
@@ -223,6 +230,7 @@ const HARNESS_SESSION_IGNORES = [
 // second block has to carry its own full copy of every selector here, not
 // just the two new ones it adds (see TS_EXTENSION_IMPORT above for why).
 const HARNESS_SESSION_SELECTORS = [
+  TRANSIENT_LOGIN_SELECTOR,
   { selector: "NewExpression[callee.name='GciLibrary']", message: OWN_GCI_LIBRARY },
   // `callee.name` reads a bare identifier only, so a namespace import
   // (`new gciLib.GciLibrary(...)`) walks past it. The three selectors
@@ -662,7 +670,7 @@ export default tseslint.config(
       'client/src/gciLibrary/__tests__/**',
     ],
     rules: {
-      'no-restricted-syntax': ['error', ...CAPABILITY_CHECK_SELECTORS],
+      'no-restricted-syntax': ['error', TRANSIENT_LOGIN_SELECTOR, ...CAPABILITY_CHECK_SELECTORS],
       '@typescript-eslint/no-restricted-imports': [
         'error',
         {

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
-vi.mock('../../gciLog', () => ({ logInfo: vi.fn() }));
+vi.mock('../../gciLog', () => ({ logInfo: vi.fn(), logWarning: vi.fn() }));
 vi.mock('../../browserQueries', () => ({
   getStoredClassComment: vi.fn(),
   setClassComment: vi.fn(),

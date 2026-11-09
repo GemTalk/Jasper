@@ -16,6 +16,7 @@
 import { ActiveSession } from './sessionManager';
 import * as queries from './browserQueries';
 import { BrowserQueryError } from './browserQueries';
+import { runWithAutoCommitDeferredSync } from './autoCommit/autoCommitRunner';
 
 // ── Topaz Parser (copied from server) ──────────────────────────
 
@@ -195,12 +196,26 @@ export interface FileInResult {
 
 /**
  * Parse a Topaz file-out and compile each piece (class definition + methods)
- * back into GemStone. Returns per-method error details for diagnostics.
+ * back into GemStone. Returns per-method error details for diagnostics. One auto-commit
+ * for the whole file-in; see the header of `fileTransfer/fileIn.ts`.
  */
 export function fileInClass(
   session: ActiveSession,
   fileContent: string,
   environmentId: number = 0,
+): FileInResult {
+  return runWithAutoCommitDeferredSync(
+    session,
+    'file-in',
+    () => fileInClassRegions(session, fileContent, environmentId),
+    (result) => result.success,
+  );
+}
+
+function fileInClassRegions(
+  session: ActiveSession,
+  fileContent: string,
+  environmentId: number,
 ): FileInResult {
   const regions = parseTopazDocument(fileContent);
   const errors: FileInError[] = [];
@@ -313,9 +328,8 @@ export type FileInStep =
   | { kind: 'input'; file: string; line: number }
   /** A Topaz command that drives the *topaz program* rather than the image — logging
    *  in, setting the output level, committing. Recognised and deliberately not run
-   *  (Jasper is already connected, and never commits on the user's behalf), but
-   *  reported, because a `commit` the file expected and did not get changes what the
-   *  file means. */
+   *  (Jasper is already connected, and a `commit` LINE never commits), but reported,
+   *  because a `commit` the file expected and did not get changes what the file means. */
   | { kind: 'sessionCommand'; directive: string; line: number; transaction: boolean }
   /** `exit` / `quit` — Topaz stops reading here, so this does too. */
   | { kind: 'stop'; directive: string; line: number }
@@ -571,6 +585,20 @@ export function fileInChangedRegions(
   oldContent: string | undefined,
   newContent: string,
   environmentId: number = 0,
+): FileInResult {
+  return runWithAutoCommitDeferredSync(
+    session,
+    'file-in',
+    () => fileInChangedRegionsOf(session, oldContent, newContent, environmentId),
+    (result) => result.success,
+  );
+}
+
+function fileInChangedRegionsOf(
+  session: ActiveSession,
+  oldContent: string | undefined,
+  newContent: string,
+  environmentId: number,
 ): FileInResult {
   if (oldContent === undefined) {
     return fileInClass(session, newContent, environmentId);

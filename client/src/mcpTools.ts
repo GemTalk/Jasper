@@ -6,9 +6,11 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { ActiveSession } from './sessionManager';
 import * as queries from './browserQueries';
+import { autoCommitAfterWrite, autoCommitTransactionSettled } from './autoCommit/autoCommitRunner';
+import { isAutoCommitArmed } from './autoCommit/autoCommitState';
 import * as sunit from './sunitQueries';
 import * as python from './pythonQueries';
-import { wrapExecuteCode } from './queries/executeCode';
+import { executeCodeRaised, wrapExecuteCode } from './queries/executeCode';
 import type { TestRunResult } from './queries/runTestMethod';
 import type { TestFailureDetails } from './queries/describeTestFailure';
 import { withMcpErrorMap } from './mcpZodErrorMap';
@@ -203,14 +205,16 @@ export function registerMcpTools(
     {},
     async () =>
       wrapMoving<Record<string, unknown>>((session) => {
-        return executeString(session, `System abortTransaction. 'Transaction aborted'`);
+        const answer = executeString(session, `System abortTransaction. 'Transaction aborted'`);
+        autoCommitTransactionSettled(session.id);
+        return answer;
       })({}),
   );
 
   server.tool(
     'add_dictionary',
     "Create a new SymbolDictionary and append it to the current user's symbolList. " +
-      'NOT committed automatically — call commit to persist or abort to undo.',
+      'Not committed unless the session has auto-commit on — otherwise call commit to persist or abort to undo.',
     { dictionaryName: z.string().describe('Name of the new dictionary') },
     async (args) =>
       wrap<typeof args>((session, a) => {
@@ -226,7 +230,9 @@ export function registerMcpTools(
       wrapMoving<Record<string, unknown>>((session) => {
         // Through the shared query rather than inline, so a refusal here names the
         // conflicting objects exactly as the session-row Commit does.
-        return commitTransaction((code) => executeString(session, code));
+        const answer = commitTransaction((code) => executeString(session, code));
+        if (answer === 'Transaction committed') autoCommitTransactionSettled(session.id);
+        return answer;
       })({}),
   );
 
@@ -234,7 +240,7 @@ export function registerMcpTools(
     'compile_class_definition',
     "Evaluate a class-definition expression (e.g. `Object subclass: 'Foo' ... inDictionary: 'UserGlobals'`). " +
       'Creates the class if new, updates it if it exists. The source embeds its own dictionary target. ' +
-      'NOT committed automatically.',
+      'Not committed unless the session has auto-commit on.',
     {
       source: z
         .string()
@@ -250,7 +256,8 @@ export function registerMcpTools(
 
   server.tool(
     'compile_method',
-    "Compile (add or update) a method on a class in the user's active session. Not committed automatically. " +
+    "Compile (add or update) a method on a class in the user's active session. Not committed unless " +
+      'the session has auto-commit on. ' +
       'Optional dictionaryName disambiguates shadowed class names.',
     {
       className: z.string().describe('Class name'),
@@ -299,7 +306,7 @@ export function registerMcpTools(
     'delete_class',
     'DESTRUCTIVE: remove a class from a specific dictionary. Requires dictionaryName because ' +
       'deletion must target a specific dictionary (names can be shadowed across dicts). ' +
-      'NOT committed automatically — abort undoes it.',
+      'Not committed unless the session has auto-commit on; otherwise abort undoes it.',
     {
       className: z.string().describe('Class name to delete'),
       dictionaryName: z.string().describe('Name of the dictionary that contains the class'),
@@ -312,7 +319,8 @@ export function registerMcpTools(
 
   server.tool(
     'delete_method',
-    'Remove a method from a class. NOT committed automatically. Optional dictionaryName ' +
+    'Remove a method from a class. Not committed unless the session has auto-commit on. Optional ' +
+      'dictionaryName ' +
       'disambiguates shadowed class names.',
     {
       className: z.string().describe('Class name'),
@@ -396,7 +404,7 @@ export function registerMcpTools(
       'Accepts both single expressions ("3 + 4") and multi-statement bodies with temp ' +
       'declarations ("| x | x := 42. x + 1") — the body is evaluated as a block, so any ' +
       'sequence of statements is fine. The value of the last statement is returned. ' +
-      'Changes are NOT committed automatically.',
+      'Changes are not committed unless the session has auto-commit on.',
     { code: z.string().describe('Smalltalk expression or statement sequence to execute') },
     async (args) =>
       wrapMoving<typeof args>((session, a) => {
@@ -404,7 +412,16 @@ export function registerMcpTools(
         // guards against AlmostOutOfStack / AbstractException so a runaway
         // block returns a clean error string instead of taking the gem down.
         try {
-          return executeString(session, wrapExecuteCode(a.code));
+          const answer = executeString(session, wrapExecuteCode(a.code));
+          // Code that raised answers its error inline, so only a clean answer commits.
+          if (!executeCodeRaised(answer)) {
+            autoCommitAfterWrite(session, 'MCP execute_code');
+            return answer;
+          }
+          return isAutoCommitArmed(session.id)
+            ? `${answer}\n(Not committed: the code raised. Anything it changed before that is ` +
+                'still in the transaction; call abort to discard it.)'
+            : answer;
         } finally {
           showBufferedTranscript(session);
         }
@@ -688,7 +705,7 @@ export function registerMcpTools(
   server.tool(
     'remove_dictionary',
     "DESTRUCTIVE: remove a dictionary from the current user's symbolList. " +
-      'NOT committed automatically.',
+      'Not committed unless the session has auto-commit on.',
     { dictionaryName: z.string().describe('Name of the dictionary to remove') },
     async (args) =>
       wrap<typeof args>((session, a) => {
@@ -774,7 +791,8 @@ export function registerMcpTools(
   server.tool(
     'set_class_comment',
     'Set the class comment (docstring equivalent). Replaces any existing comment. ' +
-      'NOT committed automatically. Optional dictionaryName disambiguates shadowed class names.',
+      'Not committed unless the session has auto-commit on. Optional dictionaryName disambiguates ' +
+      'shadowed class names.',
     {
       className: z.string().describe('Class name'),
       comment: z.string().describe('New comment text'),

@@ -45,9 +45,12 @@ import { forceStopSupport } from './forceStopSupport';
 describe('Force Stop (integration)', () => {
   let session: ActiveSession;
 
-  useIntegrationTest((testContext) => {
-    session = testActiveSession(testContext.gciLibrary, testContext.session);
-  });
+  useIntegrationTest(
+    (testContext) => {
+      session = testActiveSession(testContext.gciLibrary, testContext.session);
+    },
+    { sessions: 3 },
+  );
 
   afterEach(() => {
     setStoppedRunCollectedHandler(undefined);

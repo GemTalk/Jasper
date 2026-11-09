@@ -35,3 +35,10 @@ export function wrapExecuteCode(code: string): string {
 export function wrapCellCode(code: string): string {
   return wrap(code, `(e isKindOf: Halt) ifTrue: [e pass] ifFalse: [${ERROR_TEXT}]`);
 }
+
+/** Whether an answer from {@link wrapExecuteCode} or {@link wrapCellCode} is one of its handlers' error strings. A
+ *  heuristic: a successful answer whose printString happens to start with `Error: ` (a domain
+ *  object's `printOn:` can write that) reads as raised too, and so is not auto-committed. */
+export function executeCodeRaised(answer: string): boolean {
+  return answer.startsWith('Error: ');
+}

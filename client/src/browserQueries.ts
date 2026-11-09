@@ -13,6 +13,7 @@ import {
   sayRunInProgress,
   sayStillRunning,
 } from './nbRunner';
+import { autoCommitAfterWrite } from './autoCommit/autoCommitRunner';
 
 import { NbQueryExecutor, QueryExecutor } from './queries/types';
 
@@ -1040,8 +1041,12 @@ export function fileOutDictionary(session: ActiveSession, dict: number | string)
   return sharedFileOutDictionary(defaultQueryExecutorUsing(session), dict);
 }
 
+// A file-in's doit chunks and its `removeallmethods` change the repository like any other
+// write, so they run inside `writing`; the file-in's own deferred region makes it one commit.
 export function fileInChunk(session: ActiveSession, code: string): string {
-  return sharedFileInChunk(defaultQueryExecutorUsing(session), code);
+  return writing(session, 'file-in chunk', () =>
+    sharedFileInChunk(defaultQueryExecutorUsing(session), code),
+  );
 }
 
 export function removeAllMethods(
@@ -1050,7 +1055,9 @@ export function removeAllMethods(
   isMeta: boolean,
   dict?: number | string,
 ): string {
-  return sharedRemoveAllMethods(defaultQueryExecutorUsing(session), className, isMeta, dict);
+  return writing(session, 'remove all methods', () =>
+    sharedRemoveAllMethods(defaultQueryExecutorUsing(session), className, isMeta, dict),
+  );
 }
 
 export function describeClass(
@@ -1145,7 +1152,9 @@ export function addClassVariable(
   classVarName: string,
   dict?: number | string,
 ): string {
-  return sharedAddClassVariable(defaultQueryExecutorUsing(session), className, classVarName, dict);
+  return writing(session, 'class variable add', () =>
+    sharedAddClassVariable(defaultQueryExecutorUsing(session), className, classVarName, dict),
+  );
 }
 
 export function deleteClassVariable(
@@ -1154,11 +1163,8 @@ export function deleteClassVariable(
   classVarName: string,
   dict?: number | string,
 ): string {
-  return sharedDeleteClassVariable(
-    defaultQueryExecutorUsing(session),
-    className,
-    classVarName,
-    dict,
+  return writing(session, 'class variable remove', () =>
+    sharedDeleteClassVariable(defaultQueryExecutorUsing(session), className, classVarName, dict),
   );
 }
 
@@ -1169,7 +1175,9 @@ export function addAccessors(
   accessors: Accessor[],
   dict?: number | string,
 ): AddAccessorsResult {
-  return sharedAddAccessors(defaultQueryExecutorUsing(session), className, isMeta, accessors, dict);
+  return writing(session, 'accessors', () =>
+    sharedAddAccessors(defaultQueryExecutorUsing(session), className, isMeta, accessors, dict),
+  );
 }
 
 export function getDefinedClassVarNames(
@@ -2270,6 +2278,8 @@ export function revertClassToVersion(
   index: number,
   dict?: number | string,
 ): string {
+  // Not `writing`: a restore can land with some changes failed to compile, so the Explorer
+  // decides whether to commit from the answer.
   return sharedRevertClassToVersion(defaultQueryExecutorUsing(session), className, index, dict);
 }
 
@@ -2330,7 +2340,9 @@ export function removeClassVersion(
   index: number,
   dict?: number | string,
 ): string {
-  return sharedRemoveClassVersion(defaultQueryExecutorUsing(session), className, index, dict);
+  return writing(session, 'class version remove', () =>
+    sharedRemoveClassVersion(defaultQueryExecutorUsing(session), className, index, dict),
+  );
 }
 
 export function getGrailStubReflection(
@@ -2519,10 +2531,27 @@ export function methodsAccessingClassVar(
 }
 
 // ── Write-path queries (mutations) ─────────────────────────────────────────
-// All of these delegate to the shared layer. None auto-commit.
+// All of these delegate to the shared layer. Each write that changes the repository runs
+// inside `writing`; SessionTemps-only bookkeeping and the reads here stay outside.
+
+/**
+ * Run a repository mutation, then let auto-commit have it.
+ *
+ * After, never around: a mutation that throws has changed nothing worth committing, and
+ * committing on the way out of a failure is how a half-applied change reaches the
+ * repository. Inside a deferred region (`runWithAutoCommitDeferred`) the commit is owed
+ * rather than run — see `autoCommit/autoCommitRunner.ts`.
+ */
+function writing<T>(session: ActiveSession, what: string, run: () => T): T {
+  const answer = run();
+  autoCommitAfterWrite(session, what);
+  return answer;
+}
 
 export function compileClassDefinition(session: ActiveSession, source: string): string {
-  return sharedCompileClassDefinition(defaultQueryExecutorUsing(session), source);
+  return writing(session, 'class definition', () =>
+    sharedCompileClassDefinition(defaultQueryExecutorUsing(session), source),
+  );
 }
 
 export function compileMethod(
@@ -2534,14 +2563,16 @@ export function compileMethod(
   environmentId: number = 0,
   dict?: number | string,
 ): string {
-  return sharedCompileMethod(
-    defaultQueryExecutorUsing(session),
-    className,
-    isMeta,
-    category,
-    source,
-    environmentId,
-    dict,
+  return writing(session, 'method compile', () =>
+    sharedCompileMethod(
+      defaultQueryExecutorUsing(session),
+      className,
+      isMeta,
+      category,
+      source,
+      environmentId,
+      dict,
+    ),
   );
 }
 
@@ -2551,7 +2582,9 @@ export function setClassComment(
   comment: string,
   dict?: number | string,
 ): string {
-  return sharedSetClassComment(defaultQueryExecutorUsing(session), className, comment, dict);
+  return writing(session, 'class comment', () =>
+    sharedSetClassComment(defaultQueryExecutorUsing(session), className, comment, dict),
+  );
 }
 
 export function recategorizeClass(
@@ -2560,7 +2593,9 @@ export function recategorizeClass(
   newCategory: string,
   dict?: number | string,
 ): string {
-  return sharedRecategorizeClass(defaultQueryExecutorUsing(session), className, newCategory, dict);
+  return writing(session, 'class category', () =>
+    sharedRecategorizeClass(defaultQueryExecutorUsing(session), className, newCategory, dict),
+  );
 }
 
 export function copyMethodToClass(
@@ -2572,14 +2607,16 @@ export function copyMethodToClass(
   environmentId: number = 0,
   dict?: number | string,
 ): string {
-  return sharedCopyMethodToClass(
-    defaultQueryExecutorUsing(session),
-    sourceClass,
-    targetClass,
-    isMeta,
-    selector,
-    environmentId,
-    dict,
+  return writing(session, 'method copy', () =>
+    sharedCopyMethodToClass(
+      defaultQueryExecutorUsing(session),
+      sourceClass,
+      targetClass,
+      isMeta,
+      selector,
+      environmentId,
+      dict,
+    ),
   );
 }
 
@@ -2590,7 +2627,9 @@ export function deleteMethod(
   selector: string,
   dict?: number | string,
 ): string {
-  return sharedDeleteMethod(defaultQueryExecutorUsing(session), className, isMeta, selector, dict);
+  return writing(session, 'method delete', () =>
+    sharedDeleteMethod(defaultQueryExecutorUsing(session), className, isMeta, selector, dict),
+  );
 }
 
 export function recategorizeMethod(
@@ -2601,13 +2640,15 @@ export function recategorizeMethod(
   newCategory: string,
   dict?: number | string,
 ): string {
-  return sharedRecategorizeMethod(
-    defaultQueryExecutorUsing(session),
-    className,
-    isMeta,
-    selector,
-    newCategory,
-    dict,
+  return writing(session, 'method category', () =>
+    sharedRecategorizeMethod(
+      defaultQueryExecutorUsing(session),
+      className,
+      isMeta,
+      selector,
+      newCategory,
+      dict,
+    ),
   );
 }
 
@@ -2618,12 +2659,14 @@ export function removeMethodCategory(
   category: string,
   dict?: number | string,
 ): string {
-  return sharedRemoveMethodCategory(
-    defaultQueryExecutorUsing(session),
-    className,
-    isMeta,
-    category,
-    dict,
+  return writing(session, 'method category remove', () =>
+    sharedRemoveMethodCategory(
+      defaultQueryExecutorUsing(session),
+      className,
+      isMeta,
+      category,
+      dict,
+    ),
   );
 }
 
@@ -2635,13 +2678,15 @@ export function renameCategory(
   newCategory: string,
   dict?: number | string,
 ): string {
-  return sharedRenameCategory(
-    defaultQueryExecutorUsing(session),
-    className,
-    isMeta,
-    oldCategory,
-    newCategory,
-    dict,
+  return writing(session, 'method category rename', () =>
+    sharedRenameCategory(
+      defaultQueryExecutorUsing(session),
+      className,
+      isMeta,
+      oldCategory,
+      newCategory,
+      dict,
+    ),
   );
 }
 
@@ -2655,13 +2700,15 @@ export function removeCategory(
   // alone, which is what every caller that does not browse higher environments wants.
   maxEnv = 0,
 ): string {
-  return sharedRemoveCategory(
-    defaultQueryExecutorUsing(session),
-    className,
-    isMeta,
-    category,
-    dict,
-    maxEnv,
+  return writing(session, 'class category remove', () =>
+    sharedRemoveCategory(
+      defaultQueryExecutorUsing(session),
+      className,
+      isMeta,
+      category,
+      dict,
+      maxEnv,
+    ),
   );
 }
 
@@ -2670,7 +2717,9 @@ export function deleteClass(
   dict: number | string,
   className: string,
 ): string {
-  return sharedDeleteClass(defaultQueryExecutorUsing(session), dict, className);
+  return writing(session, 'class delete', () =>
+    sharedDeleteClass(defaultQueryExecutorUsing(session), dict, className),
+  );
 }
 
 export function moveClass(
@@ -2679,20 +2728,21 @@ export function moveClass(
   destDictIndex: number,
   className: string,
 ): string {
-  return sharedMoveClass(
-    defaultQueryExecutorUsing(session),
-    srcDictIndex,
-    destDictIndex,
-    className,
+  return writing(session, 'class move', () =>
+    sharedMoveClass(defaultQueryExecutorUsing(session), srcDictIndex, destDictIndex, className),
   );
 }
 
 export function addDictionary(session: ActiveSession, dictName: string): string {
-  return sharedAddDictionary(defaultQueryExecutorUsing(session), dictName);
+  return writing(session, 'dictionary add', () =>
+    sharedAddDictionary(defaultQueryExecutorUsing(session), dictName),
+  );
 }
 
 export function removeDictionary(session: ActiveSession, dict: number | string): string {
-  return sharedRemoveDictionary(defaultQueryExecutorUsing(session), dict);
+  return writing(session, 'dictionary remove', () =>
+    sharedRemoveDictionary(defaultQueryExecutorUsing(session), dict),
+  );
 }
 
 export function renameDictionary(
@@ -2700,7 +2750,9 @@ export function renameDictionary(
   dict: number | string,
   newName: string,
 ): string {
-  return sharedRenameDictionary(defaultQueryExecutorUsing(session), dict, newName);
+  return writing(session, 'dictionary rename', () =>
+    sharedRenameDictionary(defaultQueryExecutorUsing(session), dict, newName),
+  );
 }
 
 export function renameClassCategory(
@@ -2709,17 +2761,26 @@ export function renameClassCategory(
   oldPath: string,
   newPath: string,
 ): string {
-  return sharedRenameClassCategory(defaultQueryExecutorUsing(session), dict, oldPath, newPath);
+  return writing(session, 'class category rename', () =>
+    sharedRenameClassCategory(defaultQueryExecutorUsing(session), dict, oldPath, newPath),
+  );
 }
 
 export function moveDictionaryUp(session: ActiveSession, dictIndex: number): string {
-  return sharedMoveDictionaryUp(defaultQueryExecutorUsing(session), dictIndex);
+  return writing(session, 'dictionary move', () =>
+    sharedMoveDictionaryUp(defaultQueryExecutorUsing(session), dictIndex),
+  );
 }
 
 export function moveDictionaryDown(session: ActiveSession, dictIndex: number): string {
-  return sharedMoveDictionaryDown(defaultQueryExecutorUsing(session), dictIndex);
+  return writing(session, 'dictionary move', () =>
+    sharedMoveDictionaryDown(defaultQueryExecutorUsing(session), dictIndex),
+  );
 }
 
+// The breakpoint calls below are outside `writing` on purpose: a breakpoint is per-gem state
+// that a commit does not persist (see `debugger/breakpointManager.ts`), so an auto-commit here
+// would only commit the user's OTHER pending work at a moment they did not choose.
 export function setBreakAtStepPoint(
   session: ActiveSession,
   className: string,
@@ -2857,6 +2918,8 @@ export function applyUndoRefactoring(
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Undoing the refactoring…');
+  // Not `writing`: the apply answers a partial reversal rather than throwing, so whether to
+  // commit is decided by `undoRefactoringCommand`, which reads the answer.
   return sharedApplyUndoRefactoring(exec, token, deselectedIds);
 }
 

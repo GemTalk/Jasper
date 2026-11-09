@@ -21,6 +21,8 @@
  * the stone as it is now.
  */
 import * as vscode from 'vscode';
+import { runRawWritesWithAutoCommit } from '../autoCommit/autoCommitRunner';
+import { commitStateNote, heldBackNote } from '../autoCommit/autoCommitState';
 import { dictionaryNameFor } from '../refactoring/dictionaryLabel';
 import { ActiveSession } from '../sessionManager';
 import { defaultQueryExecutorUsing } from '../browserQueries';
@@ -88,7 +90,12 @@ export async function reverseClassEdit(
 
   let results;
   try {
-    results = applyClassSlotOps(execute, ops);
+    results = runRawWritesWithAutoCommit(
+      session,
+      'undo',
+      () => applyClassSlotOps(execute, ops),
+      (rs) => rs.every((r) => r.error === null),
+    );
   } catch (e: unknown) {
     void vscode.window.showErrorMessage(
       `Revert failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -123,7 +130,8 @@ export async function reverseClassEdit(
     void vscode.window.showErrorMessage(
       failures.length === results.length
         ? `Revert of ${entry.label} failed: ${first.error}`
-        : `Revert of ${entry.label} was partial — ${first.op.slot.className}: ${first.error}`,
+        : `Revert of ${entry.label} was partial — ${first.op.slot.className}: ${first.error}.` +
+            heldBackNote(session.id),
     );
     // Spent only when something landed. A partial revert leaves the recorded state describing
     // nothing the stone holds, so re-offering it would revert from a state it does not know;
@@ -134,7 +142,7 @@ export async function reverseClassEdit(
 
   void vscode.window.showInformationMessage(
     `Reverted ${entry.label} — ${describeClassOps(succeeded)}. The class keeps its history. ` +
-      'Compiled but NOT committed — commit when ready.',
+      commitStateNote(session.id, 'Compiled but NOT committed — commit when ready.'),
   );
   return true;
 }

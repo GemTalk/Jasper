@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', () => ({
   analyzeInstVar: vi.fn(),
@@ -19,6 +19,13 @@ import { showInstVarRefactorPanel } from '../instVarRefactorPanel';
 import { runInstVarRefactor, InstVarRefactorRequest } from '../instVarRefactorCommand';
 import type { ActiveSession } from '../../sessionManager';
 import type { ApplyResult } from '../instVarRefactorPreview';
+import {
+  _resetAutoCommitStateForTests,
+  getAutoCommitStatus,
+  registerSessionAutoCommit,
+  setAutoCommitStatus,
+} from '../../autoCommit/autoCommitState';
+import { autoCommitAfterWrite } from '../../autoCommit/autoCommitRunner';
 
 /**
  * Drives the add / remove instance-variable COMMAND orchestrator (not the engine). Pins the
@@ -201,7 +208,7 @@ describe('add / remove instance variable command', () => {
     vi.mocked(showInstVarRefactorPanel).mockResolvedValue(undefined);
 
     await runInstVarRefactor(req());
-    vi.mocked(showInstVarRefactorPanel).mock.calls[0][2].abort();
+    await vi.mocked(showInstVarRefactorPanel).mock.calls[0][2].abort();
 
     expect(queries.abortSessionTransaction).toHaveBeenCalledOnce();
   });
@@ -425,5 +432,129 @@ describe('add / remove instance variable command', () => {
 
     ops.cleanup();
     expect(queries.clearInstVarPreview).toHaveBeenCalledWith(expect.anything(), token);
+  });
+});
+
+/**
+ * Auto-commit (issue #254). A failed apply can strand a partial reshape the panel offers to
+ * abort, so from that failure until the panel closes nothing commits — a save made meanwhile
+ * would otherwise commit the wreckage and leave the Abort nothing to take back.
+ */
+describe('a stranded apply on an auto-commit session', () => {
+  const commit = vi.fn(() => ({ success: true, err: { number: 0, message: '' } }));
+  const session = { id: 1, rbSupportAvailable: true, GciTsCommit: () => commit() };
+  const failedApply = JSON.stringify({
+    applied: 1,
+    failed: [{ id: 'c2', label: 'FooSub', error: 'did not recompile' }],
+    dropped: [],
+    committed: false,
+  });
+
+  beforeEach(() => {
+    _resetAutoCommitStateForTests();
+    registerSessionAutoCommit(1, true);
+    commit.mockClear();
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+    vi.mocked(queries.applyInstVar).mockResolvedValue(failedApply);
+  });
+  afterEach(() => _resetAutoCommitStateForTests());
+
+  /** The panel as the user drives it: Apply fails, they save elsewhere, then `then`. */
+  function panelThat(then: (handlers: { abort: () => void }) => void) {
+    vi.mocked(showInstVarRefactorPanel).mockImplementation(async (_t, _s, handlers) => {
+      await handlers.apply([], false, false);
+      autoCommitAfterWrite(session as unknown as ActiveSession, 'save');
+      expect(commit).not.toHaveBeenCalled();
+      then(handlers);
+      return undefined;
+    });
+  }
+
+  it('commits nothing while the stranded panel is open, nor after it closes unaborted', async () => {
+    panelThat(() => {});
+
+    await runInstVarRefactor(req({ session: session as unknown as ActiveSession }));
+
+    expect(commit).not.toHaveBeenCalled();
+    expect(vi.mocked(vscode.window.showWarningMessage).mock.calls.at(-1)?.[0]).toContain(
+      'nothing was committed while its panel was open',
+    );
+  });
+
+  it('lets commits resume once the stranded reshape has been aborted', async () => {
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce('Abort and Discard' as never);
+    let done: unknown;
+    panelThat((handlers) => {
+      done = handlers.abort();
+    });
+    await Promise.resolve();
+
+    await runInstVarRefactor(req({ session: session as unknown as ActiveSession }));
+    await done;
+
+    expect(queries.abortSessionTransaction).toHaveBeenCalledOnce();
+    autoCommitAfterWrite(session as unknown as ActiveSession, 'save');
+    expect(commit).toHaveBeenCalled();
+  });
+
+  it('asks before an Abort that would discard saves made since the failure', async () => {
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce(undefined);
+    let answered: unknown;
+    panelThat((handlers) => {
+      answered = handlers.abort();
+    });
+
+    await runInstVarRefactor(req({ session: session as unknown as ActiveSession }));
+
+    expect(await answered).toBe(false);
+    expect(vi.mocked(vscode.window.showWarningMessage).mock.calls[0][0]).toContain(
+      'Changes you made since the refactoring failed are not committed yet',
+    );
+    expect(queries.abortSessionTransaction).not.toHaveBeenCalled();
+  });
+
+  it('aborts without asking when nothing was saved since the failure', async () => {
+    vi.mocked(showInstVarRefactorPanel).mockImplementation(async (_t, _s, handlers) => {
+      await handlers.apply([], false, false);
+      await handlers.abort();
+      return undefined;
+    });
+
+    await runInstVarRefactor(req({ session: session as unknown as ActiveSession }));
+
+    expect(vscode.window.showWarningMessage).not.toHaveBeenCalledWith(
+      expect.stringContaining('not committed yet'),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(queries.abortSessionTransaction).toHaveBeenCalledOnce();
+  });
+
+  it('lets a failed auto-commit resume after its Abort', async () => {
+    setAutoCommitStatus(1, 'failed');
+    vi.mocked(showInstVarRefactorPanel).mockImplementation(async (_t, _s, handlers) => {
+      await handlers.apply([], false, false);
+      await handlers.abort();
+      return undefined;
+    });
+
+    await runInstVarRefactor(req({ session: session as unknown as ActiveSession }));
+
+    expect(getAutoCommitStatus(1)).toBe('on');
+  });
+
+  it('holds nothing back when the apply landed', async () => {
+    vi.mocked(queries.applyInstVar).mockResolvedValue(
+      JSON.stringify({ applied: 2, failed: [], dropped: [], committed: false }),
+    );
+    vi.mocked(showInstVarRefactorPanel).mockImplementation(async (_t, _s, handlers) => {
+      await handlers.apply([], false, false);
+      autoCommitAfterWrite(session as unknown as ActiveSession, 'save');
+      expect(commit).toHaveBeenCalledTimes(1);
+      return undefined;
+    });
+
+    await runInstVarRefactor(req({ session: session as unknown as ActiveSession }));
   });
 });

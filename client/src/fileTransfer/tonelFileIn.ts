@@ -37,13 +37,13 @@
 // cost the other twenty, because a developer fixing one bad method wants the rest
 // in.
 //
-// Nothing here commits. The session is left dirty and the developer decides,
-// exactly as compiling a method from the Explorer does.
+// Committing follows the `.gs` file-in's rule; see the header of `fileIn.ts`.
 import * as vscode from 'vscode';
 import * as queries from '../browserQueries';
+import { runWithAutoCommitDeferredSync } from '../autoCommit/autoCommitRunner';
 import type { ActiveSession } from '../sessionManager';
 import * as fs from 'fs';
-import { FileInNote, FileInOutcome } from './fileIn';
+import { FileInNote, FileInOutcome, fileInSucceeded } from './fileIn';
 import { readTonelClass } from '../queries/tonel/readTonelClass';
 import { isTonelAvailable } from '../tonelAvailability';
 import type { TonelClass } from '../queries/tonel/tonelWire';
@@ -53,6 +53,8 @@ export interface TonelApplyOutcome {
   className: string;
   /** The symbol dictionary written to. */
   dictionary: string;
+  /** Whether the class definition compiled, so the class itself was written. */
+  defined: boolean;
   /** Methods compiled. */
   compiled: number;
   /** Everything that went wrong, in the order it was found. */
@@ -151,6 +153,7 @@ export function applyTonelClass(
   const outcome: TonelApplyOutcome = {
     className: tonelClass.name,
     dictionary,
+    defined: false,
     compiled: 0,
     errors: [],
   };
@@ -211,6 +214,7 @@ export function applyTonelClass(
   } catch (e) {
     return fail(`Could not define ${tonelClass.name}: ${message(e)}`);
   }
+  outcome.defined = true;
 
   // Tonel's #category is not carried by any creation selector — GemStone ships no
   // `…inDictionary:category:` form (verified on a 3.7.5 rowan3 stone) — so it is
@@ -330,19 +334,28 @@ export async function chooseTonelDictionary(
 }
 
 /**
- * File one Tonel `.st` file in, answering the SAME outcome shape the chunk path
- * uses so a mixed selection reports once.
- *
- * Reads and parses before writing anything, so a file that cannot be read cannot
- * half-modify a class. Reports nothing itself — `fileIn.ts` owns the toast and the
- * log, which is what keeps one place to look whichever format the file was in.
+ * A Tonel file read and its dictionary chosen, ready to write. `tonelClass` is absent when it
+ * cannot be written, and `outcome` then says why (an error, or a dismissed prompt).
  */
-export async function fileInTonelUri(
+export interface PreparedTonelFile {
+  filePath: string;
+  outcome: FileInOutcome;
+  tonelClass?: TonelClass;
+  dictionary?: string;
+}
+
+/**
+ * Everything before the first write: read, parse, and ask which dictionary. Split from
+ * {@link fileInPreparedTonel} so a pick of several files asks all its questions before
+ * anything is written, and no prompt sits inside the file-in's auto-commit region.
+ */
+export async function prepareTonelFile(
   session: ActiveSession,
   filePath: string,
-): Promise<FileInOutcome> {
+): Promise<PreparedTonelFile> {
   const outcome = emptyTonelOutcome();
   outcome.files = 1;
+  const prepared: PreparedTonelFile = { filePath, outcome };
 
   // Silent on purpose. This runs once per selected file, so a guard that raised its
   // own warning would stack one toast per file; the error below reaches the user
@@ -353,7 +366,7 @@ export async function fileInTonelUri(
       line: 1,
       message: 'Tonel file in needs GemStone 3.7.5 or later on a rowan3 extent',
     });
-    return outcome;
+    return prepared;
   }
 
   let text: string;
@@ -361,14 +374,14 @@ export async function fileInTonelUri(
     text = fs.readFileSync(filePath, 'utf8');
   } catch (e) {
     outcome.errors.push({ file: filePath, line: 1, message: `Could not read: ${message(e)}` });
-    return outcome;
+    return prepared;
   }
 
   const read = readTonelClass((code) => queries.executeFetchString(session, code), text);
   if (!read.ok) {
     // read.line is where the parser stopped, so the log points at the real problem.
     outcome.errors.push({ file: filePath, line: read.line, message: read.error });
-    return outcome;
+    return prepared;
   }
 
   const dictionary = await chooseTonelDictionary(session, read.tonelClass.name);
@@ -383,18 +396,50 @@ export async function fileInTonelUri(
       line: 1,
       message: `No dictionary chosen for ${read.tonelClass.name} — not filed in`,
     });
-    return outcome;
+    return prepared;
   }
+  return { ...prepared, tonelClass: read.tonelClass, dictionary };
+}
 
-  const applied = applyTonelClass(session, read.tonelClass, dictionary);
-  outcome.compiled = applied.compiled;
-  outcome.errors.push(
-    ...applied.errors.map((e) => ({
-      ...e,
-      file: e.file === applied.className ? filePath : e.file,
-    })),
+/** Write a prepared Tonel file: one auto-commit for the whole file, none if it had an error. */
+export function fileInPreparedTonel(
+  session: ActiveSession,
+  prepared: PreparedTonelFile,
+): FileInOutcome {
+  const { outcome, tonelClass, dictionary, filePath } = prepared;
+  if (!tonelClass || dictionary === undefined) return outcome;
+  return runWithAutoCommitDeferredSync(
+    session,
+    'file-in',
+    () => {
+      const applied = applyTonelClass(session, tonelClass, dictionary);
+      outcome.defined = applied.defined ? 1 : 0;
+      outcome.compiled = applied.compiled;
+      outcome.errors.push(
+        ...applied.errors.map((e) => ({
+          ...e,
+          file: e.file === applied.className ? filePath : e.file,
+        })),
+      );
+      return outcome;
+    },
+    fileInSucceeded,
   );
-  return outcome;
+}
+
+/**
+ * File one Tonel `.st` file in, answering the SAME outcome shape the chunk path
+ * uses so a mixed selection reports once.
+ *
+ * Reads and parses before writing anything, so a file that cannot be read cannot
+ * half-modify a class. Reports nothing itself — `fileIn.ts` owns the toast and the
+ * log, which is what keeps one place to look whichever format the file was in.
+ */
+export async function fileInTonelUri(
+  session: ActiveSession,
+  filePath: string,
+): Promise<FileInOutcome> {
+  return fileInPreparedTonel(session, await prepareTonelFile(session, filePath));
 }
 
 /** A FileInOutcome with the chunk-only counters left at zero. */

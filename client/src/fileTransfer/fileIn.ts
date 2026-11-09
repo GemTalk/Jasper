@@ -6,23 +6,30 @@
 // Takes a hand-written `.tpz` script as readily as a `.gs` file-out. A script's
 // preamble addresses the topaz program rather than the image — `login`, `output push`,
 // `commit` — and none of it is run here: Jasper files in over the session the user
-// picked, and never commits on their behalf. Those lines are reported rather than
+// picked, and a `commit` line in the script never commits. Those lines are reported rather than
 // dropped, and a file that asked to commit is called out by name, so a script whose
 // work would have been committed does not look as though it was.
 //
 // Running it here also means every chunk's outcome is known: a failure is reported
 // against the line it was on, and the rest of the file still files in, which is what
-// a developer fixing one bad method wants. Nothing is committed — a file-in leaves
-// the session dirty exactly as compiling a method from the Explorer does, so the user
-// decides whether to keep it.
+// a developer fixing one bad method wants. Nothing here commits on the user's behalf: a
+// file-in leaves the session dirty exactly as compiling a method from the Explorer does,
+// so the user decides whether to keep it. The one exception is a session the user has
+// armed for auto-commit (issue #254), where the whole file-in commits as ONE change once
+// it has finished, and not at all if any part of it failed — see `fileInSucceeded`.
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import {
+  runWithAutoCommitDeferred,
+  runWithAutoCommitDeferredSync,
+} from '../autoCommit/autoCommitRunner';
+import { commitStateNote, heldBackNote } from '../autoCommit/autoCommitState';
 import { ActiveSession, SessionManager } from '../sessionManager';
 import * as queries from '../browserQueries';
 import { parseTopazScript } from '../topazFileIn';
 import { rememberDirectory, rememberedDirectory } from './directory';
-import { fileInTonelUri } from './tonelFileIn';
+import { PreparedTonelFile, fileInPreparedTonel, prepareTonelFile } from './tonelFileIn';
 
 /**
  * File types the open dialog offers.
@@ -58,6 +65,9 @@ export interface FileInOutcome {
   compiled: number;
   /** `removeAllMethods` directives applied. */
   removed: number;
+  /** Class definitions a Tonel file wrote. Absent for the chunk path, which counts them as
+   *  chunks run. */
+  defined?: number;
   /** Files read, including any reached through `input`. */
   files: number;
   /** Topaz commands recognised as the topaz program's own — `login`, `output`,
@@ -84,6 +94,12 @@ export interface FileInOutcome {
   cancelled: boolean;
 }
 
+/** A file-in commits only when it went in whole: one with any error, or a cancelled one,
+ *  commits nothing, and the user decides what to keep. */
+export function fileInSucceeded(outcome: FileInOutcome): boolean {
+  return outcome.errors.length === 0 && !outcome.cancelled;
+}
+
 function emptyOutcome(): FileInOutcome {
   return {
     executed: 0,
@@ -104,6 +120,7 @@ function absorb(into: FileInOutcome, from: FileInOutcome): void {
   into.executed += from.executed;
   into.compiled += from.compiled;
   into.removed += from.removed;
+  into.defined = (into.defined ?? 0) + (from.defined ?? 0);
   into.files += from.files;
   into.ignored.push(...from.ignored);
   into.skipped.push(...from.skipped);
@@ -128,10 +145,13 @@ export function isTonelFile(fsPath: string): boolean {
  * user's: they pick a file and it goes in. It also means one mixed selection in the
  * VS Code Explorer works, each file taking its own route, and reports once.
  */
-async function fileInOneUri(session: ActiveSession, uri: vscode.Uri): Promise<FileInOutcome> {
-  return isTonelFile(uri.fsPath)
-    ? await fileInTonelUri(session, uri.fsPath)
-    : fileInFile(session, uri.fsPath);
+function fileInOneUri(
+  session: ActiveSession,
+  uri: vscode.Uri,
+  tonel: Map<string, PreparedTonelFile>,
+): FileInOutcome {
+  const prepared = tonel.get(uri.fsPath);
+  return prepared ? fileInPreparedTonel(session, prepared) : fileInFile(session, uri.fsPath);
 }
 
 /**
@@ -148,6 +168,15 @@ export function fileInFile(
   filePath: string,
   seen: Set<string> = new Set(),
 ): FileInOutcome {
+  return runWithAutoCommitDeferredSync(
+    session,
+    'file-in',
+    () => fileInOneFile(session, filePath, seen),
+    fileInSucceeded,
+  );
+}
+
+function fileInOneFile(session: ActiveSession, filePath: string, seen: Set<string>): FileInOutcome {
   const outcome = emptyOutcome();
   const absolute = path.resolve(filePath);
   if (seen.has(absolute)) return outcome;
@@ -309,25 +338,45 @@ export async function fileInUris(
   if (!session) return;
 
   const total = emptyOutcome();
-  await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: 'Filing in...' },
-    async (progress) => {
-      for (const uri of uris) {
-        progress.report({ message: path.basename(uri.fsPath) });
-        // Yield so VS Code can paint before this file's work starts. The GCI calls
-        // underneath are synchronous, so a single large file still blocks the
-        // extension host while it goes in — this only keeps a multi-file pick from
-        // looking like nothing is happening.
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        absorb(total, await fileInOneUri(session, uri));
-        if (total.stopped || total.cancelled) break;
-      }
-    },
-  );
+  // Every Tonel file's dictionary question is asked here, before anything is written, so no
+  // prompt sits inside the region below. Dismissing one stops the pick with nothing filed in.
+  const tonel = new Map<string, PreparedTonelFile>();
+  for (const uri of uris.filter((u) => isTonelFile(u.fsPath))) {
+    const prepared = await prepareTonelFile(session, uri.fsPath);
+    tonel.set(uri.fsPath, prepared);
+    if (prepared.outcome.cancelled) {
+      absorb(total, prepared.outcome);
+      break;
+    }
+  }
+
+  // The whole pick is one file-in: it commits once, or not at all if any file had an error.
+  if (!total.cancelled)
+    await runWithAutoCommitDeferred(
+      session,
+      'file-in',
+      async () =>
+        await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: 'Filing in...' },
+          async (progress) => {
+            for (const uri of uris) {
+              progress.report({ message: path.basename(uri.fsPath) });
+              // Yield so VS Code can paint before this file's work starts. The GCI calls
+              // underneath are synchronous, so a single large file still blocks the
+              // extension host while it goes in — this only keeps a multi-file pick from
+              // looking like nothing is happening.
+              await new Promise((resolve) => setTimeout(resolve, 0));
+              absorb(total, fileInOneUri(session, uri, tonel));
+              if (total.stopped || total.cancelled) break;
+            }
+          },
+        ),
+      () => fileInSucceeded(total),
+    );
 
   await rememberDirectory(store, path.dirname(uris[0].fsPath));
   writeLog(uris, total);
-  await report(total);
+  await report(session, total);
 
   // New classes and methods are only visible once the panes reload. Best-effort: the
   // file-in itself has already happened, so a refresh that can't run must not turn a
@@ -378,17 +427,19 @@ function writeLog(uris: vscode.Uri[], outcome: FileInOutcome): void {
 }
 
 /** Summarise to the user, with a way to the detail when there is any. */
-async function report(outcome: FileInOutcome): Promise<void> {
+async function report(session: ActiveSession, outcome: FileInOutcome): Promise<void> {
   const counts =
     `${outcome.compiled} method(s), ${outcome.executed} chunk(s) from ` +
     `${outcome.files} file(s)`;
   const SHOW_LOG = 'Show Log';
+  const wrote = outcome.executed + outcome.compiled + outcome.removed + (outcome.defined ?? 0) > 0;
 
   if (outcome.errors.length > 0) {
     const first = outcome.errors[0];
     const choice = await vscode.window.showErrorMessage(
       `File in finished with ${outcome.errors.length} error(s) — ${counts} went in. ` +
-        `First: ${path.basename(first.file)}:${first.line} ${first.message}`,
+        `First: ${path.basename(first.file)}:${first.line} ${first.message.replace(/\.$/, '')}.` +
+        (wrote ? heldBackNote(session.id) : ''),
       SHOW_LOG,
     );
     if (choice === SHOW_LOG) fileInChannel()?.show(true);
@@ -397,20 +448,24 @@ async function report(outcome: FileInOutcome): Promise<void> {
 
   const notes: string[] = [];
   if (outcome.stopped) notes.push('Stopped where the file said exit.');
-  if (outcome.cancelled) notes.push('Cancelled — the remaining files were not filed in.');
+  if (outcome.cancelled) notes.push('Cancelled — nothing was filed in.');
   if (outcome.skipped.length > 0) {
     notes.push(`${outcome.skipped.length} directive(s) not recognised.`);
   }
   if (outcome.ignored.length > 0) {
     notes.push(`${outcome.ignored.length} topaz command(s) not run.`);
   }
-  // Said every time: a file-in that isn't committed disappears at the next abort, and
-  // Jasper never commits on the user's behalf — least of all because a file said to.
-  notes.push(
-    outcome.askedToCommit
-      ? 'The file asked to commit; Jasper did not — commit the session to keep this.'
-      : 'Not committed — commit the session to keep it.',
-  );
+  // A `commit` line in the file never commits; only the session's auto-commit does.
+  if (wrote) {
+    notes.push(
+      commitStateNote(
+        session.id,
+        outcome.askedToCommit
+          ? 'The file asked to commit; Jasper did not — commit the session to keep this.'
+          : 'Not committed — commit the session to keep it.',
+      ),
+    );
+  }
 
   const hasDetail = outcome.skipped.length > 0 || outcome.ignored.length > 0;
   const choice = await vscode.window.showInformationMessage(

@@ -32,7 +32,7 @@ import {
 } from '../transcriptSink';
 import { runNbCall, NbCancelledError, pollNbResultReady, stopCallsOn } from '../nbRunner';
 import { expectEventLoopToRemainResponsiveDuring } from './support/timers';
-import { loginSerialOf, stillOnStoneCode } from './leftoverGem';
+import { stillOnStoneCode } from './leftoverGem';
 import {
   OOP_CLASS_STRING,
   OOP_CLASS_UTF8,
@@ -41,6 +41,7 @@ import {
   GCI_PERFORM_FLAG_ENABLE_DEBUG,
   GCI_PERFORM_FLAG_INTERPRETED,
 } from '../gciConstants';
+import { reportedSerialOf, reportedTransientLogin } from './sessionGateClient';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -51,10 +52,13 @@ describe('transcript sink (integration)', () => {
   let gci: GciLibrary;
   let handle: unknown;
 
-  useIntegrationTest((testContext) => {
-    gci = testContext.gciLibrary;
-    handle = testContext.session;
-  });
+  useIntegrationTest(
+    (testContext) => {
+      gci = testContext.gciLibrary;
+      handle = testContext.session;
+    },
+    { sessions: 2 },
+  );
 
   /**
    * A real `ActiveSession` around the live `gci`/`handle`, rebuilt per call --
@@ -359,9 +363,9 @@ tmps := SessionTemps current.
     // writes, which puts it on the worker, then waits there long enough for
     // the first logout to land; the pause before it lets the worker actually
     // start, since the write is reported just before the resume is queued.
-    const { session: busy, err } = session().transientLogin(session().login);
+    const { session: busy, err } = reportedTransientLogin(session());
     if (!busy) throw new Error(`Transient login failed: ${err.message}`);
-    const gemLogin = loginSerialOf(busy);
+    const gemLogin = reportedSerialOf(busy);
     expect(installTranscriptSink(busy)).toBe(true);
     let wroteOnce: () => void = () => {};
     const onWorker = new Promise<void>((resolve) => {

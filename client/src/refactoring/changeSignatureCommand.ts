@@ -17,6 +17,7 @@
  * Explorer (the selector changed).
  */
 import * as vscode from 'vscode';
+import { commitStateNote } from '../autoCommit/autoCommitState';
 import { SessionManager, ActiveSession } from '../sessionManager';
 import { parseUri } from '../gemstoneFileSystemProvider';
 import * as queries from '../browserQueries';
@@ -218,8 +219,10 @@ export async function beginChangeSignature(
   }
   notifyRefactoringApplied(
     session,
-    `Changed signature '${oldSelector}' → '${newSelector}' (${result.applied} change` +
-      `${result.applied === 1 ? '' : 's'}). Compiled but NOT committed — commit when ready.`,
+    () =>
+      `Changed signature '${oldSelector}' → '${newSelector}' (${result.applied} change` +
+      `${result.applied === 1 ? '' : 's'}). ` +
+      commitStateNote(session.id, 'Compiled but NOT committed — commit when ready.'),
     'toast',
   );
   return true;

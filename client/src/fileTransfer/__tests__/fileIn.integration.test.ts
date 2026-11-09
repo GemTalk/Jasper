@@ -33,11 +33,14 @@ describe('file in (integration)', () => {
   let gci: GciLibrary;
   let handle: unknown;
   let withTransientSession: (callback: (transientSession: unknown) => void) => void;
-  useIntegrationTest((testContext) => {
-    gci = testContext.gciLibrary;
-    handle = testContext.session;
-    withTransientSession = testContext.withTransientSession;
-  });
+  useIntegrationTest(
+    (testContext) => {
+      gci = testContext.gciLibrary;
+      handle = testContext.session;
+      withTransientSession = testContext.withTransientSession;
+    },
+    { sessions: 2 },
+  );
 
   const session = (): ActiveSession => testActiveSession(gci, handle);
   const exec = (code: string): string => q.executeFetchString(session(), code);

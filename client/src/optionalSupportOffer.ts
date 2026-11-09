@@ -12,7 +12,9 @@
  *               choice; "Not Now" (also Escape / the window-close control) asks
  *               again next connect.
  * The Command Palette entry (`runInstallServerSupport`) installs/reinstalls every
- * support applicable to the stone's version.
+ * support applicable to the stone's version. A support that is installed but not
+ * the one this Jasper ships is offered for reinstall by a separate notice,
+ * `noticeDifferentServerSupport` (serverSupportStatus.ts).
  *
  * A feature is *applicable* when the stone's version supports it (the Enhanced
  * Inspector needs 3.7.5+; the refactoring engine loads on any release) and
@@ -86,7 +88,7 @@ export const SERVER_SUPPORT_FEATURES: readonly ServerSupportFeature[] = [
     id: 'enhancedInspector',
     label: 'Enhanced Inspector',
     isApplicable: (b) => pluginFeatures.enhancedInspector.isApplicable(b.stoneVersion),
-    isMissing: (b) => !b.enhancedInspectorAvailable,
+    isMissing: (b) => !pluginFeatures.enhancedInspector.isAvailable(b),
     probe: pluginFeatures.enhancedInspector.probe,
     install: installEnhancedInspectorFeature,
     uninstall: uninstallEnhancedInspectorFeature,
@@ -95,7 +97,7 @@ export const SERVER_SUPPORT_FEATURES: readonly ServerSupportFeature[] = [
     id: 'refactoring',
     label: 'Refactoring engine',
     isApplicable: (b) => pluginFeatures.refactoring.isApplicable(b.stoneVersion),
-    isMissing: (b) => !b.rbSupportAvailable,
+    isMissing: (b) => !pluginFeatures.refactoring.isAvailable(b),
     probe: pluginFeatures.refactoring.probe,
     install: installRefactoringFeature,
     uninstall: uninstallRefactoringFeature,

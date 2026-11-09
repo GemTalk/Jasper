@@ -11,6 +11,11 @@
  * a nonce), matching Jasper's webview convention.
  */
 import * as vscode from 'vscode';
+import {
+  beforeChangeCommitNote,
+  commitStateNote,
+  heldBackNote,
+} from '../autoCommit/autoCommitState';
 import * as crypto from 'crypto';
 import { ClassVersion, RevertResult, RemoveResult } from './classHistoryModel';
 import { renderClassHistoryHtml, renderVersionRows } from './classHistoryPanelHtml';
@@ -31,6 +36,7 @@ export function showClassHistoryPanel(
   className: string,
   versions: ClassVersion[],
   handlers: ClassHistoryPanelHandlers,
+  sessionId: number,
   // The dictionary this history belongs to. A class name is not unique across dictionaries and
   // Restore rewrites a class, so the tab, the header and the confirmations all say which one --
   // otherwise two histories of the same name are indistinguishable side by side.
@@ -75,14 +81,18 @@ export function showClassHistoryPanel(
     const asName = result.name && result.name !== className ? ` as ${result.name}` : '';
     void vscode.window.showInformationMessage(
       `Restored ${className} to version [${index}]${asName} (now version ` +
-        `[${result.newIndex ?? '?'}])${failedNote}. Compiled but NOT committed — commit when ready.`,
+        `[${result.newIndex ?? '?'}])${failedNote}. ` +
+        (result.failed
+          ? `Compiled but NOT committed.${heldBackNote(sessionId)}`
+          : commitStateNote(sessionId, 'Compiled but NOT committed — commit when ready.')),
     );
   };
   const doRemove = async (index: number): Promise<void> => {
     const CONFIRM = 'Remove';
     const choice = await vscode.window.showWarningMessage(
       `Remove version [${index}] of ${qualified} from its class history? Any instances still on ` +
-        'that version will refer to a version no longer in the history. Not committed — commit when ready.',
+        'that version will refer to a version no longer in the history. ' +
+        beforeChangeCommitNote(sessionId, 'Not committed — commit when ready.'),
       { modal: true },
       CONFIRM,
     );
@@ -95,7 +105,7 @@ export function showClassHistoryPanel(
     void panel.webview.postMessage({ command: 'refresh', html: renderVersionRows(refreshed) });
     void vscode.window.showInformationMessage(
       `Removed version [${index}] of ${className} (${result.remaining ?? '?'} version(s) remain). ` +
-        'Not committed — commit when ready.',
+        commitStateNote(sessionId, 'Not committed — commit when ready.'),
     );
   };
   panel.webview.onDidReceiveMessage((message) => {

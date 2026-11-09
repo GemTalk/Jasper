@@ -21,10 +21,14 @@ const pkg = JSON.parse(
 );
 const itemContext: MenuItem[] = pkg.contributes.menus['view/item/context'];
 
-// The context value each kind of session row carries, from sessionContextValue.
+// The context value each kind of session row carries, from sessionContextValue:
+// `gemstoneSession`, then the auto-commit state when it is not off, then what the
+// session can do about its transaction.
 const AUTO_BEGIN_ROW = 'gemstoneSession.canCommit';
 const MANUAL_BETWEEN_TRANSACTIONS_ROW = 'gemstoneSession.canBegin';
 const TRANSACTIONLESS_ROW = 'gemstoneSession';
+const AUTO_COMMIT_ON_ROW = 'gemstoneSessionAutoCommitOn.canCommit';
+const AUTO_COMMIT_FAILED_ROW = 'gemstoneSessionAutoCommitFailed.canCommit';
 // Not a row any session shows — Begin and Commit are mutually exclusive — but
 // every session clause fires for it, which is what the package.json-hygiene
 // checks below want.
@@ -72,11 +76,15 @@ describe('session row inline button order', () => {
     // Nothing MCP is here: claiming the server is a property of the window, not
     // of a session, so it lives on the Databases section header and in the MCP
     // Server tab. The row's only MCP mark is `· MCP` in its description.
+    //
+    // The auto-commit button sits with Begin, Commit and Abort because it is the
+    // same subject: this session's transaction.
     expect(order).toEqual([
       'gemstone.fileIn',
       'gemstone.sessionBegin',
       'gemstone.sessionCommit',
       'gemstone.sessionAbort',
+      'gemstone.autoCommit.turnOn',
       'gemstone.showSessionConfiguration',
       'gemstone.sessionLogout',
     ]);
@@ -92,6 +100,7 @@ describe('session row inline button order', () => {
       'gemstone.fileIn',
       'gemstone.sessionCommit',
       'gemstone.sessionAbort',
+      'gemstone.autoCommit.turnOn',
       'gemstone.showSessionConfiguration',
       'gemstone.sessionLogout',
     ]);
@@ -102,6 +111,7 @@ describe('session row inline button order', () => {
       'gemstone.fileIn',
       'gemstone.sessionBegin',
       'gemstone.sessionAbort',
+      'gemstone.autoCommit.turnOn',
       'gemstone.showSessionConfiguration',
       'gemstone.sessionLogout',
     ]);
@@ -113,9 +123,44 @@ describe('session row inline button order', () => {
     expect(inlineOrderFor(TRANSACTIONLESS_ROW)).toEqual([
       'gemstone.fileIn',
       'gemstone.sessionAbort',
+      'gemstone.autoCommit.turnOn',
       'gemstone.showSessionConfiguration',
       'gemstone.sessionLogout',
     ]);
+  });
+
+  // One button on the row, not three (see sessionContextValue): their `when` clauses must
+  // never both hold.
+  it.each([
+    [TRANSACTIONLESS_ROW, 'gemstone.autoCommit.turnOn'],
+    [AUTO_BEGIN_ROW, 'gemstone.autoCommit.turnOn'],
+    [MANUAL_BETWEEN_TRANSACTIONS_ROW, 'gemstone.autoCommit.turnOn'],
+    [AUTO_COMMIT_ON_ROW, 'gemstone.autoCommit.turnOff'],
+    [AUTO_COMMIT_FAILED_ROW, 'gemstone.autoCommit.recover'],
+  ])('shows exactly one auto-commit button on a %s row', (row, command) => {
+    const buttons = inlineOrderFor(row).filter((c) => c.startsWith('gemstone.autoCommit.'));
+    expect(buttons).toEqual([command]);
+  });
+
+  it('keeps the rest of the row whatever the auto-commit state', () => {
+    const withoutAutoCommit = (row: string) =>
+      inlineOrderFor(row).filter((c) => !c.startsWith('gemstone.autoCommit.'));
+    expect(withoutAutoCommit(AUTO_COMMIT_ON_ROW)).toEqual(withoutAutoCommit(AUTO_BEGIN_ROW));
+    expect(withoutAutoCommit(AUTO_COMMIT_FAILED_ROW)).toEqual(withoutAutoCommit(AUTO_BEGIN_ROW));
+  });
+
+  it('gives each auto-commit state its own icon', () => {
+    // Each needs its own icon, or the state it exists to show is invisible — and they must
+    // differ, or the three commands buy nothing over one.
+    const icons = [
+      'gemstone.autoCommit.turnOn',
+      'gemstone.autoCommit.turnOff',
+      'gemstone.autoCommit.recover',
+    ].map(
+      (command) =>
+        pkg.contributes.commands.find((c: { command: string }) => c.command === command)?.icon,
+    );
+    expect(icons).toEqual(['$(sync-ignored)', '$(sync)', '$(error)']);
   });
 
   it('offers the mode switch from the session row’s context menu, not its inline strip', () => {
@@ -125,12 +170,23 @@ describe('session row inline button order', () => {
     expect(setMode?.group).toBe('1_transaction@1');
   });
 
+  it('offers the auto-commit toggle beside it, on every row whatever its state', () => {
+    // The right-click entry is the state-independent way in: it reads the state itself, and on
+    // a failed row turns auto-commit off (the row's error button is the way to resolve it).
+    for (const row of [TRANSACTIONLESS_ROW, AUTO_COMMIT_ON_ROW, AUTO_COMMIT_FAILED_ROW]) {
+      const toggle = itemContext.find(
+        (m) => m.command === 'gemstone.autoCommit.toggle' && applies(m.when ?? '', row),
+      );
+      expect(toggle?.group).toBe('1_transaction@2');
+    }
+  });
+
   // A vacated number is invisible in the rendered row — VS Code just sorts —
   // but it reads as a missing button to whoever adds the next one, which is how
   // a button ends up in the wrong place. Removing a button means renumbering
   // the ones after it.
   it('numbers the declared slots 1..n with no vacated one', () => {
-    expect(inlineRanksFor(EVERY_SESSION_CLAUSE)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(inlineRanksFor(EVERY_SESSION_CLAUSE)).toEqual([1, 2, 3, 4, 5, 6, 7]);
   });
 
   it('keeps the rare backup and restore actions off the inline row, paired in a context-menu group', () => {

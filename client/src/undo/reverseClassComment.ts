@@ -11,6 +11,7 @@
  * Naming the change itself is the dispatcher's job and is done for every kind alike.
  */
 import * as vscode from 'vscode';
+import { commitStateNote } from '../autoCommit/autoCommitState';
 import { ActiveSession } from '../sessionManager';
 import { getStoredClassComment, setClassComment } from '../browserQueries';
 import { logInfo } from '../gciLog';
@@ -73,7 +74,7 @@ export async function reverseClassComment(
 
   void vscode.window.showInformationMessage(
     `Undid ${entry.label} — ${entry.before.length === 0 ? 'the comment is empty again' : 'the earlier comment is back'}. ` +
-      'Written but NOT committed — commit when ready.',
+      commitStateNote(session.id, 'Written but NOT committed — commit when ready.'),
   );
   return true;
 }

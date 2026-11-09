@@ -519,7 +519,7 @@ jobs:
     name: ci-complete
     if: always()
     needs: [prepare, lint-workflows, lint, health-check, package-check]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:
       - name: Verify all CI jobs succeeded

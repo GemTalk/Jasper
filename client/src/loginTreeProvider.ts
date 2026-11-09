@@ -3,9 +3,17 @@ import { GemStoneLogin, loginLabel, sessionsForLogin } from './loginTypes';
 import { LoginStorage } from './loginStorage';
 import { ActiveSession, SessionManager } from './sessionManager';
 import {
+  AUTO_COMMIT_NEEDS_AUTO_BEGIN,
+  AutoCommitStatus,
+  autoCommitBlockedByMode,
+  getAutoCommitStatus,
+  onAutoCommitChanged,
+} from './autoCommit/autoCommitState';
+import {
   canBegin,
   canCommit,
   modeDescription,
+  TransactionMode,
   transactionStateLabel,
   transactionStateLabelIfKnown,
 } from './queries/transactionMode';
@@ -46,20 +54,103 @@ export class GemStoneLoginItem extends vscode.TreeItem {
   }
 }
 
+/** The only display of auto-commit, so it says off too — see docs/explanation/auto-commit.md. */
+export function autoCommitRowSuffix(status: AutoCommitStatus): string {
+  if (status === 'on') return ' · auto-commit ON';
+  if (status === 'failed') return ' · auto-commit FAILED';
+  return ' · auto-commit off';
+}
+
+/** What the row's tooltip adds under the state — the consequence, not the restatement. */
+export function autoCommitRowTooltip(status: AutoCommitStatus, mode?: TransactionMode): string {
+  if (status === 'on') {
+    return (
+      'Auto-commit is ON: every change is committed as soon as it is made, and Abort will ' +
+      'not take one back. Undo still works — it reverses a change by making the opposite one.'
+    );
+  }
+  if (status === 'failed') {
+    return (
+      'Auto-commit tried to commit and could not — almost always a conflict with another ' +
+      'session. Your changes are NOT in the repository, and it has stopped trying. ' +
+      'To resolve it, click the ⊗ on this row: abort and discard your changes, show what ' +
+      'conflicted, or turn auto-commit off.'
+    );
+  }
+  const off = 'Auto-commit is off: changes stay in this session’s transaction until you commit.';
+  return autoCommitBlockedByMode(mode) ? `${off} ${AUTO_COMMIT_NEEDS_AUTO_BEGIN}` : off;
+}
+
+/**
+ * The tooltip's auto-commit paragraph, in the warning colour when on and the error colour
+ * when failed. VS Code's hover keeps a span's `color` only when the MarkdownString has
+ * `supportHtml` and the value is a hex colour or a `var(--vscode-…)`.
+ */
+export function autoCommitTooltipParagraph(
+  status: AutoCommitStatus,
+  mode?: TransactionMode,
+): string {
+  const text = autoCommitRowTooltip(status, mode);
+  const color =
+    status === 'on'
+      ? 'problemsWarningIcon-foreground'
+      : status === 'failed'
+        ? 'problemsErrorIcon-foreground'
+        : undefined;
+  return color ? `<span style="color:var(--vscode-${color});">${text}</span>` : text;
+}
+
+/**
+ * A row whose auto-commit has failed carries a red `!` badge at its right edge. The
+ * description is the first thing VS Code truncates, and a login label like
+ * `DataCurator on gs64stone_375 (localhost)` fills the row on its own, but a decoration
+ * badge stays on screen. A tree row can only be badged through a `resourceUri` and a
+ * FileDecorationProvider, so the URI carries the state, the way rowanDecorations.ts does.
+ */
+export const AUTO_COMMIT_URI_SCHEME = 'jasper-autocommit';
+
+export function autoCommitFailedUri(sessionId: number): vscode.Uri {
+  return vscode.Uri.from({ scheme: AUTO_COMMIT_URI_SCHEME, path: `/session/${sessionId}/failed` });
+}
+
+export class AutoCommitDecorationProvider implements vscode.FileDecorationProvider {
+  provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
+    if (uri.scheme !== AUTO_COMMIT_URI_SCHEME) return undefined;
+    return {
+      badge: '!',
+      color: new vscode.ThemeColor('list.errorForeground'),
+      tooltip: autoCommitRowTooltip('failed'),
+      propagate: false,
+    };
+  }
+}
+
 /**
  * The row's `contextValue`, which is how `package.json` decides which inline
  * buttons a session gets.
  *
  * A plain context key would not do: keys are global, so in multiple-session mode
  * every row would show the buttons that suit whichever session happens to be
- * selected. Encoding the two answers in the row's own contextValue keeps each
- * row's buttons about that row. The `when` clauses match with `=~` rather than
- * `==` for the same reason — see the session entries in package.json.
+ * selected. Encoding the answers in the row's own contextValue keeps each row's
+ * buttons about that row. The `when` clauses match with `=~` rather than `==` for
+ * the same reason — see the session entries in package.json.
+ *
+ * It carries two things. First the auto-commit state, right after the prefix, so the
+ * manifest can put the RIGHT toggle button on the row — a slashed icon to turn it on, a
+ * plain one to turn it off, an error one to open the recovery choices. Three menu entries
+ * gated on this, rather than one button with a fixed icon, because a contributed entry's
+ * icon is fixed text in the manifest: a single command could offer the click but could
+ * never show the state. Only one of the three is ever on screen, so the row gains one
+ * icon, not three. Off adds nothing, so the state is additive.
+ *
+ * Then what the session can do about its transaction: `.canCommit` and `.canBegin`, each
+ * present only where the stone would accept it.
  */
-function sessionContextValue(session: ActiveSession): string {
+export function sessionContextValue(session: ActiveSession, autoCommit: AutoCommitStatus): string {
   const { transactionMode, inTransaction } = session;
   return (
     'gemstoneSession' +
+    (autoCommit === 'on' ? 'AutoCommitOn' : autoCommit === 'failed' ? 'AutoCommitFailed' : '') +
     (canCommit(inTransaction) ? '.canCommit' : '') +
     (canBegin(transactionMode, inTransaction) ? '.canBegin' : '')
   );
@@ -132,23 +223,25 @@ export class GemStoneSessionItem extends vscode.TreeItem {
   ) {
     super(loginLabel(activeSession.login), vscode.TreeItemCollapsibleState.None);
     const { id, stoneVersion, transactionMode, inTransaction } = activeSession;
+    const autoCommit = getAutoCommitStatus(id);
     // Both the MCP marker and the transaction state are in the id, because VS Code
     // reuses a node whose id is unchanged — which would leave the old text, and
     // the old set of inline buttons, on screen after either one moves.
     //
     // The id carries the rendered description, not just the contextValue: the
     // buttons and the text do not move together. `sessionContextValue` answers
-    // only canCommit/canBegin, and both are unchanged across the two transitions
-    // that matter most — undefined → autoBegin at login (the row gains `· Auto-
-    // Begin`), and autoBegin → manualBegin while in a transaction (the row must
-    // stop saying Auto-Begin). Neither half covers the other: under
-    // transactionless, an unread and a false in-transaction flag both draw
-    // `Transactionless` while Commit's button comes and goes, so both are keyed.
+    // only auto-commit and canCommit/canBegin, and the last two are unchanged
+    // across the two transitions that matter most — undefined → autoBegin at
+    // login (the row gains `· Auto-Begin`), and autoBegin → manualBegin while in
+    // a transaction (the row must stop saying Auto-Begin). Neither half covers
+    // the other: under transactionless, an unread and a false in-transaction
+    // flag both draw `Transactionless` while Commit's button comes and goes, so
+    // both are keyed.
     //
     // The price is that the row is a new node whenever its text moves, so a
     // selection on it is dropped — under autoBegin that is once, at login.
-    this.description = sessionDescription(activeSession, mcp);
-    this.id = `session-${id}-${mcp}-${sessionContextValue(activeSession)}-${this.description}`;
+    this.description = sessionDescription(activeSession, mcp) + autoCommitRowSuffix(autoCommit);
+    this.id = `session-${id}-${mcp}-${sessionContextValue(activeSession, autoCommit)}-${this.description}`;
     const tooltip = new vscode.MarkdownString();
     tooltip.appendMarkdown(
       `**Jasper session ${id}** — ${loginLabel(activeSession.login)} (${stoneVersion})\n\n`,
@@ -161,16 +254,20 @@ export class GemStoneSessionItem extends vscode.TreeItem {
     tooltip.appendMarkdown(
       `**${transactionStateLabel(transactionMode, inTransaction)}**\n\n${modeDescription(transactionMode)}`,
     );
+    tooltip.appendMarkdown(`\n\n${autoCommitTooltipParagraph(autoCommit, transactionMode)}`);
+    tooltip.supportHtml = true;
     this.tooltip = tooltip;
     this.iconPath = new vscode.ThemeIcon(isSelected ? 'debug-start' : 'plug');
+    if (autoCommit === 'failed') this.resourceUri = autoCommitFailedUri(id);
     // The contextValue says what THIS session can do — Begin and Commit are each
-    // offered only where the stone would accept them — so it is not one fixed
-    // string. The row's actions survive that because their `when` clauses match
+    // offered only where the stone would accept them, and the auto-commit button
+    // shows the session's own state — so it is not one fixed string. The row's
+    // actions survive that because their `when` clauses match
     // `viewItem =~ /^gemstoneSession/` rather than `== gemstoneSession`; see the
     // session entries in package.json. MCP state is deliberately NOT encoded
     // here: being the served session changes nothing about what the session can
     // do, and `· MCP` in the description is its marker.
-    this.contextValue = sessionContextValue(activeSession);
+    this.contextValue = sessionContextValue(activeSession, autoCommit);
   }
 }
 
@@ -185,6 +282,7 @@ type LoginTreeNode = GemStoneLoginItem | GemStoneSessionItem;
 export class LoginTreeProvider implements vscode.TreeDataProvider<LoginTreeNode> {
   private _onDidChangeTreeData = new vscode.EventEmitter<LoginTreeNode | undefined>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+  private readonly autoCommitListener: { dispose: () => void };
 
   constructor(
     private storage: LoginStorage,
@@ -197,6 +295,13 @@ export class LoginTreeProvider implements vscode.TreeDataProvider<LoginTreeNode>
     // A mode switch changes what a session row says and which buttons it carries,
     // and nothing else would redraw it — the selection has not moved.
     sessionManager?.onDidChangeTransactionState(() => this.refresh());
+    // A row carries its session's auto-commit state, so a toggle anywhere has to redraw it.
+    this.autoCommitListener = onAutoCommitChanged(() => this.refresh());
+  }
+
+  dispose(): void {
+    this.autoCommitListener.dispose();
+    this._onDidChangeTreeData.dispose();
   }
 
   // Logins with a connect attempt in flight, by identity. Held here rather than

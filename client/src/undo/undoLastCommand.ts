@@ -61,7 +61,13 @@ export async function undoLastCommand(sessions: SessionManager): Promise<void> {
     void vscode.window.showWarningMessage('Select a GemStone session first.');
     return;
   }
+  // On an auto-commit session each reverser commits its own writes once, and not at all if
+  // they fail part-way. That is done around the writes alone, not here: the plan panel is a
+  // webview, and a region open across it would hold back every save made while it is up.
+  await reverseTopEntry(sessions, session);
+}
 
+async function reverseTopEntry(sessions: SessionManager, session: ActiveSession): Promise<void> {
   // Loop rather than take one shot: a refactoring entry can turn out to be stale (the
   // stone's record is per session and a reconnect clears it), and dropping it should fall
   // through to whatever is under it rather than answer "nothing to undo" over a stack

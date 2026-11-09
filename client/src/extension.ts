@@ -12,15 +12,22 @@ import { LoginStorage } from './loginStorage';
 import { getLoginPasswords } from './loginCredentials';
 import { offerToMovePlainTextPasswords } from './plainTextPasswordOffer';
 import { runStopStone } from './stopStoneManager';
-import { LoginTreeProvider, GemStoneLoginItem, GemStoneSessionItem } from './loginTreeProvider';
+import {
+  AutoCommitDecorationProvider,
+  GemStoneLoginItem,
+  GemStoneSessionItem,
+  LoginTreeProvider,
+} from './loginTreeProvider';
 import { registerTransactionStatusBar } from './transactionStatusBar';
 import { explainGciError } from './gciLibraryError';
 import {
   TRANSACTION_MODES,
+  isTransactionMode,
   canBegin,
   canCommit,
   modeDescription,
   modeLabel,
+  TransactionMode,
   transactionStateLabel,
 } from './queries/transactionMode';
 import { showConfigurationCommand } from './configuration/showConfigurationCommand';
@@ -126,6 +133,7 @@ import {
   runInstallServerSupport,
   runUninstallServerSupport,
 } from './optionalSupportOffer';
+import { noticeDifferentServerSupport, runShowServerSupportStatus } from './serverSupportStatus';
 import { refreshEnhancedInspectorAvailable } from './enhancedInspector/enhancedInspectorAvailability';
 import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAvailability';
 import { refreshUndoUi } from './undo/undoUi';
@@ -133,6 +141,25 @@ import { undoLastCommand } from './undo/undoLastCommand';
 import { FS_CHANGED_COMMAND, SEARCH_RESYNC_COMMAND } from './undo/afterUndo';
 import { resyncEditorsAfterAbort } from './afterAbort';
 import { clearUndoStack, onUndoStackChanged } from './undo/undoStack';
+import {
+  AUTO_COMMIT_NEEDS_AUTO_BEGIN,
+  autoCommitBlockedByMode,
+  getAutoCommitStatus,
+} from './autoCommit/autoCommitState';
+import {
+  autoCommitTransactionSettled,
+  setAutoCommitCommittedHandler,
+  setAutoCommitFailureHandler,
+} from './autoCommit/autoCommitRunner';
+import {
+  reportAutoCommitFailure,
+  registerAutoCommitSessionHooks,
+  setAutoCommitAbortHandler,
+  setAutoCommitCommitHandler,
+  recoverAutoCommit,
+  toggleAutoCommit,
+  TOGGLE_AUTO_COMMIT_COMMAND,
+} from './autoCommit/autoCommitUi';
 import { registerStashRelease } from './undo/releaseStash';
 import { registerSessionTeardown } from './sessionTeardown';
 import { supportsEnhancedInspector } from './enhancedInspector/enhancedInspectorInstall';
@@ -1010,6 +1037,7 @@ export function activate(context: vscode.ExtensionContext) {
   // the rows show no MCP state at all.
   let mcpOwnership: () => McpOwnership | undefined = () => undefined;
   const treeProvider = new LoginTreeProvider(storage, sessionManager, () => mcpOwnership());
+  context.subscriptions.push(treeProvider);
   // The acceptance harness seeds a plain-text login into most runs, and this
   // toast would sit over every one of them.
   if (!process.env.GEMSTONE_SUPPRESS_PASSWORD_OFFER) {
@@ -1063,7 +1091,10 @@ export function activate(context: vscode.ExtensionContext) {
     treeDataProvider: treeProvider,
     showCollapseAll: false,
   });
-  context.subscriptions.push(treeView);
+  context.subscriptions.push(
+    treeView,
+    vscode.window.registerFileDecorationProvider(new AutoCommitDecorationProvider()),
+  );
 
   // Auto-open the Getting Started walkthrough on the first activation after
   // install (see maybeOpenGettingStarted). Fires once per machine; reset via the
@@ -1670,6 +1701,33 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(registerStashRelease(sessionManager));
   refreshUndoUi(sessionManager.getSelectedSession());
 
+  // ── Auto-commit (issue #254) ───────────────────────────────────────────
+  // Per session, seeded from the window-wide default at login and dropped at logout, so a
+  // later session reusing the id never inherits an armed state nobody asked for.
+  context.subscriptions.push(...registerAutoCommitSessionHooks(sessionManager));
+  // The runner is deliberately free of `vscode` so the write path can call it; these hand it
+  // the workbench it needs — how to tell the user a commit failed, how to run the real Abort
+  // and Commit when they are chosen from a prompt, and what a landed auto-commit refreshes.
+  setAutoCommitFailureHandler(reportAutoCommitFailure);
+  setAutoCommitAbortHandler((session) =>
+    abortSession(session, { uncommittedAlreadyConfirmed: true }),
+  );
+  setAutoCommitCommitHandler((session) => commitSession(session));
+  // An auto-commit moves the view as a manual Commit does, so it drops the same two caches —
+  // not the export refresh, which is far too heavy to run after every save.
+  setAutoCommitCommittedHandler((session) => {
+    dropCachedClassOrganizer(session);
+    omniSearch?.notifySessionSynced(session.id);
+  });
+  context.subscriptions.push(
+    new vscode.Disposable(() => {
+      setAutoCommitFailureHandler(undefined);
+      setAutoCommitAbortHandler(undefined);
+      setAutoCommitCommitHandler(undefined);
+      setAutoCommitCommittedHandler(undefined);
+    }),
+  );
+
   // ── Enhanced Inspector Perf Tracking ───────────────────────────────────
   const enhancedInspectorPerfChannel = vscode.window.createOutputChannel(
     'GemStone Enhanced Inspector Perf',
@@ -1822,10 +1880,11 @@ export function activate(context: vscode.ExtensionContext) {
   // invoked from the Sessions tree (a session item), the Databases panel, the
   // GemStone Explorer toolbar (the currently selected session) or the Command
   // Palette — which names no session, and so is the one that asks first.
+  // Answers whether the commit landed, for auto-commit's "Commit Now, Then Turn On".
   const commitSession = async (
     session: ActiveSession,
     options?: { ask?: boolean },
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     const confirmation = sessionActionConfirmation({
       action: 'Commit',
       sessionId: session.id,
@@ -1839,11 +1898,14 @@ export function activate(context: vscode.ExtensionContext) {
         { modal: true, detail: confirmation.detail },
         confirmation.confirmLabel,
       );
-      if (choice !== confirmation.confirmLabel) return;
+      if (choice !== confirmation.confirmLabel) return false;
     }
     try {
       const { success, err } = sessionManager.commit(session.id);
       if (success) {
+        // A manual commit that lands has settled whatever conflict a failed auto-commit
+        // was stuck on, so auto-commit stops shouting and starts committing again.
+        autoCommitTransactionSettled(session.id);
         announceSessionAction('Commit', sessionDescription(session), { success: true });
         await exportManager.refreshSession(session);
         SystemBrowser.refresh(session.id);
@@ -1853,6 +1915,7 @@ export function activate(context: vscode.ExtensionContext) {
         // against.
         dropCachedClassOrganizer(session);
         omniSearch?.notifySessionSynced(session.id);
+        return true;
       } else {
         // Only a refusal has a conflict set, so an errored commit costs no extra
         // round trip. Read first — see the transactionConflicts.ts header.
@@ -1872,6 +1935,7 @@ export function activate(context: vscode.ExtensionContext) {
       // its own does not say which one.
       announceSessionAction('Commit', sessionDescription(session), { success: false, reason: msg });
     }
+    return false;
   };
 
   /**
@@ -1886,7 +1950,14 @@ export function activate(context: vscode.ExtensionContext) {
    * Factored out of abortSession so the three cannot drift apart — a browser left
    * showing a view that no longer exists is the same bug however it got there.
    */
-  const refreshAfterViewReplaced = async (session: ActiveSession): Promise<void> => {
+  const refreshAfterViewReplaced = async (
+    session: ActiveSession,
+    // False when the caller cannot be sure the view moved (a mode switch that threw).
+    viewReplaced = true,
+  ): Promise<void> => {
+    // The transaction a failed auto-commit was stuck on is gone with the old view,
+    // so auto-commit has something to work with again.
+    if (viewReplaced) autoCommitTransactionSettled(session.id);
     await exportManager.refreshSession(session);
     SystemBrowser.refresh(session.id);
     // The new view can hold classes/globals/dicts committed by other sessions —
@@ -1973,22 +2044,27 @@ export function activate(context: vscode.ExtensionContext) {
    * way to ask it not to — so the confirmation says so, and says how much is at
    * stake when the session holds uncommitted work. Cancelling changes nothing.
    */
-  const setTransactionModeFor = async (session: ActiveSession): Promise<void> => {
+  const setTransactionModeFor = async (
+    session: ActiveSession,
+    target?: TransactionMode,
+  ): Promise<void> => {
     sessionManager.refreshTransactionState(session.id);
     const current = session.transactionMode;
 
-    const pick = await vscode.window.showQuickPick(
-      TRANSACTION_MODES.map((mode) => ({
-        label: mode === current ? `$(check) ${modeLabel(mode)}` : modeLabel(mode),
-        description: mode === current ? 'current' : undefined,
-        detail: modeDescription(mode),
-        mode,
-      })),
-      {
-        placeHolder: `Session ${session.id}: transaction mode (currently ${modeLabel(current)})`,
-        matchOnDetail: true,
-      },
-    );
+    const pick = target
+      ? { mode: target }
+      : await vscode.window.showQuickPick(
+          TRANSACTION_MODES.map((mode) => ({
+            label: mode === current ? `$(check) ${modeLabel(mode)}` : modeLabel(mode),
+            description: mode === current ? 'current' : undefined,
+            detail: modeDescription(mode),
+            mode,
+          })),
+          {
+            placeHolder: `Session ${session.id}: transaction mode (currently ${modeLabel(current)})`,
+            matchOnDetail: true,
+          },
+        );
     if (!pick || pick.mode === current) return;
 
     const choice = await vscode.window.showWarningMessage(
@@ -1998,7 +2074,11 @@ export function activate(context: vscode.ExtensionContext) {
         detail: `${loginLabel(session.login)}\n\n${transactionModeSwitchDetail(
           queries.sessionNeedsCommit(session),
           fileInManager.hasUnsavedChanges(session),
-        )}`,
+        )}${
+          getAutoCommitStatus(session.id) !== 'off' && autoCommitBlockedByMode(pick.mode)
+            ? `\n\nAuto-commit will be turned off. ${AUTO_COMMIT_NEEDS_AUTO_BEGIN}`
+            : ''
+        }`,
       },
       'Switch Mode',
     );
@@ -2017,7 +2097,12 @@ export function activate(context: vscode.ExtensionContext) {
       // that is no longer in it, and bring the browsers along while it is still
       // logged in.
       sessionManager.refreshTransactionState(session.id);
-      if (sessionManager.getSession(session.id)) await refreshAfterViewReplaced(session);
+      // Only a switch that changed the mode is known to have aborted; one that threw before
+      // that left the conflicting transaction in place, and re-arming over it would just fail
+      // again on the next write.
+      if (sessionManager.getSession(session.id)) {
+        await refreshAfterViewReplaced(session, session.transactionMode !== current);
+      }
       return;
     }
     await refreshAfterViewReplaced(session);
@@ -2026,16 +2111,18 @@ export function activate(context: vscode.ExtensionContext) {
     );
   };
 
+  // Only the auto-commit failure prompt passes `uncommittedAlreadyConfirmed`: its Abort button
+  // already confirmed discarding uncommitted work. The unsaved-.gs warning still applies.
   const abortSession = async (
     session: ActiveSession,
-    options?: { ask?: boolean },
+    options?: { ask?: boolean; uncommittedAlreadyConfirmed?: boolean },
   ): Promise<void> => {
     const confirmation = sessionActionConfirmation({
       action: 'Abort',
       sessionId: session.id,
       sessionLabel: loginLabel(session.login),
       warning: abortConfirmMessage(
-        queries.sessionNeedsCommit(session),
+        options?.uncommittedAlreadyConfirmed ? false : queries.sessionNeedsCommit(session),
         fileInManager.hasUnsavedChanges(session),
       ),
       ask: options?.ask ?? false,
@@ -2222,6 +2309,7 @@ export function activate(context: vscode.ExtensionContext) {
     // shows one Install/Always/Never modal, `never` does nothing.
     // Fire-and-forget; no-ops when the stone already has everything applicable.
     void maybeOfferServerSupport(session, sessionManager, context.extensionPath);
+    void noticeDifferentServerSupport(session, context.extensionPath, context.globalState);
   }
 
   context.subscriptions.push(
@@ -2340,6 +2428,10 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.uninstallServerSupport', async () => {
       await runUninstallServerSupport(sessionManager);
+    }),
+
+    vscode.commands.registerCommand('gemstone.showServerSupportStatus', async () => {
+      await runShowServerSupportStatus(sessionManager, context.extensionPath);
     }),
 
     vscode.commands.registerCommand('gemstone.renameTemporary', async (position?: unknown) => {
@@ -2554,11 +2646,17 @@ export function activate(context: vscode.ExtensionContext) {
       return beginSession(session);
     }),
 
-    vscode.commands.registerCommand('gemstone.setTransactionMode', (item?: GemStoneSessionItem) => {
-      const session = sessionForBeginOrModeCommand(item);
-      if (!session) return;
-      return setTransactionModeFor(session);
-    }),
+    // A mode name second skips the picker; auto-commit's "Switch to Auto-Begin" passes one.
+    // Checked, because a tree's context menu passes its selected rows there.
+    vscode.commands.registerCommand(
+      'gemstone.setTransactionMode',
+      (item?: GemStoneSessionItem, mode?: unknown) => {
+        const session = sessionForBeginOrModeCommand(item);
+        if (!session) return;
+        const target = typeof mode === 'string' && isTransactionMode(mode) ? mode : undefined;
+        return setTransactionModeFor(session, target);
+      },
+    ),
 
     // Explorer toolbar variants: act on the currently selected session so Commit /
     // Abort are reachable without switching to the Sessions view. They carry the
@@ -2582,6 +2680,22 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
       return abortSession(session);
+    }),
+
+    // Auto-commit's switch (issue #254). One handler, three ids: see sessionContextValue.
+    ...[
+      TOGGLE_AUTO_COMMIT_COMMAND,
+      'gemstone.autoCommit.turnOn',
+      'gemstone.autoCommit.turnOff',
+    ].map((id) =>
+      vscode.commands.registerCommand(id, (item?: GemStoneSessionItem) => {
+        const session = sessionForBeginOrModeCommand(item);
+        if (session) return toggleAutoCommit(sessionManager, session);
+      }),
+    ),
+    vscode.commands.registerCommand('gemstone.autoCommit.recover', (item?: GemStoneSessionItem) => {
+      const session = sessionForBeginOrModeCommand(item);
+      if (session) return recoverAutoCommit(sessionManager, session);
     }),
 
     vscode.commands.registerCommand('gemstone.openBrowser', async (item?: GemStoneSessionItem) => {

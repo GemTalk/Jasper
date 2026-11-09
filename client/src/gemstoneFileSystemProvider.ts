@@ -5,6 +5,7 @@ import { BrowserQueryError } from './browserQueries';
 import { GCI_ERR_OP_IN_PROGRESS } from './gciConstants';
 import { ExportManager } from './exportManager';
 import { logInfo } from './gciLog';
+import { runWithAutoCommitDeferredSync } from './autoCommit/autoCommitRunner';
 import { receiver } from './queries/util';
 import { isRealClassComment } from './queries/classCommentPresence';
 import {
@@ -906,23 +907,27 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     const source = new TextDecoder().decode(content);
 
     try {
-      switch (parsed.kind) {
-        case 'method':
-          this.compileMethod(uri, parsed, source, session);
-          break;
-        case 'definition':
-          this.compileClassDefinition(uri, parsed, source, session);
-          break;
-        case 'comment':
-          this.saveClassComment(parsed, source, session);
-          break;
-        case 'new-class':
-          this.compileClassDefinition(uri, parsed, source, session);
-          break;
-        case 'new-method':
-          this.compileMethod(uri, parsed, source, session);
-          break;
-      }
+      // A definition save writes the definition, then its category; a commit between them
+      // would file the class under the category it is leaving.
+      runWithAutoCommitDeferredSync(session, 'save', () => {
+        switch (parsed.kind) {
+          case 'method':
+            this.compileMethod(uri, parsed, source, session);
+            break;
+          case 'definition':
+            this.compileClassDefinition(uri, parsed, source, session);
+            break;
+          case 'comment':
+            this.saveClassComment(parsed, source, session);
+            break;
+          case 'new-class':
+            this.compileClassDefinition(uri, parsed, source, session);
+            break;
+          case 'new-method':
+            this.compileMethod(uri, parsed, source, session);
+            break;
+        }
+      });
 
       this.diagnostics.delete(uri);
       this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri }]);

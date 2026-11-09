@@ -272,7 +272,7 @@ The second cell keeps the collection in a variable so it can be changed step by 
     title: 'The debugger',
     body: `The debugger is one of Smalltalk's signature tools. When code raises an unhandled error, GemStone can open a debugger *on the live, suspended execution* — you inspect variables, evaluate expressions in context, edit the method, and continue.
 
-Notebook cells report an error inline rather than opening the debugger. To experience the debugger, use **Debug It** on an expression in a GemStone Workspace, or run failing code there — for example \`nil foo\` or \`self halt\`. Jasper offers both a VS Code debugger and an Enhanced (Smalltalk-style) debugger.
+A notebook cell reports an error inline, but \`self halt\` in a cell, or a breakpoint in a method the cell calls, opens the debugger. To see the debugger on an error, use **Debug It** on an expression in a GemStone Workspace, or run failing code there — for example \`nil foo\`. Jasper offers both a VS Code debugger and an Enhanced (Smalltalk-style) debugger.
 
 Run the cell below to see how an error is reported here.`,
     snippets: ['"An intentional error - a nil does not understand #foo:"\nnil foo'],
@@ -284,7 +284,7 @@ Run the cell below to see how an error is reported here.`,
 In most Smalltalks your objects live in an in-memory *image* that belongs to one process. In GemStone they live in a **persistent, shared, transactional object repository** on disk that many sessions connect to at once. A few consequences worth understanding:
 
 - **Persistence by reachability.** Anything reachable from a *persistent root* survives after your session ends — no save/load, no serialization. \`UserGlobals\` and \`Globals\` are such roots (symbol dictionaries).
-- **Transactions.** Your session sees a stable snapshot. \`System commitTransaction\` publishes your changes to everyone; \`System abortTransaction\` discards them and refreshes your view. Nothing you do is permanent until you commit.
+- **Transactions.** Your session sees a stable snapshot. \`System commitTransaction\` publishes your changes to everyone; \`System abortTransaction\` discards them and refreshes your view. Nothing you do is permanent until you commit — unless you have turned on **Auto-Commit** for the session (its row in **Logins & Sessions** says which), which commits every change as you make it.
 - **Transaction modes.** Whether you are *in* a transaction depends on the session's mode, which the status bar shows and one click changes. In **Auto-Begin** — GemStone's default, and what this lesson assumes — a new transaction starts the moment one ends, so you are always in one. In **Manual** you are left outside a transaction after each commit or abort and begin the next one yourself; in **Transactionless** you are not in one, so you switch modes before committing anything. Only Auto-Begin lets a commit land at any moment.
 - **Shared and multi-user.** Classes, methods, and data are all in the repository, visible to every session (subject to security). Many users work in the same object space.
 - **Sessions.** You are logged in as a *UserProfile*; \`SessionTemps\` holds per-session scratch state that is never committed.

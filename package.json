@@ -2,7 +2,7 @@
   "name": "gemstone-ide",
   "displayName": "Jasper: A GemStone Smalltalk IDE",
   "description": "GemStone/S IDE for Visual Studio Code",
-  "version": "1.17.0",
+  "version": "1.18.0",
   "publisher": "gemtalksystems",
   "license": "MIT",
   "author": "James Foster",
@@ -463,6 +463,12 @@
             "default": "ask",
             "description": "What to do when a login fails because the database it connects to is not running. Only applies to local databases Jasper manages — a remote or hand-rolled stone is never started. Starting a database starts both its stone and its NetLDI. The buttons on the prompt update this setting.",
             "scope": "application"
+          },
+          "gemstone.autoCommit.enableForNewSessions": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Start every NEW session with auto-commit on, so each change is committed to the repository as soon as it is made.\n\nThis setting only decides what a new session starts at; it never changes one already logged in. **Auto-commit itself is per session**, because a transaction is \u2014 each session's row in the **Logins & Sessions** view says what that session is doing (`\u00b7 auto-commit ON` / `off` / `FAILED`, plus a red `!` badge when a commit has failed), and the button on that row is the switch. `GemStone: Toggle Auto-Commit for This Session` and the row's right-click menu reach the same switch.\n\nWith auto-commit on, **Abort no longer takes a change back** \u2014 it is already in the repository. Undo still works: it reverses a change by making the opposite one.",
+            "description": "Start every new session with auto-commit on. Off by default. Auto-commit is per session; this only decides where a new one starts."
           },
           "gemstone.displayItMode": {
             "type": "string",
@@ -943,6 +949,29 @@
         "icon": "$(discard)"
       },
       {
+        "command": "gemstone.autoCommit.toggle",
+        "title": "Toggle Auto-Commit for This Session",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.autoCommit.turnOn",
+        "title": "Turn Auto-Commit On for This Session",
+        "category": "GemStone",
+        "icon": "$(sync-ignored)"
+      },
+      {
+        "command": "gemstone.autoCommit.turnOff",
+        "title": "Turn Auto-Commit Off for This Session",
+        "category": "GemStone",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "gemstone.autoCommit.recover",
+        "title": "Auto-Commit Failed — Resolve It: Abort, Show Conflicts, or Turn Off",
+        "category": "GemStone",
+        "icon": "$(error)"
+      },
+      {
         "command": "gemstone.sessionPing",
         "title": "Ping Session",
         "category": "GemStone",
@@ -1009,6 +1038,11 @@
       {
         "command": "gemstone.uninstallServerSupport",
         "title": "Uninstall Server Support (Enhanced Inspector + Refactoring)",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.showServerSupportStatus",
+        "title": "Show Server Support Status",
         "category": "GemStone"
       },
       {
@@ -2386,6 +2420,22 @@
           "when": "gemstone.hasActiveSession"
         },
         {
+          "command": "gemstone.autoCommit.toggle",
+          "when": "gemstone.hasActiveSession"
+        },
+        {
+          "command": "gemstone.autoCommit.turnOn",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.autoCommit.turnOff",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.autoCommit.recover",
+          "when": "false"
+        },
+        {
           "command": "gemstone.sessionBegin",
           "when": "gemstone.hasActiveSession && gemstone.canBegin"
         },
@@ -2596,6 +2646,10 @@
         {
           "command": "gemstone.uninstallServerSupport",
           "when": "gemstone.hasActiveSession && gemstone.serverSupportInstalled"
+        },
+        {
+          "command": "gemstone.showServerSupportStatus",
+          "when": "gemstone.hasActiveSession"
         },
         {
           "command": "gemstone.serveSeaside",
@@ -3343,14 +3397,34 @@
           "group": "inline@4"
         },
         {
+          "command": "gemstone.autoCommit.toggle",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/",
+          "group": "1_transaction@2"
+        },
+        {
+          "command": "gemstone.autoCommit.turnOn",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession([.]|$)/",
+          "group": "inline@5"
+        },
+        {
+          "command": "gemstone.autoCommit.turnOff",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSessionAutoCommitOn([.]|$)/",
+          "group": "inline@5"
+        },
+        {
+          "command": "gemstone.autoCommit.recover",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSessionAutoCommitFailed([.]|$)/",
+          "group": "inline@5"
+        },
+        {
           "command": "gemstone.showSessionConfiguration",
           "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/",
-          "group": "inline@5"
+          "group": "inline@6"
         },
         {
           "command": "gemstone.sessionLogout",
           "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/",
-          "group": "inline@6"
+          "group": "inline@7"
         },
         {
           "command": "gemstone.setTransactionMode",
@@ -3770,6 +3844,7 @@
     "test:server:stop": "npm run test:server:stop --workspace client",
     "test:server:list": "npm run test:server:list --workspace client",
     "test:server:install-plugin": "tsx client/bin/install-server-plugin.mjs",
+    "test:server:check-plugin": "tsx client/bin/check-server-plugin.mjs",
     "test:server:uninstall-plugin": "tsx client/bin/uninstall-server-plugin.mjs",
     "test:server": "npm test --workspace server",
     "test:client": "npm test --workspace client",

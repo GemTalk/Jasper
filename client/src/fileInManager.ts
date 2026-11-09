@@ -7,6 +7,7 @@ import { fileInClass } from './topazFileIn';
 import { SystemBrowser } from './systemBrowser';
 import * as queries from './browserQueries';
 import { beginDictionaryRemoval } from './undo/recordDictionaryEdit';
+import { beginClassDeletion } from './undo/recordClassEdit';
 import { notifyUndoable } from './undo/undoableToast';
 
 /**
@@ -153,8 +154,12 @@ export class FileInManager {
       const dictIndex = this.parseDictIndex(parts[0], session);
       if (!dictIndex) return;
       const className = path.basename(uri.fsPath, '.gs');
+      // Recorded for Undo like every other class delete: on an auto-commit session the delete
+      // is committed at once, so Undo is the only way back from a stray `git clean`.
+      const recording = beginClassDeletion(session, [{ dict: dictIndex, className }]);
       try {
         queries.deleteClass(session, dictIndex, className);
+        notifyUndoable(`Deleted class ${className}`, recording?.commit());
         // The .gs is already gone; drop it from the persisted mirror state too.
         const dictName = parts[0].replace(/^\d+-/, '');
         this.exportManager.removeClassFile(session, dictIndex, dictName, className);

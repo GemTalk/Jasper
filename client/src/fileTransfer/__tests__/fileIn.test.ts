@@ -11,16 +11,31 @@ vi.mock('../../browserQueries', () => ({
   compileMethod: vi.fn(() => 'Compiled'),
   removeAllMethods: vi.fn(() => 'ok'),
 }));
-vi.mock('../tonelFileIn', () => ({ fileInTonelUri: vi.fn() }));
+vi.mock('../tonelFileIn', () => ({
+  prepareTonelFile: vi.fn(),
+  fileInPreparedTonel: vi.fn(
+    (_session: unknown, prepared: { outcome: unknown }) => prepared.outcome,
+  ),
+}));
 
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import * as queries from '../../browserQueries';
 import { fileInFile, fileInUris, fileInCommand, FILE_IN_FILTERS } from '../fileIn';
+import type { FileInOutcome } from '../fileIn';
 import * as tonel from '../tonelFileIn';
 import { SessionManager } from '../../sessionManager';
 import type { ActiveSession } from '../../sessionManager';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+} from '../../autoCommit/autoCommitState';
+import {
+  autoCommitAfterWrite,
+  setAutoCommitFailureHandler,
+} from '../../autoCommit/autoCommitRunner';
+import { fakeActiveSession } from '../../__tests__/fakeActiveSession';
 
 /**
  * Filing a Topaz `.gs` file back into a session (issue #539).
@@ -30,7 +45,30 @@ import type { ActiveSession } from '../../sessionManager';
  * twenty compiled and the bad one named. These read back what reached the query layer.
  */
 
-const SESSION = { id: 1 } as ActiveSession;
+const COMMIT_OK = { success: true, err: { number: 0, message: '' } };
+let commit = vi.fn(() => COMMIT_OK);
+
+/**
+ * Put auto-commit back to off, and `compileMethod` back to a plain stub, before every test
+ * in this file. An armed session left behind by the auto-commit block below would make the
+ * ordinary tests assert the wrong note — and the suite shuffles, so that is not hypothetical.
+ */
+function resetAutoCommit(): void {
+  _resetAutoCommitStateForTests();
+  setAutoCommitFailureHandler(undefined);
+  commit = vi.fn(() => COMMIT_OK);
+  vi.mocked(queries.compileMethod).mockReset();
+  vi.mocked(queries.compileMethod).mockReturnValue('Compiled');
+}
+const SESSION = fakeActiveSession({
+  id: 1,
+  gci: {
+    get GciTsCommit() {
+      return commit;
+    },
+  },
+  handle: {},
+});
 
 /** A filesystem holding the given absolute-path → content pairs. */
 function withFiles(files: Record<string, string>): void {
@@ -82,9 +120,18 @@ const CLASS_FILE = [
   '%',
 ].join('\n');
 
+/** What the mocked Tonel reader answers for every `.st` file it is asked to prepare. */
+function tonelAnswers(outcome: FileInOutcome): void {
+  vi.mocked(tonel.prepareTonelFile).mockImplementation(async (_s, filePath) => ({
+    filePath,
+    outcome,
+  }));
+}
+
 describe('fileInFile', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetAutoCommit();
     vi.mocked(queries.fileInChunk).mockReturnValue('ok');
     vi.mocked(queries.compileMethod).mockReturnValue('Compiled');
     vi.mocked(queries.removeAllMethods).mockReturnValue('ok');
@@ -313,6 +360,7 @@ describe('the File In command', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    resetAutoCommit();
     vi.mocked(queries.fileInChunk).mockReturnValue('ok');
     vi.mocked(queries.compileMethod).mockReturnValue('Compiled');
     vi.mocked(queries.removeAllMethods).mockReturnValue('ok');
@@ -480,6 +528,125 @@ describe('the File In command', () => {
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
   });
 
+  /**
+   * A file-in on an auto-commit session (issue #254) goes in as ONE change, and the summary
+   * has to say so — telling a user to go and commit what has already been committed is the
+   * kind of small lie that teaches them not to read the notice.
+   */
+  describe('and auto-commit', () => {
+    beforeEach(() => {
+      vi.mocked(queries.compileMethod).mockImplementation(() => {
+        autoCommitAfterWrite(SESSION, 'test write');
+        return 'Compiled';
+      });
+    });
+
+    it('commits the whole file-in once, and says it did', async () => {
+      registerSessionAutoCommit(1, true);
+
+      await fileInUris(sessionManager(SESSION), [vscode.Uri.file(A_GS)], memento);
+
+      expect(commit).toHaveBeenCalledTimes(1);
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining('Committed — this session has auto-commit on'),
+      );
+    });
+
+    it('does not tell an armed session to go and commit', async () => {
+      registerSessionAutoCommit(1, true);
+
+      await fileInUris(sessionManager(SESSION), [vscode.Uri.file(A_GS)], memento);
+
+      expect(vscode.window.showInformationMessage).not.toHaveBeenCalledWith(
+        expect.stringContaining('Not committed'),
+      );
+    });
+
+    // Even when the file asked for one: a `commit` line drives the topaz program, and
+    // whether the file-in lands is the session's setting to decide, not the file's.
+    it('says it committed, not that the file asked and was refused', async () => {
+      registerSessionAutoCommit(1, true);
+      withFiles({ [TPZ]: ['doit', "Object subclass: 'Animal'", '%', 'commit'].join('\n') });
+
+      await fileInUris(sessionManager(SESSION), [vscode.Uri.file(TPZ)], memento);
+
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining('Committed — this session has auto-commit on'),
+        'Show Log',
+      );
+    });
+
+    it('commits nothing when the file-in had an error, and says how to discard it', async () => {
+      registerSessionAutoCommit(1, true);
+      vi.mocked(queries.compileMethod)
+        .mockImplementationOnce(() => {
+          autoCommitAfterWrite(SESSION, 'test write');
+          return 'Compiled';
+        })
+        .mockImplementationOnce(() => {
+          throw new Error('CompileError: undefined symbol');
+        });
+
+      await fileInUris(sessionManager(SESSION), [vscode.Uri.file(A_GS)], memento);
+
+      expect(commit).not.toHaveBeenCalled();
+      expect(vi.mocked(vscode.window.showErrorMessage).mock.calls.at(-1)?.[0]).toContain(
+        'Nothing was committed',
+      );
+    });
+
+    // Nothing went in, so there is nothing to discard: an Abort here would only throw away
+    // the user's other, unrelated work.
+    it('gives no Abort advice when the file-in failed before writing anything', async () => {
+      registerSessionAutoCommit(1, true);
+      withFiles({});
+
+      await fileInUris(sessionManager(SESSION), [vscode.Uri.file(A_GS)], memento);
+
+      const message = vi.mocked(vscode.window.showErrorMessage).mock.calls.at(-1)?.[0];
+      expect(message).toContain('Could not read');
+      expect(message).not.toContain('Nothing was committed');
+    });
+
+    it('commits two picked files once', async () => {
+      registerSessionAutoCommit(1, true);
+      withFiles({ [A_GS]: CLASS_FILE, [D_GS]: CLASS_FILE });
+
+      await fileInUris(
+        sessionManager(SESSION),
+        [vscode.Uri.file(A_GS), vscode.Uri.file(D_GS)],
+        memento,
+      );
+
+      expect(commit).toHaveBeenCalledTimes(1);
+    });
+
+    it('commits a file and the files it inputs once', async () => {
+      registerSessionAutoCommit(1, true);
+      withFiles({
+        [LOADER]: ['doit', 'UserGlobals at: #Animals put: nil', '%', 'input Animal.gs'].join('\n'),
+        [A_GS]: CLASS_FILE,
+      });
+      vi.mocked(queries.fileInChunk).mockImplementation(() => {
+        autoCommitAfterWrite(SESSION, 'file-in chunk');
+        return 'nil';
+      });
+
+      await fileInUris(sessionManager(SESSION), [vscode.Uri.file(LOADER)], memento);
+
+      expect(commit).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves the ordinary note alone on a session that never armed it', async () => {
+      await fileInUris(sessionManager(SESSION), [vscode.Uri.file(A_GS)], memento);
+
+      expect(commit).not.toHaveBeenCalled();
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining('Not committed'),
+      );
+    });
+  });
+
   it('says so plainly when the file asked to commit and did not get one', async () => {
     withFiles({ [TPZ]: ['doit', "Object subclass: 'Animal'", '%', 'commit'].join('\n') });
 
@@ -556,6 +723,8 @@ describe('choosing a reader by file type', () => {
     resolveSession: () => Promise.resolve(SESSION),
   } as unknown as SessionManager;
 
+  beforeEach(() => resetAutoCommit());
+
   // Through `at()`, like every other fixture path in this file. A raw '/tmp/x.gs'
   // string is keyed by `path.resolve` as `D:\tmp\x.gs` on Windows while the Uri the
   // code under test receives answers `d:\tmp\x.gs` — so the mock filesystem never
@@ -569,7 +738,7 @@ describe('choosing a reader by file type', () => {
     // extension decides which reader runs. Handing a Tonel file to the chunk reader
     // fails in a way that reads as a broken file rather than the wrong command.
     withFiles({ [WIDGET_ST]: "Class {\n\t#name : 'Widget'\n}\n" });
-    vi.mocked(tonel.fileInTonelUri).mockResolvedValue({
+    tonelAnswers({
       executed: 0,
       compiled: 3,
       removed: 0,
@@ -584,7 +753,7 @@ describe('choosing a reader by file type', () => {
 
     await fileInUris(manager, [vscode.Uri.file(WIDGET_ST)], undefined, SESSION);
 
-    expect(tonel.fileInTonelUri).toHaveBeenCalledWith(SESSION, WIDGET_ST);
+    expect(tonel.prepareTonelFile).toHaveBeenCalledWith(SESSION, WIDGET_ST);
     expect(queries.fileInChunk).not.toHaveBeenCalled();
   });
 
@@ -593,7 +762,7 @@ describe('choosing a reader by file type', () => {
 
     await fileInUris(manager, [vscode.Uri.file(THING_GS)], undefined, SESSION);
 
-    expect(tonel.fileInTonelUri).not.toHaveBeenCalled();
+    expect(tonel.prepareTonelFile).not.toHaveBeenCalled();
     expect(queries.fileInChunk).toHaveBeenCalled();
   });
 
@@ -604,7 +773,7 @@ describe('choosing a reader by file type', () => {
       [THING_GS]: 'run\ntrue\n%\n',
       [WIDGET_ST]: "Class {\n\t#name : 'Widget'\n}\n",
     });
-    vi.mocked(tonel.fileInTonelUri).mockResolvedValue({
+    tonelAnswers({
       executed: 0,
       compiled: 2,
       removed: 0,
@@ -625,7 +794,67 @@ describe('choosing a reader by file type', () => {
     );
 
     expect(queries.fileInChunk).toHaveBeenCalled();
-    expect(tonel.fileInTonelUri).toHaveBeenCalled();
+    expect(tonel.prepareTonelFile).toHaveBeenCalled();
+  });
+
+  // A Tonel file that only redefines the class (no methods) still wrote something, and the
+  // note telling the user to commit it must stay.
+  it('says a Tonel file that only redefined the class is not committed', async () => {
+    withFiles({ [WIDGET_ST]: "Class {\n\t#name : 'Widget'\n}\n" });
+    tonelAnswers({
+      executed: 0,
+      compiled: 0,
+      removed: 0,
+      defined: 1,
+      files: 1,
+      ignored: [],
+      askedToCommit: false,
+      skipped: [],
+      errors: [],
+      stopped: false,
+      cancelled: false,
+    });
+
+    await fileInUris(manager, [vscode.Uri.file(WIDGET_ST)], undefined, SESSION);
+
+    expect(vi.mocked(vscode.window.showInformationMessage).mock.calls.at(-1)?.[0]).toContain(
+      'Not committed — commit the session to keep it.',
+    );
+  });
+
+  // Every Tonel question is asked before anything is written, so dismissing one files in
+  // nothing at all, and there is nothing to commit or to warn about.
+  it('files in nothing when a Tonel dictionary prompt in the pick is dismissed', async () => {
+    registerSessionAutoCommit(1, true);
+    withFiles({
+      [THING_GS]: 'run\ntrue\n%\n',
+      [WIDGET_ST]: "Class {\n\t#name : 'Widget'\n}\n",
+    });
+    tonelAnswers({
+      executed: 0,
+      compiled: 0,
+      removed: 0,
+      files: 1,
+      ignored: [],
+      askedToCommit: false,
+      skipped: [],
+      errors: [],
+      stopped: false,
+      cancelled: true,
+    });
+
+    await fileInUris(
+      manager,
+      [vscode.Uri.file(THING_GS), vscode.Uri.file(WIDGET_ST)],
+      undefined,
+      SESSION,
+    );
+
+    expect(queries.fileInChunk).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
+    const notice = vi.mocked(vscode.window.showInformationMessage).mock.calls.at(-1)?.[0];
+    expect(notice).toContain('Cancelled — nothing was filed in.');
+    expect(notice).not.toContain('Nothing was committed');
   });
 });
 

@@ -103,6 +103,22 @@ describe('transaction modes on a live stone', () => {
     }
   });
 
+  // Why auto-commit needs Auto-Begin (autoCommitBlockedByMode): outside a transaction a
+  // change lands but cannot be committed, and entering one throws the change away.
+  it('throws away a change made outside a transaction when the session begins one', () => {
+    for (const mode of ['manualBegin', 'transactionless'] as TransactionMode[]) {
+      setTransactionMode(execute, mode);
+      execute(`UserGlobals at: #JasperOutsideTxnProbe put: 2. 'ok'`);
+      expect(execute('System needsCommit printString')).toBe('true');
+
+      gci.beginTransaction(session);
+
+      expect(execute(`(UserGlobals at: #JasperOutsideTxnProbe ifAbsent: [nil]) printString`)).toBe(
+        'nil',
+      );
+    }
+  });
+
   it('allows an abort outside a transaction — which is why Abort is never hidden', () => {
     setTransactionMode(execute, 'manualBegin');
 
