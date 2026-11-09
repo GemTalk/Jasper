@@ -21,6 +21,12 @@ The repo is public, so GitHub's standard hosted runners cost nothing and have no
 
 Also keep in mind that GitHub's Windows runners can't run Linux Docker containers, which rules out GemStone in Docker on the Windows legs.
 
+## The merge queue doesn't re-prove what a PR run already proved
+
+A PR reaches the merge queue only after its own run passed, so the queue run only has to show the PR still works with whatever landed on `main` since. When nothing has, the queue's merge commit has exactly the same files as the one the PR run tested, and git gives both the same tree hash. A green PR run records that hash, and a queue run that finds a matching record from a GemTalk/Jasper PR run skips the tests. The record is an artifact named `tested-tree-<hash>` on that PR run, kept for 30 days; `gh api "repos/GemTalk/Jasper/actions/artifacts?name=tested-tree-<hash>"` lists the runs that recorded a hash, and `git rev-parse '<commit>^{tree}'` gives a commit's hash. Anything less certain (no record, an expired one, an API error) runs them. A queue run that skipped says so in a notice under its run graph, naming the PR run it trusted, so its green check isn't mistaken for a full run. `main` itself is never skipped: the run on every push there is the full matrix, and it is the run the release checks.
+
+When the queue does run the tests, a failing test is tried once more before it fails the run. Without that, a flake ejects the PR and restarts all its jobs, and most queue failures are flakes. Only the queue retries, so PR runs still show every flake, and a test that needed its retry is listed in the run's annotations and job summary so it still gets fixed.
+
 ## The skipped-tests report doesn't fail the build yet
 
 Some tests skip themselves when their prerequisites are missing, and CI can't provide all of them. It has no Rowan or Grail extent, for example, and as of November 2026 the Tonel integration tests skip too. The report lists the tests skipped in every leg, meaning no CI run ever executes them. It is report-only because failing on it today would block every PR on gaps in the CI environment, not on the change being tested. The goal is to get the list to zero and then make it a gate.

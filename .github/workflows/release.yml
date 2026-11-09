@@ -101,10 +101,12 @@ jobs:
             echo "error: tag v$VERSION already exists — $VERSION looks released." >&2
             exit 1
           fi
-      # The release does not re-run lint/compile/test: the merge queue already
-      # ran them on this commit, across every platform and supported GemStone
-      # version, which is a stronger gate than any single run here could be.
-      # What matters is that it actually passed.
+      # The release does not re-run lint/compile/test: the Health Check run on
+      # the push to main already ran them on this commit, across every platform
+      # and supported GemStone version, which is a stronger gate than any single
+      # run here could be. What matters is that it actually passed. (The merge
+      # queue's run on the same commit may have skipped the tests, but it starts
+      # first, so the newest ci-complete read below is the push run's.)
       - name: Require ci-complete to have passed on this commit
         run: |
           # A commit can carry several ci-complete runs, because a failed run
