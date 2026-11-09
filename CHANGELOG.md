@@ -4,6 +4,14 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Changed
+
+- **Developer tooling and test-suite work.** No user-facing behavior change: CI now also tests against GemStone 3.7.6, the newest release, on Linux and Windows, and keeps testing 3.7.5 alongside it. 3.7.6 adds no GCI functions. ([#879](https://github.com/GemTalk/Jasper/issues/879))
+
+### Fixed
+
+- **Logging out on GemStone 3.7.6 no longer leaves the session running on the server.** When a logout reached GemStone while a call on that session was still going, GemStone 3.7.6 refused it without saying why, and Jasper took the session as already gone: it disappeared from Jasper but stayed logged in on the stone, holding its slot until an administrator stopped it. Jasper now reads that answer as the refusal it is while one of its own calls is running, waits for the call, and logs out again; and after any logout GemStone doesn't confirm, it checks the stone and ends the session if it is still there. Checking and ending it need the SessionAccess and SystemControl privileges; without them Jasper says the session may still be there, and how an administrator can end it. The 3.7.6 behaviour is reported to GemTalk as bug 52223. ([#879](https://github.com/GemTalk/Jasper/issues/879))
+
 ## [1.18.0] - 2026-11-06
 
 ### Added
@@ -22,12 +30,6 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 - **Browsing during a run no longer leaves wrong answers behind.** While a run held the session, expanding a class in the Explorer showed no variables, and that stuck after the run ended; a senders or implementors CodeLens said "0 senders". Jasper had remembered the busy refusal as the real answer. It now asks again next time, and the lens shows "senders" with no number until it can count. ([#837](https://github.com/GemTalk/Jasper/pull/837))
 - **A class or dictionary click the session refuses no longer leaves the Explorer half-updated.** Clicking during a run used to highlight the new class over the old one's methods (so opening one looked in the wrong class), or the new dictionary over the old one's classes, and Refresh emptied the Hierarchy pane and stripped the class rows' arrows. Now nothing changes when the click is refused: the highlight goes back, the busy notice says why, and clicking again once the run ends works. ([#843](https://github.com/GemTalk/Jasper/issues/843))
 - **Cancelled runs no longer pile up objects in the session.** Each cancelled query, method search, refactoring, Testing view query or debugger evaluation used to leave its stopped process behind in the session until logout, and a run that finished just as Jasper stopped waiting left its result behind too. Jasper now frees them as the run stops. ([#828](https://github.com/GemTalk/Jasper/pull/828))
-
-- **Developer tooling and test-suite work.** No user-facing behavior change: CI now also tests against GemStone 3.7.6, the newest release, on Linux and Windows, and keeps testing 3.7.5 alongside it. 3.7.6 adds no GCI functions. ([#879](https://github.com/GemTalk/Jasper/issues/879))
-
-### Fixed
-
-- **Logging out on GemStone 3.7.6 no longer leaves the session running on the server.** When a logout reached GemStone while a call on that session was still going, GemStone 3.7.6 refused it without saying why, and Jasper took the session as already gone: it disappeared from Jasper but stayed logged in on the stone, holding its slot until an administrator stopped it. Jasper now reads that answer as the refusal it is while one of its own calls is running, waits for the call, and logs out again; and after any logout GemStone doesn't confirm, it checks the stone and ends the session if it is still there. Checking and ending it need the SessionAccess and SystemControl privileges; without them Jasper says the session may still be there, and how an administrator can end it. The 3.7.6 behaviour is reported to GemTalk as bug 52223. ([#879](https://github.com/GemTalk/Jasper/issues/879))
 
 ## [1.17.0] - 2026-10-30
 
