@@ -104,28 +104,31 @@ jobs:
       # The release does not re-run lint/compile/test: the Health Check run on
       # the push to main already ran them on this commit, across every platform
       # and supported GemStone version, which is a stronger gate than any single
-      # run here could be. What matters is that it actually passed. (The merge
-      # queue's run on the same commit may have skipped the tests, but it starts
-      # first, so the newest ci-complete read below is the push run's.)
-      - name: Require ci-complete to have passed on this commit
+      # run here could be. What matters is that it actually passed. Only that
+      # push run counts: the merge queue's run lands on the same commit, may
+      # have skipped the tests or forgiven a flaky one, and finishes first.
+      - name: Require the push run's ci-complete to have passed on this commit
         run: |
-          # A commit can carry several ci-complete runs, because a failed run
-          # can be retried. Order is not guaranteed, so sort by start time and
-          # read the newest: taking an arbitrary one risks reading a stale
-          # success for a commit whose latest run failed.
-          conclusion=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" \
-            --paginate --jq '.check_runs[] | select(.name == "ci-complete") | [.started_at, .conclusion] | @tsv' |
-            sort -r | head -1 | cut -f2)
-          if [ -z "$conclusion" ]; then
-            echo "error: no ci-complete check run found for $GITHUB_SHA." >&2
-            echo "Health Check may still be running, or this commit never went through it." >&2
+          # Several push runs of one commit are possible; read the newest.
+          run_id=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/health-check.yml/runs?head_sha=${GITHUB_SHA}&event=push&branch=main" \
+            --jq '.workflow_runs | sort_by(.run_started_at) | last | .id // empty')
+          if [ -z "$run_id" ]; then
+            echo "error: no Health Check run on the push of $GITHUB_SHA to main." >&2
+            echo "Health Check may not have started yet, or this commit never reached main by a push." >&2
+            exit 1
+          fi
+          # The jobs endpoint lists the run's latest attempt.
+          conclusion=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" \
+            --jq '.jobs[] | select(.name == "ci-complete") | .conclusion // "pending"')
+          if [ -z "$conclusion" ] || [ "$conclusion" = "pending" ]; then
+            echo "error: Health Check run $run_id on $GITHUB_SHA has not finished ci-complete yet." >&2
             exit 1
           fi
           if [ "$conclusion" != "success" ]; then
-            echo "error: ci-complete concluded '$conclusion' for $GITHUB_SHA, not success." >&2
+            echo "error: ci-complete concluded '$conclusion' in Health Check run $run_id on $GITHUB_SHA, not success." >&2
             exit 1
           fi
-          echo "ci-complete passed on $GITHUB_SHA."
+          echo "ci-complete passed in Health Check run $run_id on $GITHUB_SHA."
       - name: Require package.json to be at the requested version
         run: |
           actual=$(gh api "repos/${GITHUB_REPOSITORY}/contents/package.json?ref=${GITHUB_SHA}" \

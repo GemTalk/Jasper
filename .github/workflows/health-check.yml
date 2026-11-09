@@ -29,7 +29,9 @@ concurrency:
 
 jobs:
   prepare:
-    timeout-minutes: 1
+    # In the merge queue, prepare also looks up a tested-tree record, which
+    # gives up after 60 s plus one last 15 s call (find-tested-tree.sh).
+    timeout-minutes: 3
     runs-on: ubuntu-latest
     # actions:read lets a merge-queue run look up the tested-tree records
     # that ci-complete uploads.
@@ -70,7 +72,7 @@ jobs:
       # all: the repo's devEngines.packageManager floor (npm >=11.16, onFail:
       # error) makes *any project-scoped* npm call — even a bare `npm run` —
       # fail with EBADDEVENGINES on the runner's ambient npm 10, and installing
-      # a Node just to satisfy that would cost this 1-minute job the whole
+      # a Node just to satisfy that would cost this short job the whole
       # toolchain setup while the matrix waits on it. Nothing else here
       # touches npm: the version reader below is dependency-free CJS that
       # runs on any Node.
@@ -84,17 +86,13 @@ jobs:
         run: |
           echo "versions=$(node client/bin/gemstone-integration-versions.js)" >> "$GITHUB_OUTPUT"
           echo "oldest-version=$(node client/bin/gemstone-integration-versions.js --oldest)" >> "$GITHUB_OUTPUT"
-      # The tree hash names the exact files under test, whatever the history
-      # behind them: a merge-queue commit whose tree matches a PR run's merge
-      # commit is byte-for-byte the code that run tested. The sparse checkout
-      # doesn't matter; the commit object carries the whole tree.
+      # Same tree hash, same files byte for byte, whatever the history. The
+      # sparse checkout doesn't matter: the commit object carries the whole tree.
       - name: Hash the tree under test
         id: tree
         run: echo "tree=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
-      # Skipping is sound only while a queue run checks nothing a PR run
-      # doesn't. A github.event_name condition that makes the queue check more,
-      # whether added to the queue's side or taken off the PR's, is bypassed
-      # whenever this finds a match.
+      # Skipping is sound only while a queue run checks nothing a PR run doesn't:
+      # any github.event_name condition that makes the queue check more is bypassed.
       - name: Look for a green PR run of this exact tree
         id: find-tested-tree
         if: github.event_name == 'merge_group'
@@ -231,9 +229,7 @@ jobs:
     # median, the same ratio as above. Windows (343-550s) and macOS (426-544s)
     # still fit their 12.
     timeout-minutes: ${{ fromJSON('{"ubuntu-latest":9,"windows-latest":12,"macos-latest":12}')[matrix.platform] }}
-    # A skipped job's `if` is decided before its matrix is expanded, so the
-    # skipped job has no matrix values; the fallback names it in the run graph.
-    name: ${{ matrix.platform && format('{0} {1}{2}', matrix.platform, matrix.gemstone-version, matrix.node-version && format(' (Node {0})', matrix.node-version) || '') || 'Tests on every platform and GemStone version' }}
+    name: ${{ matrix.platform }} ${{ matrix.gemstone-version }}${{ matrix.node-version && format(' (Node {0})', matrix.node-version) || '' }}
     needs: prepare
     if: needs.prepare.outputs.already-tested != 'true'
     runs-on: ${{ matrix.platform }}
@@ -271,9 +267,8 @@ jobs:
       # unaffected. Harmless on the macOS and Windows hosts, which don't use
       # glibc.
       GLIBC_TUNABLES: glibc.rtld.execstack=2
-      # In the merge queue a test that fails is run once more before it fails
-      # the leg, so a flake doesn't eject the PR. PR and main runs don't retry,
-      # so they still show every flake. Read by client/vitest.config.ts.
+      # Queue only: a failing client test gets one retry, so a flake doesn't
+      # eject the PR. PR and main runs don't retry, so they show every flake.
       VITEST_RETRY: ${{ github.event_name == 'merge_group' && '1' || '0' }}
     strategy:
       matrix:
@@ -576,7 +571,7 @@ jobs:
     if: always()
     needs: [prepare, lint-workflows, lint, health-check, package-check]
     runs-on: ubuntu-latest
-    timeout-minutes: 1
+    timeout-minutes: 3
     steps:
       # zizmor(unpinned-uses): actions must be pinned to a commit SHA, not
       # a mutable tag like @v6
@@ -601,6 +596,9 @@ jobs:
         run: echo "$TREE" > tested-tree.txt
       - name: Upload the tested-tree record
         if: github.event_name == 'pull_request'
+        # Failing to record only costs a later queue run its skip, so it must
+        # not turn a green PR red.
+        continue-on-error: true
         # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
         # not a mutable tag like @v7
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -609,9 +607,10 @@ jobs:
           path: tested-tree.txt
           # A re-run of a green run uploads the same name again.
           overwrite: true
-          # How long a green PR run still lets the queue skip its tests. Long
-          # enough to cover a PR that waits for review after its last push.
-          retention-days: 30
+          # How long a green PR run still lets the queue skip its tests: long
+          # enough for a PR to wait for review, short enough that the runner
+          # images and downloads the skip relies on haven't drifted far.
+          retention-days: 14
 
   # Report-only, first step toward a future gate: aggregates the per-suite-run
   # JSON reports (one per GemStone version x bare/plugin run) to find tests that

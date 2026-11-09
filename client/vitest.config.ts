@@ -68,10 +68,10 @@ export default defineConfig({
     // be fragile) to also emit a machine-readable JSON report alongside the
     // normal console output, which health-check.yml's report-skips job
     // aggregates across matrix cells to find tests skipped everywhere, and
-    // scripts/report-retried-tests.mjs reads for tests that needed a retry. Local
-    // `npm test` leaves this unset, so its output is unchanged (the key must
-    // be omitted, not set to undefined — vitest requires `reporters` to be
-    // iterable when the key is present at all).
+    // report-retried-tests.mjs reads. Local `npm test` leaves this unset, so
+    // its output is unchanged (the key must be omitted, not set to undefined —
+    // vitest requires `reporters` to be iterable when the key is present at
+    // all).
     ...(process.env.VITEST_JSON_OUTPUT
       ? {
           reporters: [
@@ -102,9 +102,7 @@ export default defineConfig({
             shuffle: true,
             seed: shuffleSeed,
           },
-          // health-check.yml sets VITEST_RETRY=1 in the merge queue only. A test
-          // that passes on its retry keeps its first failure in the JSON report,
-          // which is how scripts/report-retried-tests.mjs finds it.
+          // health-check.yml sets VITEST_RETRY=1 in the merge queue only.
           retry: Number(process.env.VITEST_RETRY ?? 0),
         },
       },

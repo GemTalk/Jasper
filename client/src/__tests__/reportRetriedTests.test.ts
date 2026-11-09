@@ -4,9 +4,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { withTemporaryFolderDo } from './support/file';
 
-// Black-box tests for scripts/report-retried-tests.mjs, run as a subprocess the way
-// summarizeSkippedTests.test.ts runs its script. The report is the only trace a
-// merge-queue retry leaves, so a test it misses is a flake nobody hears about.
+// Black-box tests for scripts/report-retried-tests.mjs. The report is the only trace
+// a merge-queue retry leaves, so a test it misses is a flake nobody hears about.
 const SCRIPT = path.resolve(__dirname, '..', '..', '..', 'scripts', 'report-retried-tests.mjs');
 const VITEST_CLI = path.resolve(
   __dirname,
@@ -28,17 +27,25 @@ function runReporter(testResults: object[] | undefined) {
   return runReporterOn(testResults && JSON.stringify({ testResults }));
 }
 
-function runReporterOn(reportContents: string | undefined) {
+function runReporterOn(reportContents: string | undefined, { withSummaryFile = false } = {}) {
   return withTemporaryFolderDo((dir) => {
     const reportPath = path.join(dir, 'report.json');
     if (reportContents !== undefined) {
       fs.writeFileSync(reportPath, reportContents);
     }
+    const summaryPath = path.join(dir, 'summary.md');
+    if (withSummaryFile) {
+      fs.writeFileSync(summaryPath, '');
+    }
     const result = spawnSync(process.execPath, [SCRIPT, reportPath], {
       encoding: 'utf8',
-      env: { ...process.env, GITHUB_STEP_SUMMARY: undefined },
+      env: { ...process.env, GITHUB_STEP_SUMMARY: withSummaryFile ? summaryPath : undefined },
     });
-    return { status: result.status, stdout: result.stdout };
+    return {
+      status: result.status,
+      stdout: result.stdout,
+      summary: withSummaryFile ? fs.readFileSync(summaryPath, 'utf8') : '',
+    };
   });
 }
 
@@ -121,9 +128,8 @@ describe('report-retried-tests.mjs', () => {
     expect(stdout).toContain('::warning title=Retry report unreadable::');
   });
 
-  // The report relies on Vitest keeping a failed attempt's error on a test that then
-  // passed. Running the installed Vitest on a test that fails once catches an upgrade
-  // that stops doing so, which would hide every forgiven flake.
+  // Catches a Vitest upgrade that stops keeping a failed attempt's error on a test
+  // that then passed, which would hide every forgiven flake.
   it('finds a test that real Vitest retried after it failed once', () => {
     withTemporaryFolderDo((dir) => {
       fs.writeFileSync(
@@ -150,5 +156,47 @@ describe('report-retried-tests.mjs', () => {
       expect(result.stdout).toContain('::warning title=Passed only on retry::');
       expect(result.stdout).toContain('fails once');
     });
+  });
+
+  it('writes the table to the job summary file in CI, and only the warnings to the log', () => {
+    const { stdout, summary } = runReporterOn(
+      JSON.stringify({
+        testResults: [
+          {
+            relativePosixPath: 'client/src/__tests__/a.test.ts',
+            assertionResults: [assertion('flaky', 'passed', ['Error: once'])],
+          },
+        ],
+      }),
+      { withSummaryFile: true },
+    );
+
+    expect(summary).toContain('### Tests that passed only on retry');
+    expect(summary).toContain('| `client/src/__tests__/a.test.ts` | flaky | Error: once |');
+    expect(stdout).toContain('::warning title=Passed only on retry::');
+    expect(stdout).not.toContain('### Tests that passed only on retry');
+  });
+
+  it('keeps a test name with line breaks on one warning and one table row', () => {
+    const { stdout } = runReporter([
+      {
+        relativePosixPath: 'client/src/__tests__/a.test.ts',
+        assertionResults: [assertion('line one\r\nline two', 'passed', ['Error: no'])],
+      },
+    ]);
+
+    expect(stdout).toContain('› line one%0D%0Aline two\n');
+    expect(stdout).toContain('| line one line two | Error: no |');
+  });
+
+  it('drops the carriage return from a first failure written with Windows line endings', () => {
+    const { stdout } = runReporter([
+      {
+        relativePosixPath: 'client/src/__tests__/a.test.ts',
+        assertionResults: [assertion('flaky', 'passed', ['Error: once\r\n    at a.test.ts:3'])],
+      },
+    ]);
+
+    expect(stdout).toContain('| flaky | Error: once |');
   });
 });

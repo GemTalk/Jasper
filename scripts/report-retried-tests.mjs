@@ -1,17 +1,11 @@
 #!/usr/bin/env node
 //
-// Lists the tests in one Vitest JSON report that failed and then passed on
-// their retry: flakes the merge queue forgave. Each one gets a warning
-// annotation on the run page and a row in the job summary, so a retry never
-// hides a flake. Report-only: never fails the build.
-//
-// A test that passed on retry has status "passed" and a non-empty
-// failureMessages, because Vitest keeps the errors of failed attempts.
+// Lists the tests in one Vitest JSON report that passed only on their retry,
+// as warnings and a $GITHUB_STEP_SUMMARY table (stdout when unset), so a retry
+// never hides a flake. Never fails the build. Vitest keeps a failed attempt's
+// error, so such a test is "passed" with a non-empty failureMessages.
 //
 //   node scripts/report-retried-tests.mjs <path-to-json-report>
-//
-// Writes Markdown to $GITHUB_STEP_SUMMARY (falls back to stdout when unset,
-// for local runs).
 
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 
@@ -26,7 +20,7 @@ function findRetriedTests(report) {
         retried.push({
           file,
           fullName: assertion.fullName,
-          firstFailure: assertion.failureMessages[0].split('\n')[0],
+          firstFailure: assertion.failureMessages[0].split(/\r?\n/)[0],
         });
       }
     }
@@ -39,8 +33,9 @@ function escapeAnnotation(text) {
   return text.replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A');
 }
 
+// A line break would end the table row.
 function escapeTableCell(text) {
-  return text.replaceAll('|', '\\|');
+  return text.replaceAll('|', '\\|').replace(/[\r\n]+/g, ' ');
 }
 
 function main() {

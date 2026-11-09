@@ -1,15 +1,11 @@
 #!/usr/bin/env node
 //
-// ci-complete's verdict over the jobs it waits on. Exits 0 when the run may
-// count as green, 1 otherwise.
+// ci-complete's verdict: exits 0 when the run counts as green. Every job in
+// `needs` is checked, so a job added there needs no change here. prepare must
+// pass; every other job must pass, or be skipped when prepare found the tree
+// already tested.
 //
 //   NEEDS_JSON='${{ toJSON(needs) }}' node scripts/verify-ci-complete.mjs
-//
-// Reads every job from `needs`, so a job added to ci-complete's needs is
-// checked without touching this script. prepare must have passed. Every other
-// job must have passed, or, when prepare found that a PR run already passed
-// this tree (outputs.already-tested), have been skipped. A job that ran
-// anyway and failed always fails the run.
 
 import { appendFileSync } from 'node:fs';
 
