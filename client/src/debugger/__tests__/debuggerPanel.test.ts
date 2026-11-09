@@ -1027,6 +1027,19 @@ describe('DebuggerPanel', () => {
       expect(commitSpy).toHaveBeenCalledTimes(1);
     });
 
+    it('commits nothing when the run finishes with an answer its caller judges an error', async () => {
+      vi.mocked(resumeOnWorker).mockResolvedValueOnce({ completed: true, resultOop: 0x55n });
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG, () => false);
+      const panel = lastPanel();
+      sendReady(panel);
+
+      sendMessage(panel, { command: 'resume' });
+      await tick();
+
+      expect(commitSpy).not.toHaveBeenCalled();
+      expect(panel.dispose).toHaveBeenCalled();
+    });
+
     it('holds an expression evaluated in a frame until the run finishes', async () => {
       vi.mocked(debug.evaluateInFrameNb).mockResolvedValueOnce('1764');
       vi.mocked(resumeOnWorker).mockResolvedValueOnce({ completed: true, resultOop: 0x55n });
@@ -4543,43 +4556,50 @@ describe('DebuggerPanel', () => {
 
     // A notebook cell waits on its debugger: it has to hear that the process
     // was terminated, and only once it is, so the next cell finds the session free.
-    it('calls onClosed once the process is cleared when the panel closes without finishing', async () => {
+    it('calls onCleared once the process is cleared when the panel closes without finishing', async () => {
       let cleared = (): void => {};
       vi.mocked(debug.clearStack).mockReturnValueOnce(
         new Promise((resolve) => (cleared = resolve)),
       );
       const onComplete = vi.fn();
-      const onClosed = vi.fn();
-      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG, onComplete, onClosed);
+      const onCleared = vi.fn();
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG, onComplete, onCleared);
 
       closePanel(lastPanel());
       await tick();
-      expect(onClosed).not.toHaveBeenCalled();
+      expect(onCleared).not.toHaveBeenCalled();
       cleared();
       await tick();
 
-      expect(onClosed).toHaveBeenCalledTimes(1);
+      expect(onCleared).toHaveBeenCalledTimes(1);
       expect(onComplete).not.toHaveBeenCalled();
     });
 
-    it('does NOT call onClosed after handing a result to onComplete', async () => {
+    it('calls onCleared after handing a result to onComplete, once the process is cleared', async () => {
+      let cleared = (): void => {};
+      vi.mocked(debug.clearStack).mockReturnValueOnce(
+        new Promise((resolve) => (cleared = resolve)),
+      );
       vi.mocked(resumeOnWorker).mockResolvedValueOnce({ completed: true, resultOop: 0x55n });
-      const onClosed = vi.fn();
+      const onCleared = vi.fn();
       const onComplete = vi.fn();
-      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG, onComplete, onClosed);
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG, onComplete, onCleared);
       sendReady(lastPanel());
+
       sendMessage(lastPanel(), { command: 'resume' });
       await tick();
       await tick();
-
       expect(onComplete).toHaveBeenCalledWith(0x55n);
-      expect(lastPanel().dispose).toHaveBeenCalled();
-      expect(onClosed).not.toHaveBeenCalled();
+      expect(onCleared).not.toHaveBeenCalled();
+      cleared();
+      await tick();
+
+      expect(onCleared).toHaveBeenCalledTimes(1);
     });
 
-    it('calls onClosed even when closing the panel fails part-way', async () => {
-      const onClosed = vi.fn();
-      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG, vi.fn(), onClosed);
+    it('calls onCleared even when closing the panel fails part-way', async () => {
+      const onCleared = vi.fn();
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG, vi.fn(), onCleared);
       const panel = lastPanel();
       const persist = vi
         .spyOn(
@@ -4598,7 +4618,44 @@ describe('DebuggerPanel', () => {
       }
       await tick();
 
-      expect(onClosed).toHaveBeenCalledTimes(1);
+      expect(onCleared).toHaveBeenCalledTimes(1);
+    });
+
+    // The clear holds the session on a worker, and the close-down's releases
+    // (pinned originals, inspectors) are main-thread GCI calls.
+    it('starts clearing the process only after the rest of the close-down', () => {
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+      const persist = vi.spyOn(
+        DebuggerPanel as unknown as { persistLiveSourceUris: () => void },
+        'persistLiveSourceUris',
+      );
+      onTestFinished(() => persist.mockRestore());
+
+      closePanel(lastPanel());
+
+      const firstClear = Math.min(...vi.mocked(debug.clearStack).mock.invocationCallOrder);
+      expect(firstClear).toBeGreaterThan(persist.mock.invocationCallOrder.at(-1)!);
+    });
+
+    it('leaves the process to its caller when it fails part-way through opening', () => {
+      const persist = vi
+        .spyOn(
+          DebuggerPanel as unknown as { persistLiveSourceUris: () => void },
+          'persistLiveSourceUris',
+        )
+        .mockImplementationOnce(() => {
+          throw new Error('storage refused');
+        });
+      onTestFinished(() => persist.mockRestore());
+      const onCleared = vi.fn();
+
+      const open = (): unknown =>
+        DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG, vi.fn(), onCleared);
+
+      expect(open).toThrow('storage refused');
+      expect(lastPanel().dispose).toHaveBeenCalled();
+      expect(debug.clearStack).not.toHaveBeenCalled();
+      expect(onCleared).not.toHaveBeenCalled();
     });
 
     // Clearing the stack while a Resume still owns the session would be refused,
@@ -4622,6 +4679,85 @@ describe('DebuggerPanel', () => {
       expect(panel.dispose).not.toHaveBeenCalled();
       finish({ completed: false, errorMessage: 'a soft break', errorNumber: 6003 });
       await tick();
+      await tick();
+      expect(panel.dispose).toHaveBeenCalled();
+    });
+
+    it('close() during a Resume the runner gave up on closes once the run ends', async () => {
+      let ended: ((r: debug.StepResult) => void) | undefined;
+      vi.mocked(resumeOnWorker).mockImplementationOnce(async (_s, _p, opts) => {
+        opts?.onStart?.(vi.fn(), () => true);
+        ended = opts?.onGivenUpSettled;
+        throw new NbCancelledError();
+      });
+      vi.mocked(stoppedRunHolds).mockReturnValue(true);
+      onTestFinished(() => {
+        vi.mocked(stoppedRunHolds).mockReturnValue(false);
+      });
+      const handle = DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG, vi.fn(), vi.fn());
+      const panel = lastPanel();
+      sendReady(panel);
+      sendMessage(panel, { command: 'resume' });
+      handle.close();
+      await tick();
+      expect(panel.dispose).not.toHaveBeenCalled();
+
+      vi.mocked(stoppedRunHolds).mockReturnValue(false);
+      ended?.({ completed: false, errorMessage: 'a soft break', errorNumber: 6003 });
+      await tick();
+
+      expect(panel.dispose).toHaveBeenCalled();
+    });
+
+    it('close() during a step the runner gave up on closes once the step is collected', async () => {
+      let collected: (() => void) | undefined;
+      vi.mocked(debug.stepOverNb).mockImplementationOnce(async (_s, _p, _l, opts) => {
+        opts?.onStart?.(vi.fn(), () => true);
+        collected = opts?.onAbandonedCollected;
+        throw new NbCancelledError();
+      });
+      vi.mocked(stoppedRunHolds).mockReturnValue(true);
+      onTestFinished(() => {
+        vi.mocked(stoppedRunHolds).mockReturnValue(false);
+      });
+      const handle = DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG, vi.fn(), vi.fn());
+      const panel = lastPanel();
+      sendReady(panel);
+      sendMessage(panel, { command: 'stepOver', level: 1 });
+      handle.close();
+      await tick();
+      expect(panel.dispose).not.toHaveBeenCalled();
+
+      vi.mocked(stoppedRunHolds).mockReturnValue(false);
+      collected?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(panel.dispose).toHaveBeenCalled();
+    });
+
+    it('close() before an op has started polling stops it as soon as it does', async () => {
+      const cancel = vi.fn();
+      let startPolling = (): void => {};
+      let finish: (r: debug.StepResult) => void = () => {};
+      vi.mocked(debug.stepOverNb).mockImplementationOnce(
+        (_s, _p, _l, opts) =>
+          new Promise<debug.StepResult>((resolve) => {
+            startPolling = () => opts?.onStart?.(cancel, () => false);
+            finish = resolve;
+          }),
+      );
+      const handle = DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG, vi.fn(), vi.fn());
+      const panel = lastPanel();
+      sendReady(panel);
+      sendMessage(panel, { command: 'stepOver', level: 1 });
+      await tick();
+      handle.close();
+      expect(cancel).not.toHaveBeenCalled();
+
+      startPolling();
+
+      expect(cancel).toHaveBeenCalledTimes(1);
+      finish({ completed: false, errorMessage: 'a soft break', errorNumber: 6003 });
       await tick();
       expect(panel.dispose).toHaveBeenCalled();
     });

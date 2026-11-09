@@ -24,7 +24,7 @@ import {
   CONTINUE_FLAGS,
   resolveBreakpointStop,
 } from './debugger/conditionalBreakpoints';
-import { clearStack } from './debugger/debugQueries';
+import { clearShowingTranscript } from './debugger/releaseStoppedProcess';
 import { DebuggerPanel } from './debugger/debuggerPanel';
 
 // GemStone Smalltalk as a Jupyter kernel — see gemstoneNotebookKernel.ts for
@@ -64,23 +64,32 @@ export type OpenCellDebugger = (
 export const openCellDebugger: OpenCellDebugger = (session, gsProcess, message) => {
   let panel: DebuggerPanel | undefined;
   const result = new Promise<string>((resolve, reject) => {
+    let answer: { value: string } | { error: unknown } | undefined;
     // Read inside the callback: the panel disposes as it returns, and the clear
     // that starts then holds the session on a worker thread.
-    const onComplete = (resultOop: bigint): void => {
+    const onComplete = (resultOop: bigint): boolean => {
       try {
-        resolve(fetchCellResult(session, resultOop));
-      } catch (e) {
-        reject(e);
+        const value = fetchCellResult(session, resultOop);
+        answer = { value };
+        return !executeCodeRaised(value);
+      } catch (error) {
+        answer = { error };
+        return false;
       }
     };
+    // Settled only once the clear has let go of the session, so the kernel's
+    // own clean-up after the cell isn't refused by it.
+    const onCleared = (): void => {
+      if (answer === undefined) reject(new NbCancelledError());
+      else if ('value' in answer) resolve(answer.value);
+      else reject(answer.error);
+    };
     try {
-      panel = DebuggerPanel.create(session, gsProcess, message, onComplete, () =>
-        reject(new NbCancelledError()),
-      );
+      panel = DebuggerPanel.create(session, gsProcess, message, onComplete, onCleared);
     } catch (e) {
       // Nothing owns the suspended process, so release it.
       const fail = (): void => reject(e);
-      void clearStack(session, gsProcess).then(fail, fail);
+      void clearShowingTranscript(session, gsProcess).then(fail, fail);
     }
   });
   return { result, close: () => panel?.close() };
@@ -103,8 +112,19 @@ export async function evalSmalltalk(
   // Before any GCI call: a stopped call still on the session would make GemStone
   // refuse clientForwarder mode's start, and while a worker still owns the
   // session a call from here could kill the process.
-  const outcome = await whenSessionFree(session, () => runCell(session, source, onStart));
+  let runStopRequested = (): boolean => false;
+  const outcome = await whenSessionFree(session, () =>
+    runCell(session, source, (cancel, stopRequested) => {
+      runStopRequested = stopRequested;
+      onStart?.(cancel, stopRequested);
+    }),
+  );
   if (typeof outcome === 'string') return outcome;
+  // Stopped while running, but the gem reached the halt before the break.
+  if (runStopRequested()) {
+    await clearShowingTranscript(session, outcome.gsProcess);
+    throw new NbCancelledError();
+  }
 
   const debugging = openDebugger(session, outcome.gsProcess, outcome.message);
   let stopped = false;
@@ -130,7 +150,12 @@ async function runCell(
   const code = wrapCellCode(source);
   // Before clearing a process too: a clean-up that writes to the Transcript
   // while clientForwarder mode is on stops at that write.
-  const endForwarding = (): void => appendTranscriptOutput(endClientForwarderMode(session));
+  let forwarding = true;
+  const endForwarding = (): void => {
+    if (!forwarding) return;
+    forwarding = false;
+    appendTranscriptOutput(endClientForwarderMode(session));
+  };
   appendTranscriptOutput(startClientForwarderMode(session, code));
   try {
     const outcome = await runNbCall(
@@ -171,7 +196,7 @@ async function runCell(
           if (stop.kind === 'completed') return stop.resultOop;
           if (stop.cancelled) {
             endForwarding();
-            await clearStack(session, stop.context);
+            await clearShowingTranscript(session, stop.context);
             throw new NbCancelledError();
           }
           return { gsProcess: stop.context, message: stop.message };

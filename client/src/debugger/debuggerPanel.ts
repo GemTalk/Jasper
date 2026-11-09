@@ -1577,8 +1577,9 @@ export class DebuggerPanel {
   private activeNbCancel: (() => void) | undefined;
   /** Cancel was clicked for the current op; later clicks do nothing. */
   private cancelRequested = false;
-  private resultHandedOver = false;
   private closeRequested = false;
+  /** Set when `create` fails part-way: its caller releases the process, so dispose leaves it. */
+  private processReleasedByCaller = false;
   /** Set in dispose() so an in-flight Nb op's continuation skips touching a dead panel. */
   private disposed = false;
   /** Closes this debugger's hold on auto-commit (issue #254): see the constructor. */
@@ -1605,15 +1606,17 @@ export class DebuggerPanel {
    *   completes via Resume or step-to-completion (e.g. so a halted Display It
    *   can render its result back in the workspace). Omitted when there's no
    *   result to surface (Execute It, or a halt not originating from a doit).
-   * @param onClosed called when the panel closes without having handed a result
-   *   to `onComplete`, once the process it owned has been cleared.
+   *   Answering `false` says the result is an error, so the run is not auto-committed.
+   * @param onCleared called once the panel has closed and the process it owned
+   *   has been cleared, whether or not a result went to `onComplete`.
+   * @throws when the panel can't be set up; the caller still owns `gsProcess` then.
    */
   static create(
     session: ActiveSession,
     gsProcess: bigint,
     errorMessage: string,
-    onComplete?: (resultOop: bigint) => void,
-    onClosed?: () => void,
+    onComplete?: (resultOop: bigint) => boolean | void,
+    onCleared?: () => void,
   ): DebuggerPanel {
     // Placement is decided here, once, rather than assembled from focus-dependent
     // steps: open into a brand-new group at the END of the grid (an explicit
@@ -1641,31 +1644,37 @@ export class DebuggerPanel {
       gsProcess,
       errorMessage,
       onComplete,
-      onClosed,
+      onCleared,
     );
-    // Seed the remembered column from the one we asked for, so teardown has an
-    // answer even for a panel that closed before anything read it off the panel.
-    debugger_.cachedPanelColumn = panelColumn;
-    debugger_.sourceColumn = shared?.sourceColumn ?? panelColumn + 1;
-    // The source group must exist (and be sized) before anything opens into it;
-    // the webview's `ready` arrives asynchronously, so every source open awaits
-    // this rather than racing it. A second halt joins the column the first one
-    // carved, so it neither carves nor re-fits.
-    debugger_.gridReady = shared ? shared.gridReady : debugger_.carveDebuggerColumn();
-    if (shared) debugger_.fitPending = false;
-    if (!DebuggerPanel.panels.has(session.id)) {
-      DebuggerPanel.panels.set(session.id, new Set());
+    try {
+      // Seed the remembered column from the one we asked for, so teardown has an
+      // answer even for a panel that closed before anything read it off the panel.
+      debugger_.cachedPanelColumn = panelColumn;
+      debugger_.sourceColumn = shared?.sourceColumn ?? panelColumn + 1;
+      // The source group must exist (and be sized) before anything opens into it;
+      // the webview's `ready` arrives asynchronously, so every source open awaits
+      // this rather than racing it. A second halt joins the column the first one
+      // carved, so it neither carves nor re-fits.
+      debugger_.gridReady = shared ? shared.gridReady : debugger_.carveDebuggerColumn();
+      if (shared) debugger_.fitPending = false;
+      if (!DebuggerPanel.panels.has(session.id)) {
+        DebuggerPanel.panels.set(session.id, new Set());
+      }
+      DebuggerPanel.panels.get(session.id)!.add(debugger_);
+      // Record the columns now, not when a source tab first opens. A debugger closed with
+      // the window before it ever showed a source still carved a group, and that group —
+      // carved empty, so with no tab to reap — is only reachable next launch if its column
+      // was written down while this window was alive.
+      DebuggerPanel.persistLiveSourceUris();
+      // Single-stepping needs no session-wide setup here: the debugged process
+      // started interpreted (GCI_PERFORM_FLAG_INTERPRETED at execution start —
+      // GemStone can't step native code, error 6014) and every step/continue
+      // perform carries the same flag (STEP_FLAGS in debugQueries).
+    } catch (e: unknown) {
+      debugger_.processReleasedByCaller = true;
+      panel.dispose();
+      throw e;
     }
-    DebuggerPanel.panels.get(session.id)!.add(debugger_);
-    // Record the columns now, not when a source tab first opens. A debugger closed with
-    // the window before it ever showed a source still carved a group, and that group —
-    // carved empty, so with no tab to reap — is only reachable next launch if its column
-    // was written down while this window was alive.
-    DebuggerPanel.persistLiveSourceUris();
-    // Single-stepping needs no session-wide setup here: the debugged process
-    // started interpreted (GCI_PERFORM_FLAG_INTERPRETED at execution start —
-    // GemStone can't step native code, error 6014) and every step/continue
-    // perform carries the same flag (STEP_FLAGS in debugQueries).
     return debugger_;
   }
 
@@ -1681,10 +1690,23 @@ export class DebuggerPanel {
 
   private closeIfRequested(): void {
     if (!this.closeRequested || this.disposed || this.nbBusy) return;
-    // A cancelled Resume still going ends through afterStoppedRunEnded.
+    // Retried when the stopped run ends: afterStoppedRunEnded for a Resume, the
+    // runner's onAbandonedCollected for any other op.
     if (stoppedRunHolds(this.session)) return;
     this.panel.dispose();
   }
+
+  /** The nb options' `onStart`: wire the in-panel Cancel, and honour a close already asked for. */
+  private armCancel(cancel: () => void): void {
+    this.activeNbCancel = cancel;
+    this.setCancellable(true);
+    if (this.closeRequested) this.cancelActiveOp();
+  }
+
+  /** The nb options' `onAbandonedCollected`; a turn later, once the drain has let go of the session. */
+  private readonly closeOnceCollected = (): void => {
+    setTimeout(() => this.closeIfRequested(), 0);
+  };
 
   static disposeForSession(sessionId: number): void {
     const set = DebuggerPanel.panels.get(sessionId);
@@ -1700,8 +1722,8 @@ export class DebuggerPanel {
     private readonly gsProcess: bigint,
     // Mutable: resume-into-another-error updates it; step/restart clear it.
     private errorMessage: string,
-    private readonly onComplete?: (resultOop: bigint) => void,
-    private readonly onClosed?: () => void,
+    private readonly onComplete?: (resultOop: bigint) => boolean | void,
+    private readonly onCleared?: () => void,
   ) {
     this.panel = panel;
     this.sessionId = session.id;
@@ -2859,10 +2881,8 @@ export class DebuggerPanel {
     try {
       value = await debug.evaluateInFrameNb(this.session, this.gsProcess, expr, serverLevel, {
         suppressNotification: true,
-        onStart: (cancel) => {
-          this.activeNbCancel = cancel;
-          this.setCancellable(true);
-        },
+        onStart: (cancel) => this.armCancel(cancel),
+        onAbandonedCollected: this.closeOnceCollected,
       });
     } catch (e: unknown) {
       const raw = e instanceof Error ? e.message : String(e);
@@ -3514,14 +3534,14 @@ export class DebuggerPanel {
     // Show Transcript output the completing run buffered (harmlessly empty if
     // an onComplete callback drains again).
     appendTranscriptOutput(drainTranscript(this.session));
+    const answered =
+      result.resultOop != null && this.onComplete ? this.onComplete(result.resultOop) : undefined;
     // The run finished, so what it changed is finished work, the same as a Do It that never
     // halted (issue #254): the hold commits it, with whatever was done while it was halted.
-    autoCommitAfterWrite(this.session, 'run finished in the Debugger');
-    this.releaseAutoCommit(true);
-    if (result.resultOop != null && this.onComplete) {
-      this.resultHandedOver = true;
-      this.onComplete(result.resultOop);
-    }
+    // An answer its caller judges an error is not, as for a cell that never halted.
+    const finished = answered !== false;
+    if (finished) autoCommitAfterWrite(this.session, 'run finished in the Debugger');
+    this.releaseAutoCommit(finished);
     this.panel.dispose();
   }
 
@@ -3649,10 +3669,8 @@ export class DebuggerPanel {
     // spinner with no Cancel button (never a dead button).
     const opts: NbRunOptions = {
       suppressNotification: true,
-      onStart: (cancel) => {
-        this.activeNbCancel = cancel;
-        this.setCancellable(true);
-      },
+      onStart: (cancel) => this.armCancel(cancel),
+      onAbandonedCollected: this.closeOnceCollected,
     };
     try {
       await op(opts);
@@ -5291,12 +5309,21 @@ export class DebuggerPanel {
     // next halt reads it while deciding where to open, and fails there instead.
     // Whatever else goes wrong below, it goes wrong for this panel alone.
     DebuggerPanel.panels.get(this.sessionId)?.delete(this);
-    // Closing the panel implicitly terminates the suspended process it owned,
-    // releasing the stalled GsProcess on the server (same as dismissing the
-    // error notifier). clearStack is best-effort: the session may already be gone.
-    // Started here, before anything below can throw, so `onClosed` always fires.
-    const closed = this.resultHandedOver ? undefined : this.onClosed;
-    void debug.clearStack(this.session, this.gsProcess).then(closed, closed);
+    try {
+      this.tearDown();
+    } finally {
+      // Last, and in a finally so `onCleared` always fires: the clear holds the
+      // session on a worker, and the releases above are main-thread GCI calls.
+      // Closing the panel terminates the suspended process it owned (same as
+      // dismissing the error notifier); best-effort, the session may be gone.
+      const cleared = this.onCleared;
+      if (!this.processReleasedByCaller) {
+        void debug.clearStack(this.session, this.gsProcess).then(cleared, cleared);
+      }
+    }
+  }
+
+  private tearDown(): void {
     if (this.releaseAutoCommit(false)) {
       void vscode.window.showWarningMessage(
         `Session ${this.sessionId}: the debugged run did not finish, so its changes were not ` +
