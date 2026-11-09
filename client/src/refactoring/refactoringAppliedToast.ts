@@ -34,6 +34,7 @@ import { type UndoStatus } from './undoRefactoringPreview';
 import { pushUndoEntry } from '../undo/undoStack';
 import { UNDO_COMMAND } from '../undo/undoUi';
 import { logInfo } from '../gciLog';
+import { autoCommitAfterWrite } from '../autoCommit/autoCommitRunner';
 import { REFACTORING_APPLIED_COMMAND } from './refactoringAppliedEvent';
 
 /** How to tell the user when there is nothing to undo: a transient status-bar
@@ -71,12 +72,20 @@ export function armRefactoringUndo(session: ActiveSession | undefined): UndoStat
 /**
  * Announce a completed refactoring and, when the stone recorded an undo for it, put it on the
  * undo stack and offer to undo it right there. Returns immediately.
+ *
+ * A `message` that says whether the change is committed is passed as a function: it is read
+ * after the auto-commit below, so a commit that failed is not announced as one that landed.
  */
 export function notifyRefactoringApplied(
   session: ActiveSession | undefined,
-  message: string,
+  notice: string | (() => string),
   plainNotice: PlainNoticeStyle = 'statusBar',
 ): void {
+  // Here, not at the engine's apply: the panel's Abort must still have a partial reshape to
+  // take back (docs/explanation/auto-commit.md).
+  if (session) autoCommitAfterWrite(session, 'refactoring');
+  const message = typeof notice === 'function' ? notice() : notice;
+
   // An open method-history panel refreshes itself after a Save, and must do the same after a
   // refactoring — a method changed either way, and having to close and reopen the panel to see the
   // new version is the kind of inconsistency that makes the history look unreliable. This is the one

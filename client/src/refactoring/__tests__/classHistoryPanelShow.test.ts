@@ -88,7 +88,7 @@ describe('showClassHistoryPanel restore wiring', () => {
       versions,
     }));
 
-    showClassHistoryPanel('Bar', versions, { restore, remove: noopRemove });
+    showClassHistoryPanel('Bar', versions, { restore, remove: noopRemove }, 1);
     lastPanel().__emit({ command: 'restore', index: 1 });
     await vi.waitFor(() => expect(restore).toHaveBeenCalledWith(1));
 
@@ -103,7 +103,7 @@ describe('showClassHistoryPanel restore wiring', () => {
     confirmQueue.push(undefined);
     const restore = vi.fn();
 
-    showClassHistoryPanel('Bar', versions, { restore, remove: noopRemove });
+    showClassHistoryPanel('Bar', versions, { restore, remove: noopRemove }, 1);
     lastPanel().__emit({ command: 'restore', index: 1 });
     await new Promise((resolve) => {
       setTimeout(resolve, 0);
@@ -119,7 +119,7 @@ describe('showClassHistoryPanel restore wiring', () => {
       versions,
     }));
 
-    showClassHistoryPanel('Bar', versions, { restore: vi.fn(), remove });
+    showClassHistoryPanel('Bar', versions, { restore: vi.fn(), remove }, 1);
     lastPanel().__emit({ command: 'remove', index: 1 });
 
     await vi.waitFor(() => expect(remove).toHaveBeenCalledWith(1));
@@ -129,12 +129,9 @@ describe('showClassHistoryPanel restore wiring', () => {
   // meant?", so both name the dictionary when there is one (#396).
   describe('naming the dictionary', () => {
     it('puts the dictionary in the tab title', () => {
-      showClassHistoryPanel(
-        'Shadowed',
-        versions,
-        { restore: vi.fn(), remove: vi.fn() },
-        { dictName: 'DictionaryB' },
-      );
+      showClassHistoryPanel('Shadowed', versions, { restore: vi.fn(), remove: vi.fn() }, 1, {
+        dictName: 'DictionaryB',
+      });
 
       expect(vscode.window.createWebviewPanel).toHaveBeenCalledWith(
         'gemstoneClassHistory',
@@ -145,7 +142,7 @@ describe('showClassHistoryPanel restore wiring', () => {
     });
 
     it('leaves the tab title unqualified when no dictionary was given', () => {
-      showClassHistoryPanel('Shadowed', versions, { restore: vi.fn(), remove: vi.fn() });
+      showClassHistoryPanel('Shadowed', versions, { restore: vi.fn(), remove: vi.fn() }, 1);
 
       expect(vscode.window.createWebviewPanel).toHaveBeenCalledWith(
         'gemstoneClassHistory',
@@ -161,6 +158,7 @@ describe('showClassHistoryPanel restore wiring', () => {
         'Shadowed',
         versions,
         { restore: vi.fn(), remove: vi.fn() },
+        1,
         { dictName: 'DictionaryB' },
       );
 
@@ -183,6 +181,7 @@ describe('showClassHistoryPanel restore wiring', () => {
         'Shadowed',
         versions,
         { restore: vi.fn(), remove: vi.fn() },
+        1,
         { dictName: 'DictionaryB' },
       );
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 // Stub only what the class-history flow touches.
@@ -25,6 +25,10 @@ import { showClassHistoryPanel } from '../refactoring/classHistoryPanel';
 import { ExplorerController, HierarchyItem } from '../gemstoneExplorer';
 import { peekUndoEntry, resetUndoStacks, undoStackDepth } from '../undo/undoStack';
 import type { SessionManager, ActiveSession } from '../sessionManager';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+} from '../autoCommit/autoCommitState';
 
 /**
  * Restoring a class version is an ordinary CLASS EDIT (#434).
@@ -43,8 +47,14 @@ const HISTORY = JSON.stringify([
 const bound = (oop: string) => ({ bound: true, oop, selectors: [] });
 const unbound = { bound: false, oop: null, selectors: [] };
 
+const commit = vi.fn(() => ({ success: true, err: { number: 0, message: '' } }));
+
 function makeController() {
-  const session = { id: 1, rbSupportAvailable: true } as unknown as ActiveSession;
+  const session = {
+    id: 1,
+    rbSupportAvailable: true,
+    GciTsCommit: () => commit(),
+  } as unknown as ActiveSession;
   const sessionManager = { getSelectedSession: () => session } as unknown as SessionManager;
   const ctl = new ExplorerController(sessionManager);
   ctl.state.dictIndex = 3;
@@ -173,7 +183,7 @@ describe('ExplorerController.classHistory — which dictionary the history belon
 
   /** The dictionary name the panel was labelled with. */
   const panelDictName = () =>
-    (vi.mocked(showClassHistoryPanel).mock.calls[0][3] as { dictName?: string }).dictName;
+    (vi.mocked(showClassHistoryPanel).mock.calls[0][4] as { dictName?: string }).dictName;
 
   it("labels the panel with the hierarchy node's dictionary", async () => {
     const ctl = makeController();
@@ -236,5 +246,40 @@ describe('ExplorerController.classHistory — which dictionary the history belon
     const dicts = entry?.kind === 'classEdit' ? entry.slots.map((s) => s.dict) : [];
     expect(dicts.length).toBeGreaterThan(0);
     expect(dicts.every((d) => d === 'Globals')).toBe(true);
+  });
+});
+
+/** Auto-commit (issue #254): a restore commits only when every change recompiled. */
+describe('restoring a class version on an auto-commit session', () => {
+  beforeEach(() => {
+    _resetAutoCommitStateForTests();
+    registerSessionAutoCommit(1, true);
+    commit.mockClear();
+  });
+  afterEach(() => _resetAutoCommitStateForTests());
+
+  it('commits a restore that landed whole', async () => {
+    vi.mocked(queries.revertClassToVersion).mockReturnValue(
+      JSON.stringify({ reverted: true, name: 'Account', newIndex: 3, apply: { failed: [] } }),
+    );
+
+    await restoreVersion(makeController(), 1);
+
+    expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits nothing when some of the restore failed to compile', async () => {
+    vi.mocked(queries.revertClassToVersion).mockReturnValue(
+      JSON.stringify({
+        reverted: true,
+        name: 'Account',
+        newIndex: 3,
+        apply: { failed: [{ label: 'Account>>total', error: 'did not recompile' }] },
+      }),
+    );
+
+    await restoreVersion(makeController(), 1);
+
+    expect(commit).not.toHaveBeenCalled();
   });
 });

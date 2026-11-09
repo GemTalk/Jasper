@@ -36,8 +36,9 @@ export interface InstVarPanelHandlers {
     deleteHistory: boolean,
   ) => Promise<ApplyResult>;
   /** Abort the session transaction — discards the stranded partial reshape (and any other
-   *  uncommitted work). Invoked from the panel's in-place Abort button. Throws on failure. */
-  abort: () => void;
+   *  uncommitted work). Invoked from the panel's in-place Abort button. Throws on failure;
+   *  answers false when the user backed out of a further confirmation. */
+  abort: () => void | boolean | Promise<void | boolean>;
   /** LIVE probe of `System needsCommit`, used at commit-confirmation time. The preview's
    *  `sessionHasUncommittedChanges` is a snapshot from when it was built; a paginated preview can
    *  sit open while the user picks up other uncommitted work, so re-probe here rather than warn (or
@@ -177,10 +178,14 @@ export function showInstVarRefactorPanel(
               canAbort: failure.canAbort,
             });
           } else if (message?.command === 'abort') {
-            // Direct abort — no second confirmation; the banner already stated the cost.
+            // Direct abort: the banner already stated the cost. The handler asks again only when
+            // something written since the failure would be discarded too.
             try {
-              handlers.abort();
-              void panel.webview.postMessage({ command: 'aborted' });
+              if ((await handlers.abort()) === false) {
+                void panel.webview.postMessage({ command: 'abortCancelled' });
+              } else {
+                void panel.webview.postMessage({ command: 'aborted' });
+              }
             } catch (e: unknown) {
               void panel.webview.postMessage({
                 command: 'abortFailed',

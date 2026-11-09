@@ -2,12 +2,30 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
-import { __resetConfig, __setConfig, TreeItemCollapsibleState } from '../__mocks__/vscode';
+import {
+  __resetConfig,
+  __setConfig,
+  ThemeColor,
+  TreeItemCollapsibleState,
+  Uri,
+} from '../__mocks__/vscode';
 import { LoginStorage } from '../loginStorage';
 import { fakeSecretStorage } from './support/secretStorage';
-import { LoginTreeProvider, GemStoneLoginItem, GemStoneSessionItem } from '../loginTreeProvider';
+import {
+  AutoCommitDecorationProvider,
+  GemStoneLoginItem,
+  GemStoneSessionItem,
+  LoginTreeProvider,
+  autoCommitRowTooltip,
+} from '../loginTreeProvider';
 import { DEFAULT_LOGIN, GemStoneLogin } from '../loginTypes';
 import type { ActiveSession, SessionManager } from '../sessionManager';
+import {
+  _resetAutoCommitStateForTests,
+  forgetSessionAutoCommit,
+  registerSessionAutoCommit,
+  setAutoCommitStatus,
+} from '../autoCommit/autoCommitState';
 
 function makeLogin(overrides: Partial<GemStoneLogin> = {}): GemStoneLogin {
   return { ...DEFAULT_LOGIN, label: 'Test', ...overrides };
@@ -121,6 +139,18 @@ describe('LoginTreeProvider', () => {
       expect(listener).toHaveBeenCalledWith(undefined);
     });
 
+    it('redraws when auto-commit changes, and stops once disposed', () => {
+      const own = new LoginTreeProvider(storage);
+      const refresh = vi.spyOn(own, 'refresh');
+
+      setAutoCommitStatus(41, 'on');
+      expect(refresh).toHaveBeenCalledTimes(1);
+
+      own.dispose();
+      setAutoCommitStatus(41, 'off');
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
+
     it('subscribes to session selection changes', () => {
       const manager = stubSessionManager();
       new LoginTreeProvider(storage, manager);
@@ -183,6 +213,8 @@ describe('GemStoneLoginItem', () => {
 });
 
 describe('GemStoneSessionItem', () => {
+  beforeEach(() => _resetAutoCommitStateForTests());
+
   function sessionInMode(
     mode: ActiveSession['transactionMode'],
     inTransaction: boolean | undefined,
@@ -197,10 +229,138 @@ describe('GemStoneSessionItem', () => {
     const session = makeSession(makeLogin({ gs_user: 'Admin', stone: 'prod', gem_host: 'db' }), 3);
     const selected = new GemStoneSessionItem(session, true);
     expect(selected.label).toBe('Admin on prod (db)');
+    expect(selected.description).toBe('Session 3 (3.7.2) · auto-commit off');
+    expect(selected.contextValue).toBe('gemstoneSession.canCommit');
     expect((selected.iconPath as { id: string }).id).toBe('debug-start');
 
     const idle = new GemStoneSessionItem(session, false);
     expect((idle.iconPath as { id: string }).id).toBe('plug');
+  });
+
+  // The only display of auto-commit (issue #254), so it says off too.
+  it('says what auto-commit is doing, off included', () => {
+    const session = makeSession(makeLogin(), 3);
+
+    expect(new GemStoneSessionItem(session, false).description).toBe(
+      'Session 3 (3.7.2) · auto-commit off',
+    );
+
+    registerSessionAutoCommit(3, true);
+    expect(new GemStoneSessionItem(session, false).description).toBe(
+      'Session 3 (3.7.2) · auto-commit ON',
+    );
+
+    setAutoCommitStatus(3, 'failed');
+    expect(new GemStoneSessionItem(session, false).description).toBe(
+      'Session 3 (3.7.2) · auto-commit FAILED',
+    );
+  });
+
+  it('reads its own session, never another one', () => {
+    const session = makeSession(makeLogin(), 3);
+    registerSessionAutoCommit(4, true);
+    expect(new GemStoneSessionItem(session, false).description).toBe(
+      'Session 3 (3.7.2) · auto-commit off',
+    );
+
+    registerSessionAutoCommit(3, true);
+    forgetSessionAutoCommit(3);
+    expect(new GemStoneSessionItem(session, false).description).toBe(
+      'Session 3 (3.7.2) · auto-commit off',
+    );
+  });
+
+  it('never colours the icon, in any auto-commit state', () => {
+    const session = makeSession(makeLogin(), 3);
+    const colorOf = (item: GemStoneSessionItem) =>
+      (item.iconPath as { color?: { id: string } }).color?.id;
+
+    expect(colorOf(new GemStoneSessionItem(session, false))).toBeUndefined();
+    registerSessionAutoCommit(3, true);
+    expect(colorOf(new GemStoneSessionItem(session, false))).toBeUndefined();
+    setAutoCommitStatus(3, 'failed');
+    expect(colorOf(new GemStoneSessionItem(session, false))).toBeUndefined();
+  });
+
+  it('badges the row only when a commit has failed', () => {
+    const session = makeSession(makeLogin(), 3);
+    const provider = new AutoCommitDecorationProvider();
+    const badgeOf = (item: GemStoneSessionItem) =>
+      item.resourceUri && provider.provideFileDecoration(item.resourceUri);
+
+    expect(badgeOf(new GemStoneSessionItem(session, false))).toBeUndefined();
+    registerSessionAutoCommit(3, true);
+    expect(badgeOf(new GemStoneSessionItem(session, false))).toBeUndefined();
+
+    setAutoCommitStatus(3, 'failed');
+    const badge = badgeOf(new GemStoneSessionItem(session, false));
+    expect(badge?.badge).toBe('!');
+    expect(badge?.color).toEqual(new ThemeColor('list.errorForeground'));
+    expect(badge?.tooltip).toMatch(/NOT in the repository/);
+  });
+
+  it('leaves URIs of other schemes undecorated', () => {
+    const provider = new AutoCommitDecorationProvider();
+    expect(provider.provideFileDecoration(Uri.file('/tmp/x.gs'))).toBeUndefined();
+  });
+
+  it("colours the tooltip's auto-commit paragraph when on or failed, and leaves off plain", () => {
+    const session = makeSession(makeLogin(), 3);
+    const tooltipOf = () =>
+      new GemStoneSessionItem(session, false).tooltip as { value: string; supportHtml?: boolean };
+
+    expect(tooltipOf().value).not.toContain('<span');
+    registerSessionAutoCommit(3, true);
+    expect(tooltipOf().supportHtml).toBe(true);
+    expect(tooltipOf().value).toContain(
+      '<span style="color:var(--vscode-problemsWarningIcon-foreground);">Auto-commit is ON',
+    );
+    setAutoCommitStatus(3, 'failed');
+    expect(tooltipOf().value).toContain(
+      '<span style="color:var(--vscode-problemsErrorIcon-foreground);">Auto-commit tried',
+    );
+  });
+
+  it('keeps the icon SHAPE for the selection', () => {
+    const session = makeSession(makeLogin(), 3);
+    registerSessionAutoCommit(3, true);
+
+    const selected = new GemStoneSessionItem(session, true).iconPath as { id: string };
+    const idle = new GemStoneSessionItem(session, false).iconPath as { id: string };
+    expect(selected.id).toBe('debug-start');
+    expect(idle.id).toBe('plug');
+  });
+
+  // The `contextValue` is what the manifest gates the row's auto-commit BUTTON on, so it is
+  // the join between the state and which of the three icons appears. Its values are pinned
+  // in sessionMenuOrder.test.ts from the other side.
+  it('names its auto-commit state in the contextValue, which picks the row button', () => {
+    const session = makeSession(makeLogin(), 3);
+
+    expect(new GemStoneSessionItem(session, false).contextValue).toBe('gemstoneSession.canCommit');
+
+    registerSessionAutoCommit(3, true);
+    expect(new GemStoneSessionItem(session, false).contextValue).toBe(
+      'gemstoneSessionAutoCommitOn.canCommit',
+    );
+
+    setAutoCommitStatus(3, 'failed');
+    expect(new GemStoneSessionItem(session, false).contextValue).toBe(
+      'gemstoneSessionAutoCommitFailed.canCommit',
+    );
+  });
+
+  it('spells out in the tooltip what the armed state costs — Abort stops being a way back', () => {
+    const session = makeSession(makeLogin(), 3);
+    registerSessionAutoCommit(3, true);
+    expect((new GemStoneSessionItem(session, false).tooltip as { value: string }).value).toMatch(
+      /Abort will not take one back/,
+    );
+
+    setAutoCommitStatus(3, 'failed');
+    expect((new GemStoneSessionItem(session, false).tooltip as { value: string }).value).toMatch(
+      /NOT in the repository/,
+    );
   });
 
   // The label's own wording is transactionStateLabel's, pinned in
@@ -215,15 +375,15 @@ describe('GemStoneSessionItem', () => {
 
   it('says which transaction mode the session is in, after its number', () => {
     expect(new GemStoneSessionItem(sessionInMode('manualBegin', false), true).description).toBe(
-      'Session 3 (3.7.2) · Manual · not in transaction',
+      'Session 3 (3.7.2) · Manual · not in transaction · auto-commit off',
     );
   });
 
   it('leaves the row as it always read when the mode has not been read', () => {
-    // A row that has always said "Session 3 (3.7.2)" should not start announcing
-    // an absence; the tooltip is where "could not be read" belongs.
+    // A row that has always named no mode should not start announcing an
+    // absence; the tooltip is where "could not be read" belongs.
     const item = new GemStoneSessionItem(sessionInMode(undefined, undefined), true);
-    expect(item.description).toBe('Session 3 (3.7.2)');
+    expect(item.description).toBe('Session 3 (3.7.2) · auto-commit off');
     expect((item.tooltip as { value: string }).value).toContain('could not be read');
   });
 
@@ -266,5 +426,18 @@ describe('GemStoneSessionItem', () => {
     const before = new GemStoneSessionItem(sessionInMode('manualBegin', false), true);
     const after = new GemStoneSessionItem(sessionInMode('manualBegin', true), true);
     expect(before.id).not.toBe(after.id);
+  });
+});
+
+describe('the auto-commit tooltip outside Auto-Begin', () => {
+  it.each(['manualBegin', 'transactionless'] as const)(
+    'says why auto-commit cannot be turned on in %s mode',
+    (mode) => {
+      expect(autoCommitRowTooltip('off', mode)).toMatch(/needs Auto-Begin/);
+    },
+  );
+
+  it('says nothing about the mode in Auto-Begin, where it can be turned on', () => {
+    expect(autoCommitRowTooltip('off', 'autoBegin')).not.toMatch(/Auto-Begin/);
   });
 });

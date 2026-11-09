@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', () => ({
@@ -25,6 +25,11 @@ import type { MessageOptions } from 'vscode';
 import { window, __resetConfig } from '../../__mocks__/vscode';
 import { captureMethodSlots } from '../../undo/queries/methodSlotQueries';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+} from '../../autoCommit/autoCommitState';
+import { autoCommitAfterWrite } from '../../autoCommit/autoCommitRunner';
 import type { MethodSearchResult } from '../../queries/methodSearch';
 import { peekUndoEntry, resetUndoStacks, undoStackDepth } from '../../undo/undoStack';
 import type { MethodSlot } from '../../undo/undoTypes';
@@ -44,7 +49,8 @@ type SelectorInfo = {
   sessionBit: number;
 };
 
-const SESSION = { id: 1 } as ActiveSession;
+const commit = vi.fn(() => ({ success: true, err: { number: 0, message: '' } }));
+const SESSION = { id: 1, GciTsCommit: () => commit() } as unknown as ActiveSession;
 
 function makeController(session: ActiveSession | null = SESSION): ExplorerController {
   const sessionManager = {
@@ -726,5 +732,44 @@ describe('removing several methods — guards', () => {
 
     expect(showWarningMessage).not.toHaveBeenCalled();
     expect(deleteMethod).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Auto-commit (issue #254): a multi-method removal is one undo entry, so it is one commit, and
+ * none when any method failed to go. The mocked `deleteMethod` reports its write as the real
+ * one's `writing` wrapper does.
+ */
+describe('removing several methods on an auto-commit session', () => {
+  beforeEach(() => {
+    _resetAutoCommitStateForTests();
+    registerSessionAutoCommit(1, true);
+    commit.mockClear();
+  });
+  afterEach(() => _resetAutoCommitStateForTests());
+
+  it('commits the whole removal once', async () => {
+    deleteMethod.mockImplementation((s, _c, _m, selector) => {
+      autoCommitAfterWrite(s, 'method delete');
+      return `Deleted: ${selector}`;
+    });
+
+    await removeMethods(makeController(), [row('at:'), row('size')]);
+
+    expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits nothing when one method could not be removed, and says how to discard it', async () => {
+    deleteMethod.mockImplementation((s, _c, _m, selector) => {
+      autoCommitAfterWrite(s, 'method delete');
+      return selector === 'size' ? 'Error: not writable' : `Deleted: ${selector}`;
+    });
+
+    await removeMethods(makeController(), [row('at:'), row('size')]);
+
+    expect(commit).not.toHaveBeenCalled();
+    expect(vi.mocked(window.showErrorMessage).mock.calls.at(-1)?.[0]).toContain(
+      'Nothing was committed',
+    );
   });
 });

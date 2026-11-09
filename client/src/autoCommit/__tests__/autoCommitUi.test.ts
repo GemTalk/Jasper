@@ -1,0 +1,514 @@
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
+vi.mock('../../browserQueries', () => ({
+  sessionNeedsCommit: vi.fn(() => false),
+  transactionConflicts: vi.fn(() => ({
+    commitResult: 'failure',
+    categories: [
+      { key: 'Write-Write', total: 1, objects: [{ oop: '12200449', className: 'Account' }] },
+    ],
+  })),
+}));
+
+import * as vscode from 'vscode';
+import { ActiveSession, SessionManager } from '../../sessionManager';
+import { fakeActiveSession } from '../../__tests__/fakeActiveSession';
+import * as queries from '../../browserQueries';
+import {
+  _resetAutoCommitStateForTests,
+  getAutoCommitStatus,
+  registerSessionAutoCommit,
+  setAutoCommitStatus,
+} from '../autoCommitState';
+import { autoCommitTransactionSettled } from '../autoCommitRunner';
+import {
+  AUTO_COMMIT_DEFAULT_SETTING,
+  autoCommitDefaultForNewSessions,
+  autoCommitTransactionModeChanged,
+  offerAutoCommitRecovery,
+  recoverAutoCommit,
+  registerAutoCommitSessionHooks,
+  reportAutoCommitFailure,
+  setAutoCommitCommitHandler,
+  toggleAutoCommit,
+} from '../autoCommitUi';
+import { __resetConfig, __setConfig } from '../../__mocks__/vscode';
+
+const OK = { success: true, err: { number: 0, message: '' } };
+
+function makeSession(id = 1, commit = vi.fn(() => OK)): ActiveSession {
+  return fakeActiveSession({
+    id,
+    gci: { GciTsCommit: commit },
+    handle: {},
+    login: { label: 'Test' },
+    stoneVersion: '3.7.2',
+  });
+}
+
+function managerFor(session: ActiveSession | undefined): SessionManager {
+  return {
+    getSelectedSession: () => session,
+    refreshTransactionState: vi.fn(),
+  } as unknown as SessionManager;
+}
+
+const warn = vscode.window.showWarningMessage as unknown as ReturnType<typeof vi.fn>;
+const inform = vscode.window.showInformationMessage as unknown as ReturnType<typeof vi.fn>;
+
+beforeEach(() => {
+  _resetAutoCommitStateForTests();
+  setAutoCommitCommitHandler(undefined);
+  __resetConfig();
+  vi.mocked(queries.sessionNeedsCommit).mockReturnValue(false);
+  warn.mockReset();
+  warn.mockResolvedValue(undefined);
+  inform.mockReset();
+  inform.mockResolvedValue(undefined);
+});
+
+describe('the toggle', () => {
+  it('arms a clean session without asking anything', async () => {
+    const session = makeSession();
+    registerSessionAutoCommit(1, false);
+
+    await toggleAutoCommit(managerFor(session));
+
+    expect(getAutoCommitStatus(1)).toBe('on');
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('disarms an armed session', async () => {
+    const session = makeSession();
+    registerSessionAutoCommit(1, true);
+
+    await toggleAutoCommit(managerFor(session));
+    expect(getAutoCommitStatus(1)).toBe('off');
+  });
+
+  it('acts on the session it was handed, not the selected one', async () => {
+    const other = makeSession(2);
+    registerSessionAutoCommit(1, false);
+    registerSessionAutoCommit(2, false);
+
+    await toggleAutoCommit(managerFor(makeSession(1)), other);
+
+    expect(getAutoCommitStatus(1)).toBe('off');
+    expect(getAutoCommitStatus(2)).toBe('on');
+  });
+
+  it('says so rather than guessing when no session is selected', async () => {
+    await toggleAutoCommit(managerFor(undefined));
+    expect(warn).toHaveBeenCalledWith('Select a GemStone session first.');
+  });
+});
+
+describe('arming over a transaction that already has uncommitted work', () => {
+  beforeEach(() => vi.mocked(queries.sessionNeedsCommit).mockReturnValue(true));
+
+  it('asks first, and says the next change would commit all of it', async () => {
+    warn.mockResolvedValue(undefined); // dismissed
+    const session = makeSession();
+
+    await toggleAutoCommit(managerFor(session));
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toMatch(/already has uncommitted changes/);
+    // Dismissed means dismissed: nothing is armed behind the user's back.
+    expect(getAutoCommitStatus(1)).toBe('off');
+  });
+
+  it('commits the backlog first when asked to, then arms', async () => {
+    const commit = vi.fn(() => OK);
+    warn.mockResolvedValue('Commit Now, Then Turn On');
+
+    await toggleAutoCommit(managerFor(makeSession(1, commit)));
+
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(getAutoCommitStatus(1)).toBe('on');
+  });
+
+  it('arms without committing when the user says to go ahead anyway', async () => {
+    const commit = vi.fn(() => OK);
+    warn.mockResolvedValue('Turn On Anyway');
+
+    await toggleAutoCommit(managerFor(makeSession(1, commit)));
+
+    expect(commit).not.toHaveBeenCalled();
+    expect(getAutoCommitStatus(1)).toBe('on');
+  });
+
+  it('asks the same question when the commit state could not be read at all', async () => {
+    // A probe that failed leaves the user no better placed to know what is staged than a
+    // positive one, so silence would be the one wrong answer.
+    vi.mocked(queries.sessionNeedsCommit).mockReturnValue(undefined);
+    warn.mockResolvedValue(undefined);
+
+    await toggleAutoCommit(managerFor(makeSession()));
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toMatch(/could not be checked/);
+    expect(getAutoCommitStatus(1)).toBe('off');
+  });
+
+  it('leaves auto-commit off when the pre-commit it was asked for fails', async () => {
+    warn.mockResolvedValue('Commit Now, Then Turn On');
+    const failing = vi.fn(() => ({
+      success: false,
+      err: { number: 2261, message: 'conflicts' },
+    }));
+
+    await toggleAutoCommit(managerFor(makeSession(1, failing)));
+
+    expect(getAutoCommitStatus(1)).toBe('off');
+  });
+
+  it('commits through the registered Commit, which reports conflicts and refreshes', async () => {
+    warn.mockResolvedValue('Commit Now, Then Turn On');
+    const direct = vi.fn(() => OK);
+    const viaCommand = vi.fn(async () => true);
+    setAutoCommitCommitHandler(viaCommand);
+    const session = makeSession(1, direct);
+
+    await toggleAutoCommit(managerFor(session));
+
+    expect(viaCommand).toHaveBeenCalledWith(session);
+    expect(direct).not.toHaveBeenCalled();
+    expect(getAutoCommitStatus(1)).toBe('on');
+  });
+
+  it('leaves auto-commit off when the registered Commit did not land', async () => {
+    warn.mockResolvedValue('Commit Now, Then Turn On');
+    setAutoCommitCommitHandler(async () => false);
+
+    await toggleAutoCommit(managerFor(makeSession()));
+
+    expect(getAutoCommitStatus(1)).toBe('off');
+    expect(vi.mocked(vscode.window.showErrorMessage).mock.calls.at(-1)?.[0]).toContain(
+      'auto-commit was left off',
+    );
+  });
+
+  it('leaves auto-commit off, rather than throwing, when the session cannot commit at all', async () => {
+    warn.mockResolvedValue('Commit Now, Then Turn On');
+    const throwing = vi.fn(() => {
+      throw new Error('operation in progress');
+    });
+
+    await expect(toggleAutoCommit(managerFor(makeSession(1, throwing)))).resolves.toBeUndefined();
+    expect(getAutoCommitStatus(1)).toBe('off');
+  });
+});
+
+/** The per-session lifecycle: seeded at login, dropped at logout, off outside Auto-Begin. */
+describe('registerAutoCommitSessionHooks', () => {
+  function hooked(session: ActiveSession) {
+    const handlers: Record<string, (id: number) => void> = {};
+    const on = (name: string) => (h: (id: number) => void) => {
+      handlers[name] = h;
+      return { dispose: () => {} };
+    };
+    registerAutoCommitSessionHooks({
+      onDidAddSession: on('add'),
+      onDidRemoveSession: on('remove'),
+      onDidChangeTransactionState: on('mode'),
+      getSession: (id: number) => (id === session.id ? session : undefined),
+    });
+    return handlers;
+  }
+
+  it('starts a new session on when the default says so', () => {
+    __setConfig('gemstone', AUTO_COMMIT_DEFAULT_SETTING, true);
+    const session = makeSession();
+    session.transactionMode = 'autoBegin';
+
+    hooked(session).add(1);
+
+    expect(getAutoCommitStatus(1)).toBe('on');
+  });
+
+  it('starts a session that logged in outside Auto-Begin off, whatever the default says', () => {
+    __setConfig('gemstone', AUTO_COMMIT_DEFAULT_SETTING, true);
+    const session = makeSession();
+    session.transactionMode = 'manualBegin';
+
+    hooked(session).add(1);
+
+    expect(getAutoCommitStatus(1)).toBe('off');
+  });
+
+  it('forgets a session at logout, so a later one reusing the id starts clean', () => {
+    const handlers = hooked(makeSession());
+    registerSessionAutoCommit(1, true);
+
+    handlers.remove(1);
+
+    expect(getAutoCommitStatus(1)).toBe('off');
+  });
+
+  it('turns auto-commit off when the session leaves Auto-Begin', () => {
+    const session = makeSession();
+    const handlers = hooked(session);
+    registerSessionAutoCommit(1, true);
+    session.transactionMode = 'transactionless';
+
+    handlers.mode(1);
+
+    expect(getAutoCommitStatus(1)).toBe('off');
+  });
+});
+
+describe('recovering from a failed commit', () => {
+  it('does not blame a conflict for a commit that got no answer, nor offer the conflicts', async () => {
+    reportAutoCommitFailure(makeSession(), 'the session is busy', 'threw');
+
+    const [message, ...choices] = warn.mock.calls.at(-1) as [string, ...string[]];
+    expect(message).toContain('may be busy or no longer connected');
+    expect(message).not.toContain('conflict');
+    expect(choices).not.toContain('Show Conflicts');
+  });
+
+  it('runs the abort, and leaves arming to the abort itself', async () => {
+    // The real abort settles the transaction through `autoCommitTransactionSettled`, and
+    // only when it actually ran: it can still be backed out of at its own "unsaved exported
+    // .gs files" question, and arming here would arm over an abort that never happened.
+    const session = makeSession();
+    registerSessionAutoCommit(1, true);
+    setAutoCommitStatus(1, 'failed');
+    const abort = vi.fn(async () => {});
+    warn.mockResolvedValue('Abort and Discard');
+
+    await offerAutoCommitRecovery(session, 'conflicts', abort);
+
+    expect(abort).toHaveBeenCalledWith(session);
+    expect(getAutoCommitStatus(1)).toBe('failed');
+
+    // ...and the abort that did run puts it back.
+    autoCommitTransactionSettled(1);
+    expect(getAutoCommitStatus(1)).toBe('on');
+  });
+
+  it('shows the conflict report without changing the state', async () => {
+    const session = makeSession();
+    registerSessionAutoCommit(1, true);
+    // The runner has already flipped it by the time the prompt is shown.
+    setAutoCommitStatus(1, 'failed');
+    warn.mockResolvedValue('Show Conflicts');
+
+    await offerAutoCommitRecovery(session, 'conflicts', vi.fn());
+
+    expect(queries.transactionConflicts).toHaveBeenCalledWith(session);
+    expect(getAutoCommitStatus(1)).toBe('failed');
+  });
+
+  it('turns auto-commit off when that is what the user picks', async () => {
+    const session = makeSession();
+    registerSessionAutoCommit(1, true);
+    warn.mockResolvedValue('Turn Auto-Commit Off');
+
+    await offerAutoCommitRecovery(session, 'conflicts', vi.fn());
+    expect(getAutoCommitStatus(1)).toBe('off');
+  });
+
+  it('leaves the failed state alone when the prompt is dismissed, so the red stays', async () => {
+    const session = makeSession();
+    registerSessionAutoCommit(1, true);
+    setAutoCommitStatus(1, 'failed');
+    warn.mockResolvedValue(undefined);
+
+    await offerAutoCommitRecovery(session, 'conflicts', vi.fn());
+    expect(getAutoCommitStatus(1)).toBe('failed');
+  });
+
+  it("opens the recovery choices when the failed row's error button is clicked", async () => {
+    const session = makeSession();
+    registerSessionAutoCommit(1, true);
+    setAutoCommitStatus(1, 'failed');
+    warn.mockResolvedValue(undefined);
+
+    await recoverAutoCommit(managerFor(session));
+
+    expect(warn.mock.calls[0][0]).toMatch(/could not commit/);
+    expect(getAutoCommitStatus(1)).toBe('failed');
+  });
+
+  it('has nothing to resolve on a session whose auto-commit has not failed', async () => {
+    const session = makeSession();
+    registerSessionAutoCommit(1, true);
+
+    await recoverAutoCommit(managerFor(session));
+
+    expect(warn).not.toHaveBeenCalled();
+    expect(getAutoCommitStatus(1)).toBe('on');
+  });
+
+  it('turns a failed session off when toggled, rather than prompting with Turn Off', async () => {
+    const session = makeSession();
+    registerSessionAutoCommit(1, true);
+    setAutoCommitStatus(1, 'failed');
+
+    await toggleAutoCommit(managerFor(session));
+
+    expect(warn).not.toHaveBeenCalled();
+    expect(getAutoCommitStatus(1)).toBe('off');
+    expect(inform.mock.calls.at(-1)?.[0]).toMatch(/still conflicts .* until you abort/);
+  });
+});
+
+describe('a manual commit or abort settling the transaction', () => {
+  it('picks auto-commit back up', () => {
+    registerSessionAutoCommit(1, true);
+    setAutoCommitStatus(1, 'failed');
+
+    autoCommitTransactionSettled(1);
+    expect(getAutoCommitStatus(1)).toBe('on');
+  });
+
+  it('leaves a session that never armed it alone', () => {
+    autoCommitTransactionSettled(9);
+    expect(getAutoCommitStatus(9)).toBe('off');
+  });
+});
+
+/**
+ * The window-wide default (issue #254). It decides only where a NEW session starts — the
+ * per-session switch is what a session actually runs on — so the two must not be confused.
+ */
+describe('the default for new sessions', () => {
+  it('is off when nobody set it', () => {
+    expect(autoCommitDefaultForNewSessions()).toBe(false);
+  });
+
+  it('is what the setting says when they did', () => {
+    __setConfig('gemstone', AUTO_COMMIT_DEFAULT_SETTING, true);
+    expect(autoCommitDefaultForNewSessions()).toBe(true);
+  });
+
+  it('does not arm a session on its own — a session is armed by being registered', () => {
+    __setConfig('gemstone', AUTO_COMMIT_DEFAULT_SETTING, true);
+    // Reading the default is not the same as applying it: `activate` reads it once per
+    // login and hands the answer to `registerSessionAutoCommit`.
+    expect(getAutoCommitStatus(1)).toBe('off');
+  });
+
+  it('is offered from the turn-on notice, so it is reachable without opening Settings', async () => {
+    inform.mockResolvedValue('Make This the Default');
+
+    await toggleAutoCommit(managerFor(makeSession()));
+    // The notice is fire-and-forget, so let its tail run.
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Asserted through the setting's own reader rather than the update spy: the mock hands
+    // back a fresh configuration object per call, so the spy a test holds is never the one
+    // the code used.
+    expect(autoCommitDefaultForNewSessions()).toBe(true);
+  });
+
+  it('is offered from the turn-off notice too, and set back to off', async () => {
+    __setConfig('gemstone', AUTO_COMMIT_DEFAULT_SETTING, true);
+    registerSessionAutoCommit(1, true);
+    inform.mockResolvedValue('Make This the Default');
+
+    await toggleAutoCommit(managerFor(makeSession()));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(inform).toHaveBeenCalledWith(expect.stringMatching(/OFF/), 'Make This the Default');
+    expect(autoCommitDefaultForNewSessions()).toBe(false);
+  });
+
+  it('is not offered when the default already matches', async () => {
+    registerSessionAutoCommit(1, true);
+
+    await toggleAutoCommit(managerFor(makeSession()));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(inform).toHaveBeenCalledWith(expect.stringMatching(/OFF/));
+  });
+
+  it('is left alone when the notice is dismissed', async () => {
+    inform.mockResolvedValue(undefined);
+
+    await toggleAutoCommit(managerFor(makeSession()));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(autoCommitDefaultForNewSessions()).toBe(false);
+  });
+});
+
+describe('transaction modes other than Auto-Begin', () => {
+  it.each(['manualBegin', 'transactionless'] as const)(
+    'refuses to turn on in %s mode, says why, and offers the mode switch',
+    async (mode) => {
+      const session = makeSession();
+      session.transactionMode = mode;
+      warn.mockResolvedValue(undefined);
+
+      await toggleAutoCommit(managerFor(session));
+
+      expect(getAutoCommitStatus(1)).toBe('off');
+      expect(warn.mock.calls[0][0]).toMatch(/needs Auto-Begin/);
+      expect(warn.mock.calls[0]).toContain('Switch to Auto-Begin and Turn On…');
+    },
+  );
+
+  it('switches to Auto-Begin and then turns auto-commit on, when asked to', async () => {
+    const session = makeSession();
+    session.transactionMode = 'manualBegin';
+    warn.mockResolvedValue('Switch to Auto-Begin and Turn On…');
+    vi.mocked(vscode.commands.executeCommand).mockImplementationOnce(async () => {
+      session.transactionMode = 'autoBegin';
+    });
+
+    await toggleAutoCommit(managerFor(session));
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'gemstone.setTransactionMode',
+      { activeSession: session },
+      'autoBegin',
+    );
+    expect(getAutoCommitStatus(1)).toBe('on');
+  });
+
+  it('leaves auto-commit off when the mode switch is declined', async () => {
+    const session = makeSession();
+    session.transactionMode = 'manualBegin';
+    warn.mockResolvedValue('Switch to Auto-Begin and Turn On…');
+    vi.mocked(vscode.commands.executeCommand).mockImplementationOnce(async () => undefined);
+
+    await toggleAutoCommit(managerFor(session));
+
+    expect(getAutoCommitStatus(1)).toBe('off');
+  });
+
+  it('turns an armed session off when its mode leaves Auto-Begin', () => {
+    const session = makeSession();
+    registerSessionAutoCommit(1, true);
+    session.transactionMode = 'manualBegin';
+
+    autoCommitTransactionModeChanged(session);
+
+    expect(getAutoCommitStatus(1)).toBe('off');
+    expect(inform.mock.calls.at(-1)?.[0]).toMatch(/OFF .* Manual mode/);
+  });
+
+  it('leaves an armed session alone while it stays in Auto-Begin', () => {
+    const session = makeSession();
+    registerSessionAutoCommit(1, true);
+    session.transactionMode = 'autoBegin';
+
+    autoCommitTransactionModeChanged(session);
+
+    expect(getAutoCommitStatus(1)).toBe('on');
+  });
+
+  it('explains a commit refused outside a transaction, instead of offering the conflict prompt', () => {
+    const session = makeSession();
+    warn.mockResolvedValue(undefined);
+
+    reportAutoCommitFailure(session, 'not in txn', 'notInTransaction');
+
+    expect(warn.mock.calls[0][0]).toMatch(/not in a transaction/);
+    expect(warn.mock.calls[0]).not.toContain('Show Conflicts');
+  });
+});

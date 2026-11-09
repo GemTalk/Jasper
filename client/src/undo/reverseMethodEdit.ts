@@ -17,6 +17,8 @@
  * refusal, matching the refactoring undo's policy.
  */
 import * as vscode from 'vscode';
+import { runRawWritesWithAutoCommit } from '../autoCommit/autoCommitRunner';
+import { commitStateNote, heldBackNote } from '../autoCommit/autoCommitState';
 import { ActiveSession } from '../sessionManager';
 import { defaultQueryExecutorUsing } from '../browserQueries';
 import { logInfo } from '../gciLog';
@@ -71,7 +73,12 @@ export async function reverseMethodEdit(
 
   let results;
   try {
-    results = applyMethodSlotOps(execute, ops);
+    results = runRawWritesWithAutoCommit(
+      session,
+      'undo',
+      () => applyMethodSlotOps(execute, ops),
+      (rs) => rs.every((r) => r.error === null),
+    );
   } catch (e: unknown) {
     void vscode.window.showErrorMessage(
       `Undo failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -108,7 +115,8 @@ export async function reverseMethodEdit(
     void vscode.window.showErrorMessage(
       failures.length === results.length
         ? `Undo of ${entry.label} failed: ${first.error}`
-        : `Undo of ${entry.label} was partial — ${slotLabel(first.op.slot)}: ${first.error}`,
+        : `Undo of ${entry.label} was partial — ${slotLabel(first.op.slot)}: ${first.error}.` +
+            heldBackNote(session.id),
     );
     // A PARTIAL reversal spends the entry: some of it landed, so the recorded "before" no
     // longer describes anything the stone holds, and offering it again would reverse from a
@@ -120,8 +128,8 @@ export async function reverseMethodEdit(
   }
 
   void vscode.window.showInformationMessage(
-    `Undid ${entry.label} — ${describeOps(succeeded)}. Compiled but NOT committed — ` +
-      'commit when ready.',
+    `Undid ${entry.label} — ${describeOps(succeeded)}. ` +
+      commitStateNote(session.id, 'Compiled but NOT committed — commit when ready.'),
   );
   return true;
 }

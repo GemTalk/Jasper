@@ -182,7 +182,7 @@ export function renderClassHistoryHtml(opts: ClassHistoryHtmlOptions): string {
 <body>
   <header>
     <div class="title">Definition history of <code>${escapeHtml(className)}</code>${inDict}</div>
-    <div class="subtitle">${count} version${count === 1 ? '' : 's'} in this stone — newest first. Read-only; a restore is a new version and is not committed.</div>
+    <div class="subtitle">${count} version${count === 1 ? '' : 's'} in this stone — newest first. Read-only; a restore is a new version, committed only if the session has auto-commit on.</div>
   </header>
   <ul class="versions">
 ${rows}

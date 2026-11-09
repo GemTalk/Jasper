@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from './sessionManager';
-import { wrapExecuteCode } from './queries/executeCode';
+import { executeCodeRaised, wrapExecuteCode } from './queries/executeCode';
 import { GemStoneNotebookKernel, GEMSTONE_NOTEBOOK_TYPE } from './gemstoneNotebookKernel';
 import { startClientForwarderMode, endClientForwarderMode, settleNbResult } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
 import { NbRunOptions, runNbCall, whenSessionFree } from './nbRunner';
 import { failCell, fetchCellResult } from './notebookCellResult';
+import { autoCommitAfterWrite } from './autoCommit/autoCommitRunner';
 import { OOP_ILLEGAL, OOP_NIL, OOP_CLASS_UTF8 } from './gciConstants';
 import { SMALLTALK_LANGUAGE } from './languageIds';
 import { sessionKernelId } from './sessionKernels';
@@ -109,7 +110,10 @@ async function runCell(
     );
 
     // wrapExecuteCode printStrings server-side, so the result IS a string.
-    return fetchCellResult(session, resultOop);
+    const data = fetchCellResult(session, resultOop);
+    // A cell that raised answers its error inline, so only a clean answer commits.
+    if (!executeCodeRaised(data)) autoCommitAfterWrite(session, 'notebook cell');
+    return data;
   } finally {
     appendTranscriptOutput(endClientForwarderMode(session));
   }

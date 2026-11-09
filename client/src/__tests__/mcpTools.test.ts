@@ -67,6 +67,13 @@ import * as sunit from '../sunitQueries';
 import * as python from '../pythonQueries';
 import { registerMcpTools } from '../mcpTools';
 import { ActiveSession } from '../sessionManager';
+import {
+  _resetAutoCommitStateForTests,
+  getAutoCommitStatus,
+  registerSessionAutoCommit,
+  setAutoCommitStatus,
+} from '../autoCommit/autoCommitState';
+import { setAutoCommitFailureHandler } from '../autoCommit/autoCommitRunner';
 import { fakeActiveSession } from './fakeActiveSession';
 
 interface ToolRegistration {
@@ -97,10 +104,17 @@ function createMockServer() {
   };
 }
 
+const COMMIT_OK = { success: true, err: { number: 0, message: '' } };
+let commit = vi.fn(() => COMMIT_OK);
+
 function makeSession(): ActiveSession {
   return fakeActiveSession({
     id: 1,
-    gci: {},
+    gci: {
+      get GciTsCommit() {
+        return commit;
+      },
+    },
     handle: {},
     login: { label: 'DataCurator on gs64stone (localhost)' },
     stoneVersion: '3.7.4',
@@ -122,6 +136,9 @@ describe('registerMcpTools', () => {
       (id) => transactionStateMoved.push(id),
     );
     vi.clearAllMocks();
+    _resetAutoCommitStateForTests();
+    setAutoCommitFailureHandler(undefined);
+    commit = vi.fn(() => COMMIT_OK);
     transactionStateMoved = [];
   });
 
@@ -943,5 +960,95 @@ describe('registerMcpTools', () => {
     vi.mocked(queries.executeFetchString).mockReturnValue('1');
     const present = await server.getTool('execute_code')!.handler({ code: '1' });
     expect(present.isError).toBeUndefined();
+  });
+
+  /**
+   * These tools run on the USER's active session, so a session the user armed for
+   * auto-commit (issue #254) commits an agent's doit exactly as it commits the user's own.
+   * The standalone `mcp-server` workspace is a different thing entirely — its own GCI
+   * sessions, no auto-commit at all — which is why its tool descriptions still say
+   * "NOT committed automatically" and these no longer do.
+   */
+  describe('auto-commit', () => {
+    it('commits after execute_code on an armed session', async () => {
+      registerSessionAutoCommit(1, true);
+      vi.mocked(queries.executeFetchString).mockReturnValue('42');
+
+      await server.getTool('execute_code')!.handler({ code: 'UserGlobals at: #x put: 42' });
+
+      expect(commit).toHaveBeenCalledTimes(1);
+    });
+
+    it('commits nothing when the code raised an ordinary error, and says so', async () => {
+      registerSessionAutoCommit(1, true);
+      vi.mocked(queries.executeFetchString).mockReturnValue(
+        'Error: MessageNotUnderstood - a UndefinedObject does not understand #foo',
+      );
+
+      const answer = await server.getTool('execute_code')!.handler({
+        code: 'UserGlobals at: #x put: 1. nil foo',
+      });
+
+      expect(commit).not.toHaveBeenCalled();
+      expect(JSON.stringify(answer)).toContain('Not committed: the code raised');
+    });
+
+    it('commits nothing when the code threw', async () => {
+      registerSessionAutoCommit(1, true);
+      vi.mocked(queries.executeFetchString).mockImplementation(() => {
+        throw new Error('doesNotUnderstand');
+      });
+
+      await server.getTool('execute_code')!.handler({ code: 'nil foo' });
+
+      expect(commit).not.toHaveBeenCalled();
+    });
+
+    // A commit or abort from Claude settles a failed auto-commit, as the Commit and Abort
+    // commands do.
+    it('resumes a failed auto-commit after the commit tool lands', async () => {
+      registerSessionAutoCommit(1, true);
+      setAutoCommitStatus(1, 'failed');
+      vi.mocked(queries.executeFetchString).mockReturnValue('committed');
+
+      await server.getTool('commit')!.handler({});
+
+      expect(getAutoCommitStatus(1)).toBe('on');
+    });
+
+    it('leaves a failed auto-commit failed when the commit tool is refused', async () => {
+      registerSessionAutoCommit(1, true);
+      setAutoCommitStatus(1, 'failed');
+      vi.mocked(queries.executeFetchString).mockReturnValue('refused');
+
+      await server.getTool('commit')!.handler({});
+
+      expect(getAutoCommitStatus(1)).toBe('failed');
+    });
+
+    it('resumes a failed auto-commit after the abort tool', async () => {
+      registerSessionAutoCommit(1, true);
+      setAutoCommitStatus(1, 'failed');
+      vi.mocked(queries.executeFetchString).mockReturnValue('Transaction aborted');
+
+      await server.getTool('abort')!.handler({});
+
+      expect(getAutoCommitStatus(1)).toBe('on');
+    });
+
+    it('commits nothing on a session that never armed it', async () => {
+      vi.mocked(queries.executeFetchString).mockReturnValue('42');
+
+      await server.getTool('execute_code')!.handler({ code: '42' });
+
+      expect(commit).not.toHaveBeenCalled();
+    });
+
+    it('no longer promises the change is uncommitted, because it may not be', () => {
+      for (const name of ['execute_code', 'compile_method', 'delete_method']) {
+        expect(server.getTool(name)!.description).not.toContain('NOT committed automatically');
+      }
+      expect(server.getTool('compile_method')!.description).toContain('auto-commit');
+    });
   });
 });

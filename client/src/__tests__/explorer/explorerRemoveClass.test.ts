@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', async (orig) => ({
@@ -36,10 +36,17 @@ import {
 import { captureClassSlots } from '../../undo/queries/classSlotQueries';
 import { peekUndoEntry, resetUndoStacks } from '../../undo/undoStack';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+} from '../../autoCommit/autoCommitState';
+import { autoCommitAfterWrite } from '../../autoCommit/autoCommitRunner';
 import type { MethodSearchResult } from '../../queries/methodSearch';
 
+const commit = vi.fn(() => ({ success: true, err: { number: 0, message: '' } }));
+
 function makeController(onClassRemoved?: (sessionId: number, className: string) => void) {
-  const session = { id: 1 } as ActiveSession;
+  const session = { id: 1, GciTsCommit: () => commit() } as unknown as ActiveSession;
   const sessionManager = { getSelectedSession: () => session } as unknown as SessionManager;
   const ctl = new ExplorerController(sessionManager, undefined, onClassRemoved);
   ctl.state.dictName = 'UserGlobals';
@@ -565,5 +572,44 @@ describe('ExplorerController.removeClass — reporting a scan that came back ful
     expect(detail).toContain('1 method still references it:');
     expect(detail).not.toContain('At least');
     expect(detail).not.toContain('not complete');
+  });
+});
+
+/**
+ * Auto-commit (issue #254): a subtree goes as one commit, and not at all when any class in it
+ * failed to go — half a subtree in the repository is not what the user asked to remove. The
+ * mocked `deleteClass` reports its write as the real one's `writing` wrapper does.
+ */
+describe('ExplorerController.removeClass on an auto-commit session', () => {
+  beforeEach(() => {
+    _resetAutoCommitStateForTests();
+    registerSessionAutoCommit(1, true);
+    commit.mockClear();
+    descendantsMock.mockReturnValue([descendant('Kid', 1)]);
+    confirmSubtreeOnce();
+  });
+  afterEach(() => _resetAutoCommitStateForTests());
+
+  it('commits the whole subtree once', async () => {
+    deleteClassMock.mockImplementation((s, _dict, name) => {
+      autoCommitAfterWrite(s, 'class delete');
+      return `Deleted class: ${name}`;
+    });
+
+    await makeController().removeClass();
+
+    expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits nothing when one class in the subtree failed to go', async () => {
+    deleteClassMock.mockImplementation((s, _dict, name) => {
+      autoCommitAfterWrite(s, 'class delete');
+      return name === 'Kid' ? 'Error: could not delete Kid' : `Deleted class: ${name}`;
+    });
+
+    await makeController().removeClass();
+
+    expect(commit).not.toHaveBeenCalled();
+    expect(error.mock.calls.at(-1)?.[0]).toContain('Nothing was committed');
   });
 });

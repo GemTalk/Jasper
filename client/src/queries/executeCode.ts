@@ -18,3 +18,10 @@ export function wrapExecuteCode(code: string): string {
   on: AlmostOutOfStack do: [:e | 'Error: AlmostOutOfStack - user code exhausted the call stack']]
   on: AbstractException do: [:e | 'Error: ', e class name asString, ' - ', e messageText asString]`;
 }
+
+/** Whether an answer from {@link wrapExecuteCode} is one of its handlers' error strings. A
+ *  heuristic: a successful answer whose printString happens to start with `Error: ` (a domain
+ *  object's `printOn:` can write that) reads as raised too, and so is not auto-committed. */
+export function executeCodeRaised(answer: string): boolean {
+  return answer.startsWith('Error: ');
+}

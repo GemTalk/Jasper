@@ -10,6 +10,7 @@ import {
   toBigInt,
 } from './gciConstants';
 import { logError, logInfo } from './gciLog';
+import { autoCommitAfterWrite } from './autoCommit/autoCommitRunner';
 import { routeInspect } from './inspectRouter';
 import { DebuggerPanel } from './debugger/debuggerPanel';
 import { clearStack, getObjectPrintString } from './debugger/debugQueries';
@@ -236,6 +237,9 @@ export class CodeExecutor {
       }
 
       const resultString = await this.pollForResult(session);
+
+      // Debug It always halts first; the Debugger commits when that run finishes.
+      if (mode !== 'debug') autoCommitAfterWrite(session, 'Do It');
 
       this.diagnostics.delete(editor.document.uri);
 

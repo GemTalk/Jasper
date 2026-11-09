@@ -37,6 +37,11 @@ import { GemStoneVersion, GemStoneDatabase, GemStoneProcess } from '../sysadminT
 import { GemStoneLogin, loginLabel, dataCuratorLoginToCreate } from '../loginTypes';
 import { ActiveSession, SessionManager } from '../sessionManager';
 import { canBegin, canCommit, transactionStateLabelIfKnown } from '../queries/transactionMode';
+import {
+  AutoCommitStatus,
+  getAutoCommitStatus,
+  onAutoCommitChanged,
+} from '../autoCommit/autoCommitState';
 import { readWebviewScript } from '../webviewAssets';
 import { appendSysadmin, showSysadmin } from '../sysadminChannel';
 import { explainGciError } from '../gciLibraryError';
@@ -119,6 +124,12 @@ interface SessionInfo {
   id: number;
   /** The one the rest of Jasper works in — where Display It and friends run. */
   current: boolean;
+  /**
+   * Whether this session commits as it goes (issue #254). On the wire because the row draws
+   * both the state and the button that flips it, and the button's icon IS the state — a row
+   * that had to ask afterwards would flash the wrong glyph on every repaint.
+   */
+  autoCommit: AutoCommitStatus;
   /**
    * The session's transaction state in words — "Auto-Begin", "Manual · not in
    * transaction" — or absent when it has not been read from the stone. The same
@@ -625,6 +636,9 @@ export class DatabasesPanel {
     // so without this the row for a login that just connected kept offering
     // "Log in" until something else happened to redraw the panel.
     this.deps.sessionManager.onDidAddSession(() => this.markStale(), null, this.disposables);
+    // Toggling auto-commit changes no session and no process, so none of the events above
+    // fire for it — but this panel draws the state and the button, so it has to redraw.
+    this.disposables.push(onAutoCommitChanged(() => this.markStale()));
     // A mode switch changes what each session row says and which of its buttons
     // apply, and no session arrived or left to say so.
     this.deps.sessionManager.onDidChangeTransactionState(
@@ -1329,6 +1343,9 @@ export class DatabasesPanel {
     'gemstone.sessionBegin',
     'gemstone.sessionCommit',
     'gemstone.sessionAbort',
+    // The state-reading toggle, not the tree's turnOn/turnOff pair: this panel draws its own glyph.
+    'gemstone.autoCommit.toggle',
+    'gemstone.autoCommit.recover',
     'gemstone.setTransactionMode',
     'gemstone.fullLogicalBackup',
     'gemstone.fullLogicalRestore',
@@ -1886,6 +1903,7 @@ export class DatabasesPanel {
       ),
       canCommit: canCommit(session.inTransaction),
       canBegin: canBegin(session.transactionMode, session.inTransaction),
+      autoCommit: getAutoCommitStatus(session.id),
     };
   }
 
@@ -2224,6 +2242,11 @@ th.v-num { text-align: right; }
 .db-session .session-name { font-size: 0.95em; }
 .db-session-current .session-name { font-weight: 700; }
 .session-id { margin-left: 8px; font-size: 0.85em; }
+/* Auto-commit's state, beside the session id (issue #254). Tinted only for the two states
+   worth catching without reading — a row where every session is painted says nothing. */
+.session-autocommit { margin-left: 8px; font-size: 0.85em; }
+.session-autocommit.ac-warn { color: var(--gm-warn); }
+.session-autocommit.ac-err { color: var(--vscode-errorForeground, #f14c4c); }
 .session-tx-mode { margin-left: 8px; font-size: 0.85em; }
 /* The Ping result sits to the left of the row's buttons — a compact banner that
    clears itself after a success and lingers (with Dismiss) after a warning.

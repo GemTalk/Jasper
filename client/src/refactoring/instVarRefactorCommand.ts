@@ -17,6 +17,8 @@
 import * as vscode from 'vscode';
 import { ActiveSession } from '../sessionManager';
 import * as queries from '../browserQueries';
+import { autoCommitTransactionSettled, holdAutoCommit } from '../autoCommit/autoCommitRunner';
+import { hasAutoCommitPending } from '../autoCommit/autoCommitState';
 import { InstVarOp } from './queries/previewInstVar';
 import { Accessor } from './queries/addAccessors';
 import { PREVIEW_PAGE_BYTES } from './queries/previewRenameMethod';
@@ -207,36 +209,74 @@ export async function runInstVarRefactor(
     accessorSpecs && accessorSpecs.length > 0
       ? `Accessors added with this change: ${accessorSpecs.map((a) => a.selector).join(', ')}`
       : undefined;
-  const result = await showInstVarRefactorPanel(
-    title(),
-    start,
-    {
-      loadPage: async (off) =>
-        parsePage(await queries.pageInstVarPreview(session, token, off, PREVIEW_PAGE_BYTES)),
-      apply: async (options, migrate, deleteHistory) =>
-        parseApplyResult(
-          await queries.applyInstVar(
-            session,
-            token,
-            [],
-            options,
-            migrate,
-            deleteHistory,
-            accessorSpecs ?? [],
-          ),
-        ),
-      // The engine stops at the first failure and never aborts on its own (that would discard the
-      // user's other in-flight work). The panel surfaces the failure in place and, when a partial
-      // reshape is stranded, offers this abort directly — no toast, no second confirmation.
-      abort: () => {
-        queries.abortSessionTransaction(session);
+  // A failed apply can strand a partial reshape that the panel offers to abort. Until the panel
+  // closes, auto-commit is held (issue #254): a save made meanwhile would otherwise commit the
+  // wreckage and leave that Abort with nothing to take back.
+  let releaseHold: ((succeeded: boolean) => boolean) | undefined;
+  let aborted = false;
+  let result;
+  try {
+    result = await showInstVarRefactorPanel(
+      title(),
+      start,
+      {
+        loadPage: async (off) =>
+          parsePage(await queries.pageInstVarPreview(session, token, off, PREVIEW_PAGE_BYTES)),
+        apply: async (options, migrate, deleteHistory) => {
+          const applied = parseApplyResult(
+            await queries.applyInstVar(
+              session,
+              token,
+              [],
+              options,
+              migrate,
+              deleteHistory,
+              accessorSpecs ?? [],
+            ),
+          );
+          if (applied.error || applied.failed.length > 0) {
+            releaseHold ??= holdAutoCommit(session, 'refactoring');
+          }
+          return applied;
+        },
+        // The engine stops at the first failure and never aborts on its own (that would discard
+        // the user's other in-flight work). The panel surfaces the failure in place and, when a
+        // partial reshape is stranded, offers this abort directly — no toast, no second
+        // confirmation.
+        abort: async () => {
+          // The banner priced the abort before anything else was written; a save made since,
+          // held back by the hold above, would be discarded with the reshape.
+          if (hasAutoCommitPending(session.id)) {
+            const DISCARD = 'Abort and Discard';
+            const choice = await vscode.window.showWarningMessage(
+              'Changes you made since the refactoring failed are not committed yet, and Abort ' +
+                'discards them along with the partial reshape.',
+              { modal: true },
+              DISCARD,
+            );
+            if (choice !== DISCARD) return false;
+          }
+          queries.abortSessionTransaction(session);
+          aborted = true;
+          autoCommitTransactionSettled(session.id);
+          return true;
+        },
+        // Live re-probe for the commit-confirmation warning — see the panel handler's doc.
+        sessionNeedsCommit: () => queries.sessionNeedsCommit(session),
+        cleanup: safeClear,
       },
-      // Live re-probe for the commit-confirmation warning — see the panel handler's doc.
-      sessionNeedsCommit: () => queries.sessionNeedsCommit(session),
-      cleanup: safeClear,
-    },
-    accessorNote,
-  );
+      accessorNote,
+    );
+  } finally {
+    // After an abort there is nothing left to commit. Closed without one, the partial reshape
+    // stays uncommitted, as the panel's banner said it would.
+    if (releaseHold?.(aborted)) {
+      void vscode.window.showWarningMessage(
+        `${title()} did not finish, so nothing was committed while its panel was open. ` +
+          'Abort to discard it — your next change would commit it.',
+      );
+    }
+  }
   // The panel resolves a result only on success; every apply failure is shown and handled inside
   // the panel (Abort or Close), which then resolves undefined. So a falsy result means the user
   // cancelled, closed, or hit a failure the panel already reported — nothing more to say here.

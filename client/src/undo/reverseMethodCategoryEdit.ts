@@ -30,6 +30,7 @@
  * a name that was never in it answers 'not-listed' and nothing happens.
  */
 import * as vscode from 'vscode';
+import { commitStateNote } from '../autoCommit/autoCommitState';
 import { ActiveSession } from '../sessionManager';
 import { getMethodCategories, removeMethodCategory, renameCategory } from '../browserQueries';
 import { logInfo } from '../gciLog';
@@ -117,7 +118,8 @@ export async function reverseMethodCategoryEdit(
 
   void vscode.window.showInformationMessage(
     `Undid ${entry.label} — the category is called '${entry.before}' again, with the same ` +
-      'methods in it. Changed but NOT committed — commit when ready.',
+      'methods in it. ' +
+      commitStateNote(session.id, 'Changed but NOT committed — commit when ready.'),
   );
   return true;
 }
@@ -184,7 +186,7 @@ async function removeReal(
 
   void vscode.window.showInformationMessage(
     `Undid ${entry.label} — '${entry.after}' is gone again. It was empty, so no method moved. ` +
-      'Changed but NOT committed — commit when ready.',
+      commitStateNote(session.id, 'Changed but NOT committed — commit when ready.'),
   );
   return true;
 }

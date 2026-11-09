@@ -169,6 +169,12 @@
     edit: 'edit',
     pass: 'pass',
     link: 'link',
+    // Auto-commit's three faces (issue #254). `sync` and `sync-ignored` are the same glyph
+    // with and without a slash, which is what makes them read as a toggle rather than two
+    // unrelated icons; `error` is the third state, where it is armed and NOT committing.
+    sync: 'sync',
+    syncIgnored: 'sync-ignored',
+    error: 'error',
   };
 
   /** The codicon name for an internal key (or the name itself, if already one). */
@@ -630,6 +636,54 @@
     return `<span class="ping-result ${ok ? 'ok' : 'warn'}" role="status">${glyph}<span class="notice-msg">${esc(notice.message)}</span>${actions}</span>`;
   }
 
+  /**
+   * How a session row shows auto-commit (issue #254) — the words beside the session id, and
+   * the button that flips it.
+   *
+   * The state-reading `toggle`, whose icon this picks at render time, or `recover` on a failed
+   * row. The wording and the glyphs match the tree's deliberately: the two must not describe
+   * the same state differently.
+   */
+  const AUTO_COMMIT_FACE = {
+    on: {
+      icon: 'sync',
+      word: 'auto-commit ON',
+      tone: 'warn',
+      title:
+        'Auto-commit is ON: every change is committed as soon as it is made, and Abort will ' +
+        'not take one back. Click to turn it off.',
+    },
+    failed: {
+      icon: 'error',
+      word: 'auto-commit FAILED',
+      tone: 'err',
+      title:
+        'Auto-commit tried to commit and could not — almost always a conflict with another ' +
+        'session. Your changes are NOT in the repository. Click to resolve it: abort and ' +
+        'discard your changes, show what conflicted, or turn auto-commit off.',
+    },
+    off: {
+      icon: 'syncIgnored',
+      word: 'auto-commit off',
+      tone: '',
+      title:
+        'Auto-commit is off: changes stay in this session’s transaction until you commit. ' +
+        'Click to turn it on.',
+    },
+  };
+
+  function autoCommitFace(session) {
+    return AUTO_COMMIT_FACE[session.autoCommit] || AUTO_COMMIT_FACE.off;
+  }
+
+  /** The state, in words, for the row's name half. */
+  function autoCommitLabel(session) {
+    const face = autoCommitFace(session);
+    return `<span class="dim session-autocommit${face.tone ? ' ac-' + face.tone : ''}"${tipAttr(
+      face.title,
+    )}>${esc(face.word)}</span>`;
+  }
+
   function sessionActions(session) {
     const act = (cmd, label, iconKey, title) =>
       btn('sessionAction', label, iconKey, null, {
@@ -673,6 +727,15 @@
       begin +
       commit +
       act('gemstone.sessionAbort', 'Abort', 'discard', 'Abort this session') +
+      // With Commit and Abort, because it is the same subject: this session's transaction.
+      act(
+        session.autoCommit === 'failed'
+          ? 'gemstone.autoCommit.recover'
+          : 'gemstone.autoCommit.toggle',
+        'Auto-Commit',
+        autoCommitFace(session).icon,
+        autoCommitFace(session).title,
+      ) +
       btn('showSessionConfiguration', 'Session Configuration', 'gear', null, {
         session: session.id,
         iconOnly: true,
@@ -726,7 +789,7 @@
       ? `<span class="dim session-tx-mode">${esc(session.transactionState)}</span>`
       : '';
     return `<div class="db-line db-session${session.current ? ' db-session-current' : ''}"${tipAttr(tip)}>
-        <span class="db-line-name">${mark}<span class="session-name">${esc(login.user)}</span><span class="dim session-id">session ${esc(String(session.id))}</span>${state}</span>
+        <span class="db-line-name">${mark}<span class="session-name">${esc(login.user)}</span><span class="dim session-id">session ${esc(String(session.id))}</span>${state}${autoCommitLabel(session)}</span>
         <span class="db-line-actions">${sessionActions(session)}</span>
       </div>`;
   }

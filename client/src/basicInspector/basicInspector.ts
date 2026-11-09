@@ -20,6 +20,7 @@ import * as crypto from 'crypto';
 import { ActiveSession } from '../sessionManager';
 import * as debug from '../debugger/debugQueries';
 import * as pins from '../exportSetPins';
+import { autoCommitAfterWrite } from '../autoCommit/autoCommitRunner';
 import { executeFetchString } from '../browserQueries';
 import { logError } from '../gciLog';
 import { SESSION_BUSY_MESSAGE } from '../gciLibraryError';
@@ -653,6 +654,7 @@ export class BasicInspector {
     if (kind === 'instvar') debug.setInstVar(this.session, oop, index, valueOop);
     else if (kind === 'indexed') debug.setIndexedVar(this.session, oop, index, valueOop);
     else debug.setDictionaryValue(this.session, oop, BigInt(keyOop!), valueOop);
+    autoCommitAfterWrite(this.session, 'Inspector value edit');
   }
 
   /**
@@ -693,6 +695,7 @@ export class BasicInspector {
     let resultOop: bigint;
     try {
       resultOop = debug.evaluateWithReceiverToOop(this.session, oop, expression);
+      autoCommitAfterWrite(this.session, 'Inspector evaluate');
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
       logError(this.sessionId, message);

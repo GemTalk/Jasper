@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
-vi.mock('../../gciLog', () => ({ logInfo: vi.fn() }));
+vi.mock('../../gciLog', () => ({ logInfo: vi.fn(), logWarning: vi.fn() }));
 vi.mock('../reverseMethodEdit', () => ({ reverseMethodEdit: vi.fn() }));
 vi.mock('../reverseClassEdit', () => ({ reverseClassEdit: vi.fn() }));
 vi.mock('../reverseClassComment', () => ({ reverseClassComment: vi.fn() }));
@@ -47,7 +47,16 @@ import { captureMethodSlots } from '../queries/methodSlotQueries';
 import { captureClassVar } from '../queries/classVarQueries';
 import { peekUndoEntry, pushUndoEntry, resetUndoStacks, undoStackDepth } from '../undoStack';
 import type { NewUndoEntry } from '../undoTypes';
-import type { ActiveSession, SessionManager } from '../../sessionManager';
+import type { SessionManager } from '../../sessionManager';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+} from '../../autoCommit/autoCommitState';
+import {
+  autoCommitAfterWrite,
+  setAutoCommitFailureHandler,
+} from '../../autoCommit/autoCommitRunner';
+import { fakeActiveSession } from '../../__tests__/fakeActiveSession';
 
 /**
  * The dispatcher (#434) — the single Undo every affordance runs.
@@ -61,7 +70,18 @@ import type { ActiveSession, SessionManager } from '../../sessionManager';
  * stone no longer holds is dropped and skipped rather than previewed over nothing.
  */
 
-const session = { id: 1 } as ActiveSession;
+const OK = { success: true, err: { number: 0, message: '' } };
+let commit = vi.fn(() => OK);
+
+const session = fakeActiveSession({
+  id: 1,
+  gci: {
+    get GciTsCommit() {
+      return commit;
+    },
+  },
+  handle: {},
+});
 const sessions = { getSelectedSession: () => session } as unknown as SessionManager;
 
 const status = (available: boolean, sequence = 1) => ({
@@ -155,6 +175,9 @@ function acceptThePlan(): void {
 beforeEach(() => {
   vi.clearAllMocks();
   resetUndoStacks();
+  _resetAutoCommitStateForTests();
+  setAutoCommitFailureHandler(undefined);
+  commit = vi.fn(() => OK);
   acceptThePlan();
 });
 
@@ -426,6 +449,40 @@ describe('undoLastCommand', () => {
     const none = { getSelectedSession: () => undefined } as unknown as SessionManager;
     await undoLastCommand(none);
     expect(vi.mocked(vscode.window.showWarningMessage).mock.calls[0][0]).toContain('session');
+  });
+});
+
+/**
+ * Undo and auto-commit (issue #254).
+ *
+ * Each reverser commits its own writes, once, and not at all when they fail part-way (pinned
+ * beside each reverser). What is pinned here is that the dispatcher holds nothing back itself:
+ * the plan panel is a webview, so a save the user makes while it is open must still commit.
+ */
+describe('undoLastCommand and auto-commit', () => {
+  it('lets a save made while the plan panel is open commit at once', async () => {
+    registerSessionAutoCommit(session.id, true);
+    pushUndoEntry(methodEdit('Save Account>>#balance'));
+    vi.mocked(showUndoPlanPanel).mockImplementation(async () => {
+      autoCommitAfterWrite(session, 'save');
+      expect(commit).toHaveBeenCalledTimes(1);
+      return false;
+    });
+
+    await undoLastCommand(sessions);
+
+    expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits nothing when the user cancels the plan panel', async () => {
+    registerSessionAutoCommit(session.id, true);
+    pushUndoEntry(methodEdit('Save Account>>#balance'));
+    vi.mocked(showUndoPlanPanel).mockResolvedValue(false);
+
+    await undoLastCommand(sessions);
+
+    expect(reverseMethodEdit).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
   });
 });
 

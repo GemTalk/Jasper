@@ -27,7 +27,7 @@ export type SessionTransaction = 'Commit' | 'Abort';
 export interface SessionTransactionDeps {
   sessionManager: Pick<SessionManager, 'getSession' | 'getSelectedSession'>;
   /** Commit the session. `ask` puts the session in a modal first. */
-  commit: (session: ActiveSession, options?: { ask?: boolean }) => Promise<void>;
+  commit: (session: ActiveSession, options?: { ask?: boolean }) => Promise<void | boolean>;
   /** Abort the session, under the same contract. */
   abort: (session: ActiveSession, options?: { ask?: boolean }) => Promise<void>;
 }
@@ -93,5 +93,5 @@ export async function sessionTransactionCommand(
   // unsaved editors) can raise a modal from there. The palette shows nothing
   // about which session is current, and "whichever one is current" is how work
   // lands in the wrong stone.
-  return await run(resolved.session, { ask: !resolved.fromRow });
+  await run(resolved.session, { ask: !resolved.fromRow });
 }

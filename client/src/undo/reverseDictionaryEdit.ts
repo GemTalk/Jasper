@@ -19,6 +19,8 @@
  * already warned about that; undoing it restores exactly the name that source expects.
  */
 import * as vscode from 'vscode';
+import { runRawWritesWithAutoCommit } from '../autoCommit/autoCommitRunner';
+import { commitStateNote } from '../autoCommit/autoCommitState';
 import { ActiveSession } from '../sessionManager';
 import { defaultQueryExecutorUsing, removeDictionary, renameDictionary } from '../browserQueries';
 import { logInfo } from '../gciLog';
@@ -63,9 +65,15 @@ export async function reverseDictionaryEdit(
     return true;
   }
 
-  const error = entry.after.present
-    ? renameBack(session, entry)
-    : reinsertDictionary(execute, entry.stashKey ?? '', entry.before.index);
+  const error = runRawWritesWithAutoCommit(
+    session,
+    'undo',
+    () =>
+      entry.after.present
+        ? renameBack(session, entry)
+        : reinsertDictionary(execute, entry.stashKey ?? '', entry.before.index),
+    (e) => e === null,
+  );
 
   if (error !== null) {
     void vscode.window.showErrorMessage(`Undo of ${entry.label} failed: ${error}`);
@@ -80,9 +88,10 @@ export async function reverseDictionaryEdit(
   void vscode.window.showInformationMessage(
     entry.after.present
       ? `Undid ${entry.label} — the dictionary is called ${entry.before.name} again. ` +
-          'Changed but NOT committed — commit when ready.'
+          commitStateNote(session.id, 'Changed but NOT committed — commit when ready.')
       : `Undid ${entry.label} — it is back at position ${entry.before.index} on the symbol ` +
-          'list, with every class it held. Changed but NOT committed — commit when ready.',
+          'list, with every class it held. ' +
+          commitStateNote(session.id, 'Changed but NOT committed — commit when ready.'),
   );
   return true;
 }
@@ -156,7 +165,7 @@ async function unlistCreated(
 
   void vscode.window.showInformationMessage(
     `Undid ${entry.label} — ${entry.after.name} is off the symbol list again. ` +
-      'Changed but NOT committed — commit when ready.',
+      commitStateNote(session.id, 'Changed but NOT committed — commit when ready.'),
   );
   return true;
 }

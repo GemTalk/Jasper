@@ -15,6 +15,7 @@
  * under a nonce), matching Jasper's webview convention.
  */
 import * as vscode from 'vscode';
+import { beforeChangeCommitNote, commitStateNote } from '../autoCommit/autoCommitState';
 import * as crypto from 'crypto';
 import { MethodVersion } from './methodHistoryModel';
 import { renderMethodHistoryHtml, renderVersionRows } from './methodHistoryPanelHtml';
@@ -47,6 +48,7 @@ export function showMethodHistoryPanel(
   methodLabel: string,
   versions: MethodVersion[],
   handlers: MethodHistoryPanelHandlers,
+  sessionId: number,
 ): vscode.WebviewPanel {
   const panel = vscode.window.createWebviewPanel(
     'gemstoneMethodHistory',
@@ -63,7 +65,8 @@ export function showMethodHistoryPanel(
     const CONFIRM = 'Restore';
     const choice = await vscode.window.showWarningMessage(
       `Restore ${methodLabel} to version [${index}]? This recompiles that version's source as ` +
-        'the new current version (a redo). Not committed — commit when ready.',
+        'the new current version (a redo). ' +
+        beforeChangeCommitNote(sessionId, 'Not committed — commit when ready.'),
       { modal: true },
       CONFIRM,
     );
@@ -76,7 +79,8 @@ export function showMethodHistoryPanel(
     void panel.webview.postMessage({ command: 'refresh', html: renderVersionRows(refreshed) });
     void vscode.window.showInformationMessage(
       `Restored ${methodLabel} to version [${index}] — recompiled as the new current version. ` +
-        'Not committed — commit when ready. (Undo by restoring the previous version.)',
+        commitStateNote(sessionId, 'Not committed — commit when ready.') +
+        ' (Undo by restoring the previous version.)',
     );
   };
   panel.webview.onDidReceiveMessage((message) => {

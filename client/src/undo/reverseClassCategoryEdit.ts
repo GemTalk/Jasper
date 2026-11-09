@@ -13,6 +13,8 @@
  * user put it under only if they decline.
  */
 import * as vscode from 'vscode';
+import { runWithAutoCommitDeferredSync } from '../autoCommit/autoCommitRunner';
+import { commitStateNote, heldBackNote } from '../autoCommit/autoCommitState';
 import { ActiveSession } from '../sessionManager';
 import { getClassesWithCategory, recategorizeClass } from '../browserQueries';
 import { logInfo } from '../gciLog';
@@ -64,17 +66,24 @@ export async function reverseClassCategoryEdit(
   }
 
   const failures: string[] = [];
-  for (const c of todo) {
-    try {
-      const answer = recategorizeClass(session, c.className, c.before, entry.dict);
-      // recategorizeClass reports a class it cannot resolve or write by RETURNING a status
-      // string rather than raising, so a bare call would read as success over a class nothing
-      // refiled.
-      if (!answer.startsWith('Recategorized:')) failures.push(`${c.className}: ${answer}`);
-    } catch (e: unknown) {
-      failures.push(`${c.className}: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
+  runWithAutoCommitDeferredSync(
+    session,
+    'undo',
+    () => {
+      for (const c of todo) {
+        try {
+          const answer = recategorizeClass(session, c.className, c.before, entry.dict);
+          // recategorizeClass reports a class it cannot resolve or write by RETURNING a status
+          // string rather than raising, so a bare call would read as success over a class
+          // nothing refiled.
+          if (!answer.startsWith('Recategorized:')) failures.push(`${c.className}: ${answer}`);
+        } catch (e: unknown) {
+          failures.push(`${c.className}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    },
+    () => failures.length === 0,
+  );
 
   await refreshExplorer();
   // Follow the class when exactly one moved -- the forward action SELECTED the category it went
@@ -89,7 +98,7 @@ export async function reverseClassCategoryEdit(
     void vscode.window.showErrorMessage(
       moved === 0
         ? `Undo of ${entry.label} failed: ${failures[0]}`
-        : `Undo of ${entry.label} was partial — ${failures[0]}`,
+        : `Undo of ${entry.label} was partial — ${failures[0]}.${heldBackNote(session.id)}`,
     );
     // Spent only when a class actually moved: a partial refile leaves the recorded state
     // describing nothing the dictionary holds, while a refile where every class failed moved
@@ -101,7 +110,7 @@ export async function reverseClassCategoryEdit(
 
   void vscode.window.showInformationMessage(
     `Undid ${entry.label} — ${moved} class${moved === 1 ? '' : 'es'} filed as before. ` +
-      'Changed but NOT committed — commit when ready.',
+      commitStateNote(session.id, 'Changed but NOT committed — commit when ready.'),
   );
   return true;
 }

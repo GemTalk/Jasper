@@ -7,6 +7,7 @@ import { DebuggerPanel } from './debugger/debuggerPanel';
 import { SystemBrowser } from './systemBrowser';
 import { GlobalsBrowser } from './globalsBrowser';
 import { CommentBrowser } from './commentBrowser';
+import { forgetSessionAutoCommit } from './autoCommit/autoCommitState';
 
 /**
  * Close a session's browsers, inspectors and debuggers and clear its breakpoints
@@ -27,6 +28,9 @@ export function registerSessionTeardown(
     // Before the panels close: the export set went with the session, so a
     // panel releasing its pins would only fail against the logged-out handle.
     forgetSessionPins(id);
+    // Before the debuggers close, so a closing one does not tell the user to Abort a session
+    // that is already gone.
+    forgetSessionAutoCommit(id);
     EnhancedInspector.disposeForSession(id);
     BasicInspector.disposeForSession(id);
     DebuggerPanel.disposeForSession(id);

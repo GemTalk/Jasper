@@ -27,6 +27,8 @@ vi.mock('../browserQueries', () => ({
 }));
 // The undo recorder's symbol-list read — mocked so the flow records without a stone (#434).
 vi.mock('../undo/queries/dictionaryQueries', () => ({ captureDictionary: vi.fn() }));
+const classDeletion = vi.hoisted(() => ({ commit: vi.fn() }));
+vi.mock('../undo/recordClassEdit', () => ({ beginClassDeletion: vi.fn(() => classDeletion) }));
 
 import * as vscode from 'vscode';
 import { FileInManager, newClassTemplate } from '../fileInManager';
@@ -35,6 +37,7 @@ import { ExportManager } from '../exportManager';
 import { GemStoneLogin } from '../loginTypes';
 import { fileInClass } from '../topazFileIn';
 import { SystemBrowser } from '../systemBrowser';
+import { beginClassDeletion } from '../undo/recordClassEdit';
 import * as queries from '../browserQueries';
 import { captureDictionary } from '../undo/queries/dictionaryQueries';
 import { peekUndoEntry, resetUndoStacks, undoStackDepth } from '../undo/undoStack';
@@ -527,6 +530,21 @@ describe('FileInManager', () => {
       deleteHandler({ files: [createUri(fsPath)] });
 
       expect(queries.deleteClass).toHaveBeenCalledWith(mockSession, 1, 'MyClass');
+    });
+
+    // On an auto-commit session the delete is committed at once, so a stray `git clean` in
+    // the mirror needs Undo to come back from.
+    it('records the class for Undo before removing it', () => {
+      const fsPath = '/workspace/gemstone/localhost/gs64stone/DataCurator/1-UserGlobals/MyClass.gs';
+      deleteHandler({ files: [createUri(fsPath)] });
+
+      expect(beginClassDeletion).toHaveBeenCalledWith(mockSession, [
+        { dict: 1, className: 'MyClass' },
+      ]);
+      expect(vi.mocked(beginClassDeletion).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(queries.deleteClass).mock.invocationCallOrder[0],
+      );
+      expect(classDeletion.commit).toHaveBeenCalledOnce();
       // Drop the (already-deleted) class from the persisted mirror state too.
       expect(mockExportManager.removeClassFile).toHaveBeenCalledWith(
         mockSession,
