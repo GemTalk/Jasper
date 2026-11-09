@@ -537,13 +537,15 @@ export class SessionManager {
         s,
         serverSession,
         'its run ignored every stop and is still running on the server',
+        true,
       );
     } else if (s.lastLogoutFailure) {
       // A failed logout can leave the gem logged in; see ActiveSession.logout.
       this.endLeftoverGem(
         s,
         serverSession,
-        'GemStone did not confirm the logout, so its gem may still be on the server',
+        "GemStone didn't confirm the logout, so its gem may still be on the server",
+        false,
       );
     }
     forgetSession(id);
@@ -794,21 +796,36 @@ export class SessionManager {
     }
   }
 
-  /** End a logged-out session's gem if it is still on the server, or say why not. */
-  private endLeftoverGem(s: ActiveSession, serverSession: string | undefined, why: string): void {
+  /**
+   * End a logged-out session's gem if it is still on the server, or say why not.
+   * Unless `known` (the gem is there), the warning only says it may be: a gem
+   * that died, or a stone that stopped, fails the logout too, and without the
+   * privileges Jasper can't look.
+   */
+  private endLeftoverGem(
+    s: ActiveSession,
+    serverSession: string | undefined,
+    why: string,
+    known: boolean,
+  ): void {
     const left = `Session ${s.id} is logged out, but ${why}.`;
+    const administrator = known
+      ? 'An administrator can end it'
+      : 'If it is still there, an administrator can end it';
     if (serverSession === undefined) {
-      void vscode.window.showWarningMessage(`${left} An administrator can end it.`);
+      void vscode.window.showWarningMessage(`${left} ${administrator}.`);
       return;
     }
     const failure = this.tryEndServerSession(s, serverSession);
     if (failure === undefined) return;
-    void vscode.window.showWarningMessage(
+    const notEnded =
       failure instanceof GciLibraryError && failure.number === NO_PRIVILEGE_ERROR
-        ? `${left} Ending it needs the SessionAccess and SystemControl privileges, which ${s.login.gs_user} ` +
-            `doesn't have. An administrator can end it with: System stopSession: ${serverSession}`
-        : `${left} It could not be ended (${failure instanceof Error ? failure.message : String(failure)}). ` +
-            `An administrator can end it with: System stopSession: ${serverSession}`,
+        ? `${known ? 'Ending it' : 'Checking for it'} needs the SessionAccess and SystemControl ` +
+          `privileges, which ${s.login.gs_user} doesn't have.`
+        : `${known ? 'It could not be ended' : 'Jasper could not check for it'} ` +
+          `(${failure instanceof Error ? failure.message : String(failure)}).`;
+    void vscode.window.showWarningMessage(
+      `${left} ${notEnded} ${administrator} with: System stopSession: ${serverSession}`,
     );
   }
 

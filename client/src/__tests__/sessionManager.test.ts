@@ -819,7 +819,47 @@ describe('SessionManager', () => {
       await expect(manager.logout(session.id)).resolves.toBe(true);
 
       expect(ran('descriptionOfSessionSerialNum: 7')).toBe(true);
+      expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
       expect(manager.getSession(session.id)).toBeUndefined();
+    });
+
+    // The gem may be gone: a dead gem or a stopped stone fails a logout too.
+    it('says only that the gem may be left when the user may not check', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Unprivileged' }, '/mock/lib');
+      gciLogout.mockReturnValueOnce({ sessionFreed: true, failure: { number: 0, message: '' } });
+      executeAndFetchStringMock.mockImplementation((...args: unknown[]) => {
+        if (String(args[1]).includes('descriptionOfSessionSerialNum:')) {
+          throw GciLibraryError.fromGciError({ number: 2151, message: 'no privilege' });
+        }
+        return stoneAnswer(...args);
+      });
+
+      await manager.logout(session.id);
+
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /may still be on the server\. Checking for it needs the SessionAccess and SystemControl privileges.* If it is still there, an administrator can end it with: System stopSession: 42$/,
+        ),
+      );
+    });
+
+    it('says only that the gem may be left when the check fails', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Stone gone' }, '/mock/lib');
+      gciLogout.mockReturnValueOnce({ sessionFreed: true, failure: { number: 0, message: '' } });
+      executeAndFetchStringMock.mockImplementation((...args: unknown[]) => {
+        if (String(args[1]).includes('descriptionOfSessionSerialNum:')) {
+          throw new Error('stone not running');
+        }
+        return stoneAnswer(...args);
+      });
+
+      await manager.logout(session.id);
+
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /may still be on the server\. Jasper could not check for it \(stone not running\)\. If it is still there, an administrator can end it with: System stopSession: 42$/,
+        ),
+      );
     });
 
     it('leaves the server alone after a logout GemStone confirmed', async () => {
