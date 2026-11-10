@@ -155,18 +155,19 @@ describe('tonel file in (integration)', () => {
   });
 
   describe('non-ASCII content', () => {
-    // On 3.6.x a non-ASCII character in compiled source trips the ComStrmSetCursor
-    // compiler bug, and Tonel file in needs 3.7.5 anyway (../tonelFileIn.ts).
-    const skipBelow37 = (ctx: TestContext): void => {
+    // Gated on the release Tonel file in supports (../tonelFileIn.ts), not on the
+    // bug: below it, at least through 3.6.2 and 3.7.4.3, a non-ASCII character in
+    // compiled source trips the ComStrmSetCursor compiler bug.
+    const skipBelowTonelRelease = (ctx: TestContext): void => {
       const version = exec('System gemVersionAt: #gsVersion');
       ctx.skip(
-        compareGemStoneVersions(version, '3.7.0') < 0,
-        `non-ASCII source needs GemStone 3.7 or later; this stone is ${version}`,
+        compareGemStoneVersions(version, '3.7.5') < 0,
+        `Tonel file in needs GemStone 3.7.5 or later; this stone is ${version}`,
       );
     };
 
     it('carries the comment and method source in intact', (ctx) => {
-      skipBelow37(ctx);
+      skipBelowTonelRelease(ctx);
       const label = "label\n\t^'café 中文 😀'";
 
       const outcome = fileIn(
