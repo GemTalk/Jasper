@@ -9,7 +9,9 @@
 //   node scripts/summarize-skipped-tests.mjs <dir-of-json-reports>
 //
 // Writes Markdown to $GITHUB_STEP_SUMMARY (falls back to stdout when unset,
-// for local runs).
+// for local runs). When any test is never executed, it also prints a
+// `::warning` workflow command: the job summary sits below every leg's test
+// report, while warnings show near the top of the run page and in a PR's Checks.
 
 import { readdirSync, readFileSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -53,11 +55,13 @@ function collectTestStats(reportFiles) {
   return stats;
 }
 
-function renderSummary(stats) {
-  const entries = [...stats.values()];
-  const alwaysSkipped = entries
+function findAlwaysSkipped(entries) {
+  return entries
     .filter((entry) => entry.seen > 0 && entry.skipped === entry.seen)
     .sort((a, b) => a.file.localeCompare(b.file) || a.fullName.localeCompare(b.fullName));
+}
+
+function renderSummary(entries, alwaysSkipped) {
   const skippedSomewhere = entries.filter((entry) => entry.skipped > 0);
 
   const lines = ['## Skipped tests report', ''];
@@ -72,7 +76,8 @@ function renderSummary(stats) {
       '| --- | --- |',
     );
     for (const entry of alwaysSkipped) {
-      lines.push(`| ${entry.fullName} | ${entry.file} |`);
+      // An unescaped `|` would split the row; a bare path renders `__tests__` as bold.
+      lines.push(`| ${entry.fullName.replaceAll('|', '\\|')} | \`${entry.file}\` |`);
     }
     lines.push('');
   }
@@ -84,6 +89,13 @@ function renderSummary(stats) {
   return lines.join('\n');
 }
 
+// GitHub shows the title in bold, so the count goes there. A warning is plain text
+// and no URL reaches one job's summary, so the message names the section.
+function renderNeverRunWarning(count) {
+  const tests = count === 1 ? '1 test' : `${count} tests`;
+  return `::warning title=${tests} never run on any leg::See "Skipped tests report summary" at the bottom of this run's Summary page.`;
+}
+
 function main() {
   const dir = process.argv[2];
   if (!dir) {
@@ -93,8 +105,13 @@ function main() {
   }
 
   const reportFiles = findReportFiles(dir);
-  const stats = collectTestStats(reportFiles);
-  const summary = renderSummary(stats);
+  const entries = [...collectTestStats(reportFiles).values()];
+  const alwaysSkipped = findAlwaysSkipped(entries);
+  const summary = renderSummary(entries, alwaysSkipped);
+
+  if (alwaysSkipped.length > 0) {
+    console.log(renderNeverRunWarning(alwaysSkipped.length));
+  }
 
   const summaryFile = process.env.GITHUB_STEP_SUMMARY;
   if (summaryFile) {

@@ -540,7 +540,8 @@ jobs:
   # Report-only, first step toward a future gate: aggregates the per-suite-run
   # JSON reports (one per GemStone version x bare/plugin run) to find tests that
   # are skipped (ctx.skip / it.skip / .todo) in every suite run — i.e. never
-  # actually executed anywhere — and posts them to the job summary. Never fails
+  # actually executed anywhere — and posts them to the job summary, with a
+  # warning annotation giving the count near the top of the run. Never fails
   # the build; see summarize-skipped-tests.mjs. Deliberately independent of
   # ci-complete: it's report-only and never fails, so branch protection / the
   # merge queue neither waits for it nor cares about its outcome.

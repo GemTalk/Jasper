@@ -14,8 +14,9 @@ import { withTemporaryFolderDo } from './support/file';
 // Black-box tests, following lintSupplyChain.test.ts: each case writes throwaway JSON
 // reports into a temp dir and runs the real script against it as a subprocess. That is
 // where the script's contract lives — it has no exports, takes a directory argument,
-// and communicates through exit status plus the Markdown it emits. GITHUB_STEP_SUMMARY
-// is left unset in the child env so that Markdown lands on stdout.
+// and communicates through exit status, the Markdown it emits and a `::warning`
+// workflow command. GITHUB_STEP_SUMMARY is left unset in the child env so that the
+// Markdown lands on stdout beside the warning.
 //
 // __dirname is client/src/__tests__, so the repo root is three levels up.
 const SCRIPT = path.resolve(__dirname, '..', '..', '..', 'scripts', 'summarize-skipped-tests.mjs');
@@ -71,8 +72,32 @@ describe('summarize-skipped-tests.mjs', () => {
 
     expect(status).toBe(0);
     expect(stdout).toContain('**1 test skipped in every suite run (never executed anywhere).**');
-    expect(stdout).toContain('| always skipped | client/src/__tests__/a.test.ts |');
+    expect(stdout).toContain('| always skipped | `client/src/__tests__/a.test.ts` |');
     expect(stdout).not.toContain('| sometimes skipped |');
     expect(stdout).toContain('2 distinct tests across suite runs; 2 skipped in at least one.');
+  });
+
+  it('raises a warning giving the count when a test is never run', () => {
+    const { stdout } = runSummarizer([
+      [
+        file('client/src/__tests__/a.test.ts', [
+          ['first', 'skipped'],
+          ['second', 'skipped'],
+        ]),
+      ],
+    ]);
+
+    expect(stdout).toContain(
+      '::warning title=2 tests never run on any leg::See "Skipped tests report summary" at the bottom of this run\'s Summary page.',
+    );
+  });
+
+  it('raises no warning when every test runs somewhere', () => {
+    const { stdout } = runSummarizer([
+      [file('client/src/__tests__/a.test.ts', [['ran', 'passed']])],
+    ]);
+
+    expect(stdout).toContain('No test is skipped in every suite run.');
+    expect(stdout).not.toContain('::warning');
   });
 });
