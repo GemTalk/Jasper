@@ -332,7 +332,7 @@ interface SelectorInfo {
 
 // ── Tree item payload classes ───────────────────────────────────────────────
 
-class DictItem extends vscode.TreeItem {
+export class DictItem extends vscode.TreeItem {
   constructor(
     public readonly dictName: string,
     public readonly dictIndex: number,
@@ -1156,6 +1156,8 @@ interface PendingClick {
   item: ClassItem | DictItem;
   /** Settles once the click has been committed or dropped; never rejects. */
   done: Promise<void>;
+  /** A move-back took the pane's highlight off this click's row while it read. */
+  highlightMoved?: boolean;
 }
 
 /** What the Classes pane shows on each class row of a dictionary, besides its name. */
@@ -1243,6 +1245,11 @@ export class ExplorerController {
   // Counts refreshes. A dictionary click reads by the clicked row's index, which a refresh
   // can shift to another dictionary, so a click that read across one is dropped.
   private refreshes = 0;
+  // Rows being highlighted again because the pane highlights another row (a dropped
+  // click's move-back, or a committed click's row after one). The move fires the pane's
+  // selection event like a user's click would, and it can arrive after the user has
+  // clicked another row; startClick must not read it as the user going back.
+  private readonly rowsBeingRehighlighted = new Set<ClassItem | DictItem>();
   // className → {current,total} position in its class history, for classes with
   // more than one version in the current dictionary; fetched once per dict so a
   // reshaped class row can render `Foo[2/3]`. Single-version classes are absent
@@ -2509,14 +2516,17 @@ export class ExplorerController {
       const stillApplies = () => isLatest() && this.refreshes === refreshes;
       try {
         const selection = await this.inReadOrder(() => this.readDictSelection(item, stillApplies));
-        if (selection && stillApplies()) return this.commitDictSelection(item, selection);
+        if (selection && stillApplies())
+          return this.commitClick(this.views?.dict, item, () =>
+            this.commitDictSelection(item, selection),
+          );
       } catch (e) {
         logClickFailure(e, this.session() !== session);
         if (isSelected()) return;
       }
       const { dictName, dictIndex } = this.state;
       if (this.dropClick(item, isLatest) && dictName !== undefined && dictIndex !== undefined)
-        void this.revealCascade(this.views?.dict, new DictItem(dictName, dictIndex));
+        this.rehighlightSelection(this.views?.dict, new DictItem(dictName, dictIndex));
     });
   }
 
@@ -2571,13 +2581,16 @@ export class ExplorerController {
         const selection = await this.inReadOrder(() =>
           this.readClassSelection(item, dictIndex, stillApplies),
         );
-        if (selection && stillApplies()) return this.commitClassSelection(item, selection, true);
+        if (selection && stillApplies())
+          return this.commitClick(this.views?.klass, item, () =>
+            this.commitClassSelection(item, selection, true),
+          );
       } catch (e) {
         logClickFailure(e, this.session() !== session);
         if (this.state.className === item.className) return;
       }
       if (this.dropClick(item, isLatest) && this.state.className !== undefined)
-        void this.revealCascade(this.views?.klass, new ClassItem(this.state.className));
+        this.rehighlightSelection(this.views?.klass, new ClassItem(this.state.className));
     });
   }
 
@@ -2610,8 +2623,10 @@ export class ExplorerController {
   // Runs a row click, unless it repeats the one still pending (VS Code reports a class
   // click twice, see handleClassClick) or clicks the row already selected. Clicking the
   // selected row abandons a click pending in the same pane: the user went back. One
-  // pending in another pane is left alone, since a highlight moving back (dropClick)
-  // lands here too.
+  // pending in another pane is left alone, and so is one in the same pane while that
+  // row is being highlighted again, since that highlight's selection event lands here
+  // too. A real click back to that row during the move is indistinguishable and is
+  // ignored too; the window lasts until the reveal settles.
   private startClick(
     item: ClassItem | DictItem,
     alreadySelected: boolean,
@@ -2620,13 +2635,40 @@ export class ExplorerController {
     const pending = this.pendingClick;
     if (pending && sameRow(pending.item, item)) return pending.done;
     if (alreadySelected) {
-      if (pending && samePane(pending.item, item)) this.pendingClick = undefined;
+      if (pending && samePane(pending.item, item)) {
+        const rehighlighting = [...this.rowsBeingRehighlighted].some((row) => sameRow(row, item));
+        if (rehighlighting) pending.highlightMoved = true;
+        else this.pendingClick = undefined;
+      }
       return Promise.resolve();
     }
     const click: PendingClick = { item, done: Promise.resolve() };
     this.pendingClick = click;
     click.done = run(() => this.pendingClick === click);
     return click.done;
+  }
+
+  // Commits the latest click, then highlights its row again if a move-back left the
+  // highlight on the previous row while the click read.
+  private commitClick<T>(
+    view: vscode.TreeView<T> | undefined,
+    item: T & (ClassItem | DictItem),
+    commit: () => void,
+  ): void {
+    const highlightMoved = this.pendingClick?.highlightMoved;
+    commit();
+    if (highlightMoved) this.rehighlightSelection(view, item);
+  }
+
+  // Highlights the selected row again when the pane highlights another one. VS Code
+  // delivers the selection event this fires before the reveal settles (40 of 40 reveals
+  // in VS Code 1.129.1 and 1.144.0), so the row stops counting as being highlighted again once it does.
+  private rehighlightSelection<T>(
+    view: vscode.TreeView<T> | undefined,
+    row: T & (ClassItem | DictItem),
+  ): void {
+    this.rowsBeingRehighlighted.add(row);
+    void this.revealCascade(view, row).finally(() => this.rowsBeingRehighlighted.delete(row));
   }
 
   // Ends a click that didn't commit. Answers whether its pane's highlight should go back to
