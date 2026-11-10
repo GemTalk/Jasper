@@ -9,9 +9,9 @@
 //   node scripts/summarize-skipped-tests.mjs <dir-of-json-reports>
 //
 // Writes Markdown to $GITHUB_STEP_SUMMARY (falls back to stdout when unset,
-// for local runs). When any test is never executed, it also prints a
-// `::warning` workflow command: the job summary sits below every leg's test
-// report, while warnings show near the top of the run page and in a PR's Checks.
+// for local runs). Also writes the never-executed count to $GITHUB_OUTPUT as
+// `never-run`; health-check.yml names a job after it, so the count shows in the
+// run's job graph instead of only in this summary, which sits below every leg's.
 
 import { readdirSync, readFileSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -89,13 +89,6 @@ function renderSummary(entries, alwaysSkipped) {
   return lines.join('\n');
 }
 
-// GitHub shows the title in bold, so the count goes there. A warning is plain text
-// and no URL reaches one job's summary, so the message names the section.
-function renderNeverRunWarning(count) {
-  const tests = count === 1 ? '1 test' : `${count} tests`;
-  return `::warning title=${tests} never run on any leg::See "Skipped tests report summary" at the bottom of this run's Summary page.`;
-}
-
 function main() {
   const dir = process.argv[2];
   if (!dir) {
@@ -109,8 +102,9 @@ function main() {
   const alwaysSkipped = findAlwaysSkipped(entries);
   const summary = renderSummary(entries, alwaysSkipped);
 
-  if (alwaysSkipped.length > 0) {
-    console.log(renderNeverRunWarning(alwaysSkipped.length));
+  const outputFile = process.env.GITHUB_OUTPUT;
+  if (outputFile) {
+    appendFileSync(outputFile, `never-run=${alwaysSkipped.length}\n`);
   }
 
   const summaryFile = process.env.GITHUB_STEP_SUMMARY;

@@ -14,9 +14,9 @@ import { withTemporaryFolderDo } from './support/file';
 // Black-box tests, following lintSupplyChain.test.ts: each case writes throwaway JSON
 // reports into a temp dir and runs the real script against it as a subprocess. That is
 // where the script's contract lives — it has no exports, takes a directory argument,
-// and communicates through exit status, the Markdown it emits and a `::warning`
-// workflow command. GITHUB_STEP_SUMMARY is left unset in the child env so that the
-// Markdown lands on stdout beside the warning.
+// and communicates through exit status, the Markdown it emits and the `never-run`
+// count it writes to GITHUB_OUTPUT. GITHUB_STEP_SUMMARY is left unset in the child
+// env so that the Markdown lands on stdout.
 //
 // __dirname is client/src/__tests__, so the repo root is three levels up.
 const SCRIPT = path.resolve(__dirname, '..', '..', '..', 'scripts', 'summarize-skipped-tests.mjs');
@@ -37,12 +37,19 @@ function runSummarizer(reports: ReportFile[][]) {
       fs.writeFileSync(path.join(dir, `report-${index}.json`), JSON.stringify({ testResults }));
     });
 
+    // Not .json, so the script doesn't read it as a report.
+    const outputFile = path.join(dir, 'github-output.txt');
     const result = spawnSync(process.execPath, [SCRIPT, dir], {
       encoding: 'utf8',
-      env: { ...process.env, GITHUB_STEP_SUMMARY: undefined },
+      env: { ...process.env, GITHUB_STEP_SUMMARY: undefined, GITHUB_OUTPUT: outputFile },
     });
 
-    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+    return {
+      status: result.status,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      output: fs.existsSync(outputFile) ? fs.readFileSync(outputFile, 'utf8') : '',
+    };
   });
 }
 
@@ -77,8 +84,8 @@ describe('summarize-skipped-tests.mjs', () => {
     expect(stdout).toContain('2 distinct tests across suite runs; 2 skipped in at least one.');
   });
 
-  it('raises a warning giving the count when a test is never run', () => {
-    const { stdout } = runSummarizer([
+  it('writes the never-run count as a step output', () => {
+    const { output } = runSummarizer([
       [
         file('client/src/__tests__/a.test.ts', [
           ['first', 'skipped'],
@@ -87,17 +94,15 @@ describe('summarize-skipped-tests.mjs', () => {
       ],
     ]);
 
-    expect(stdout).toContain(
-      '::warning title=2 tests never run on any leg::See "Skipped tests report summary" at the bottom of this run\'s Summary page.',
-    );
+    expect(output).toBe('never-run=2\n');
   });
 
-  it('raises no warning when every test runs somewhere', () => {
-    const { stdout } = runSummarizer([
+  it('writes a never-run count of 0 when every test runs somewhere', () => {
+    const { stdout, output } = runSummarizer([
       [file('client/src/__tests__/a.test.ts', [['ran', 'passed']])],
     ]);
 
     expect(stdout).toContain('No test is skipped in every suite run.');
-    expect(stdout).not.toContain('::warning');
+    expect(output).toBe('never-run=0\n');
   });
 });
