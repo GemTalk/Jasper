@@ -591,8 +591,10 @@ jobs:
   # The report's summary lands below every leg's, far down the run page. A job's
   # box in the graph shows only its name, so this job exists to carry the count
   # in its name; clicking the box opens its log, which links to the full list.
+  # always(): a skipped job's box shows its name expression unevaluated.
   never-run-count:
-    name: ${{ needs.report-skips.outputs.never-run == '0' && 'Every test runs somewhere' || format('⚠️ {0} tests never run', needs.report-skips.outputs.never-run) }}
+    name: ${{ needs.report-skips.result != 'success' && 'Never-run count unavailable' || needs.report-skips.outputs.never-run == '0' && 'Every test runs somewhere' || format('⚠️ {0} tests never run', needs.report-skips.outputs.never-run) }}
+    if: always()
     timeout-minutes: 1
     needs: report-skips
     runs-on: ubuntu-latest
@@ -603,11 +605,16 @@ jobs:
       - name: Link to the list of tests that never run
         env:
           GH_TOKEN: ${{ github.token }}
+          REPORT_RESULT: ${{ needs.report-skips.result }}
           NEVER_RUN: ${{ needs.report-skips.outputs.never-run }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
+          if [ "$REPORT_RESULT" != success ]; then
+            echo "No count: the skipped-tests report didn't run, because a leg failed or was cancelled."
+            exit 0
+          fi
           if [ "$NEVER_RUN" = 0 ]; then
             echo "Every test runs on at least one leg."
             exit 0
