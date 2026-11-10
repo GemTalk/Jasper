@@ -20,6 +20,7 @@ import {
   type ForceStopDeps,
 } from './forceStop';
 import { GciLibraryError } from './gciLibraryError';
+import { explainLoginFailure } from './loginFailureMessage';
 import { installMethodHistory } from './methodHistory/methodHistoryServer';
 import {
   TransactionMode,
@@ -251,7 +252,7 @@ export class SessionManager {
   }
 
   // Run GciTsLogin (blocking) and return the session handle, or throw with the
-  // GCI error message when no session was created.
+  // explained login failure when no session was created.
   private blockingLoginHandle(
     gci: GciLibrary,
     stoneNrs: string,
@@ -270,7 +271,7 @@ export class SessionManager {
       0,
     );
     if (!result.session) {
-      throw new Error(result.err.message || `Login failed (error ${result.err.number})`);
+      throw new Error(explainLoginFailure(result.err));
     }
     return result.session;
   }
@@ -308,7 +309,7 @@ export class SessionManager {
         return session;
       }
       if (result === -1) {
-        throw new Error(err.message || `Login failed (error ${err.number})`);
+        throw new Error(explainLoginFailure(err));
       }
       await this.sleep(LOGIN_POLL_INTERVAL_MS);
     }
@@ -410,7 +411,7 @@ export class SessionManager {
   ): { session: ActiveSession; logout: () => void } {
     const { session: transient, err } = session.transientLogin(login);
     if (!transient) {
-      throw new Error(err.message || `Login failed (error ${err.number})`);
+      throw new Error(explainLoginFailure(err));
     }
     transient.enhancedInspectorAvailable = false;
     transient.rbSupportAvailable = false;

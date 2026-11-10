@@ -116,6 +116,49 @@ describe('explainStartFailure', () => {
     expect(message).toContain('Starting NetLDI gs64ldi');
   });
 
+  describe('a stone with no key file', () => {
+    // The tail of what startstone 3.7.5 printed for a database laid out the way
+    // Jasper creates one, with conf/gemstone.key missing.
+    const MISSING_KEY_OUTPUT =
+      'startstone[Error]: Stone process (id=1077614) has died.\n' +
+      'KEYFILE = "/db/conf/gemstone.key";\n' +
+      ' ________________________________________________________________________________\n' +
+      '|     ERROR: Unable to stat() key file /db/conf/gemstone.key:\n' +
+      '| ENOENT No such file or directory                                               |\n' +
+      '|________________________________________________________________________________|';
+
+    it('says which key file is missing, and where the free one is', () => {
+      const message = explainStartFailure(
+        'Starting stone gs64stone',
+        MISSING_KEY_OUTPUT,
+        '/opt/gs',
+      );
+
+      expect(message).toMatch(
+        /^Starting stone gs64stone failed: its key file \/db\/conf\/gemstone.key does not exist/,
+      );
+      expect(message).toContain('/opt/gs/sys/community.starter.key');
+      expect(message).toContain(MISSING_KEY_OUTPUT);
+    });
+
+    it("recognises 3.6.2's wording of the same failure", () => {
+      const output =
+        '|     ERROR: Unable to stat() key file /db/conf/gemstone.key:\n' +
+        '| errno=2,ENOENT, The file or directory specified cannot be found                |';
+
+      expect(explainStartFailure('Starting stone gs64stone', output, '/opt/gs')).toMatch(
+        /its key file \/db\/conf\/gemstone.key does not exist/,
+      );
+    });
+
+    it('leaves a key file that exists but is refused for another reason alone', () => {
+      const output =
+        '|     ERROR: Unable to stat() key file /db/conf/gemstone.key:\n| EACCES Permission denied';
+
+      expect(explainStartFailure('Starting stone gs64stone', output, '/opt/gs')).toBeUndefined();
+    });
+  });
+
   it('lets every other failure through untouched', () => {
     expect(
       explainStartFailure('Starting stone gs64stone', 'extent0.dbf is in use', '/opt/gs'),

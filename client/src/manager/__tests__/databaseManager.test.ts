@@ -305,6 +305,35 @@ describe('DatabaseManager.createDatabaseDirect', () => {
     );
     expect(db.dirName).toBe('db-1');
   });
+
+  it('copies the free license key into the database', async () => {
+    await makeCreateManager().createDatabaseDirect('3.7.4', 'extent0', 'gs64stone', 'gs64ldi');
+
+    expect(wslCopyFileSync).toHaveBeenCalledWith(
+      path.join('/gs', 'sys', 'community.starter.key'),
+      path.join('/root', 'db-1', 'conf', 'gemstone.key'),
+    );
+    expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+  });
+
+  it('says the stone cannot start yet when there is no license key to copy', async () => {
+    vi.mocked(wslExistsSync).mockImplementation(
+      (p: string) => p !== path.join('/gs', 'sys', 'community.starter.key'),
+    );
+
+    const db = await makeCreateManager().createDatabaseDirect(
+      '3.7.4',
+      'extent0',
+      'gs64stone',
+      'gs64ldi',
+    );
+
+    const warning = String(vi.mocked(vscode.window.showWarningMessage).mock.calls[0]?.[0]);
+    expect(warning).toContain(path.join('/gs', 'sys', 'community.starter.key'));
+    expect(warning).toContain(path.join('/root', 'db-1', 'conf', 'gemstone.key'));
+    expect(warning).toMatch(/gs64stone can't start yet/);
+    expect(db.dirName).toBe('db-1');
+  });
 });
 
 // ── Registering an existing installation ──────────────────────────────────

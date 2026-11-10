@@ -116,8 +116,17 @@ export class DatabaseManager {
     progress?.report({ message: 'Copying key file...' });
     const gsPath = this.storage.getGemstonePath(version)!;
     const keySource = path.join(gsPath, 'sys', 'community.starter.key');
+    const keyDest = path.join(dbDir, 'conf', 'gemstone.key');
     if (wslExistsSync(keySource)) {
-      wslCopyFileSync(keySource, path.join(dbDir, 'conf', 'gemstone.key'));
+      wslCopyFileSync(keySource, keyDest);
+    } else {
+      // The stone config names keyDest regardless, and a stone whose key file
+      // is missing refuses to start.
+      const message =
+        `No license key was found at ${keySource}, so the stone ${stoneName} can't start yet. ` +
+        `Put a GemStone key file at ${keyDest}, then start it.`;
+      appendSysadmin(message);
+      void vscode.window.showWarningMessage(message);
     }
 
     // Copy the product tree's system.conf as default.conf so the documented

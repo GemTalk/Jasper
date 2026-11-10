@@ -4,6 +4,11 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Fixed
+
+- **A failed login says what to check.** GemStone often reports different mistakes the same way: error 4147 means a mistyped or stopped NetLDI, a host that doesn't exist, a login set to the wrong GemStone version, or a NetLDI that wants a host password. Jasper now reads GemStone's text to tell them apart and starts the message with what to check, followed by GemStone's own text and error number. When GemStone doesn't say why a login failed, the message says so and offers its advice only as something to try. ([#891](https://github.com/GemTalk/Jasper/issues/891))
+- **A database with no license key no longer fails silently.** When the GemStone install has no free key file to copy, creating a database now warns that its stone can't start yet and says where to put a key file. Starting a stone whose key file is missing now says so in one line, naming the file, instead of leaving it at the end of a long block of `startstone` output. ([#892](https://github.com/GemTalk/Jasper/issues/892))
+
 ## [1.18.0] - 2026-11-06
 
 ### Added
