@@ -2305,8 +2305,9 @@ describe('ProcessManager', () => {
     }
 
     it('names the missing key file, and the free one when the install has it', async () => {
-      const starterKey = nodePath.join(gsPath, 'sys', 'community.starter.key');
-      fs.writeFileSync(starterKey, '');
+      // Named with '/' on every host: on Windows gsPath is the stone's path inside WSL.
+      const starterKey = `${gsPath}/sys/community.starter.key`;
+      fs.writeFileSync(nodePath.join(gsPath, 'sys', 'community.starter.key'), '');
 
       const error = await failedStart();
 
