@@ -12,8 +12,8 @@ set -euo pipefail
 #             in .gemstone-integration-releases.json
 #   name      Instance name; defaults to 'jasper-test'
 #   --extent  (--start only) Pristine extent to start from; default
-#             extent0.dbf. `npm run test:server:start:rowan3` wraps the rowan3
-#             invocation, which is what the Tonel file out/in suites need.
+#             extent0.dbf. `--extent extent0.rowan3.dbf` builds the rowan3 stone
+#             the Tonel file out/in feature needs.
 
 SCRIPT_DIR="$(dirname "$0")"
 COMMAND="${1:-}"

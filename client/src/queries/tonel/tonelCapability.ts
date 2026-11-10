@@ -15,7 +15,7 @@
 // that do not exist on a base extent, and the 3.6.x tarballs ship no Rowan
 // extent of either generation — a rowan3 3.6.2 stone is not merely unsupported,
 // it is not constructible from the product. Where the gate fails the commands
-// are HIDDEN, not degraded, and every test for the feature SKIPS.
+// are HIDDEN, not degraded.
 //
 // Audience is core developers doing base-code development, not general users.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -23,12 +23,9 @@
 // Why this probe asks about selectors rather than versions
 // --------------------------------------------------------
 // A version check would freeze the feature to the releases we happened to know
-// about when we wrote it, and — worse — would keep the rowan3 test tier dark
-// forever after rowan3 reached CI, because nothing would notice it had. Jasper
-// runs no CI test against a rowan3 stone today, so this tier is developer-run
-// until that changes; gating on the machinery being *present* means the feature
-// and its tests switch themselves on the day rowan3 reaches CI or lands in the
-// base extent, with no edit and nobody remembering to make one.
+// about when we wrote it. Gating on the machinery being *present* means the
+// feature switches itself on the day rowan3 lands in the base extent, with no
+// edit and nobody remembering to make one.
 //
 // So the probe resolves exactly the classes this feature drives and asks
 // whether they understand exactly the selectors it sends.
@@ -52,7 +49,7 @@
 // modification visitors that write into a package directory on disk, and there
 // is no public single-class entry point on either side. Pinning the private
 // shape here is what turns "Rowan changed under us" from a mysterious runtime
-// failure into a named, hidden command and a skipped test.
+// failure into a named, hidden command.
 import { QueryExecutor } from '../types';
 import { escapeString, splitLines } from '../util';
 import { ROWAN_LOOKUP_PRELUDE, rowanLookupExpr } from './rowanLookup';
