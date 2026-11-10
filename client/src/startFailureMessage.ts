@@ -3,7 +3,7 @@
  * unhelpfully: an install Jasper cannot locate, GemStone itself complaining
  * about its own environment, and a stone with no key file.
  *
- * Both are here, free of vscode and of ProcessManager, because the wording *is*
+ * They are here, free of vscode and of ProcessManager, because the wording *is*
  * the fix — each of these replaced a message that sent users off to debug the
  * wrong thing — and wording is only worth having if it can be pinned down by a
  * test.
@@ -57,25 +57,12 @@ export function explainMissingInstall(version: string, rootPath: string): string
 }
 
 /**
- * The stone log excerpt `startstone` prints when the file `KEYFILE` names is
- * missing, across the table border it draws. 3.7.5's second line is
- * `| ENOENT No such file or directory`; 3.6.2's is the one below.
+ * Replace a child process's bare `GEMSTONE environment variable is not defined`
+ * with something that names the real situation, or return undefined to let the
+ * original output stand.
  *
- *     |     ERROR: Unable to stat() key file /db/conf/gemstone.key:
- *     | errno=2,ENOENT, The file or directory specified cannot be found
- */
-const MISSING_KEY_FILE = /Unable to stat\(\) key file (.+?):\s*\n[|\s]*(?:errno=\d+,\s*)?ENOENT/;
-
-/**
- * Replace output whose cause GemStone buries or misstates with something that
- * names the real situation, or return undefined to let the original output
- * stand.
- *
- * A missing key file is buried: it is the last line of a long stone log excerpt.
- *
- * A bare `GEMSTONE environment variable is not defined` is misstated: Jasper's
- * own start path always sets `GEMSTONE` — `getEnvironment` either sets it
- * or throws before anything is spawned — so relaying it verbatim sends the
+ * Jasper's own start path always sets `GEMSTONE` — `getEnvironment` either sets it
+ * or throws before anything is spawned — so relaying this verbatim sends the
  * user into a shell profile that is not the problem. It has been seen in
  * practice while a mismatched or externally started server was in the picture.
  */
@@ -84,14 +71,6 @@ export function explainStartFailure(
   output: string,
   gemstonePath: string,
 ): string | undefined {
-  const keyFile = MISSING_KEY_FILE.exec(output)?.[1];
-  if (keyFile) {
-    return (
-      `${label} failed: its key file ${keyFile} does not exist, and a stone can't start ` +
-      `without one. Put a GemStone key file there and start it again. The free one is ` +
-      `${gemstonePath}/sys/community.starter.key.\n\n${output}`
-    );
-  }
   if (!isBareGemstoneUndefined(output)) return undefined;
   return (
     `${label} failed. GemStone reported that GEMSTONE is not defined, but Jasper passed it ` +
@@ -104,5 +83,40 @@ export function explainStartFailure(
     `  • Refresh the Databases view. If a server for this database is shown as started ` +
     `outside Jasper, the command may have reached that one instead, and Jasper can offer to ` +
     `restart it under its own environment.\n\n${output}`
+  );
+}
+
+/**
+ * The stone log excerpt `startstone` prints when the file `KEYFILE` names is
+ * missing, across the table border it draws. 3.7.5's second line is
+ * `| ENOENT No such file or directory`; 3.6.2's is the one below.
+ *
+ *     |     ERROR: Unable to stat() key file /db/conf/gemstone.key:
+ *     | errno=2,ENOENT, The file or directory specified cannot be found
+ */
+const MISSING_KEY_FILE = /Unable to stat\(\) key file (.+?):\s*\n[|\s]*(?:errno=\d+,\s*)?ENOENT/;
+
+/**
+ * Name the missing key file a stone failed to start for, which GemStone leaves
+ * as the last line of a long stone log excerpt, or return undefined to let the
+ * output stand.
+ *
+ * `starterKey` is the install's free key file, only when it exists: database
+ * creation leaves the key missing exactly when it isn't there, and pointing the
+ * user at it would send them to the file creation just reported missing.
+ */
+export function explainMissingKeyFile(
+  label: string,
+  output: string,
+  starterKey: string | undefined,
+): string | undefined {
+  const keyFile = MISSING_KEY_FILE.exec(output)?.[1];
+  if (!keyFile) return undefined;
+  const whereToGetOne = starterKey
+    ? `The free one is ${starterKey}.`
+    : 'This GemStone install has no free key file to copy, so get one from GemTalk Systems.';
+  return (
+    `${label} failed: its key file ${keyFile} does not exist, and a stone can't start ` +
+    `without one. Put a GemStone key file there and start it again. ${whereToGetOne}\n\n${output}`
   );
 }

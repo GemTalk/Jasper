@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   explainMissingInstall,
+  explainMissingKeyFile,
   explainStartFailure,
   isBareGemstoneUndefined,
 } from '../startFailureMessage';
@@ -116,52 +117,72 @@ describe('explainStartFailure', () => {
     expect(message).toContain('Starting NetLDI gs64ldi');
   });
 
-  describe('a stone with no key file', () => {
-    // The tail of what startstone 3.7.5 printed for a database laid out the way
-    // Jasper creates one, with conf/gemstone.key missing.
-    const MISSING_KEY_OUTPUT =
-      'startstone[Error]: Stone process (id=1077614) has died.\n' +
-      'KEYFILE = "/db/conf/gemstone.key";\n' +
-      ' ________________________________________________________________________________\n' +
+  it('lets every other failure through untouched', () => {
+    expect(
+      explainStartFailure('Starting stone gs64stone', 'extent0.dbf is in use', '/opt/gs'),
+    ).toBeUndefined();
+  });
+});
+
+describe('explainMissingKeyFile', () => {
+  // The tail of what startstone 3.7.5 printed for a database laid out the way
+  // Jasper creates one, with conf/gemstone.key missing.
+  const MISSING_KEY_OUTPUT =
+    'startstone[Error]: Stone process (id=1077614) has died.\n' +
+    'KEYFILE = "/db/conf/gemstone.key";\n' +
+    ' ________________________________________________________________________________\n' +
+    '|     ERROR: Unable to stat() key file /db/conf/gemstone.key:\n' +
+    '| ENOENT No such file or directory                                               |\n' +
+    '|________________________________________________________________________________|';
+  const STARTER_KEY = '/opt/gs/sys/community.starter.key';
+
+  it('says which key file is missing, and where the free one is', () => {
+    const message = explainMissingKeyFile(
+      'Starting stone gs64stone',
+      MISSING_KEY_OUTPUT,
+      STARTER_KEY,
+    );
+
+    expect(message).toMatch(
+      /^Starting stone gs64stone failed: its key file \/db\/conf\/gemstone.key does not exist/,
+    );
+    expect(message).toContain(`The free one is ${STARTER_KEY}.`);
+    expect(message).toContain(MISSING_KEY_OUTPUT);
+  });
+
+  it('does not point at a free key file the install does not have', () => {
+    // Database creation leaves the key missing exactly when the free one isn't
+    // there, so naming it would contradict the warning creation just gave.
+    const message = explainMissingKeyFile(
+      'Starting stone gs64stone',
+      MISSING_KEY_OUTPUT,
+      undefined,
+    );
+
+    expect(message).toContain('has no free key file to copy');
+    expect(message).not.toContain('community.starter.key');
+  });
+
+  it("recognises 3.6.2's wording of the same failure", () => {
+    const output =
       '|     ERROR: Unable to stat() key file /db/conf/gemstone.key:\n' +
-      '| ENOENT No such file or directory                                               |\n' +
-      '|________________________________________________________________________________|';
+      '| errno=2,ENOENT, The file or directory specified cannot be found                |';
 
-    it('says which key file is missing, and where the free one is', () => {
-      const message = explainStartFailure(
-        'Starting stone gs64stone',
-        MISSING_KEY_OUTPUT,
-        '/opt/gs',
-      );
+    expect(explainMissingKeyFile('Starting stone gs64stone', output, STARTER_KEY)).toMatch(
+      /its key file \/db\/conf\/gemstone.key does not exist/,
+    );
+  });
 
-      expect(message).toMatch(
-        /^Starting stone gs64stone failed: its key file \/db\/conf\/gemstone.key does not exist/,
-      );
-      expect(message).toContain('/opt/gs/sys/community.starter.key');
-      expect(message).toContain(MISSING_KEY_OUTPUT);
-    });
+  it('leaves a key file that exists but is refused for another reason alone', () => {
+    const output =
+      '|     ERROR: Unable to stat() key file /db/conf/gemstone.key:\n| EACCES Permission denied';
 
-    it("recognises 3.6.2's wording of the same failure", () => {
-      const output =
-        '|     ERROR: Unable to stat() key file /db/conf/gemstone.key:\n' +
-        '| errno=2,ENOENT, The file or directory specified cannot be found                |';
-
-      expect(explainStartFailure('Starting stone gs64stone', output, '/opt/gs')).toMatch(
-        /its key file \/db\/conf\/gemstone.key does not exist/,
-      );
-    });
-
-    it('leaves a key file that exists but is refused for another reason alone', () => {
-      const output =
-        '|     ERROR: Unable to stat() key file /db/conf/gemstone.key:\n| EACCES Permission denied';
-
-      expect(explainStartFailure('Starting stone gs64stone', output, '/opt/gs')).toBeUndefined();
-    });
+    expect(explainMissingKeyFile('Starting stone gs64stone', output, STARTER_KEY)).toBeUndefined();
   });
 
   it('lets every other failure through untouched', () => {
     expect(
-      explainStartFailure('Starting stone gs64stone', 'extent0.dbf is in use', '/opt/gs'),
+      explainMissingKeyFile('Starting stone gs64stone', 'extent0.dbf is in use', STARTER_KEY),
     ).toBeUndefined();
   });
 });

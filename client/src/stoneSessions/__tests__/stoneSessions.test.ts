@@ -6,6 +6,7 @@ import { window } from '../../__mocks__/vscode';
 import type { ActiveSession } from '../../activeSession';
 import { GciLibraryError } from '../../gciLibraryError';
 import { DEFAULT_LOGIN } from '../../loginTypes';
+import { explainLoginFailure } from '../../loginFailureMessage';
 import {
   isGemCommand,
   gemIsHere,
@@ -106,6 +107,12 @@ describe('sessionAge', () => {
   ])('%i seconds reads as %s', (seconds, age) => {
     expect(sessionAge(1000, 1000 + seconds)).toBe(age);
   });
+});
+
+/** What a refused transient login now throws: see loginFailureMessage.ts. */
+const EXPLAINED_REFUSAL = explainLoginFailure({
+  number: 4051,
+  message: 'Login failed:  the userId/password combination is invalid or expired.',
 });
 
 describe('Stop Session', () => {
@@ -274,7 +281,23 @@ describe('Stop Session', () => {
     );
 
     expect(window.showWarningMessage).toHaveBeenLastCalledWith(
-      'GemStone session 7 could not be stopped (the stone went away). ' +
+      'GemStone session 7 could not be stopped: the stone went away. ' +
+        'An administrator can end it with: System stopSession: 7',
+    );
+  });
+
+  it('does not wrap a refused login, which ends in brackets of its own, in more brackets', async () => {
+    vi.mocked(window.showWarningMessage).mockResolvedValueOnce(STOP_SESSION);
+
+    await stopStoneSessionCommand(
+      row,
+      deps(async () => {
+        throw new Error(EXPLAINED_REFUSAL);
+      }),
+    );
+
+    expect(window.showWarningMessage).toHaveBeenLastCalledWith(
+      `GemStone session 7 could not be stopped: ${EXPLAINED_REFUSAL} ` +
         'An administrator can end it with: System stopSession: 7',
     );
   });
@@ -369,6 +392,20 @@ describe('Kill', () => {
         'Someone allowed to end process 39811 on uffda can run: kill -9 39811',
     );
     expect(d.refresh).toHaveBeenCalledWith(false);
+  });
+
+  it('adds no second full stop after a refused login, which already ends in one', async () => {
+    vi.mocked(window.showWarningMessage).mockResolvedValueOnce(KILL);
+    const d = deps(async () => {
+      throw new Error(EXPLAINED_REFUSAL);
+    });
+
+    await killStoneSessionCommand(row, d);
+
+    expect(window.showWarningMessage).toHaveBeenLastCalledWith(
+      `GemStone session 7 could not be killed: ${EXPLAINED_REFUSAL} ` +
+        'Someone allowed to end process 39811 on uffda can run: kill -9 39811',
+    );
   });
 
   it('says so when the gem outlives SIGKILL', async () => {

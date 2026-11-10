@@ -17,6 +17,7 @@ import {
   wslMkdirSync,
   wslRmSync,
 } from '../../wslFs';
+import { appendSysadmin } from '../../sysadminChannel';
 import { DatabaseManager } from '../databaseManager';
 import { GemStoneDatabase } from '../../sysadminTypes';
 import { SysadminStorage } from '../../sysadminStorage';
@@ -329,6 +330,8 @@ describe('DatabaseManager.createDatabaseDirect', () => {
     );
 
     const warning = String(vi.mocked(vscode.window.showWarningMessage).mock.calls[0]?.[0]);
+    // The toast goes when dismissed; the Admin log line is the lasting record.
+    expect(appendSysadmin).toHaveBeenCalledWith(warning);
     expect(warning).toContain(path.join('/gs', 'sys', 'community.starter.key'));
     expect(warning).toContain(path.join('/root', 'db-1', 'conf', 'gemstone.key'));
     expect(warning).toMatch(/gs64stone can't start yet/);

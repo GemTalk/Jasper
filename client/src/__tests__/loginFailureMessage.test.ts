@@ -139,16 +139,42 @@ describe('explainLoginFailure', () => {
     expect(explainLoginFailure(err)).toBe(err.message);
   });
 
+  // For a number whose text was never captured, the meaning is the whole
+  // diagnosis, so each one is pinned, not just the shape of the sentence.
   it.each([
-    ['logins turned off', 4053],
-    ['the stone at its session limit', 4039],
-    ['the user at its session limit', 4050],
-  ])('words the never-captured %s as what the number usually means', (_label, number) => {
+    ['logins turned off', 4053, /usually means the stone has logins turned off\./],
+    [
+      'the stone at its session limit',
+      4039,
+      /usually means the stone already has as many sessions/,
+    ],
+    ['the user at its session limit', 4050, /usually means this user already has as many sessions/],
+  ])('words the never-captured %s as what the number usually means', (_label, number, meaning) => {
     const message = explainLoginFailure({ number, message: 'whatever GemStone says' });
 
     expect(message).toMatch(new RegExp(`^GemStone error ${number} usually means`));
+    expect(message).toMatch(meaning);
     expect(message).toContain("If GemStone's text in brackets agrees, something to try");
-    expect(message).toContain('whatever GemStone says');
+    expect(message).toContain('(GemStone error ' + number + ': whatever GemStone says.)');
+  });
+
+  it.each([
+    ['no text', ''],
+    ['only "Login failed:"', 'Login failed: '],
+  ])('leaves out the brackets and the comparison when GemStone gave %s', (_label, message) => {
+    const explained = explainLoginFailure({ number: 4053, message });
+
+    expect(explained).toMatch(/usually means the stone has logins turned off\. Something to try:/);
+    expect(explained).not.toMatch(/in brackets agrees/);
+    expect(explained).toMatch(/\(GemStone error 4053\.\)$/);
+  });
+
+  it('gives no advice to a NetLDI refusal that now gives a reason', () => {
+    // The host-login advice is for a refusal with nothing after "failed:"; a
+    // reason GemStone adds later is its own diagnosis.
+    const err = { number: 4147, message: CAPTURED.noHostLogin.message + 'some future reason' };
+
+    expect(explainLoginFailure(err)).toBe(err.message.trim());
   });
 
   it('leaves an error it has no advice for as GemStone reported it', () => {
@@ -200,7 +226,8 @@ describe('the login error numbers, in every vendored GemStone release', () => {
 
         expect(entry, `${name} is not defined in ${revision}`).not.toBeNull();
         expect(Number(entry![1])).toBe(number);
-        expect(entry![2].replace(/\s+/g, ' ')).toContain(
+        // Without the comment's ` * ` line prefixes, so a rewrapped comment still matches.
+        expect(entry![2].replace(/\n\s*\*/g, ' ').replace(/\s+/g, ' ')).toContain(
           HEADER_MEANING[name as keyof typeof LOGIN_ERRORS],
         );
       },

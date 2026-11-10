@@ -83,6 +83,12 @@ const gciTsLogin = vi.fn((..._args: unknown[]) => ({
   err: { number: 0, message: '' },
 }));
 
+// What libgcits reports for a wrong password (captured from 3.7.5).
+const REFUSED_PASSWORD = {
+  number: 4051,
+  message: 'Login failed:  the userId/password combination is invalid or expired.',
+};
+
 // Non-blocking login controls (loginAsync). `supportsNb` picks the nb vs
 // blocking path; `nbLoginStarts` simulates GciTsNbLogin failing to start; the
 // GciTsNbLoginFinished sequence is consumed one per poll (0 pending, 1 done,
@@ -166,6 +172,7 @@ import { GciLibraryError } from '../gciLibraryError';
 import { isRunning, stopCallsOn, stoppedRunHolds } from '../nbRunner';
 import { FORCE_STOP_WAIT_MS } from '../forceStop';
 import { startNonBlockingCall } from './fakeActiveSession';
+import type { ActiveSession } from '../activeSession';
 
 describe('evaluateLoginPolicy', () => {
   it('allows the first login regardless of mode', () => {
@@ -1566,15 +1573,21 @@ describe('SessionManager', () => {
       expect(gciTsNbLogin).not.toHaveBeenCalled();
     });
 
-    it('rejects with the gem error message when a non-blocking login fails', async () => {
+    it('rejects with the explained failure when a non-blocking login fails', async () => {
       supportsNb = true;
-      nbFinishedSequence = [
-        { result: 0 },
-        { result: -1, err: { number: 4051, message: 'invalid password' } },
-      ];
+      nbFinishedSequence = [{ result: 0 }, { result: -1, err: REFUSED_PASSWORD }];
 
       await expect(manager.loginAsync(testLogin(), '/mock/lib')).rejects.toThrow(
-        /invalid password/,
+        /user name or password is wrong.*\(GemStone error 4051: the userId\/password combination/,
+      );
+    });
+
+    it('rejects with the explained failure when a blocking login fails', async () => {
+      supportsNb = false;
+      gciTsLogin.mockReturnValueOnce({ session: null as never, err: REFUSED_PASSWORD });
+
+      await expect(manager.loginAsync(testLogin(), '/mock/lib')).rejects.toThrow(
+        /user name or password is wrong.*\(GemStone error 4051: the userId\/password combination/,
       );
     });
 
@@ -1604,6 +1617,18 @@ describe('SessionManager', () => {
       supportsNb = false;
       const session = await manager.loginAsync(testLogin(), '/mock/lib');
       expect(session.id).toBe(1);
+    });
+  });
+
+  describe('loginTransient', () => {
+    it('rejects with the explained failure when the stone refuses it', () => {
+      const through = {
+        transientLogin: () => ({ session: undefined, err: REFUSED_PASSWORD }),
+      } as unknown as ActiveSession;
+
+      expect(() => manager.loginTransient({ ...DEFAULT_LOGIN, label: 'Test' }, through)).toThrow(
+        /user name or password is wrong.*\(GemStone error 4051: the userId\/password combination/,
+      );
     });
   });
 });

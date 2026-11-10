@@ -33,7 +33,11 @@ import {
   pickExternalServer,
   withServerEnvironment,
 } from '../externalServerScan';
-import { explainMissingInstall, explainStartFailure } from '../startFailureMessage';
+import {
+  explainMissingInstall,
+  explainMissingKeyFile,
+  explainStartFailure,
+} from '../startFailureMessage';
 
 /** Ceiling on the `ps` calls the external-server scan makes. They run
  *  synchronously from the Databases tree's getChildren, on the extension host's
@@ -967,12 +971,32 @@ export class ProcessManager {
       // the holder here rather than in one command means none of them are left
       // relaying an error the user cannot act on.
       const output = e instanceof Error ? e.message : String(e);
+      // A missing key file is named here for the same reason.
+      const missingKey = explainMissingKeyFile(
+        `Starting stone ${db.config.stoneName}`,
+        output,
+        this.starterKeyIn(gsPath),
+      );
+      if (missingKey) throw new Error(missingKey, { cause: e });
       const explained = explainExtentLocked(
         db.config.stoneName,
         output,
         (await this.findExtentHolders(db)) ?? [],
       );
       throw explained ? new Error(explained) : e;
+    }
+  }
+
+  /** The install's free key file, when it has one. `gsPath` is the path the
+   *  stone runs with, which on Windows is inside WSL, so it is checked there. */
+  private starterKeyIn(gsPath: string): string | undefined {
+    const key = `${gsPath}/sys/community.starter.key`;
+    if (!needsWsl()) return fs.existsSync(key) ? key : undefined;
+    try {
+      wslExecSync(`test -e ${shellQuote(key)}`);
+      return key;
+    } catch {
+      return undefined;
     }
   }
 

@@ -59,13 +59,23 @@ function guess(whatFailed: string, tryThis: string): string {
   return `${whatFailed} GemStone didn't say why, so this is only something to try: ${tryThis}`;
 }
 
+/** GemStone's words as they go in the brackets: no "Login failed:" (the caller says it). */
+function gemstoneWords(message: string): string {
+  return message
+    .trim()
+    .replace(/^Login failed:\s*/, '')
+    .replace(/[\s.]+$/, '');
+}
+
 /** Advice from the number alone, for an error whose text has never been seen. */
-function usually(number: number, meaning: string, tryThis: string): string {
-  return `GemStone error ${number} usually means ${meaning}. If GemStone's text in brackets agrees, something to try: ${tryThis}`;
+function usually(number: number, meaning: string, tryThis: string, said: string): string {
+  const askToCompare = said ? "If GemStone's text in brackets agrees, something" : 'Something';
+  return `GemStone error ${number} usually means ${meaning}. ${askToCompare} to try: ${tryThis}`;
 }
 
 function adviceFor(err: ReportedGciError): string | undefined {
   const text = err.message;
+  const said = gemstoneWords(text);
   switch (err.number) {
     case GS_ERR_LOGIN_DENIAL:
       if (!LOGIN_DENIED.test(text)) return undefined;
@@ -86,18 +96,21 @@ function adviceFor(err: ReportedGciError): string | undefined {
         GS_ERR_LOGINS_DISABLED,
         'the stone has logins turned off',
         'ask its administrator to allow logins.',
+        said,
       );
     case GS_ERR_MAX_SESSIONS_LIMIT:
       return usually(
         GS_ERR_MAX_SESSIONS_LIMIT,
         'the stone already has as many sessions as it allows',
         'log out a session you no longer need, or ask its administrator.',
+        said,
       );
     case GS_ERR_ACTIVE_USER_LIMIT:
       return usually(
         GS_ERR_ACTIVE_USER_LIMIT,
         'this user already has as many sessions as it is allowed',
         'log out one of them, or use another user.',
+        said,
       );
     case ERR_IN_LOGIN:
       return adviceForGemService(text);
@@ -141,13 +154,15 @@ function adviceForGemService(text: string): string | undefined {
 /**
  * The message a failed login is reported with: advice first when there is any,
  * with GemStone's own words in brackets after it. Brackets rather than a blank
- * line, because a VS Code notification drops line breaks. GemStone's leading
- * "Login failed:" goes, since the caller already says it.
+ * line, because a VS Code notification drops line breaks. With no advice, the
+ * text is left exactly as GemStone gave it.
  */
 export function explainLoginFailure(err: ReportedGciError): string {
   const text = err.message.trim();
   const advice = adviceFor(err);
   if (!advice) return text || `Login failed (error ${err.number})`;
-  const gemstoneSaid = text.replace(/^Login failed:\s*/, '').replace(/[\s.]+$/, '');
-  return `${advice} (GemStone error ${err.number}: ${gemstoneSaid}.)`;
+  const said = gemstoneWords(text);
+  return said
+    ? `${advice} (GemStone error ${err.number}: ${said}.)`
+    : `${advice} (GemStone error ${err.number}.)`;
 }
