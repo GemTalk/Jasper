@@ -8,7 +8,7 @@
 // The class types are Rowan's spellings (`normal`, `variable`, `byteSubclass`), as
 // its reader answers them on a 3.7.5 rowan3 stone — see CREATION_SELECTOR in
 // ../tonelFileIn.ts.
-import { describe, it, expect, vi, type TestContext } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
@@ -18,7 +18,7 @@ import type { ActiveSession } from '../../sessionManager';
 import { applyTonelClass } from '../tonelFileIn';
 import type { TonelClass } from '../../queries/tonel/tonelWire';
 import { testActiveSession } from '../../__tests__/testActiveSession';
-import { compareGemStoneVersions } from '../../gemStoneVersion';
+import { knownGemStoneBugs, skipForKnownGemStoneBug } from '../../__tests__/knownGemStoneBugs';
 
 const PROBE = 'JasperTonelFileInProbe';
 
@@ -68,11 +68,13 @@ describe('tonel file in (integration)', () => {
     it('removes a method the file does not carry', () => {
       fileIn(probe());
       q.compileMethod(session(), PROBE, false, 'accessing', 'addedLater\n\t^42');
+      q.compileMethod(session(), PROBE, true, 'accessing', 'addedLater\n\t^42');
 
       const outcome = fileIn(probe());
 
       expect(outcome.errors).toEqual([]);
       expect(value(`${PROBE} includesSelector: #addedLater`)).toBe('false');
+      expect(value(`${PROBE} class includesSelector: #addedLater`)).toBe('false');
       expect(value(`${PROBE} includesSelector: #size`)).toBe('true');
     });
 
@@ -155,19 +157,8 @@ describe('tonel file in (integration)', () => {
   });
 
   describe('non-ASCII content', () => {
-    // Gated on the release Tonel file in supports (../tonelFileIn.ts), not on the
-    // bug: below it, at least through 3.6.2 and 3.7.4.3, a non-ASCII character in
-    // compiled source trips the ComStrmSetCursor compiler bug.
-    const skipBelowTonelRelease = (ctx: TestContext): void => {
-      const version = exec('System gemVersionAt: #gsVersion');
-      ctx.skip(
-        compareGemStoneVersions(version, '3.7.5') < 0,
-        `Tonel file in needs GemStone 3.7.5 or later; this stone is ${version}`,
-      );
-    };
-
     it('carries the comment and method source in intact', (ctx) => {
-      skipBelowTonelRelease(ctx);
+      skipForKnownGemStoneBug(knownGemStoneBugs.nonAsciiSourceCompile, ctx, session());
       const label = "label\n\t^'café 中文 😀'";
 
       const outcome = fileIn(
