@@ -9,7 +9,9 @@
 //   node scripts/summarize-skipped-tests.mjs <dir-of-json-reports>
 //
 // Writes Markdown to $GITHUB_STEP_SUMMARY (falls back to stdout when unset,
-// for local runs).
+// for local runs). Also writes the never-executed count to $GITHUB_OUTPUT as
+// `never-run`; health-check.yml names a job after it, so the count shows in the
+// run's job graph instead of only in this summary, which sits below every leg's.
 
 import { readdirSync, readFileSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -53,11 +55,13 @@ function collectTestStats(reportFiles) {
   return stats;
 }
 
-function renderSummary(stats) {
-  const entries = [...stats.values()];
-  const alwaysSkipped = entries
+function findAlwaysSkipped(entries) {
+  return entries
     .filter((entry) => entry.seen > 0 && entry.skipped === entry.seen)
     .sort((a, b) => a.file.localeCompare(b.file) || a.fullName.localeCompare(b.fullName));
+}
+
+function renderSummary(entries, alwaysSkipped) {
   const skippedSomewhere = entries.filter((entry) => entry.skipped > 0);
 
   const lines = ['## Skipped tests report', ''];
@@ -72,7 +76,8 @@ function renderSummary(stats) {
       '| --- | --- |',
     );
     for (const entry of alwaysSkipped) {
-      lines.push(`| ${entry.fullName} | ${entry.file} |`);
+      // An unescaped `|` would split the row; a bare path renders `__tests__` as bold.
+      lines.push(`| ${entry.fullName.replaceAll('|', '\\|')} | \`${entry.file}\` |`);
     }
     lines.push('');
   }
@@ -93,8 +98,14 @@ function main() {
   }
 
   const reportFiles = findReportFiles(dir);
-  const stats = collectTestStats(reportFiles);
-  const summary = renderSummary(stats);
+  const entries = [...collectTestStats(reportFiles).values()];
+  const alwaysSkipped = findAlwaysSkipped(entries);
+  const summary = renderSummary(entries, alwaysSkipped);
+
+  const outputFile = process.env.GITHUB_OUTPUT;
+  if (outputFile) {
+    appendFileSync(outputFile, `never-run=${alwaysSkipped.length}\n`);
+  }
 
   const summaryFile = process.env.GITHUB_STEP_SUMMARY;
   if (summaryFile) {

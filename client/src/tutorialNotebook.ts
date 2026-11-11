@@ -272,7 +272,7 @@ The second cell keeps the collection in a variable so it can be changed step by 
     title: 'The debugger',
     body: `The debugger is one of Smalltalk's signature tools. When code raises an unhandled error, GemStone can open a debugger *on the live, suspended execution* — you inspect variables, evaluate expressions in context, edit the method, and continue.
 
-Notebook cells report an error inline rather than opening the debugger. To experience the debugger, use **Debug It** on an expression in a GemStone Workspace, or run failing code there — for example \`nil foo\` or \`self halt\`. Jasper offers both a VS Code debugger and an Enhanced (Smalltalk-style) debugger.
+A notebook cell reports an error inline, but \`self halt\` in a cell, or a breakpoint in a method the cell calls, opens the debugger. To see the debugger on an error, use **Debug It** on an expression in a GemStone Workspace, or run failing code there — for example \`nil foo\`.
 
 Run the cell below to see how an error is reported here.`,
     snippets: ['"An intentional error - a nil does not understand #foo:"\nnil foo'],

@@ -305,7 +305,12 @@ export function startClientForwarderMode(session: ActiveSession, source: string)
  * thrown.
  */
 export function endClientForwarderMode(session: ActiveSession): string {
-  return runFetchString(session, END_CLIENT_FORWARDER_MODE_CODE);
+  return tryEndClientForwarderMode(session) ?? '';
+}
+
+/** {@link endClientForwarderMode}, answering undefined when the end failed. */
+export function tryEndClientForwarderMode(session: ActiveSession): string | undefined {
+  return tryFetchString(session, END_CLIENT_FORWARDER_MODE_CODE);
 }
 
 /** Drain buffered transcript output (queries, MCP, debugger-step paths). */
@@ -314,6 +319,10 @@ export function drainTranscript(session: ActiveSession): string {
 }
 
 function runFetchString(session: ActiveSession, code: string): string {
+  return tryFetchString(session, code) ?? '';
+}
+
+function tryFetchString(session: ActiveSession, code: string): string | undefined {
   try {
     return session.executeAndFetchString(code);
   } catch (e) {
@@ -321,7 +330,7 @@ function runFetchString(session: ActiveSession, code: string): string {
       session.id,
       `Transcript sink call failed: ${e instanceof Error ? e.message : String(e)}`,
     );
-    return '';
+    return undefined;
   }
 }
 
@@ -369,8 +378,7 @@ export function decodeTranscriptForwarderSend(
  *
  * `flags` are what each resume runs with, and must be the flags the call was
  * started with, less any single-step: a resume with the debug flag dropped runs
- * the rest of the call with every breakpoint disarmed. Notebook cells start
- * with 0, so the default keeps them as they were.
+ * the rest of the call with every breakpoint disarmed.
  */
 export async function settleNbResult(
   session: ActiveSession,

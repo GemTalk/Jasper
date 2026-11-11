@@ -7,8 +7,8 @@ export const MAX_CELL_RESULT = 256 * 1024;
 
 /**
  * Throw for a cell whose call ended in an error, clearing its process first. A
- * cell's code catches every Smalltalk error, so this is a stop that got past its
- * handlers, and no notebook debugger will own the process.
+ * cell's code reports Smalltalk errors itself, and a halt or breakpoint goes to
+ * the debugger, so this is a stop nothing else will own.
  */
 export async function failCell(session: ActiveSession, err: GciError): Promise<never> {
   await clearInBackground(session, err.context);
