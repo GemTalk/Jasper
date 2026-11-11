@@ -10,8 +10,10 @@
 // So does a file that has more sessions logged in at once than it booked.
 // If the watcher can't log in, or fails mid-run, every file still waiting on
 // the gate, and the run itself, fails with that error rather than vitest crashing.
-// The watcher logs in only when the first file asks for sessions, so a run of
-// unit tests alone never touches the stone or needs client/.env.test.
+// The watcher logs in only when the first file asks for sessions, so a run in
+// which no file books never logs the gate in or needs client/.env.test. A login
+// a test worker made before then, already gone by the watcher's first look,
+// goes unseen.
 // The bookkeeping is in sessionGateLedger.ts; this is its sockets and watcher.
 import { writeFileSync, rmSync } from 'node:fs';
 import { createServer, type Socket } from 'node:net';
@@ -73,7 +75,6 @@ export async function startGate(
   const waitTimers = new Map<Socket, NodeJS.Timeout>();
   const afterNextSample: (() => void)[] = [];
   let watcher: Watcher | undefined;
-  let watcherStartedAt = 0;
   let watcherFailure: string | undefined;
 
   const reply = (socket: Socket, msg: object) => {
@@ -107,7 +108,7 @@ export async function startGate(
           reply(socket, { error: watcherFailure });
         } else if (msg.op === 'acquire') {
           if (!watcher) {
-            watcherStartedAt = Date.now();
+            ledger.restartClock();
             try {
               watcher = startWatcher(onSample, (error) =>
                 failWaiting('the session watching the test stone failed', error),
@@ -222,7 +223,7 @@ export async function startGate(
     console.log(
       `session gate: ${summary.grants} grants, ${summary.waited} waited, total ${total} ms, p50 ${summary.p50WaitMs} ms, p90 ${summary.p90WaitMs} ms, max ${summary.maxWaitMs} ms, peak committed ${summary.peakCommitted}/${ledger.capacity}, peak live ${summary.peakLive}; ${watcher.lookMs.length} looks at the stone, p50 ${summary.watcherLookMs.p50} ms, p99 ${summary.watcherLookMs.p99} ms, max ${summary.watcherLookMs.max} ms`,
     );
-    const missed = ledger.loginsNeverSeen(watcher.serial, endSerial, watcherStartedAt);
+    const missed = ledger.loginsNeverSeen(watcher.serial, endSerial);
     if (missed.length > 0) {
       throw new Error(
         `session gate: ${missed.length} login(s) came and went between two looks at the stone, and no file reported them. A test, or app code it called, logged in without reporting it (see reportLogin in sessionGateClient.ts), or the stone refused a login whose refusal was not reported within ${REFUSAL_REPORT_SLACK_MS / 1000} s of it. A login from outside the run during it shows up here too.\n${missed.map((m) => describeUnseen(ledger, m)).join('\n')}`,

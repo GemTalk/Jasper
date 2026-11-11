@@ -58,7 +58,7 @@ export class SessionLedger<K> {
   private readonly queue: Waiter<K>[] = [];
   private live: Set<string> | undefined;
   // Sessions already on the stone at the watcher's first look belong to no test file.
-  private before: Set<string> | undefined;
+  private before: Map<string, number> | undefined;
   private readonly sightings = new Map<string, Sighting>();
   // Login serial -> when a file reported it.
   private readonly reported = new Map<string, number>();
@@ -72,14 +72,19 @@ export class SessionLedger<K> {
   readonly grants: Grant[] = [];
   peakCommitted = 0;
   peakLive = 0;
-  readonly startedAt: number;
+  private startedAt: number;
 
-  /** `capacity` can be set later, once the stone has said how many sessions it takes, but before any {@link grant}. */
+  /** `capacity` can be set later, once the stone has said how many sessions it takes, but before any {@link request}. */
   constructor(
     public capacity: number,
     private readonly clock: () => number = Date.now,
   ) {
     this.startedAt = clock();
+  }
+
+  /** Starts the run's clock again, as the watcher logs in: times in the run are counted from here. */
+  restartClock(): void {
+    this.startedAt = this.clock();
   }
 
   /** Puts `key` in line for `request.n` sessions; {@link grant} answers who gets in. */
@@ -177,7 +182,7 @@ export class SessionLedger<K> {
     const serials = new Set(sessions.keys());
     let leftOver: Map<string, number> | undefined;
     if (!this.before) {
-      this.before = serials;
+      this.before = sessions;
       leftOver = sessions;
     }
     const now = this.clock();
@@ -266,9 +271,13 @@ export class SessionLedger<K> {
     return found;
   }
 
-  /** Logins from test workers no file reported and no file was blamed for, such as one made after its file gave its booking back. */
+  /**
+   * Logins from test workers no file reported and no file was blamed for, such
+   * as one made after its file gave its booking back, or one a worker made
+   * before any file booked that was still on the stone at the first look.
+   */
   stray(): { serial: string; pid: number }[] {
-    return [...this.sightings]
+    const fromSightings = [...this.sightings]
       .filter(
         ([serial, s]) =>
           this.workerPids.has(s.pid) &&
@@ -277,13 +286,16 @@ export class SessionLedger<K> {
           !this.excused.has(serial),
       )
       .map(([serial, s]) => ({ serial, pid: s.pid }));
+    const fromBefore = [...(this.before ?? [])]
+      .filter(([, pid]) => this.workerPids.has(pid))
+      .map(([serial, pid]) => ({ serial, pid }));
+    return [...fromBefore, ...fromSightings];
   }
 
   /**
    * Login serials go up by one per login on the stone, so a serial between two
    * the gate knows of that it never saw nor was told about is a login too short
-   * for the watcher's look. `firstSerial` and `endSerial` bound the run's logins;
-   * `firstAt` is when `firstSerial` logged in.
+   * for the watcher's look. `firstSerial` and `endSerial` bound the run's logins.
    * Answers each with the files that held bookings in the time it can have
    * happened, the known serials either side, and the refusals reported near it.
    * Each reported refusal not already matched to a session the watcher saw
@@ -292,17 +304,13 @@ export class SessionLedger<K> {
    * A login the watcher's look leaves out (GcUser, SymbolUser), or one made
    * between the watcher's own login and its first look, would show here too.
    */
-  loginsNeverSeen(
-    firstSerial: number | undefined,
-    endSerial: number,
-    firstAt = this.startedAt,
-  ): UnseenLogin[] {
+  loginsNeverSeen(firstSerial: number | undefined, endSerial: number): UnseenLogin[] {
     const when = new Map<number, KnownSerial>();
     const know = (serial: number, at: number, how: KnownSerial['how']) => {
       const prev = when.get(serial);
       if (!prev || at < prev.at) when.set(serial, { serial, at, how });
     };
-    if (firstSerial !== undefined) know(firstSerial, firstAt, 'run edge');
+    if (firstSerial !== undefined) know(firstSerial, this.startedAt, 'run edge');
     know(endSerial, this.clock(), 'run edge');
     for (const [serial, s] of this.sightings) know(Number(serial), s.firstSeen, 'seen');
     for (const [serial, at] of this.reported) know(Number(serial), at, 'reported');

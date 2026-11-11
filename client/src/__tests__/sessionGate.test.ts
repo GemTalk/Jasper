@@ -118,6 +118,7 @@ describe('the session gate', () => {
     describe('when its watcher cannot log in', () => {
       beforeEach(async () => {
         teardown = await startGate(socketPath, () => {
+          watchersStarted++;
           throw new Error('no such stone');
         });
       });
@@ -128,6 +129,15 @@ describe('the session gate', () => {
         expect(answer).toEqual({
           error: expect.stringMatching(/could not log in the session that watches.*no such stone/),
         });
+      });
+
+      it('does not try to log in again for a later booking', async () => {
+        await ask(1);
+
+        const { answer } = await ask(1);
+
+        expect(watchersStarted).toBe(1);
+        expect(answer).toEqual({ error: expect.stringMatching(/could not log in/) });
       });
 
       it('fails the run at teardown', async () => {
