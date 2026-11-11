@@ -115,13 +115,11 @@ export class ActiveSession {
    * A failed logout usually frees it too; only a refusal because a call is
    * still in progress leaves it usable.
    *
-   * GemStone refuses a logout while a call on another thread holds the
-   * session, but 3.7.6 no longer says why (GemStone bug 52223): it answers
-   * FALSE with no error number. While one of this session's own worker calls
-   * is outstanding, that answer is taken as the refusal it is, not as a
-   * session already gone. GemStone still decides: a worker call that has
-   * already let go of the session, though its result is not read yet, does
-   * not stop the logout.
+   * GemStone 3.7.6 refuses a logout without saying why (see
+   * `GciLibrary.logout`), so the library is told whether one of this session's
+   * own worker calls is outstanding. GemStone still decides: a worker call
+   * that has already let go of the session, though its result is not read
+   * yet, does not stop the logout.
    *
    * A non-blocking call whose result is not collected yet does not stop the
    * logout, but it can outlive it: a gem whose run has resumed a soft break
@@ -132,10 +130,11 @@ export class ActiveSession {
    * @returns whether the session is gone; false only for that refusal.
    */
   logout(): boolean {
-    const { sessionFreed, failure } = this.gci.logout(this.handle());
+    const { sessionFreed, failure } = this.gci.logout(
+      this.handle(),
+      this.workerCallsInProgress > 0,
+    );
     this.lastLogoutFailure = failure;
-    const unexplainedRefusal = failure?.number === 0 && this.workerCallsInProgress > 0;
-    if (unexplainedRefusal) return false;
     if (sessionFreed) this.handle = loggedOut;
     return sessionFreed;
   }

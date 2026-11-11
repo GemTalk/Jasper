@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { GemStoneLogin } from '../loginTypes';
 import { ActiveSession } from '../activeSession';
+import { GCI_ERR_OP_IN_PROGRESS } from '../gciConstants';
 import { fakeActiveSession, sessionOn } from './fakeActiveSession';
 
 const login: GemStoneLogin = {
@@ -163,15 +164,11 @@ describe('logging a session out', () => {
     expect(session.isLoggedOut()).toBe(true);
   });
 
-  // GemStone 3.7.6 answers a refused logout with FALSE and no error number.
-  const unexplained = { sessionFreed: true, failure: { number: 0, message: '' } };
-
-  it('takes an unexplained failed logout as refused while one of its calls runs on a worker thread', async () => {
+  // GciLibrary.logout needs it to read GemStone 3.7.6's unexplained refusal.
+  it('tells the library whether one of its calls is running on a worker thread', async () => {
     let finish: (value: { result: bigint; err: object }) => void = () => {};
     const gci = {
-      logout: vi
-        .fn((_session: unknown): object => ({ sessionFreed: true }))
-        .mockReturnValueOnce(unexplained),
+      logout: vi.fn((_session: unknown, _ownCallRunning: boolean) => ({ sessionFreed: false })),
       GciTsPerformAsync: vi.fn(
         () =>
           new Promise<{ result: bigint; err: object }>((resolve) => {
@@ -182,23 +179,19 @@ describe('logging a session out', () => {
     const session = sessionOn(gci);
     const call = session.GciTsPerformAsync(1n, 1n, null, [], 0, 0);
 
-    const whileRunning = session.logout();
+    session.logout();
     finish({ result: 1n, err: {} });
     await call;
-    const afterwards = session.logout();
+    session.logout();
 
-    expect([whileRunning, afterwards]).toEqual([false, true]);
-  });
-
-  it('takes an unexplained failed logout as gone when none of its calls is running', () => {
-    const session = sessionOn({ logout: vi.fn(() => unexplained) });
-
-    expect(session.logout()).toBe(true);
-    expect(session.isLoggedOut()).toBe(true);
+    expect(gci.logout.mock.calls.map(([, ownCallRunning]) => ownCallRunning)).toEqual([
+      true,
+      false,
+    ]);
   });
 
   it("keeps GemStone's error from a failed logout, and clears it after one that succeeds", () => {
-    const failure = { number: 0, message: '' };
+    const failure = { number: GCI_ERR_OP_IN_PROGRESS, message: 'operation in progress' };
     const gci = {
       logout: vi
         .fn((_session: unknown): object => ({ sessionFreed: false, failure }))

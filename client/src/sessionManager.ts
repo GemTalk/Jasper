@@ -33,6 +33,30 @@ import {
 // background login thread works.
 const LOGIN_POLL_INTERVAL_MS = 25;
 
+/** How {@link SessionManager} words its warning about a gem left after a logout. */
+interface LeftoverGemWording {
+  why: string;
+  /** Leads "needs the SessionAccess and SystemControl privileges". */
+  needs: string;
+  /** Leads the error that stopped Jasper from ending it. */
+  failed: string;
+  administrator: string;
+}
+
+const RUN_STILL_GOING: LeftoverGemWording = {
+  why: 'its run ignored every stop and is still running on the server',
+  needs: 'Ending it',
+  failed: 'It could not be ended',
+  administrator: 'An administrator can end it',
+};
+
+const GEM_MAY_BE_LEFT: LeftoverGemWording = {
+  why: "GemStone didn't confirm the logout, so its gem may still be on the server",
+  needs: 'Checking for it',
+  failed: 'Jasper could not check for it',
+  administrator: 'If it is still there, an administrator can end it',
+};
+
 /**
  * Log `session` out, answering false only when it was refused because a call
  * is still in progress. A session that is already logged out counts as gone.
@@ -533,22 +557,12 @@ export class SessionManager {
       if (ended) stillRunning = false;
     }
     if (stillRunning) {
-      this.endLeftoverGem(
-        s,
-        serverSession,
-        'its run ignored every stop and is still running on the server',
-        true,
-      );
+      this.endLeftoverGem(s, serverSession, RUN_STILL_GOING);
     } else if (s.lastLogoutFailure?.number === 0) {
       // GemStone 3.7.6 fails a refused logout with no error number (bug 52223), so the
-      // gem may still be logged in; see ActiveSession.logout. Not after other failures:
+      // gem may still be logged in; see GciLibrary.logout. Not after other failures:
       // the check's login blocks the extension host, for 45 s against an unreachable stone.
-      this.endLeftoverGem(
-        s,
-        serverSession,
-        "GemStone didn't confirm the logout, so its gem may still be on the server",
-        false,
-      );
+      this.endLeftoverGem(s, serverSession, GEM_MAY_BE_LEFT);
     }
     forgetSession(id);
     forgetForceStop(id);
@@ -800,20 +814,16 @@ export class SessionManager {
 
   /**
    * End a logged-out session's gem if it is still on the server, or say why not.
-   * Unless `known` (the gem is there), the warning only says it may be: a logout
-   * failed with no error number doesn't say whether the gem is gone, and without
-   * the privileges Jasper can't look.
+   * {@link GEM_MAY_BE_LEFT} only says the gem may be there: a logout failed with
+   * no error number doesn't say whether the gem is gone, and without the
+   * privileges Jasper can't look.
    */
   private endLeftoverGem(
     s: ActiveSession,
     serverSession: string | undefined,
-    why: string,
-    known: boolean,
+    { why, needs, failed, administrator }: LeftoverGemWording,
   ): void {
     const left = `Session ${s.id} is logged out, but ${why}.`;
-    const administrator = known
-      ? 'An administrator can end it'
-      : 'If it is still there, an administrator can end it';
     if (serverSession === undefined) {
       void vscode.window.showWarningMessage(`${left} ${administrator}.`);
       return;
@@ -822,10 +832,9 @@ export class SessionManager {
     if (failure === undefined) return;
     const notEnded =
       failure instanceof GciLibraryError && failure.number === NO_PRIVILEGE_ERROR
-        ? `${known ? 'Ending it' : 'Checking for it'} needs the SessionAccess and SystemControl ` +
-          `privileges, which ${s.login.gs_user} doesn't have.`
-        : `${known ? 'It could not be ended' : 'Jasper could not check for it'} ` +
-          `(${failure instanceof Error ? failure.message : String(failure)}).`;
+        ? `${needs} needs the SessionAccess and SystemControl privileges, which ` +
+          `${s.login.gs_user} doesn't have.`
+        : `${failed} (${failure instanceof Error ? failure.message : String(failure)}).`;
     void vscode.window.showWarningMessage(
       `${left} ${notEnded} ${administrator} with: System stopSession: ${serverSession}`,
     );
