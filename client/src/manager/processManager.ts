@@ -6,7 +6,14 @@ import { SysadminStorage } from '../sysadminStorage';
 import { GemStoneDatabase, GemStoneProcess } from '../sysadminTypes';
 import { DEFAULT_GS_PW } from '../loginTypes';
 import { appendSysadmin, showSysadmin } from '../sysadminChannel';
-import { needsWsl, windowsPathToWsl, wslSpawn, wslExecSync, wslExec } from '../wslBridge';
+import {
+  inBothPathForms,
+  needsWsl,
+  windowsPathToWsl,
+  wslSpawn,
+  wslExecSync,
+  wslExec,
+} from '../wslBridge';
 import {
   ExtentHolder,
   parseProcHolders,
@@ -36,6 +43,7 @@ import {
 import {
   explainMissingInstall,
   explainMissingKeyFile,
+  STARTER_KEY_FILE,
   explainStartFailure,
 } from '../startFailureMessage';
 
@@ -976,6 +984,7 @@ export class ProcessManager {
         `Starting stone ${db.config.stoneName}`,
         output,
         () => this.starterKeyIn(gsPath),
+        inBothPathForms,
       );
       if (missingKey) throw new Error(missingKey, { cause: e });
       const explained = explainExtentLocked(
@@ -990,7 +999,7 @@ export class ProcessManager {
   /** The install's free key file, when it has one. `gsPath` is the path the
    *  stone runs with, which on Windows is inside WSL, so it is checked there. */
   private starterKeyIn(gsPath: string): string | undefined {
-    const key = `${gsPath}/sys/community.starter.key`;
+    const key = `${gsPath}/${STARTER_KEY_FILE}`;
     if (!needsWsl()) return fs.existsSync(key) ? key : undefined;
     try {
       wslExecSync(`test -e ${shellQuote(key)}`);

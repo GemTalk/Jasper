@@ -4,6 +4,10 @@ import * as path from 'path';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../wslFs');
 vi.mock('../../sysadminChannel');
+vi.mock('../../wslBridge', async () => ({
+  ...(await vi.importActual<typeof import('../../wslBridge')>('../../wslBridge')),
+  inBothPathForms: vi.fn((p: string) => p),
+}));
 
 import * as vscode from 'vscode';
 import {
@@ -18,6 +22,7 @@ import {
   wslRmSync,
 } from '../../wslFs';
 import { appendSysadmin } from '../../sysadminChannel';
+import { inBothPathForms } from '../../wslBridge';
 import { DatabaseManager } from '../databaseManager';
 import { GemStoneDatabase } from '../../sysadminTypes';
 import { SysadminStorage } from '../../sysadminStorage';
@@ -343,6 +348,21 @@ describe('DatabaseManager.createDatabaseDirect', () => {
     expect(warning).toMatch(/no free key file at .*gs64stone can't start yet/);
     expect(db.dirName).toBe('db-1');
     expect(db.keyMissing).toBe(true);
+  });
+
+  it('writes both paths in the warning as the user should see them', async () => {
+    vi.mocked(wslExistsSync).mockImplementation(
+      (p: string) => p !== path.join('/gs', 'sys', 'community.starter.key'),
+    );
+    vi.mocked(inBothPathForms).mockImplementation((p) => `<${p}>`);
+
+    await makeCreateManager()
+      .createDatabaseDirect('3.7.4', 'extent0', 'gs64stone', 'gs64ldi')
+      .finally(() => vi.mocked(inBothPathForms).mockImplementation((p) => p));
+
+    const warning = String(vi.mocked(vscode.window.showWarningMessage).mock.calls[0]?.[0]);
+    expect(warning).toContain(`<${path.join('/gs', 'sys', 'community.starter.key')}>`);
+    expect(warning).toContain(`<${path.join('/root', 'db-1', 'conf', 'gemstone.key')}>`);
   });
 });
 

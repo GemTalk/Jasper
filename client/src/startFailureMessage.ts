@@ -98,30 +98,38 @@ export function explainStartFailure(
  */
 const MISSING_KEY_FILE = /Unable to stat\(\) key file (.+?):[|\s]*(?:errno=\d+,[|\s]*)?ENOENT/;
 
+/** The free key file a GemStone install may ship, relative to its product tree. */
+export const STARTER_KEY_FILE = 'sys/community.starter.key';
+
 /**
  * Name the missing key file a stone failed to start for, which GemStone leaves
  * as the last line of a long stone log excerpt, or return undefined to let the
- * output stand.
+ * output stand. The output itself is left out: a notification would run its
+ * table into this one line, and `startstone`'s output is already in the
+ * GemStone Admin log.
  *
  * `findStarterKey` gives the install's free key file, only when it exists:
  * database creation leaves the key missing exactly when it isn't there, and
  * pointing the user at it would send them to the file creation just reported
  * missing. It is called only once the output is known to be a missing key,
- * because on Windows it is a synchronous call into WSL.
+ * because on Windows it is a synchronous call into WSL. `showPath` writes each
+ * path as the user should see it.
  */
 export function explainMissingKeyFile(
   label: string,
   output: string,
   findStarterKey: () => string | undefined,
+  showPath: (p: string) => string,
 ): string | undefined {
   const keyFile = MISSING_KEY_FILE.exec(output)?.[1];
   if (!keyFile) return undefined;
   const starterKey = findStarterKey();
   const whereToGetOne = starterKey
-    ? `The free one is ${starterKey}.`
+    ? `The free one is ${showPath(starterKey)}.`
     : 'This GemStone install has no free key file to copy, so get one from GemTalk Systems.';
   return (
-    `${label} failed: its key file ${keyFile} does not exist, and a stone can't start ` +
-    `without one. Put a GemStone key file there and start it again. ${whereToGetOne}\n\n${output}`
+    `${label} failed: its key file ${showPath(keyFile)} does not exist, and a stone can't start ` +
+    `without one. Put a GemStone key file there and start it again. ${whereToGetOne} ` +
+    "GemStone's full output is in the GemStone Admin log."
   );
 }

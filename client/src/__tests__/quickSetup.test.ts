@@ -1,3 +1,4 @@
+import * as path from 'path';
 import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
@@ -422,7 +423,7 @@ describe('runQuickSetup', () => {
     expect(deps.processManager.startNetldi).not.toHaveBeenCalled();
   });
 
-  it("stops after creation's warning when there is no key file, rather than failing to start", async () => {
+  it('sets up everything but the stone start when there is no key file', async () => {
     const version = makeVersion({ extracted: true });
     mockShowQuickPick.mockResolvedValue({ label: '3.7.4', version });
     const deps = makeDeps();
@@ -439,7 +440,17 @@ describe('runQuickSetup', () => {
     });
     await runQuickSetup(deps);
     expect(deps.processManager.startStone).not.toHaveBeenCalled();
+    expect(deps.processManager.startNetldi).toHaveBeenCalled();
+    expect(deps.loginStorage.saveLogin).toHaveBeenCalled();
+    expect(deps.loginStorage.setGciLibraryPath).toHaveBeenCalled();
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+    expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringMatching(/except starting the stone gs64stone, which needs a key file/),
+    );
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining(`at ${path.join('/root/db-1', 'conf', 'gemstone.key')},`),
+    );
   });
 
   // ── Login creation ────────────────────────────────────────

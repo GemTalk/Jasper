@@ -23,6 +23,9 @@ vi.mock('../../wslBridge', async () => {
   return {
     ...actual,
     needsWsl: vi.fn(() => false),
+    // The real one asks the real needsWsl, so a Windows CI leg would rewrite
+    // the Linux paths these tests expect; it has tests of its own.
+    inBothPathForms: vi.fn((p: string) => p),
     wslExecSync: vi.fn(),
     wslExec: vi.fn(async () => ''),
   };
@@ -2313,6 +2316,18 @@ describe('ProcessManager', () => {
 
       expect(error.message).toMatch(/its key file \/db-1\/conf\/gemstone.key does not exist/);
       expect(error.message).toContain(`The free one is ${starterKey}.`);
+    });
+
+    it('writes both paths as the user should see them', async () => {
+      fs.writeFileSync(nodePath.join(gsPath, 'sys', 'community.starter.key'), '');
+      vi.mocked(wslBridge.inBothPathForms).mockImplementation((p) => `<${p}>`);
+
+      const error = await failedStart().finally(() =>
+        vi.mocked(wslBridge.inBothPathForms).mockImplementation((p) => p),
+      );
+
+      expect(error.message).toContain('its key file </db-1/conf/gemstone.key> does not exist');
+      expect(error.message).toContain(`The free one is <${gsPath}/sys/community.starter.key>.`);
     });
 
     it('does not name a free key file the install does not have', async () => {

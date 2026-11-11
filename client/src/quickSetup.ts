@@ -10,7 +10,7 @@ import { dataCuratorLoginToCreate } from './loginTypes';
 import { GemStoneVersion } from './sysadminTypes';
 import { getSharedMemory } from './sharedMemoryTreeProvider';
 import { appendSysadmin } from './sysadminChannel';
-import { isWindows } from './wslBridge';
+import { inBothPathForms, isWindows } from './wslBridge';
 import { bundledWindowsClientGciPath } from './bundledGci';
 
 function waitForTerminalClose(name: string): Promise<void> {
@@ -172,22 +172,25 @@ export async function runQuickSetup(deps: QuickSetupDeps): Promise<void> {
     );
     return;
   }
-  // Creation has already said the stone can't start yet and where the key goes.
-  if (db.keyMissing) return;
-
   // ── Step 7: Start stone ─────────────────────────────────
-  try {
-    await vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title: `Quick Setup: Starting stone ${stoneName}...`,
-      },
-      () => processManager.startStone(db),
-    );
-    refreshAdminViews();
-  } catch (e) {
-    vscode.window.showErrorMessage(`Failed to start stone: ${e instanceof Error ? e.message : e}`);
-    return;
+  // With no key file the start can only fail, and creation has already said
+  // where the key goes. Nothing after this step needs the stone.
+  if (!db.keyMissing) {
+    try {
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Quick Setup: Starting stone ${stoneName}...`,
+        },
+        () => processManager.startStone(db),
+      );
+      refreshAdminViews();
+    } catch (e) {
+      vscode.window.showErrorMessage(
+        `Failed to start stone: ${e instanceof Error ? e.message : e}`,
+      );
+      return;
+    }
   }
 
   // ── Step 8: Start NetLDI ────────────────────────────────
@@ -255,8 +258,19 @@ export async function runQuickSetup(deps: QuickSetupDeps): Promise<void> {
   if (login) await loginStorage.saveLogin(login);
   refreshLogins();
 
+  const loginName = `DataCurator on ${stoneName} (localhost)`;
+  if (db.keyMissing) {
+    const done =
+      `Quick Setup finished everything except starting the stone ${stoneName}, which needs ` +
+      `a key file first. Put a GemStone key file at ` +
+      `${inBothPathForms(path.join(db.path, 'conf', 'gemstone.key'))}, start the stone, then ` +
+      `use the login "${loginName}" to connect.`;
+    appendSysadmin(done);
+    vscode.window.showWarningMessage(done);
+    return;
+  }
   appendSysadmin('Quick Setup complete');
   vscode.window.showInformationMessage(
-    `Quick Setup complete! Database "${db.dirName}" is running. Use the login "DataCurator on ${stoneName} (localhost)" to connect.`,
+    `Quick Setup complete! Database "${db.dirName}" is running. Use the login "${loginName}" to connect.`,
   );
 }

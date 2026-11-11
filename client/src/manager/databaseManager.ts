@@ -11,7 +11,8 @@ import {
   registeredRefusal,
 } from './registeredDatabase';
 import { appendSysadmin } from '../sysadminChannel';
-import { needsWsl, windowsPathToWsl, wslExecSync } from '../wslBridge';
+import { STARTER_KEY_FILE } from '../startFailureMessage';
+import { inBothPathForms, needsWsl, windowsPathToWsl, wslExecSync } from '../wslBridge';
 import {
   wslExistsSync,
   wslMkdirSync,
@@ -123,15 +124,16 @@ export class DatabaseManager {
 
     progress?.report({ message: 'Copying key file...' });
     const gsPath = this.storage.getGemstonePath(version)!;
-    const keySource = path.join(gsPath, 'sys', 'community.starter.key');
+    const keySource = path.join(gsPath, STARTER_KEY_FILE);
     const keyDest = path.join(dbDir, 'conf', 'gemstone.key');
     const keyMissing = !wslExistsSync(keySource);
     if (keyMissing) {
       // The stone config names keyDest regardless, and a stone whose key file
       // is missing refuses to start.
       const message =
-        `This GemStone install has no free key file at ${keySource}, so the stone ` +
-        `${stoneName} can't start yet. Put a GemStone key file at ${keyDest}, then start it.`;
+        `This GemStone install has no free key file at ${inBothPathForms(keySource)}, so the ` +
+        `stone ${stoneName} can't start yet. Put a GemStone key file at ` +
+        `${inBothPathForms(keyDest)}, then start it.`;
       appendSysadmin(message);
       void vscode.window.showWarningMessage(message);
     } else {
