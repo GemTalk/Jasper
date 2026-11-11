@@ -42,6 +42,17 @@ export const knownGemStoneBugs = {
     osName: 'Darwin',
     brokenIn: [{ from: '3.7.2', through: '3.7.6' }],
   },
+
+  /**
+   * Compiling method source that holds a non-ASCII character fails in the
+   * compiler's ComStrmSetCursor (error 1001). 3.7.5 compiles the same source
+   * cleanly.
+   */
+  nonAsciiSourceCompile: {
+    description:
+      'GemStone compiler bug: method source holding a non-ASCII character fails to compile (ComStrmSetCursor, error 1001)',
+    brokenIn: [{ from: '3.6.2', through: '3.7.4.3' }],
+  },
 } satisfies Record<string, KnownGemStoneBug>;
 
 /**

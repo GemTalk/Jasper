@@ -1257,7 +1257,7 @@ describe("a stone's sessions, under Session Processes", () => {
     serial: 9,
     user: 'ewinger',
     gemPid: 39811,
-    host: 'thor',
+    host: 'elsewhere.example',
     age: '3h',
     stuck: false,
     canStop: true,
@@ -1289,7 +1289,9 @@ describe("a stone's sessions, under Session Processes", () => {
     expect(list.querySelector('.db-group-title')!.textContent).toBe('Session Processes · 2');
     expect(list.parentElement).toBe(groupTitled('Processes').parentElement);
     expect(groupTitled('Processes').querySelector('[data-stone-session]')).toBeNull();
-    expect(rowEl(9)!.textContent).toContain('GemStone session 5 · gem 39811 · thor · 3h');
+    expect(rowEl(9)!.textContent).toContain(
+      'GemStone session 5 · gem 39811 · elsewhere.example · 3h',
+    );
     expect(rowEl(1)!.textContent).toContain('system: symbolgem');
   });
 
@@ -1380,11 +1382,11 @@ describe("a stone's sessions, under Session Processes", () => {
   // Two logins to one stone elsewhere share one list.
   it('lists a stone with no database here once, under Other Logins', () => {
     const login = (user: string) => ({
-      label: `${user} on far (thor)`,
+      label: `${user} on far (elsewhere.example)`,
       user,
       stone: 'far',
       version: '3.7.5',
-      host: 'thor',
+      host: 'elsewhere.example',
       netldi: 'farldi',
       running: true,
       connected: true,
@@ -1394,13 +1396,19 @@ describe("a stone's sessions, under Session Processes", () => {
       state({
         logins: [login('DataCurator'), login('SystemUser')],
         otherStoneSessions: [
-          { key: 'stone:thor/far', kind: 'sessions', rows: [row()], stone: 'far', host: 'thor' },
+          {
+            key: 'stone:elsewhere.example/far',
+            kind: 'sessions',
+            rows: [row()],
+            stone: 'far',
+            host: 'elsewhere.example',
+          },
         ],
       }),
     );
     const other = root.querySelector('[data-section="otherLogins"]') as HTMLElement;
     expect(other.querySelectorAll('.stone-sessions')).toHaveLength(1);
-    expect(other.textContent).toContain('Session Processes on far (thor) · 1');
+    expect(other.textContent).toContain('Session Processes on far (elsewhere.example) · 1');
   });
 
   it('opens the panel at the row Show in Sessions asks for, and keeps it marked', () => {
