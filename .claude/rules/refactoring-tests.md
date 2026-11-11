@@ -19,7 +19,7 @@ has an apply-path test.
   `*.committing.integration.test.ts` file using `allowedCommits` — but check it against
   [the harness reference](../../docs/reference/integration-test-harness.md)'s exclusions first; a scenario that doesn't fit still
   belongs in the on-demand `client/src/__tests__/gci/` project rather than being forced into `allowedCommits`.
-- Both boundaries: 3.6.2 **and** 3.7.5.
+- Both boundaries: 3.6.2 **and** the newest release in `client/.gemstone-integration-releases.json`.
 
 ## What an apply test must assert
 

@@ -88,7 +88,7 @@ describe('uninstallEnhancedInspectorFeature', () => {
     await uninstall(base, true);
 
     expect(logout).toHaveBeenCalledTimes(1);
-    expect(logout).toHaveBeenCalledWith(sameObject(systemUserHandle));
+    expect(logout).toHaveBeenCalledWith(sameObject(systemUserHandle), false);
   });
 
   it('does not run the removal and warns when the default password is rejected non-interactively', async () => {
