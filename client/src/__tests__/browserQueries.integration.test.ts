@@ -166,6 +166,29 @@ describe('browser queries (integration)', () => {
       expect(source.length).toBeGreaterThan(0);
     });
 
+    it('answers the same source as the blocking read', async () => {
+      const [firstMethod] = queries.getMethodList(session(), 'Array').filter((m) => !m.isMeta);
+
+      const source = await queries.methodSource(session(), 'Array', false, firstMethod.selector);
+
+      expect(source).toBe(queries.getMethodSource(session(), 'Array', false, firstMethod.selector));
+    });
+
+    it('answers both sides of a session-override diff read at the same time', async () => {
+      const [first, second] = queries.getMethodList(session(), 'Array').filter((m) => !m.isMeta);
+      const expected = [
+        queries.getMethodSource(session(), 'Array', false, first.selector),
+        queries.getMethodSource(session(), 'Array', false, second.selector),
+      ];
+
+      const reads = Promise.all([
+        queries.methodSource(session(), 'Array', false, first.selector),
+        queries.baseMethodSource(session(), 'Array', false, second.selector),
+      ]);
+
+      await expect(reads).resolves.toEqual(expected);
+    });
+
     /**
      * What the doit does when there is no method to read.
      *
@@ -265,6 +288,21 @@ describe('browser queries (integration)', () => {
         source = queries.getMethodSource(session(), GONE_CLASS, false, GONE_SELECTOR, 0, globals);
       }).not.toThrow();
       expect(source).toBe('');
+    });
+  });
+
+  describe('baseMethodSource', () => {
+    it('answers the merged source for a method no session overrides', async () => {
+      const [firstMethod] = queries.getMethodList(session(), 'Array').filter((m) => !m.isMeta);
+
+      const source = await queries.baseMethodSource(
+        session(),
+        'Array',
+        false,
+        firstMethod.selector,
+      );
+
+      expect(source).toBe(queries.getMethodSource(session(), 'Array', false, firstMethod.selector));
     });
   });
 

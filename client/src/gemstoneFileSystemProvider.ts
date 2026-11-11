@@ -818,7 +818,7 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     return [];
   }
 
-  readFile(uri: vscode.Uri): Uint8Array {
+  async readFile(uri: vscode.Uri): Promise<Uint8Array> {
     const parsed = parseUri(uri);
 
     if (parsed.kind === 'new-class') {
@@ -851,8 +851,8 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     switch (parsed.kind) {
       case 'method': {
         const dictRef = parsed.dictIndex ?? parsed.dictName;
-        text = parsed.base
-          ? queries.getBaseMethodSource(
+        text = await (parsed.base
+          ? queries.baseMethodSource(
               session,
               parsed.className,
               parsed.isMeta,
@@ -860,14 +860,14 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
               parsed.environmentId,
               dictRef,
             )
-          : queries.getMethodSource(
+          : queries.methodSource(
               session,
               parsed.className,
               parsed.isMeta,
               parsed.selector,
               parsed.environmentId,
               dictRef,
-            );
+            ));
         break;
       }
       case 'definition': {

@@ -23,8 +23,11 @@ import {
   TransactionConflicts,
   tryTransactionConflicts as sharedTryTransactionConflicts,
 } from './queries/transactionConflicts';
-import { getMethodSource as sharedGetMethodSource } from './queries/getMethodSource';
-import { getBaseMethodSource as sharedGetBaseMethodSource } from './queries/getBaseMethodSource';
+import {
+  getMethodSource as sharedGetMethodSource,
+  methodSource as sharedMethodSource,
+} from './queries/getMethodSource';
+import { baseMethodSource as sharedBaseMethodSource } from './queries/getBaseMethodSource';
 import { getDictionaryNames as sharedGetDictionaryNames } from './queries/getDictionaryNames';
 import { getClassNames as sharedGetClassNames } from './queries/getClassNames';
 import {
@@ -933,6 +936,8 @@ export function getMethodInstVarAccess(
   );
 }
 
+const OPENING_METHOD = 'GemStone: Opening method…';
+
 export function getMethodSource(
   session: ActiveSession,
   className: string,
@@ -951,16 +956,34 @@ export function getMethodSource(
   );
 }
 
-export function getBaseMethodSource(
+export function methodSource(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
   selector: string,
   environmentId: number = 0,
   dict?: number | string,
-): string {
-  return sharedGetBaseMethodSource(
-    defaultQueryExecutorUsing(session),
+): Promise<string> {
+  return sharedMethodSource(
+    queuedNbQueryExecutorUsing(session, OPENING_METHOD),
+    className,
+    isMeta,
+    selector,
+    environmentId,
+    dict,
+  );
+}
+
+export function baseMethodSource(
+  session: ActiveSession,
+  className: string,
+  isMeta: boolean,
+  selector: string,
+  environmentId: number = 0,
+  dict?: number | string,
+): Promise<string> {
+  return sharedBaseMethodSource(
+    queuedNbQueryExecutorUsing(session, OPENING_METHOD),
     className,
     isMeta,
     selector,

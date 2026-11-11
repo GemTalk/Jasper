@@ -1,4 +1,4 @@
-import { QueryExecutor } from './types';
+import { NbQueryExecutor, QueryExecutor } from './types';
 import { classLookupExpr, escapeString } from './util';
 
 /**
@@ -39,17 +39,43 @@ export function getMethodSource(
   environmentId: number = 0,
   dict?: number | string,
 ): string {
+  return execute(methodSourceCode(className, isMeta, selector, environmentId, dict));
+}
+
+/**
+ * A method's source, or `''` when the class or the method is gone, read
+ * without blocking the extension host. A vanished method is an ordinary race
+ * with an abort or another session, so it answers an empty buffer the user
+ * can see rather than raising.
+ */
+export function methodSource(
+  execute: NbQueryExecutor,
+  className: string,
+  isMeta: boolean,
+  selector: string,
+  environmentId: number = 0,
+  dict?: number | string,
+): Promise<string> {
+  return execute(methodSourceCode(className, isMeta, selector, environmentId, dict));
+}
+
+function methodSourceCode(
+  className: string,
+  isMeta: boolean,
+  selector: string,
+  environmentId: number,
+  dict: number | string | undefined,
+): string {
   const at =
     environmentId === 0
       ? `compiledMethodAt: #'${escapeString(selector)}' otherwise: nil`
       : `compiledMethodAt: #'${escapeString(selector)}' environmentId: ${environmentId} otherwise: nil`;
   // The lookup itself is wrapped too: a numeric dict index that is out of range
   // raises rather than answering nil (see classLookupExpr).
-  const code = `| cls m |
+  return `| cls m |
 cls := [${classLookupExpr(className, dict)}] on: Error do: [:e | nil].
 cls ifNil: [^ ''].
 m := [${isMeta ? 'cls class' : 'cls'} ${at}] on: Error do: [:e | nil].
 m ifNil: [^ ''].
 m sourceString`;
-  return execute(code);
 }

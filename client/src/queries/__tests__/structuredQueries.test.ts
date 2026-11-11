@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { QueryExecutor } from '../types';
+import { NbQueryExecutor, QueryExecutor } from '../types';
 import { getDictionaryEntries } from '../getDictionaryEntries';
 import { getGlobalsForDictionary } from '../getGlobalsForDictionary';
 import { getAllClassNames } from '../getAllClassNames';
 import { getClassEnvironments } from '../getClassEnvironments';
-import { getBaseMethodSource } from '../getBaseMethodSource';
+import { baseMethodSource } from '../getBaseMethodSource';
 import { getClassHierarchy } from '../getClassHierarchy';
 import { getMethodList } from '../getMethodList';
 import { getStepPointSelectorRanges } from '../../debugger/queries/getStepPointSelectorRanges';
@@ -220,31 +220,31 @@ describe('getClassEnvironments', () => {
   });
 });
 
-describe('getBaseMethodSource', () => {
-  it('reads the persistent (base) method, not the merged/session view', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'isVowel\n  ^ base');
-    getBaseMethodSource(execute, 'Character', false, 'isVowel', 0);
+describe('baseMethodSource', () => {
+  it('reads the persistent (base) method, not the merged/session view', async () => {
+    const execute = vi.fn<NbQueryExecutor>(async () => 'isVowel\n  ^ base');
+    await baseMethodSource(execute, 'Character', false, 'isVowel', 0);
     const code = execute.mock.calls[0][0];
     expect(code).toContain('persistentMethodDictForEnv: 0');
     expect(code).toContain("at: #'isVowel' otherwise: nil");
     expect(code).not.toContain('compiledMethodAt:'); // that would return the override
   });
 
-  it('targets the metaclass for a class-side selector', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getBaseMethodSource(execute, 'Character', true, 'foo', 0);
+  it('targets the metaclass for a class-side selector', async () => {
+    const execute = vi.fn<NbQueryExecutor>(async () => '');
+    await baseMethodSource(execute, 'Character', true, 'foo', 0);
     expect(execute.mock.calls[0][0]).toContain('Character class');
   });
 
-  it('threads a non-zero environment id into the persistent lookup', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getBaseMethodSource(execute, 'Character', false, 'foo', 2);
+  it('threads a non-zero environment id into the persistent lookup', async () => {
+    const execute = vi.fn<NbQueryExecutor>(async () => '');
+    await baseMethodSource(execute, 'Character', false, 'foo', 2);
     expect(execute.mock.calls[0][0]).toContain('persistentMethodDictForEnv: 2');
   });
 
-  it('emits ASCII-only source (3.6.x miscompiles non-ASCII: ComStrmSetCursor)', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getBaseMethodSource(execute, 'Character', false, 'isVowel', 0);
+  it('emits ASCII-only source (3.6.x miscompiles non-ASCII: ComStrmSetCursor)', async () => {
+    const execute = vi.fn<NbQueryExecutor>(async () => '');
+    await baseMethodSource(execute, 'Character', false, 'isVowel', 0);
 
     const code = execute.mock.calls[0][0];
     // eslint-disable-next-line no-control-regex -- \x00-\x7F is the intentional ASCII range, not a stray control char
