@@ -8,6 +8,14 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 - **A Smalltalk notebook cell stops at breakpoints and `self halt`.** A cell that calls a method with a breakpoint in it, or runs `self halt`, opens the GemStone Debugger straight away and waits while you step or inspect. Resume or step to the end, and the cell shows the result it would have shown. Close the debugger or press the cell's stop, and the cell says "Stopped." and the cells queued after it don't run. Errors such as `doesNotUnderstand` or `ZeroDivide` still appear in the cell's output, as before. The **Breakpoints not honored** note on each Smalltalk cell is gone. ([#559](https://github.com/GemTalk/Jasper/issues/559))
 
+### Changed
+
+- **Developer tooling and test-suite work.** No user-facing behavior change: CI now also tests against GemStone 3.7.6, the newest release, on Linux and Windows, and keeps testing 3.7.5 alongside it. 3.7.6 adds no GCI functions. ([#879](https://github.com/GemTalk/Jasper/issues/879))
+
+### Fixed
+
+- **Logging out on GemStone 3.7.6 no longer leaves the session running on the server.** When a logout reached GemStone while a call on that session was still going, GemStone 3.7.6 refused it without saying why, and Jasper took the session as already gone: it disappeared from Jasper but stayed logged in on the stone, holding its slot until an administrator stopped it. Jasper now reads that answer as the refusal it is while one of its own calls is running, waits for the call, and logs out again; and after a logout GemStone fails without saying why, it checks the stone and ends the session if it is still there. Checking and ending it need the SessionAccess and SystemControl privileges; without them Jasper says the session may still be there, and how an administrator can end it. The 3.7.6 behaviour is reported to GemTalk as bug 52223. ([#879](https://github.com/GemTalk/Jasper/issues/879))
+
 ## [1.18.0] - 2026-11-06
 
 ### Added

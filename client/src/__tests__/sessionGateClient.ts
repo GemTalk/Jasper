@@ -74,7 +74,7 @@ export function reportRefusedLogin(socket = held.at(-1)): void {
   socket?.write(JSON.stringify({ op: 'refused' }) + '\n');
 }
 
-// gcierr.ht, the same in every vendored release from 3.6.2 through 3.7.5.
+// gcierr.ht, the same in every vendored release from 3.6.2 through 3.7.6.
 const GS_ERR_LOGIN_DENIAL = 4051;
 
 /**

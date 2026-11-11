@@ -28,6 +28,8 @@ export class ActiveSession {
    *  `STN_GEM_INITIAL_TRANSACTION_MODE` lets a stone hand out any of the three
    *  at login. Owned by `SessionManager.refreshTransactionState`. */
   transactionMode?: TransactionMode;
+  /** GemStone's error from this session's last logout, when that logout failed. */
+  lastLogoutFailure?: GciError;
   /** Whether the session was inside a transaction when the state was last read.
    *  This — not the mode — decides whether a commit can land. Owned by
    *  `SessionManager.refreshTransactionState`. */
@@ -108,9 +110,16 @@ export class ActiveSession {
 
   /**
    * Logs the session out, warning on the console instead of answering
-   * GemStone's error. Once the session is gone, every method that needs its
-   * handle throws, a second logout included. A failed logout usually frees it
-   * too; only a refusal because a call is still in progress leaves it usable.
+   * GemStone's error, which is kept in `lastLogoutFailure`. Once the session is
+   * gone, every method that needs its handle throws, a second logout included.
+   * A failed logout usually frees it too; only a refusal because a call is
+   * still in progress leaves it usable.
+   *
+   * GemStone 3.7.6 refuses a logout without saying why (see
+   * `GciLibrary.logout`), so the library is told whether one of this session's
+   * own worker calls is outstanding. GemStone still decides: a worker call
+   * that has already let go of the session, though its result is not read
+   * yet, does not stop the logout.
    *
    * A non-blocking call whose result is not collected yet does not stop the
    * logout, but it can outlive it: a gem whose run has resumed a soft break
@@ -121,7 +130,11 @@ export class ActiveSession {
    * @returns whether the session is gone; false only for that refusal.
    */
   logout(): boolean {
-    const { sessionFreed } = this.gci.logout(this.handle());
+    const { sessionFreed, failure } = this.gci.logout(
+      this.handle(),
+      this.workerCallsInProgress > 0,
+    );
+    this.lastLogoutFailure = failure;
     if (sessionFreed) this.handle = loggedOut;
     return sessionFreed;
   }

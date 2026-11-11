@@ -1,6 +1,6 @@
 // Integration test for the Methods-scope server fetch ceiling against a live stone, over the release
-// matrix (3.6.2 and 3.7.5). Base-image reflection only — no server plugin — so it runs in both the
-// bare and plugin CI passes.
+// matrix. Base-image reflection only — no server plugin — so it runs in both the bare and plugin CI
+// passes.
 //
 // Two halves, both previously untested:
 //   1. the generated selector scan really is BOUNDED — `searchSelectors` hands back at most `limit`

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { GemStoneLogin } from '../loginTypes';
 import { ActiveSession } from '../activeSession';
+import { GCI_ERR_OP_IN_PROGRESS } from '../gciConstants';
 import { fakeActiveSession, sessionOn } from './fakeActiveSession';
 
 const login: GemStoneLogin = {
@@ -161,6 +162,50 @@ describe('logging a session out', () => {
     session.logout();
 
     expect(session.isLoggedOut()).toBe(true);
+  });
+
+  // GciLibrary.logout needs it to read GemStone 3.7.6's unexplained refusal.
+  it('tells the library whether one of its calls is running on a worker thread', async () => {
+    let finish: (value: { result: bigint; err: object }) => void = () => {};
+    const gci = {
+      logout: vi.fn((_session: unknown, _ownCallRunning: boolean) => ({ sessionFreed: false })),
+      GciTsPerformAsync: vi.fn(
+        () =>
+          new Promise<{ result: bigint; err: object }>((resolve) => {
+            finish = resolve;
+          }),
+      ),
+    };
+    const session = sessionOn(gci);
+    const call = session.GciTsPerformAsync(1n, 1n, null, [], 0, 0);
+
+    session.logout();
+    finish({ result: 1n, err: {} });
+    await call;
+    session.logout();
+
+    expect(gci.logout.mock.calls.map(([, ownCallRunning]) => ownCallRunning)).toEqual([
+      true,
+      false,
+    ]);
+  });
+
+  it("keeps GemStone's error from a failed logout, and clears it after one that succeeds", () => {
+    const failure = { number: GCI_ERR_OP_IN_PROGRESS, message: 'operation in progress' };
+    const gci = {
+      logout: vi
+        .fn((_session: unknown): object => ({ sessionFreed: false, failure }))
+        .mockReturnValueOnce({ sessionFreed: false, failure })
+        .mockReturnValueOnce({ sessionFreed: true }),
+    };
+    const session = sessionOn(gci);
+
+    session.logout();
+    const afterFailure = session.lastLogoutFailure;
+    session.logout();
+
+    expect(afterFailure).toBe(failure);
+    expect(session.lastLogoutFailure).toBeUndefined();
   });
 
   it('keeps the session usable when the logout leaves it alive', () => {

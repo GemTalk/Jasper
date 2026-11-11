@@ -33,10 +33,33 @@ import {
 // background login thread works.
 const LOGIN_POLL_INTERVAL_MS = 25;
 
+/** How {@link SessionManager} words its warning about a gem left after a logout. */
+interface LeftoverGemWording {
+  why: string;
+  /** Leads "needs the SessionAccess and SystemControl privileges". */
+  needs: string;
+  /** Leads the error that stopped Jasper from ending it. */
+  failed: string;
+  administrator: string;
+}
+
+const RUN_STILL_GOING: LeftoverGemWording = {
+  why: 'its run ignored every stop and is still running on the server',
+  needs: 'Ending it',
+  failed: 'It could not be ended',
+  administrator: 'An administrator can end it',
+};
+
+const GEM_MAY_BE_LEFT: LeftoverGemWording = {
+  why: "GemStone didn't confirm the logout, so its gem may still be on the server",
+  needs: 'Checking for it',
+  failed: 'Jasper could not check for it',
+  administrator: 'If it is still there, an administrator can end it',
+};
+
 /**
- * Log `session` out, answering false only when GemStone refused because a
- * call is still in progress. A session that is already logged out counts as
- * gone.
+ * Log `session` out, answering false only when it was refused because a call
+ * is still in progress. A session that is already logged out counts as gone.
  */
 export function logOutOrFindGone(session: ActiveSession): boolean {
   try {
@@ -494,7 +517,7 @@ export class SessionManager {
    *   that the run ignores every stop, so it is not stopped again.
    * @returns whether this call logged the session out: false when the session
    *   was already gone or another logout of it did the work.
-   * @throws {Error} when GemStone refuses the logout (a koffi worker thread
+   * @throws {Error} when the logout is refused (a call on a worker thread
    *   still owns the session); the session stays open and registered.
    */
   async logout(id: number, stopAlreadyTried = false): Promise<boolean> {
@@ -524,8 +547,8 @@ export class SessionManager {
       await stopCallsOn(s);
       if (!logOutOrFindGone(s)) {
         throw new Error(
-          `Session ${id} could not be logged out: its run is ignoring every stop, and GemStone ` +
-            "won't log out a session while that run goes on. The session is still open. " +
+          `Session ${id} could not be logged out: its run is ignoring every stop, and a ` +
+            "session can't be logged out while that run goes on. The session is still open. " +
             `An administrator can end it with: System stopSession: ${serverSession ?? '<its number>'}`,
         );
       }
@@ -533,7 +556,14 @@ export class SessionManager {
       // moment: the run can still be going.
       if (ended) stillRunning = false;
     }
-    if (stillRunning) this.endLeftoverRun(s, serverSession);
+    if (stillRunning) {
+      this.endLeftoverGem(s, serverSession, RUN_STILL_GOING);
+    } else if (s.lastLogoutFailure?.number === 0) {
+      // GemStone 3.7.6 fails a refused logout with no error number (bug 52223), so the
+      // gem may still be logged in; see GciLibrary.logout. Not after other failures:
+      // the check's login blocks the extension host, for 45 s against an unreachable stone.
+      this.endLeftoverGem(s, serverSession, GEM_MAY_BE_LEFT);
+    }
     forgetSession(id);
     forgetForceStop(id);
     this.sessions.delete(id);
@@ -782,21 +812,31 @@ export class SessionManager {
     }
   }
 
-  /** End a logged-out session's gem whose run ignored every stop, or say why not. */
-  private endLeftoverRun(s: ActiveSession, serverSession: string | undefined): void {
-    const left = `Session ${s.id} is logged out, but its run ignored every stop and is still running on the server.`;
+  /**
+   * End a logged-out session's gem if it is still on the server, or say why not.
+   * {@link GEM_MAY_BE_LEFT} only says the gem may be there: a logout failed with
+   * no error number doesn't say whether the gem is gone, and without the
+   * privileges Jasper can't look.
+   */
+  private endLeftoverGem(
+    s: ActiveSession,
+    serverSession: string | undefined,
+    { why, needs, failed, administrator }: LeftoverGemWording,
+  ): void {
+    const left = `Session ${s.id} is logged out, but ${why}.`;
     if (serverSession === undefined) {
-      void vscode.window.showWarningMessage(`${left} An administrator can end it.`);
+      void vscode.window.showWarningMessage(`${left} ${administrator}.`);
       return;
     }
     const failure = this.tryEndServerSession(s, serverSession);
     if (failure === undefined) return;
-    void vscode.window.showWarningMessage(
+    const notEnded =
       failure instanceof GciLibraryError && failure.number === NO_PRIVILEGE_ERROR
-        ? `${left} Ending it needs the SessionAccess and SystemControl privileges, which ${s.login.gs_user} ` +
-            `doesn't have. An administrator can end it with: System stopSession: ${serverSession}`
-        : `${left} It could not be ended (${failure instanceof Error ? failure.message : String(failure)}). ` +
-            `An administrator can end it with: System stopSession: ${serverSession}`,
+        ? `${needs} needs the SessionAccess and SystemControl privileges, which ` +
+          `${s.login.gs_user} doesn't have.`
+        : `${failed} (${failure instanceof Error ? failure.message : String(failure)}).`;
+    void vscode.window.showWarningMessage(
+      `${left} ${notEnded} ${administrator} with: System stopSession: ${serverSession}`,
     );
   }
 

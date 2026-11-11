@@ -31,8 +31,14 @@
   {
     "version": "3.7.5",
     "reasons": [
-      "Current latest release.",
       "Fixed a thread-safety bug in GciTsLogin() and changed GCI error codes.",
+      "Minimum version for the Enhanced Inspector; its integration tests skip on every earlier release."
+    ]
+  },
+  {
+    "version": "3.7.6",
+    "reasons": [
+      "Current latest release.",
       "Validates Jasper against the current target environment."
     ]
   }

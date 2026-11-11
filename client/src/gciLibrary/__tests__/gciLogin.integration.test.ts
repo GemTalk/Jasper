@@ -25,7 +25,7 @@ import { LOGIN_SERIAL_CODE } from '../../__tests__/sessionGateLedger';
  * GEMSTONE_GLOBAL_DIR handling -- the harness's own session is never used.
  */
 describe('GCI login (integration)', () => {
-  // gcierr.ht -- same values in every vendored release from 3.6.2 through 3.7.5.
+  // gcierr.ht -- same values in every vendored release from 3.6.2 through 3.7.6.
   const GS_ERR_LOGIN_DENIAL = 4051;
   const NET_ERR_NO_SUCH_STN = 4065;
   const ERR_IN_LOGIN = 4147;
