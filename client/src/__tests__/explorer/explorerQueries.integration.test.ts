@@ -337,15 +337,15 @@ describe('explorer queries (integration)', () => {
     });
   });
 
-  describe('getClassCategory', () => {
-    it('returns the class category the definition editor shows on its own line', () => {
+  describe('classCategory', () => {
+    it('returns the class category the definition editor shows on its own line', async () => {
       defineClass(WIDGET, 'JasperIt-Shown');
 
-      expect(q.getClassCategory(session(), WIDGET, userIndex())).toBe('JasperIt-Shown');
+      expect(await q.classCategory(session(), WIDGET, userIndex())).toBe('JasperIt-Shown');
     });
 
-    it('returns empty for a class that cannot be found', () => {
-      expect(q.getClassCategory(session(), 'JasperItNoSuchClass', userIndex())).toBe('');
+    it('returns empty for a class that cannot be found', async () => {
+      expect(await q.classCategory(session(), 'JasperItNoSuchClass', userIndex())).toBe('');
     });
   });
 

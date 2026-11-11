@@ -14,7 +14,8 @@ vi.mock('../browserQueries', () => ({
   methodSource: vi.fn(async () => 'at: index\n  ^self basicAt: index'),
   baseMethodSource: vi.fn(async () => 'isVowel\n  ^ base impl'),
   getClassDefinition: vi.fn(() => "Object subclass: 'Array'\n  instVarNames: #()"),
-  getClassCategory: vi.fn(() => ''),
+  classDefinition: vi.fn(async () => "Object subclass: 'Array'\n  instVarNames: #()"),
+  classCategory: vi.fn(async () => ''),
   classExistsInDictionary: vi.fn(() => false),
   recategorizeClass: vi.fn(),
   // The class-category recorder's read, taken either side of a definition save so a
@@ -22,6 +23,7 @@ vi.mock('../browserQueries', () => ({
   getClassesWithCategory: vi.fn(() => [] as unknown[]),
   getClassComment: vi.fn(() => 'An ordered collection.'),
   getStoredClassComment: vi.fn(() => 'An ordered collection.'),
+  storedClassComment: vi.fn(async () => 'An ordered collection.'),
   compileMethod: vi.fn(() => 'Compiled: Array >> at:'),
   compileClassDefinition: vi.fn(),
   // Answers what the real query answers on success — the provider now checks it, because
@@ -559,16 +561,12 @@ describe('GemStoneFileSystemProvider', () => {
       const uri = Uri.parse('gemstone://1/Globals/Array/definition');
       const content = new TextDecoder().decode(await provider.readFile(uri));
       expect(content).toContain("Object subclass: 'Array'");
-      expect(queries.getClassDefinition).toHaveBeenCalledWith(
-        expect.anything(),
-        'Array',
-        'Globals',
-      );
+      expect(queries.classDefinition).toHaveBeenCalledWith(expect.anything(), 'Array', 'Globals');
     });
 
     it('scopes a class definition to the SymbolList index given by ?dict', async () => {
       await provider.readFile(Uri.parse('gemstone://1/Globals/Array/definition?dict=9'));
-      expect(queries.getClassDefinition).toHaveBeenCalledWith(expect.anything(), 'Array', 9);
+      expect(queries.classDefinition).toHaveBeenCalledWith(expect.anything(), 'Array', 9);
     });
 
     /**
@@ -581,7 +579,7 @@ describe('GemStoneFileSystemProvider', () => {
       const uri = Uri.parse('gemstone://1/Globals/Array/comment');
       const content = new TextDecoder().decode(await provider.readFile(uri));
       expect(content).toBe('An ordered collection.');
-      expect(queries.getStoredClassComment).toHaveBeenCalledWith(
+      expect(queries.storedClassComment).toHaveBeenCalledWith(
         expect.anything(),
         'Array',
         'Globals',
@@ -590,7 +588,7 @@ describe('GemStoneFileSystemProvider', () => {
     });
 
     it('opens empty for a class with no comment of its own', async () => {
-      vi.mocked(queries.getStoredClassComment).mockReturnValueOnce('');
+      vi.mocked(queries.storedClassComment).mockResolvedValueOnce('');
 
       const content = new TextDecoder().decode(
         await provider.readFile(Uri.parse('gemstone://1/Globals/Array/comment')),
@@ -959,17 +957,17 @@ describe('GemStoneFileSystemProvider', () => {
     });
 
     it('shows the class category on its own line (Class>>definition omits it)', async () => {
-      vi.mocked(queries.getClassDefinition).mockReturnValueOnce(
+      vi.mocked(queries.classDefinition).mockResolvedValueOnce(
         "Object subclass: 'Array'\n  inDictionary: Globals\n  options: #()",
       );
-      vi.mocked(queries.getClassCategory).mockReturnValueOnce('Collections-Ordered');
+      vi.mocked(queries.classCategory).mockResolvedValueOnce('Collections-Ordered');
 
       const content = new TextDecoder().decode(
         await provider.readFile(Uri.parse('gemstone://1/Globals/Array/definition')),
       );
 
       expect(content).toContain("category: 'Collections-Ordered'\n  options: #()");
-      expect(queries.getClassCategory).toHaveBeenCalledWith(expect.anything(), 'Array', 'Globals');
+      expect(queries.classCategory).toHaveBeenCalledWith(expect.anything(), 'Array', 'Globals');
     });
 
     it('strips the category line before compiling and applies it via recategorizeClass', () => {

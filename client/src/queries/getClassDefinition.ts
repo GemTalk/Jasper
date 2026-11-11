@@ -1,4 +1,4 @@
-import { QueryExecutor } from './types';
+import { NbQueryExecutor, QueryExecutor } from './types';
 import { classLookupExpr, escapeString } from './util';
 
 // Return a class's definition. `dict` (a 1-based SymbolList index, or a name)
@@ -10,12 +10,28 @@ export function getClassDefinition(
   className: string,
   dict?: number | string,
 ): string {
+  return execute(classDefinitionCode(className, dict));
+}
+
+/**
+ * A class's definition, read without blocking the extension host. `dict` (a
+ * 1-based SymbolList index, or a name) scopes the lookup; without it, the name
+ * resolves as a bare global.
+ */
+export function classDefinition(
+  execute: NbQueryExecutor,
+  className: string,
+  dict?: number | string,
+): Promise<string> {
+  return execute(classDefinitionCode(className, dict));
+}
+
+function classDefinitionCode(className: string, dict: number | string | undefined): string {
   if (dict === undefined) {
-    return execute(`${className} definition`);
+    return `${className} definition`;
   }
-  const code = `| cls |
+  return `| cls |
 cls := ${classLookupExpr(className, dict)}.
 cls ifNil: [^ 'Class not found: ${escapeString(className)}'].
 cls definition`;
-  return execute(code);
 }

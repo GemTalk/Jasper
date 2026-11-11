@@ -44,13 +44,19 @@ import {
   getClassEnvironmentsAsync as sharedGetClassEnvironmentsAsync,
 } from './queries/getClassEnvironments';
 import { getMethodInstVarAccess as sharedGetMethodInstVarAccess } from './queries/getMethodInstVarAccess';
-import { getClassDefinition as sharedGetClassDefinition } from './queries/getClassDefinition';
 import {
-  getClassCategory as sharedGetClassCategory,
+  getClassDefinition as sharedGetClassDefinition,
+  classDefinition as sharedClassDefinition,
+} from './queries/getClassDefinition';
+import {
+  classCategory as sharedClassCategory,
   classExistsInDictionary as sharedClassExistsInDictionary,
 } from './queries/getClassCategory';
 import { getClassComment as sharedGetClassComment } from './queries/getClassComment';
-import { getStoredClassComment as sharedGetStoredClassComment } from './queries/getStoredClassComment';
+import {
+  getStoredClassComment as sharedGetStoredClassComment,
+  storedClassComment as sharedStoredClassComment,
+} from './queries/getStoredClassComment';
 import { canClassBeWritten as sharedCanClassBeWritten } from './queries/canClassBeWritten';
 import { getAllClassNames as sharedGetAllClassNames } from './queries/getAllClassNames';
 import {
@@ -937,6 +943,8 @@ export function getMethodInstVarAccess(
 }
 
 const OPENING_METHOD = 'GemStone: Opening method…';
+const OPENING_CLASS_DEFINITION = 'GemStone: Opening class definition…';
+const OPENING_CLASS_COMMENT = 'GemStone: Opening class comment…';
 
 export function getMethodSource(
   session: ActiveSession,
@@ -1000,12 +1008,28 @@ export function getClassDefinition(
   return sharedGetClassDefinition(defaultQueryExecutorUsing(session), className, dict);
 }
 
-export function getClassCategory(
+export function classDefinition(
   session: ActiveSession,
   className: string,
   dict?: number | string,
-): string {
-  return sharedGetClassCategory(defaultQueryExecutorUsing(session), className, dict);
+): Promise<string> {
+  return sharedClassDefinition(
+    queuedNbQueryExecutorUsing(session, OPENING_CLASS_DEFINITION),
+    className,
+    dict,
+  );
+}
+
+export function classCategory(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): Promise<string> {
+  return sharedClassCategory(
+    queuedNbQueryExecutorUsing(session, OPENING_CLASS_DEFINITION),
+    className,
+    dict,
+  );
 }
 
 export function classExistsInDictionary(
@@ -1030,6 +1054,18 @@ export function getStoredClassComment(
   dict?: number | string,
 ): string {
   return sharedGetStoredClassComment(defaultQueryExecutorUsing(session), className, dict);
+}
+
+export function storedClassComment(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): Promise<string> {
+  return sharedStoredClassComment(
+    queuedNbQueryExecutorUsing(session, OPENING_CLASS_COMMENT),
+    className,
+    dict,
+  );
 }
 
 export function canClassBeWritten(

@@ -431,6 +431,12 @@ describe('browser queries (integration)', () => {
 
       expect(definition).toContain('Array');
     });
+
+    it('answers the same definition as the blocking read', async () => {
+      const definition = await queries.classDefinition(session(), 'Array', 'Globals');
+
+      expect(definition).toBe(queries.getClassDefinition(session(), 'Array', 'Globals'));
+    });
   });
 
   describe('getClassComment', () => {
@@ -488,6 +494,15 @@ describe('browser queries (integration)', () => {
       queries.setClassComment(session(), COMMENT_CLASS, 'A stored comment.');
 
       expect(queries.getStoredClassComment(session(), COMMENT_CLASS)).toBe('A stored comment.');
+    });
+
+    it('answers the same stored text as the blocking read', async () => {
+      defineCommentClass();
+      queries.setClassComment(session(), COMMENT_CLASS, 'A stored comment.');
+
+      const comment = await queries.storedClassComment(session(), COMMENT_CLASS);
+
+      expect(comment).toBe(queries.getStoredClassComment(session(), COMMENT_CLASS));
     });
 
     /** The undo round trip: a comment added and then emptied leaves no comment. */

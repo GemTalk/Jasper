@@ -874,8 +874,11 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
         // GemStone's `definition` omits the category; show it on its own line so
         // it's visible and editable (the save path applies it separately).
         const dictRef = parsed.dictIndex ?? parsed.dictName;
-        const definition = queries.getClassDefinition(session, parsed.className, dictRef);
-        const category = queries.getClassCategory(session, parsed.className, dictRef);
+        // Queued together so a read made in the meantime can't land between them.
+        const [definition, category] = await Promise.all([
+          queries.classDefinition(session, parsed.className, dictRef),
+          queries.classCategory(session, parsed.className, dictRef),
+        ]);
         text = withCategoryLine(definition, category);
         break;
       }
@@ -885,7 +888,7 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
         // and saving writes the boilerplate in as a real comment. See
         // getStoredClassComment for why the hover and the System Browser's Comment
         // panel deliberately still show the synthesised text.
-        text = queries.getStoredClassComment(
+        text = await queries.storedClassComment(
           session,
           parsed.className,
           parsed.dictIndex ?? parsed.dictName,
