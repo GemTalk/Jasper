@@ -30,8 +30,8 @@ function write(rel: string, content: string): void {
   fs.writeFileSync(full, content);
 }
 
-// Default timeout was timing out on the Windows health-check leg: process
-// spawns and filesystem I/O both run measurably slower there than on Linux.
+// Default timeout was timing out on the Windows health-check leg: these tests build
+// and walk real temp folders, and filesystem I/O runs measurably slower there than on Linux.
 describe('findRowanLoadSpecs', { timeout: 10000 }, () => {
   it('finds a load spec by its content signature, in any layout', () => {
     write('rowan/specs/LoadMe.ston', LOAD_SPEC('LoadMe'));
@@ -149,19 +149,39 @@ describe('deriveRepoName', () => {
 });
 
 describe('updateGitRepo', () => {
-  // Answers each `git rev-parse HEAD` with the next hash in turn; every other git command succeeds silently.
-  function fakeGit(headBefore: string, headAfter: string): void {
-    const heads = [headBefore, headAfter];
+  beforeEach(() => {
     vi.mocked(execFile).mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  // Answers each `git rev-parse HEAD` with the next hash in turn; a `pull` fails with
+  // `pullError` as git's stderr when given, and every other git command succeeds silently.
+  function fakeGit(headBefore: string, headAfter: string, pullError?: string): void {
+    const heads = [headBefore, headAfter];
     vi.mocked(execFile).mockImplementation(((
       _file: string,
       args: string[],
       _options: unknown,
-      callback: (err: Error | null, stdout: string, stderr: string) => void,
+      callback?: (err: Error | null, stdout: string, stderr: string) => void,
     ) => {
-      callback(null, args.includes('rev-parse') ? `${heads.shift()}\n` : '', '');
+      if (args.includes('pull') && pullError !== undefined) {
+        callback?.(new Error('Command failed: git pull'), '', `${pullError}\n`);
+        return;
+      }
+      if (args.includes('rev-parse')) {
+        const head = heads.shift();
+        if (head === undefined) throw new Error('unexpected extra git rev-parse');
+        callback?.(null, `${head}\n`, '');
+        return;
+      }
+      callback?.(null, '', '');
     }) as unknown as typeof execFile);
   }
+
+  const gitCommands = () => vi.mocked(execFile).mock.calls.map((call) => [call[0], call[1]]);
 
   it('reports no change when the clone is already current', async () => {
     fakeGit('aaa', 'aaa');
@@ -180,11 +200,41 @@ describe('updateGitRepo', () => {
 
     await updateGitRepo('/clone');
 
-    expect(vi.mocked(execFile).mock.calls.map((call) => [call[0], call[1]])).toEqual([
+    expect(gitCommands()).toEqual([
       ['git', ['-C', '/clone', 'rev-parse', 'HEAD']],
       ['git', ['-C', '/clone', 'pull', '--recurse-submodules', '--ff-only']],
       ['git', ['-C', '/clone', 'submodule', 'update', '--init', '--recursive']],
       ['git', ['-C', '/clone', 'rev-parse', 'HEAD']],
     ]);
+  });
+
+  it('stops at a failed pull and reports the message git gave', async () => {
+    fakeGit('aaa', 'aaa', 'fatal: Not possible to fast-forward, aborting.');
+
+    await expect(updateGitRepo('/clone')).rejects.toThrow(
+      /^fatal: Not possible to fast-forward, aborting\.$/,
+    );
+    expect(gitCommands()).toEqual([
+      ['git', ['-C', '/clone', 'rev-parse', 'HEAD']],
+      ['git', ['-C', '/clone', 'pull', '--recurse-submodules', '--ff-only']],
+    ]);
+  });
+
+  // Inside a git hook, GIT_DIR and friends point at Jasper's own repo; passed on, they
+  // would make git ignore `-C` and update the wrong repository.
+  it('runs git without the GIT_* variables of the process that launched it', async () => {
+    vi.stubEnv('GIT_DIR', '/hook/repo/.git');
+    vi.stubEnv('GIT_WORK_TREE', '/hook/repo');
+    fakeGit('aaa', 'aaa');
+
+    await updateGitRepo('/clone');
+
+    const envs = vi
+      .mocked(execFile)
+      .mock.calls.map((call) => (call[2] as { env: NodeJS.ProcessEnv }).env);
+    expect(envs).toHaveLength(4);
+    for (const env of envs) {
+      expect(Object.keys(env).filter((key) => key.startsWith('GIT_'))).toEqual([]);
+    }
   });
 });
