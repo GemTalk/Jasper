@@ -10,6 +10,11 @@ const SCRIPT = path.resolve(__dirname, '..', '..', '..', 'scripts', 'verify-ci-c
 
 type Result = 'success' | 'failure' | 'skipped' | 'cancelled';
 
+// prepare's already-tested output.
+const NOT_A_QUEUE_RUN = '';
+const NO_RECORD = 'false';
+const RECORD_FOUND = 'true';
+
 function needs(prepare: Result, alreadyTested: string, others: Record<string, Result>) {
   return {
     prepare: {
@@ -51,38 +56,47 @@ const ALL_SKIPPED = {
 
 describe('verify-ci-complete.mjs', () => {
   it.each([
-    ['every job passed', needs('success', '', ALL_PASSED)],
-    ['a queue run found no record and every job passed', needs('success', 'false', ALL_PASSED)],
-    ['a queue run found a record and every job was skipped', needs('success', 'true', ALL_SKIPPED)],
+    ['every job passed', needs('success', NOT_A_QUEUE_RUN, ALL_PASSED)],
+    ['a queue run found no record and every job passed', needs('success', NO_RECORD, ALL_PASSED)],
+    [
+      'a queue run found a record and every job was skipped',
+      needs('success', RECORD_FOUND, ALL_SKIPPED),
+    ],
     [
       'a queue run found a record and a job ran anyway and passed',
-      needs('success', 'true', { ...ALL_SKIPPED, lint: 'success' }),
+      needs('success', RECORD_FOUND, { ...ALL_SKIPPED, lint: 'success' }),
     ],
   ])('passes when %s', (_case, input) => {
     expect(verify(JSON.stringify(input)).status).toBe(0);
   });
 
   it.each([
-    ['a job failed', needs('success', '', { ...ALL_PASSED, 'health-check': 'failure' })],
-    ['a job was cancelled', needs('success', '', { ...ALL_PASSED, 'health-check': 'cancelled' })],
+    [
+      'a job failed',
+      needs('success', NOT_A_QUEUE_RUN, { ...ALL_PASSED, 'health-check': 'failure' }),
+    ],
+    [
+      'a job was cancelled',
+      needs('success', NOT_A_QUEUE_RUN, { ...ALL_PASSED, 'health-check': 'cancelled' }),
+    ],
     [
       'a job was skipped without a record',
-      needs('success', '', { ...ALL_PASSED, lint: 'skipped' }),
+      needs('success', NOT_A_QUEUE_RUN, { ...ALL_PASSED, lint: 'skipped' }),
     ],
     [
       'a job was skipped and no record matched',
-      needs('success', 'false', { ...ALL_PASSED, lint: 'skipped' }),
+      needs('success', NO_RECORD, { ...ALL_PASSED, lint: 'skipped' }),
     ],
     [
       'a record matched but a job ran anyway and failed',
-      needs('success', 'true', { ...ALL_SKIPPED, lint: 'failure' }),
+      needs('success', RECORD_FOUND, { ...ALL_SKIPPED, lint: 'failure' }),
     ],
     [
       'a record matched but a job was cancelled',
-      needs('success', 'true', { ...ALL_SKIPPED, 'health-check': 'cancelled' }),
+      needs('success', RECORD_FOUND, { ...ALL_SKIPPED, 'health-check': 'cancelled' }),
     ],
-    ['prepare failed', needs('failure', '', ALL_SKIPPED)],
-    ['prepare was skipped, even with a record', needs('skipped', 'true', ALL_SKIPPED)],
+    ['prepare failed', needs('failure', NOT_A_QUEUE_RUN, ALL_SKIPPED)],
+    ['prepare was skipped, even with a record', needs('skipped', RECORD_FOUND, ALL_SKIPPED)],
   ])('fails when %s', (_case, input) => {
     const { status, stdout } = verify(JSON.stringify(input));
 
@@ -105,7 +119,7 @@ describe('verify-ci-complete.mjs', () => {
   });
 
   it('says so when it passes because a PR run already passed the tree', () => {
-    const { stdout } = verify(JSON.stringify(needs('success', 'true', ALL_SKIPPED)));
+    const { stdout } = verify(JSON.stringify(needs('success', RECORD_FOUND, ALL_SKIPPED)));
 
     expect(stdout).toContain(
       `A PR run already passed tree ${'f'.repeat(40)}, so this merge-queue run skipped the tests.`,
@@ -113,13 +127,13 @@ describe('verify-ci-complete.mjs', () => {
   });
 
   it('puts the skip in the job summary, so the green check is not mistaken for a full run', () => {
-    const { summary } = verify(JSON.stringify(needs('success', 'true', ALL_SKIPPED)));
+    const { summary } = verify(JSON.stringify(needs('success', RECORD_FOUND, ALL_SKIPPED)));
 
     expect(summary).toContain('**Passed without running the tests.**');
   });
 
   it('writes no summary for an ordinary pass', () => {
-    const { summary } = verify(JSON.stringify(needs('success', '', ALL_PASSED)));
+    const { summary } = verify(JSON.stringify(needs('success', NOT_A_QUEUE_RUN, ALL_PASSED)));
 
     expect(summary).toBe('');
   });

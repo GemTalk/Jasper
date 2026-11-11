@@ -44,8 +44,13 @@ function main() {
     console.error('Usage: node report-retried-tests.mjs <path-to-json-report>');
     process.exit(1);
   }
-  // The test step may have failed before vitest wrote a report at all.
+  // Expected when the test step died before Vitest wrote anything, but on a
+  // green leg it means the path no longer matches VITEST_JSON_OUTPUT, and every
+  // forgiven flake would vanish without this warning.
   if (!existsSync(reportPath)) {
+    console.log(
+      `::warning title=Retry report missing::${escapeAnnotation(`No test report at ${reportPath}, so tests that passed only on retry cannot be listed.`)}`,
+    );
     return;
   }
 

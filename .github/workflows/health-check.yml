@@ -269,6 +269,7 @@ jobs:
       GLIBC_TUNABLES: glibc.rtld.execstack=2
       # Queue only: a failing client test gets one retry, so a flake doesn't
       # eject the PR. PR and main runs don't retry, so they show every flake.
+      # The retry-report steps test this, not the event, so they follow it.
       VITEST_RETRY: ${{ github.event_name == 'merge_group' && '1' || '0' }}
     strategy:
       matrix:
@@ -467,7 +468,7 @@ jobs:
       - name: Report tests that passed only on retry (without server plugin)
         # always(): a leg that still failed may have had other tests pass on
         # retry, and those flakes belong in the report too.
-        if: always() && github.event_name == 'merge_group'
+        if: always() && env.VITEST_RETRY != '0'
         env:
           SKIP_REPORT_PATH: ${{ env.SKIP_REPORT_BARE_PATH }}
         shell: bash
@@ -497,7 +498,7 @@ jobs:
       - name: Report tests that passed only on retry (with server plugin)
         # always(): a leg that still failed may have had other tests pass on
         # retry, and those flakes belong in the report too.
-        if: always() && github.event_name == 'merge_group'
+        if: always() && env.VITEST_RETRY != '0'
         env:
           SKIP_REPORT_PATH: ${{ env.SKIP_REPORT_PLUGIN_PATH }}
         shell: bash

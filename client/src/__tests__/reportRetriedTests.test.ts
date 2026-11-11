@@ -103,11 +103,11 @@ describe('report-retried-tests.mjs', () => {
     expect(stdout).toBe('');
   });
 
-  it('prints nothing and succeeds when the test run wrote no report', () => {
+  it('warns and succeeds when the test run wrote no report, so a lost report is not silent', () => {
     const { status, stdout } = runReporter(undefined);
 
     expect(status).toBe(0);
-    expect(stdout).toBe('');
+    expect(stdout).toContain('::warning title=Retry report missing::No test report at ');
   });
 
   it('escapes a percent sign in the warning, which GitHub would read as an escape', () => {
