@@ -559,6 +559,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       never-run: ${{ steps.summarize.outputs.never-run }}
+      # The same id the run page's #summary-<id> anchor uses
+      job-id: ${{ job.check_run_id }}
     # download-artifact needs actions:read to list/fetch artifacts from this
     # run; the top-level contents:read block doesn't cover that
     permissions:
@@ -593,33 +595,32 @@ jobs:
   # in its name; clicking the box opens its log, which links to the full list.
   # always(): a skipped job's box shows its name expression unevaluated.
   never-run-count:
-    name: ${{ needs.report-skips.result != 'success' && 'Never-run count unavailable' || needs.report-skips.outputs.never-run == '0' && 'Every test runs somewhere' || format('⚠️ {0} tests never run', needs.report-skips.outputs.never-run) }}
+    name: ${{ needs.report-skips.result != 'success' && 'Never-run count unavailable' || needs.report-skips.outputs.never-run == '0' && 'Every test runs somewhere' || needs.report-skips.outputs.never-run == '1' && '⚠️ 1 test never runs' || format('⚠️ {0} tests never run', needs.report-skips.outputs.never-run) }}
     if: always()
     timeout-minutes: 1
     needs: report-skips
     runs-on: ubuntu-latest
-    # actions:read to look up the report job's id for the link
-    permissions:
-      actions: read
+    permissions: {}
     steps:
       - name: Link to the list of tests that never run
         env:
-          GH_TOKEN: ${{ github.token }}
           REPORT_RESULT: ${{ needs.report-skips.result }}
           NEVER_RUN: ${{ needs.report-skips.outputs.never-run }}
+          REPORT_JOB_ID: ${{ needs.report-skips.outputs.job-id }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           if [ "$REPORT_RESULT" != success ]; then
-            echo "No count: the skipped-tests report didn't run, because a leg failed or was cancelled."
+            echo "No count: the skipped-tests report didn't finish."
             exit 0
           fi
           if [ "$NEVER_RUN" = 0 ]; then
             echo "Every test runs on at least one leg."
             exit 0
           fi
-          job_id=$(gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs" --paginate \
-            --jq '.jobs[] | select(.name == "Skipped tests report") | .id')
-          echo "$NEVER_RUN tests never run on any leg. The list:"
-          echo "https://github.com/$REPO/actions/runs/$RUN_ID#summary-$job_id"
+          if [ "$NEVER_RUN" = 1 ]; then
+            echo "1 test never runs on any leg. The list:"
+          else
+            echo "$NEVER_RUN tests never run on any leg. The list:"
+          fi
+          echo "https://github.com/$REPO/actions/runs/$RUN_ID#summary-$REPORT_JOB_ID"

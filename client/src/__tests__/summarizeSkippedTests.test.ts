@@ -84,6 +84,14 @@ describe('summarize-skipped-tests.mjs', () => {
     expect(stdout).toContain('2 distinct tests across suite runs; 2 skipped in at least one.');
   });
 
+  it('escapes a | in a test name so it stays in one table cell', () => {
+    const { stdout } = runSummarizer([
+      [file('client/src/__tests__/a.test.ts', [['a | b', 'skipped']])],
+    ]);
+
+    expect(stdout).toContain('| a \\| b | `client/src/__tests__/a.test.ts` |');
+  });
+
   it('writes the never-run count as a step output', () => {
     const { output } = runSummarizer([
       [
