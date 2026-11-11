@@ -975,7 +975,7 @@ export class ProcessManager {
       const missingKey = explainMissingKeyFile(
         `Starting stone ${db.config.stoneName}`,
         output,
-        this.starterKeyIn(gsPath),
+        () => this.starterKeyIn(gsPath),
       );
       if (missingKey) throw new Error(missingKey, { cause: e });
       const explained = explainExtentLocked(

@@ -89,6 +89,7 @@ function makeDeps(overrides?: Partial<QuickSetupDeps>): QuickSetupDeps {
           ldiName: 'gs64ldi',
           baseExtent: 'extent0.dbf',
         },
+        keyMissing: false,
       })),
     } as unknown as DatabaseManager,
     processManager: {
@@ -419,6 +420,26 @@ describe('runQuickSetup', () => {
       expect.stringContaining('stone failed'),
     );
     expect(deps.processManager.startNetldi).not.toHaveBeenCalled();
+  });
+
+  it("stops after creation's warning when there is no key file, rather than failing to start", async () => {
+    const version = makeVersion({ extracted: true });
+    mockShowQuickPick.mockResolvedValue({ label: '3.7.4', version });
+    const deps = makeDeps();
+    vi.mocked(deps.databaseManager.createDatabaseDirect).mockResolvedValue({
+      dirName: 'db-1',
+      path: '/root/db-1',
+      config: {
+        version: '3.7.4',
+        stoneName: 'gs64stone',
+        ldiName: 'gs64ldi',
+        baseExtent: 'extent0.dbf',
+      },
+      keyMissing: true,
+    });
+    await runQuickSetup(deps);
+    expect(deps.processManager.startStone).not.toHaveBeenCalled();
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
   });
 
   // ── Login creation ────────────────────────────────────────

@@ -68,14 +68,15 @@ function gemstoneWords(message: string): string {
 }
 
 /** Advice from the number alone, for an error whose text has never been seen. */
-function usually(number: number, meaning: string, tryThis: string, said: string): string {
-  const askToCompare = said ? "If GemStone's text in brackets agrees, something" : 'Something';
-  return `GemStone error ${number} usually means ${meaning}. ${askToCompare} to try: ${tryThis}`;
+function usually(err: ReportedGciError, meaning: string, tryThis: string): string {
+  const askToCompare = gemstoneWords(err.message)
+    ? "If GemStone's text in brackets agrees, something"
+    : 'Something';
+  return `GemStone error ${err.number} usually means ${meaning}. ${askToCompare} to try: ${tryThis}`;
 }
 
 function adviceFor(err: ReportedGciError): string | undefined {
   const text = err.message;
-  const said = gemstoneWords(text);
   switch (err.number) {
     case GS_ERR_LOGIN_DENIAL:
       if (!LOGIN_DENIED.test(text)) return undefined;
@@ -93,24 +94,21 @@ function adviceFor(err: ReportedGciError): string | undefined {
     }
     case GS_ERR_LOGINS_DISABLED:
       return usually(
-        GS_ERR_LOGINS_DISABLED,
+        err,
         'the stone has logins turned off',
         'ask its administrator to allow logins.',
-        said,
       );
     case GS_ERR_MAX_SESSIONS_LIMIT:
       return usually(
-        GS_ERR_MAX_SESSIONS_LIMIT,
+        err,
         'the stone already has as many sessions as it allows',
         'log out a session you no longer need, or ask its administrator.',
-        said,
       );
     case GS_ERR_ACTIVE_USER_LIMIT:
       return usually(
-        GS_ERR_ACTIVE_USER_LIMIT,
+        err,
         'this user already has as many sessions as it is allowed',
         'log out one of them, or use another user.',
-        said,
       );
     case ERR_IN_LOGIN:
       return adviceForGemService(text);

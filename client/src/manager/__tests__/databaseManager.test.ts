@@ -307,17 +307,23 @@ describe('DatabaseManager.createDatabaseDirect', () => {
     expect(db.dirName).toBe('db-1');
   });
 
-  it('copies the free license key into the database', async () => {
-    await makeCreateManager().createDatabaseDirect('3.7.4', 'extent0', 'gs64stone', 'gs64ldi');
+  it('copies the free key file into the database', async () => {
+    const db = await makeCreateManager().createDatabaseDirect(
+      '3.7.4',
+      'extent0',
+      'gs64stone',
+      'gs64ldi',
+    );
 
     expect(wslCopyFileSync).toHaveBeenCalledWith(
       path.join('/gs', 'sys', 'community.starter.key'),
       path.join('/root', 'db-1', 'conf', 'gemstone.key'),
     );
     expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+    expect(db.keyMissing).toBe(false);
   });
 
-  it('says the stone cannot start yet when there is no license key to copy', async () => {
+  it('says the stone cannot start yet when there is no free key file to copy', async () => {
     vi.mocked(wslExistsSync).mockImplementation(
       (p: string) => p !== path.join('/gs', 'sys', 'community.starter.key'),
     );
@@ -334,8 +340,9 @@ describe('DatabaseManager.createDatabaseDirect', () => {
     expect(appendSysadmin).toHaveBeenCalledWith(warning);
     expect(warning).toContain(path.join('/gs', 'sys', 'community.starter.key'));
     expect(warning).toContain(path.join('/root', 'db-1', 'conf', 'gemstone.key'));
-    expect(warning).toMatch(/gs64stone can't start yet/);
+    expect(warning).toMatch(/no free key file at .*gs64stone can't start yet/);
     expect(db.dirName).toBe('db-1');
+    expect(db.keyMissing).toBe(true);
   });
 });
 

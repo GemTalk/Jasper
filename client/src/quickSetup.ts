@@ -172,6 +172,8 @@ export async function runQuickSetup(deps: QuickSetupDeps): Promise<void> {
     );
     return;
   }
+  // Creation has already said the stone can't start yet and where the key goes.
+  if (db.keyMissing) return;
 
   // ── Step 7: Start stone ─────────────────────────────────
   try {

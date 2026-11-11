@@ -88,30 +88,35 @@ export function explainStartFailure(
 
 /**
  * The stone log excerpt `startstone` prints when the file `KEYFILE` names is
- * missing, across the table border it draws. 3.7.5's second line is
- * `| ENOENT No such file or directory`; 3.6.2's is the one below.
+ * missing. It wraps the excerpt in an 80-column table, so where the line breaks
+ * and a `|` border falls depends on the path's length: anywhere between the
+ * colon and `ENOENT`. 3.7.5 prints `ENOENT No such file or directory`; 3.6.2,
+ * with a short path:
  *
- *     |     ERROR: Unable to stat() key file /db/conf/gemstone.key:
- *     | errno=2,ENOENT, The file or directory specified cannot be found
+ *     |     ERROR: Unable to stat() key file /nokey.key: errno=2,ENOENT, The file or directory
+ *     | specified cannot be found
  */
-const MISSING_KEY_FILE = /Unable to stat\(\) key file (.+?):\s*\n[|\s]*(?:errno=\d+,\s*)?ENOENT/;
+const MISSING_KEY_FILE = /Unable to stat\(\) key file (.+?):[|\s]*(?:errno=\d+,[|\s]*)?ENOENT/;
 
 /**
  * Name the missing key file a stone failed to start for, which GemStone leaves
  * as the last line of a long stone log excerpt, or return undefined to let the
  * output stand.
  *
- * `starterKey` is the install's free key file, only when it exists: database
- * creation leaves the key missing exactly when it isn't there, and pointing the
- * user at it would send them to the file creation just reported missing.
+ * `findStarterKey` gives the install's free key file, only when it exists:
+ * database creation leaves the key missing exactly when it isn't there, and
+ * pointing the user at it would send them to the file creation just reported
+ * missing. It is called only once the output is known to be a missing key,
+ * because on Windows it is a synchronous call into WSL.
  */
 export function explainMissingKeyFile(
   label: string,
   output: string,
-  starterKey: string | undefined,
+  findStarterKey: () => string | undefined,
 ): string | undefined {
   const keyFile = MISSING_KEY_FILE.exec(output)?.[1];
   if (!keyFile) return undefined;
+  const starterKey = findStarterKey();
   const whereToGetOne = starterKey
     ? `The free one is ${starterKey}.`
     : 'This GemStone install has no free key file to copy, so get one from GemTalk Systems.';
