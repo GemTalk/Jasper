@@ -539,8 +539,10 @@ export class SessionManager {
         'its run ignored every stop and is still running on the server',
         true,
       );
-    } else if (s.lastLogoutFailure) {
-      // A failed logout can leave the gem logged in; see ActiveSession.logout.
+    } else if (s.lastLogoutFailure?.number === 0) {
+      // GemStone 3.7.6 fails a refused logout with no error number (bug 52223), so the
+      // gem may still be logged in; see ActiveSession.logout. Not after other failures:
+      // the check's login blocks the extension host, for 45 s against an unreachable stone.
       this.endLeftoverGem(
         s,
         serverSession,
@@ -798,9 +800,9 @@ export class SessionManager {
 
   /**
    * End a logged-out session's gem if it is still on the server, or say why not.
-   * Unless `known` (the gem is there), the warning only says it may be: a gem
-   * that died, or a stone that stopped, fails the logout too, and without the
-   * privileges Jasper can't look.
+   * Unless `known` (the gem is there), the warning only says it may be: a logout
+   * failed with no error number doesn't say whether the gem is gone, and without
+   * the privileges Jasper can't look.
    */
   private endLeftoverGem(
     s: ActiveSession,

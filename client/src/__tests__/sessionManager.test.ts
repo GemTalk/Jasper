@@ -823,7 +823,7 @@ describe('SessionManager', () => {
       expect(manager.getSession(session.id)).toBeUndefined();
     });
 
-    // The gem may be gone: a dead gem or a stopped stone fails a logout too.
+    // The gem may be gone: a logout failed with no error number doesn't say.
     it('says only that the gem may be left when the user may not check', async () => {
       const session = manager.login({ ...DEFAULT_LOGIN, label: 'Unprivileged' }, '/mock/lib');
       gciLogout.mockReturnValueOnce({ sessionFreed: true, failure: { number: 0, message: '' } });
@@ -868,6 +868,21 @@ describe('SessionManager', () => {
       await manager.logout(session.id);
 
       expect(ran('descriptionOfSessionSerialNum:')).toBe(false);
+    });
+
+    // The check logs in again, which blocks until a stone it can't reach times out.
+    it('leaves the server alone after a logout that failed with an error number', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Unreachable' }, '/mock/lib');
+      gciLogout.mockReturnValueOnce({
+        sessionFreed: true,
+        failure: { number: 4147, message: 'network error' },
+      });
+
+      await manager.logout(session.id);
+
+      expect(ran('descriptionOfSessionSerialNum:')).toBe(false);
+      expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+      expect(manager.getSession(session.id)).toBeUndefined();
     });
   });
 
