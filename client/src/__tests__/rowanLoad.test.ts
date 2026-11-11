@@ -1,5 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { execFileSync } from 'child_process';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+vi.mock('child_process');
+
+import { execFile } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -27,8 +30,8 @@ function write(rel: string, content: string): void {
   fs.writeFileSync(full, content);
 }
 
-// Default timeout was timing out on the Windows health-check leg: process
-// spawns and filesystem I/O both run measurably slower there than on Linux.
+// Default timeout was timing out on the Windows health-check leg: these tests build
+// and walk real temp folders, and filesystem I/O runs measurably slower there than on Linux.
 describe('findRowanLoadSpecs', { timeout: 10000 }, () => {
   it('finds a load spec by its content signature, in any layout', () => {
     write('rowan/specs/LoadMe.ston', LOAD_SPEC('LoadMe'));
@@ -145,85 +148,93 @@ describe('deriveRepoName', () => {
   });
 });
 
-// Higher than findRowanLoadSpecs' bump above: each test here spawns several
-// git processes (clone, commit, push, pull), so the same per-process
-// Windows overhead compounds more. Same root cause, not a separate issue.
-describe('updateGitRepo', { timeout: 20000 }, () => {
-  // Strip GIT_* from the env so the test's own git commands operate on its temp
-  // repos, not on whatever repo the ambient environment points at — critical when
-  // this suite runs inside a git hook (e.g. the pre-push hook exports GIT_DIR).
-  const gitEnv = (): NodeJS.ProcessEnv => {
-    const env: NodeJS.ProcessEnv = { ...process.env };
-    for (const k of Object.keys(env)) if (k.startsWith('GIT_')) delete env[k];
-    return env;
-  };
-  const g = (args: string[], cwd: string) =>
-    execFileSync('git', args, { cwd, stdio: 'pipe', env: gitEnv() });
-
-  // Holds the folder `setup()` builds its repos under, so it is removed even when the test
-  // fails: the paths it hands back are used after it returns, so it cannot own its own
-  // cleanup with a try/finally.
-  let base: string | undefined;
+describe('updateGitRepo', () => {
+  beforeEach(() => {
+    vi.mocked(execFile).mockReset();
+  });
 
   afterEach(() => {
-    if (base !== undefined) {
-      fs.rmSync(base, { recursive: true, force: true });
-      base = undefined;
-    }
+    vi.unstubAllEnvs();
   });
 
-  // A bare remote, plus a clone of it. Advancing the remote is done through a
-  // throwaway second clone so the first clone genuinely lags behind.
-  function setup(): { remote: string; clone: string; bump: () => void } {
-    const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'rowan-git-'));
-    base = folder;
-    const seed = path.join(folder, 'seed');
-    const remote = path.join(folder, 'remote.git');
-    fs.mkdirSync(seed);
-    g(['init', '-q', '-b', 'main'], seed);
-    g(['config', 'user.email', 't@t'], seed);
-    g(['config', 'user.name', 'T'], seed);
-    // Force LF checkouts regardless of the host's core.autocrlf: this file is
-    // tracked, so it travels with every clone (remote, clone, each pusher)
-    // and applies no matter which process performs the checkout, unlike a
-    // core.autocrlf override on the git commands here, which wouldn't reach
-    // updateGitRepo's own checkout.
-    fs.writeFileSync(path.join(seed, '.gitattributes'), '* text=auto eol=lf\n');
-    fs.writeFileSync(path.join(seed, 'a.txt'), 'one\n');
-    g(['add', '-A'], seed);
-    g(['commit', '-qm', 'one'], seed);
-    g(['clone', '-q', '--bare', seed, remote], folder);
-
-    const clone = path.join(folder, 'clone');
-    g(['clone', '-q', remote, clone], folder);
-
-    let n = 1;
-    const bump = () => {
-      const pusher = path.join(folder, `pusher-${n}`);
-      g(['clone', '-q', remote, pusher], folder);
-      g(['config', 'user.email', 't@t'], pusher);
-      g(['config', 'user.name', 'T'], pusher);
-      fs.writeFileSync(path.join(pusher, 'a.txt'), `rev-${n}\n`);
-      g(['commit', '-aqm', `rev-${n}`], pusher);
-      g(['push', '-q', 'origin', 'main'], pusher);
-      n += 1;
-    };
-    return { remote, clone, bump };
+  // Answers each `git rev-parse HEAD` with the next hash in turn; a `pull` fails with
+  // `pullError` as git's stderr when given, and every other git command succeeds silently.
+  function fakeGit(headBefore: string, headAfter: string, pullError?: string): void {
+    const heads = [headBefore, headAfter];
+    vi.mocked(execFile).mockImplementation(((
+      _file: string,
+      args: string[],
+      _options: unknown,
+      callback?: (err: Error | null, stdout: string, stderr: string) => void,
+    ) => {
+      if (args.includes('pull') && pullError !== undefined) {
+        callback?.(new Error('Command failed: git pull'), '', `${pullError}\n`);
+        return;
+      }
+      if (args.includes('rev-parse')) {
+        const head = heads.shift();
+        if (head === undefined) throw new Error('unexpected extra git rev-parse');
+        callback?.(null, `${head}\n`, '');
+        return;
+      }
+      callback?.(null, '', '');
+    }) as unknown as typeof execFile);
   }
 
-  it('reports no change when the clone is already current', async () => {
-    const { clone } = setup();
+  const gitCommands = () => vi.mocked(execFile).mock.calls.map((call) => [call[0], call[1]]);
 
-    expect(await updateGitRepo(clone)).toEqual({ updated: false });
+  it('reports no change when the clone is already current', async () => {
+    fakeGit('aaa', 'aaa');
+
+    expect(await updateGitRepo('/clone')).toEqual({ updated: false });
   });
 
-  it('fast-forwards and reports the change when the remote has advanced', async () => {
-    const { clone, bump } = setup();
-    bump();
+  it('reports the change when the remote has advanced', async () => {
+    fakeGit('aaa', 'bbb');
 
-    const result = await updateGitRepo(clone);
+    expect(await updateGitRepo('/clone')).toEqual({ updated: true });
+  });
 
-    expect(result.updated).toBe(true);
-    expect(fs.readFileSync(path.join(clone, 'a.txt'), 'utf8')).toBe('rev-1\n');
+  it('pulls fast-forward only, then updates submodules, inside the clone', async () => {
+    fakeGit('aaa', 'aaa');
+
+    await updateGitRepo('/clone');
+
+    expect(gitCommands()).toEqual([
+      ['git', ['-C', '/clone', 'rev-parse', 'HEAD']],
+      ['git', ['-C', '/clone', 'pull', '--recurse-submodules', '--ff-only']],
+      ['git', ['-C', '/clone', 'submodule', 'update', '--init', '--recursive']],
+      ['git', ['-C', '/clone', 'rev-parse', 'HEAD']],
+    ]);
+  });
+
+  it('stops at a failed pull and reports the message git gave', async () => {
+    fakeGit('aaa', 'aaa', 'fatal: Not possible to fast-forward, aborting.');
+
+    await expect(updateGitRepo('/clone')).rejects.toThrow(
+      /^fatal: Not possible to fast-forward, aborting\.$/,
+    );
+    expect(gitCommands()).toEqual([
+      ['git', ['-C', '/clone', 'rev-parse', 'HEAD']],
+      ['git', ['-C', '/clone', 'pull', '--recurse-submodules', '--ff-only']],
+    ]);
+  });
+
+  // Inside a git hook, GIT_DIR and friends point at Jasper's own repo; passed on, they
+  // would make git ignore `-C` and update the wrong repository.
+  it('runs git without the GIT_* variables of the process that launched it', async () => {
+    vi.stubEnv('GIT_DIR', '/hook/repo/.git');
+    vi.stubEnv('GIT_WORK_TREE', '/hook/repo');
+    fakeGit('aaa', 'aaa');
+
+    await updateGitRepo('/clone');
+
+    const envs = vi
+      .mocked(execFile)
+      .mock.calls.map((call) => (call[2] as { env: NodeJS.ProcessEnv }).env);
+    expect(envs).toHaveLength(4);
+    for (const env of envs) {
+      expect(Object.keys(env).filter((key) => key.startsWith('GIT_'))).toEqual([]);
+    }
   });
 });
