@@ -13,7 +13,8 @@ import { logError, logInfo } from './gciLog';
 import { autoCommitAfterWrite } from './autoCommit/autoCommitRunner';
 import { routeInspect } from './inspectRouter';
 import { DebuggerPanel } from './debugger/debuggerPanel';
-import { clearStack, getObjectPrintString } from './debugger/debugQueries';
+import { getObjectPrintString } from './debugger/debugQueries';
+import { releaseStoppedProcess } from './debugger/releaseStoppedProcess';
 import { appendTranscript, appendTranscriptOutput, showTranscript } from './transcriptChannel';
 import {
   startClientForwarderMode,
@@ -679,16 +680,8 @@ export class CodeExecutor {
     appendTranscriptOutput(endClientForwarderMode(session));
   }
 
-  /**
-   * Clear a suspended process no debugger will own, in the background. Ends
-   * clientForwarder mode first: on 3.7.5 a clean-up that writes to the
-   * Transcript while the mode is on stops at that write (measured), and the
-   * clear holds the session past the caller's own end anyway. What the clean-up
-   * wrote is shown once it is done.
-   */
   private releaseProcess(session: ActiveSession, gsProcess: bigint): void {
-    appendTranscriptOutput(endClientForwarderMode(session));
-    void clearStack(session, gsProcess, () => appendTranscriptOutput(drainTranscript(session)));
+    void releaseStoppedProcess(session, gsProcess);
   }
 
   /**

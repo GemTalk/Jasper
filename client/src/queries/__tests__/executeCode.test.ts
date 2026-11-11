@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { wrapExecuteCode } from '../executeCode';
+import { wrapCellCode, wrapExecuteCode } from '../executeCode';
 
 describe('wrapExecuteCode', () => {
   // The block wrap is what lets `| x | x := 42. x + 1` and other
@@ -50,5 +50,29 @@ describe('wrapExecuteCode', () => {
     expect(stackIdx).toBeGreaterThan(-1);
     expect(exIdx).toBeGreaterThan(-1);
     expect(stackIdx).toBeLessThan(exIdx);
+  });
+});
+
+describe('wrapCellCode', () => {
+  // A notebook cell runs with debugging on: a halt must reach the debugger,
+  // while every other exception is still reported inline.
+  it('passes a Halt on and reports everything else inline', () => {
+    const out = wrapCellCode('self halt. 3');
+    expect(out).toContain('[self halt. 3] value printString');
+    expect(out).toContain('(e isKindOf: Halt) ifTrue: [e pass]');
+    expect(out).toContain('on: AbstractException');
+    expect(out).toContain('e messageText asString');
+  });
+
+  it('keeps the minimal AlmostOutOfStack guard innermost', () => {
+    const out = wrapCellCode('1');
+    expect(out.indexOf('on: AlmostOutOfStack')).toBeGreaterThan(-1);
+    expect(out.indexOf('on: AlmostOutOfStack')).toBeLessThan(out.indexOf('on: AbstractException'));
+  });
+
+  // The MCP tool runs with debugging off; a halt it passed on would stop the
+  // agent's call with nothing to debug it.
+  it('leaves the execute_code wrapper catching halts', () => {
+    expect(wrapExecuteCode('1')).not.toContain('Halt');
   });
 });

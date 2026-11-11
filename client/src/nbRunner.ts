@@ -94,7 +94,8 @@ export interface NbRunOptions {
    */
   suppressNotification?: boolean;
   /**
-   * Called once when polling begins, handed a `cancel` fn. Invoking it stops the
+   * Called when polling begins, handed a `cancel` fn; a halted Smalltalk cell
+   * calls it again with its debugger's close. Invoking it stops the
    * call exactly as the progress notification's Cancel does: a soft break, and the
    * runner stops waiting if the call is still going (see
    * {@link STOP_WAITING_AFTER_MS}). Lets a caller drive cancellation from its own UI

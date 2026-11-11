@@ -11,15 +11,32 @@
 //     proper error string.
 //
 // Both handlers return a String, matching the printString result the caller
-// expects, so the wrapper is shape-stable across success/error.
+// expects, so the wrapper is shape-stable across success/error. The one
+// exception is a notebook cell's halt, which wrapCellCode passes on.
 
-export function wrapExecuteCode(code: string): string {
+const ERROR_TEXT = `'Error: ', e class name asString, ' - ', e messageText asString`;
+
+function wrap(code: string, onException: string): string {
   return `[[[${code}] value printString]
   on: AlmostOutOfStack do: [:e | 'Error: AlmostOutOfStack - user code exhausted the call stack']]
-  on: AbstractException do: [:e | 'Error: ', e class name asString, ' - ', e messageText asString]`;
+  on: AbstractException do: [:e | ${onException}]`;
 }
 
-/** Whether an answer from {@link wrapExecuteCode} is one of its handlers' error strings. A
+export function wrapExecuteCode(code: string): string {
+  return wrap(code, ERROR_TEXT);
+}
+
+/**
+ * A notebook cell's wrapper. Cells run with debugging on, so a halt is passed on
+ * to the debugger; resumed, it carries on to the cell's printString result. Only
+ * `Halt` is singled out: narrowing the net to `Error` would also stop reporting
+ * Warnings, Notifications and TestFailures inline.
+ */
+export function wrapCellCode(code: string): string {
+  return wrap(code, `(e isKindOf: Halt) ifTrue: [e pass] ifFalse: [${ERROR_TEXT}]`);
+}
+
+/** Whether an answer from {@link wrapExecuteCode} or {@link wrapCellCode} is one of its handlers' error strings. A
  *  heuristic: a successful answer whose printString happens to start with `Error: ` (a domain
  *  object's `printOn:` can write that) reads as raised too, and so is not auto-committed. */
 export function executeCodeRaised(answer: string): boolean {
