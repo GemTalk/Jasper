@@ -31,8 +31,8 @@ These hooks, chosen to be the places an operation *finishes*:
 | --- | --- |
 | the `writing` wrapper in `browserQueries`' write-path section | method compiles, class edits, comments, categories, dictionary edits — everything the Explorer, the browsers, the editors and the MCP tools reach the stone through |
 | `codeExecutor` after a completed execution | Do It, Display It, Inspect It |
-| `smalltalkNotebookController` / MCP `execute_code` | a doit by another route, unless it raised (its error comes back as an answer, not a throw) |
-| the GemStone Debugger | a run that halted and was then resumed or stepped to the end, together with everything done while it was halted (see *Holds* below) |
+| `smalltalkNotebookController` / MCP `execute_code` | a doit by another route, unless it raised (its error comes back as an answer, not a throw); a cell that stopped in the debugger commits as the Debugger row says |
+| the GemStone Debugger | a run that halted and was then resumed or stepped to the end, together with everything done while it was halted (see *Holds* below); not a notebook cell whose answer is an error |
 | the basic Inspector | an expression in its evaluation pane; a slot edited or reverted |
 | `notifyRefactoringApplied` | all fifteen refactorings |
 | `undoRefactoringCommand` | an undo of a refactoring, when it reversed every change |
@@ -97,8 +97,9 @@ persist half-done work, whoever asked for it:
 
 - **A debugger holding a halted run.** The run's work so far is in the transaction, so an expression
   evaluated in a frame, a variable edit, or a save in another editor commits nothing while it is
-  halted. When the run finishes, one commit takes all of it; Terminate commits none of it and says
-  the next change would.
+  halted. When the run finishes, one commit takes all of it, unless it was a notebook cell that
+  answered an error, which commits nothing, as it would have without the halt. Terminate commits
+  none of it and says the next change would.
 - **An instance-variable refactoring whose apply failed.** From the failure until its panel closes,
   nothing commits, so the panel's **Abort** still has the partial reshape to take back. If you
   saved anything while the panel was up, the Abort asks first, since it discards that too. After
