@@ -228,7 +228,6 @@ import {
 import { SunitTestController } from './sunitTestController';
 import { GrailNotebookController, grailSessionKernel } from './grailNotebookController';
 import { SmalltalkNotebookController, smalltalkSessionKernel } from './smalltalkNotebookController';
-import { registerNotebookBreakpointHint } from './debugger/notebookBreakpointHint';
 import { SessionKernels } from './sessionKernels';
 import { ExportManager } from './exportManager';
 import { FileInManager } from './fileInManager';
@@ -1499,7 +1498,6 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     new SessionKernels(sessionManager, [smalltalkSessionKernel, grailSessionKernel]),
   );
-  context.subscriptions.push(registerNotebookBreakpointHint());
 
   // ── Status Bar: Active Session ─────────────────────────
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);

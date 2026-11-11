@@ -301,7 +301,7 @@ describe('transcriptSink', () => {
       expect((gci.GciTsContinueWithAsync as ReturnType<typeof vi.fn>).mock.calls[0][4]).toBe(0x21);
     });
 
-    it('resumes with flags 0 when none are given, as a notebook cell runs', async () => {
+    it('resumes with flags 0 when none are given', async () => {
       const gci = makeGci({
         GciTsNbResult: vi.fn(() => ({ result: OOP_ILLEGAL, err: forwarderError() })),
       });
