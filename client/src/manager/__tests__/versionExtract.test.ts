@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
@@ -29,6 +30,7 @@ import {
   isAlive,
   makeFixture,
   partialTree,
+  productDirName,
   progressLog,
   tearDown,
   until,
@@ -304,19 +306,29 @@ describe.runIf(process.platform === 'linux' && realUnzip && realPython)(
   },
 );
 
-// Attaching and detaching a disk image takes seconds apiece on a CI runner,
-// which puts these past vitest's default 5 s.
+// Attaching and detaching a disk image takes about a second on a CI runner, and
+// creating one about eight, so the image is built once and copied per test.
 describe.runIf(process.platform === 'darwin')(
   'Unpacking a GemStone disk image on macOS',
   { timeout: 30_000 },
   () => {
-    let volume: string;
+    const volume = `JasperTest${process.pid}${Date.now()}`;
+    let imageDir: string;
+    let image: string;
+
+    beforeAll(() => {
+      imageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jasper-dmg-'));
+      image = buildDmg(imageDir, productDirName(new SysadminStorage().getPlatformSuffix()), volume);
+    }, 30_000);
+
+    afterAll(() => {
+      fs.rmSync(imageDir, { recursive: true, force: true });
+    });
 
     beforeEach(() => {
       setUp('dmg');
-      volume = `JasperTest${process.pid}${Date.now()}`;
-      buildDmg(f, volume);
-    }, 30_000);
+      fs.copyFileSync(image, f.archivePath);
+    });
 
     afterEach(async () => {
       await tearDown(f);
