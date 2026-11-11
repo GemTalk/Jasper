@@ -57,7 +57,7 @@ export class SessionLedger<K> {
   private readonly holders = new Map<K, Holder>();
   private readonly queue: Waiter<K>[] = [];
   private live: Set<string> | undefined;
-  // Sessions already on the stone when the run started belong to no test file.
+  // Sessions already on the stone at the watcher's first look belong to no test file.
   private before: Set<string> | undefined;
   private readonly sightings = new Map<string, Sighting>();
   // Login serial -> when a file reported it.
@@ -167,7 +167,7 @@ export class SessionLedger<K> {
 
   /**
    * The watcher's look at the stone: each user session's login serial and its
-   * GCI client's process id. The first look is what was there before the run.
+   * GCI client's process id. The first look is what was there before any file booked.
    * Answers the sessions that were there before, on the first look only.
    */
   sample(sessions: Map<string, number>): Map<string, number> | undefined {
@@ -282,7 +282,8 @@ export class SessionLedger<K> {
   /**
    * Login serials go up by one per login on the stone, so a serial between two
    * the gate knows of that it never saw nor was told about is a login too short
-   * for the watcher's look. `firstSerial` and `endSerial` bound the run's logins.
+   * for the watcher's look. `firstSerial` and `endSerial` bound the run's logins;
+   * `firstAt` is when `firstSerial` logged in.
    * Answers each with the files that held bookings in the time it can have
    * happened, the known serials either side, and the refusals reported near it.
    * Each reported refusal not already matched to a session the watcher saw
@@ -291,13 +292,17 @@ export class SessionLedger<K> {
    * A login the watcher's look leaves out (GcUser, SymbolUser), or one made
    * between the watcher's own login and its first look, would show here too.
    */
-  loginsNeverSeen(firstSerial: number | undefined, endSerial: number): UnseenLogin[] {
+  loginsNeverSeen(
+    firstSerial: number | undefined,
+    endSerial: number,
+    firstAt = this.startedAt,
+  ): UnseenLogin[] {
     const when = new Map<number, KnownSerial>();
     const know = (serial: number, at: number, how: KnownSerial['how']) => {
       const prev = when.get(serial);
       if (!prev || at < prev.at) when.set(serial, { serial, at, how });
     };
-    if (firstSerial !== undefined) know(firstSerial, this.startedAt, 'run edge');
+    if (firstSerial !== undefined) know(firstSerial, firstAt, 'run edge');
     know(endSerial, this.clock(), 'run edge');
     for (const [serial, s] of this.sightings) know(Number(serial), s.firstSeen, 'seen');
     for (const [serial, at] of this.reported) know(Number(serial), at, 'reported');

@@ -20,10 +20,12 @@ describe('the session gate', () => {
   let look: (sessions: Map<string, number>) => void;
   let fail: (error: unknown) => void;
   let watcher: Partial<Watcher>;
+  let watchersStarted: number;
   let teardown: (() => Promise<void>) | undefined;
   const files: Socket[] = [];
 
   const startWatcher: StartWatcher = (onSample, onFail) => {
+    watchersStarted++;
     look = onSample;
     fail = onFail;
     onSample(new Map());
@@ -67,6 +69,7 @@ describe('the session gate', () => {
 
   beforeEach(() => {
     socketPath = gateSocketPath(`jasper-gate-test-${process.pid}-${Date.now()}`);
+    watchersStarted = 0;
     teardown = undefined;
   });
 
@@ -86,24 +89,54 @@ describe('the session gate', () => {
       });
     });
 
-    const cannotStart = () => {
-      throw new Error('no such stone');
-    };
+    it('does not log in to the stone until a file books', async () => {
+      await start();
 
-    it('fails to start when its watcher cannot start', async () => {
-      const starting = startGate(socketPath, cannotStart);
+      await connect();
 
-      await expect(starting).rejects.toThrow('no such stone');
+      expect(watchersStarted).toBe(0);
     });
 
-    it('stops serving when its watcher cannot start', async () => {
-      await startGate(socketPath, cannotStart).catch(() => {});
+    it('logs in to the stone once, for the first file that books', async () => {
+      await start({ sessionLimit: 3 });
 
-      const connecting = new Promise((resolve, reject) =>
-        createConnection(socketPath).once('connect', resolve).once('error', reject),
-      );
+      await ask(1);
+      await ask(1);
 
-      await expect(connecting).rejects.toThrow();
+      expect(watchersStarted).toBe(1);
+    });
+
+    it('ends a run no file booked in without logging in to the stone', async () => {
+      await start();
+
+      const ending = teardown!();
+
+      await expect(ending).resolves.toBeUndefined();
+      expect(watchersStarted).toBe(0);
+    });
+
+    describe('when its watcher cannot log in', () => {
+      beforeEach(async () => {
+        teardown = await startGate(socketPath, () => {
+          throw new Error('no such stone');
+        });
+      });
+
+      it('refuses the booking, saying why', async () => {
+        const { answer } = await ask(1);
+
+        expect(answer).toEqual({
+          error: expect.stringMatching(/could not log in the session that watches.*no such stone/),
+        });
+      });
+
+      it('fails the run at teardown', async () => {
+        (await ask(1)).socket.destroy();
+
+        const ending = teardown!();
+
+        await expect(ending).rejects.toThrow(/session gate: could not log in.*no such stone/);
+      });
     });
   });
 
@@ -132,10 +165,14 @@ describe('the session gate', () => {
   });
 
   describe('when its watcher fails', () => {
-    beforeEach(() => start());
+    let file: Socket;
+
+    beforeEach(async () => {
+      await start();
+      file = await booked();
+    });
 
     it('answers the check of a file holding a booking with the failure', async () => {
-      const file = await booked();
       const answer = nextAnswer(file);
       send(file, { op: 'check' });
 
@@ -147,7 +184,6 @@ describe('the session gate', () => {
     });
 
     it('fails the end-of-file check of a file holding a booking', async () => {
-      const file = await booked();
       fail(new Error('Your session has been forcibly terminated'));
 
       const check = assertBookingKept(file);
@@ -158,7 +194,6 @@ describe('the session gate', () => {
     });
 
     it('gives a file still waiting for room the failure', async () => {
-      await booked();
       const waiting = await connect();
       const answer = nextAnswer(waiting);
       send(waiting, { op: 'acquire', file: 'b.test.ts', pid: process.pid, n: 1 });
@@ -178,6 +213,7 @@ describe('the session gate', () => {
 
     it('fails the run at teardown', async () => {
       fail(new Error('stone stopped'));
+      file.destroy();
 
       const ending = teardown!();
 
@@ -186,6 +222,7 @@ describe('the session gate', () => {
 
     it('ends a run whose watcher kept looking without failing it', async () => {
       look(new Map());
+      file.destroy();
 
       const ending = teardown!();
 
