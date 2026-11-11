@@ -428,4 +428,79 @@ describe('whether a session is busy (integration)', () => {
     expect(err.number, err.message).toBe(0);
     expect(transient.GciTsOopToI64(result).value).toBe(7n);
   });
+  function freedCount(on: ActiveSession): () => number {
+    let count = 0;
+    on.onFreed(() => count++);
+    return () => count;
+  }
+
+  it('tells its listeners once the answer to code started without waiting is read', async () => {
+    const transient = transientSession();
+    const timesFreed = freedCount(transient);
+    startNonBlocking(transient, 'true');
+    await resultReady(transient);
+
+    transient.GciTsNbResult();
+
+    expect(timesFreed()).toBe(1);
+  });
+
+  it('does not tell its listeners while the answer to code started without waiting is unread', async () => {
+    const transient = transientSession();
+    const timesFreed = freedCount(transient);
+
+    startNonBlocking(transient, 'true');
+    await resultReady(transient);
+
+    expect(timesFreed()).toBe(0);
+  });
+
+  it('tells its listeners once it stops waiting for an answer nobody will read', () => {
+    const transient = transientSession();
+    const timesFreed = freedCount(transient);
+    startNonBlocking(transient, '(Delay forMilliseconds: 300) wait');
+
+    transient.forgetUncollectedCall();
+
+    expect(timesFreed()).toBe(1);
+  });
+
+  it('tells its listeners once a call on another thread finishes', async () => {
+    const transient = transientSession();
+    const timesFreed = freedCount(transient);
+
+    await startOnWorker(transient);
+
+    expect(timesFreed()).toBe(1);
+  });
+
+  it('does not tell its listeners while another call on another thread is still running', async () => {
+    const transient = transientSession();
+    const timesFreed = freedCount(transient);
+    const shortDelay = delayOn(transient, 0);
+    void startOnWorker(transient);
+    // Starting the short call only once the long one holds the session fixes which of the two
+    // GemStone refuses.
+    await vi.waitFor(() => expect(transient.GciTsCallInProgress().result).toBe(1), {
+      timeout: 5_000,
+    });
+
+    await transient.GciTsPerformAsync(shortDelay, OOP_ILLEGAL, 'wait', [], 0, 0);
+
+    expect(transient.isBusy()).toBe(true);
+    expect(timesFreed()).toBe(0);
+  });
+
+  it('stops telling a listener that unsubscribed', async () => {
+    const transient = transientSession();
+    let timesFreed = 0;
+    const unsubscribe = transient.onFreed(() => timesFreed++);
+    startNonBlocking(transient, 'true');
+    await resultReady(transient);
+
+    unsubscribe();
+    transient.GciTsNbResult();
+
+    expect(timesFreed).toBe(0);
+  });
 });
