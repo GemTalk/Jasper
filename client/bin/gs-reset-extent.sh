@@ -16,11 +16,9 @@ set -euo pipefail
 # did the unlinking starts a second stone on a fresh file in the same directory.
 # Two stones, one data directory, and the first one's data is unreachable.
 #
-# With the default versions (3.6.2 for the base tier, 3.7.5 for rowan3) the paths
-# differ and this cannot happen, which is exactly why it would otherwise surprise
-# someone later: it needs two instances of the SAME version, such as
+# It needs two instances of the SAME version, such as
 # `gs-test-server.sh --start 3.7.5` (jasper-test) followed by
-# `test:server:start:rowan3` (jasper-rowan3).
+# `gs-test-server.sh --start 3.7.5 jasper-rowan3 --extent extent0.rowan3.dbf`.
 #
 # Arguments:
 #   version   GemStone version (e.g. 3.7.5)

@@ -64,7 +64,7 @@ The on-demand `client/src/__tests__/gci/` project **never runs in CI** (see `.cl
 **These are not reasons** — each already has a mechanism that runs in CI:
 
 - _needs the server plugin in the image_ → gate it (see below). CI runs the suite twice, once bare and once with the plugin installed, so both worlds are covered.
-- _needs Rowan or Grail in the image_ → probe for it live and `ctx.skip(reason)` when absent, the way `rowanExportFixpoint.integration.test.ts` does with `listRowanProjects(exec).available`. Unlike the server plugin, there is no CI pass with Rowan/Grail installed yet, so such a test currently always skips in CI — that's a known gap, not a reason to write it in `gci/` instead.
+- _needs Rowan or Grail in the image_ → no CI pass has either installed, so a test gated on one skips on every run. Test Jasper's own half instead, from input built by hand: `fileTransfer/__tests__/tonelFileIn.integration.test.ts` builds the class description Rowan's reader would answer and runs on every stone. Leave Rowan's and Grail's own behaviour to their own tests.
 - _needs a class, method, or test-case fixture a bare vendor extent lacks_ → create it in the test; the auto-abort rolls it back.
 - _depends on behavior that differs by stone version_ → a version-applicability gate resolved off the session, never a hardcoded `stoneVersion` literal.
 - _trips a known GemStone defect on some releases_ → add it to `knownGemStoneBugs` (`src/__tests__/knownGemStoneBugs.ts`) and call `skipForKnownGemStoneBug` at the test's top. End each range at the last release seen broken, never at a guessed fix, so newer releases run the test again.

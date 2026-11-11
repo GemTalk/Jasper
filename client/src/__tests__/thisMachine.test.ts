@@ -72,7 +72,7 @@ describe('isThisMachine', () => {
       } as WslNetworkInfo);
       try {
         expect(isThisMachine('dev-distro')).toBe(true);
-        expect(isThisMachine('thor')).toBe(false);
+        expect(isThisMachine('elsewhere.example')).toBe(false);
       } finally {
         vi.mocked(getWslNetworkInfoCached).mockReturnValue(undefined);
       }

@@ -30,9 +30,9 @@ import {
 describe('parseStoneSessions', () => {
   it("reads the stone's clock, its commit-record backlog, and one session per line", () => {
     const text =
-      '1793224302\t34\t20\ttrue\tuffda\t7\n' +
+      '1793224302\t34\t20\ttrue\tstonehost.example\t7\n' +
       '2\t1\tGcUser\t3886706\tlocalhost\t1793224153\t0\treclaimgcgem\n' +
-      '7\t12\tDataCurator\t41377\tthor\t1793223402\t1\t';
+      '7\t12\tDataCurator\t41377\telsewhere.example\t1793223402\t1\t';
 
     expect(parseStoneSessions(text)).toEqual({
       kind: 'sessions',
@@ -40,7 +40,7 @@ describe('parseStoneSessions', () => {
       commitRecordBacklog: 34,
       abortThreshold: 20,
       canStopSessions: true,
-      stoneHostname: 'uffda',
+      stoneHostname: 'stonehost.example',
       sessions: [
         {
           id: 2,
@@ -58,7 +58,7 @@ describe('parseStoneSessions', () => {
           serial: 12,
           user: 'DataCurator',
           gemPid: 41377,
-          host: 'thor',
+          host: 'elsewhere.example',
           loggedInAt: 1793223402,
           transaction: 'in',
           systemGem: undefined,
@@ -69,20 +69,22 @@ describe('parseStoneSessions', () => {
   });
 
   it('reads a stone with no other session as an empty list', () => {
-    expect(parseStoneSessions('1793224302\t1\t20\tfalse\tuffda\t')).toEqual({
+    expect(parseStoneSessions('1793224302\t1\t20\tfalse\tstonehost.example\t')).toEqual({
       kind: 'sessions',
       serverNow: 1793224302,
       commitRecordBacklog: 1,
       abortThreshold: 20,
       canStopSessions: false,
-      stoneHostname: 'uffda',
+      stoneHostname: 'stonehost.example',
       sessions: [],
     });
   });
 
   it('reads a transactionless session, and one with no user yet', () => {
     const [row] = (
-      parseStoneSessions('100\t1\t20\ttrue\tuffda\t\n9\t30\t\t555\tlocalhost\t90\t-1\t') as {
+      parseStoneSessions(
+        '100\t1\t20\ttrue\tstonehost.example\t\n9\t30\t\t555\tlocalhost\t90\t-1\t',
+      ) as {
         sessions: StoneSession[];
       }
     ).sessions;
@@ -115,7 +117,7 @@ describe('Stop Session', () => {
     serial: 12,
     user: 'ewinger',
     gemPid: 39811,
-    host: 'thor',
+    host: 'elsewhere.example',
     loggedInAt: 0,
     transaction: 'in',
     holdsOldestCommitRecord: false,
@@ -149,7 +151,7 @@ describe('Stop Session', () => {
     await stopStoneSessionCommand(row, d);
 
     expect(window.showWarningMessage).toHaveBeenCalledWith(
-      "Stop GemStone session 7 (ewinger on thor, gem 39811)? Anything it hasn't committed will be lost.",
+      "Stop GemStone session 7 (ewinger on elsewhere.example, gem 39811)? Anything it hasn't committed will be lost.",
       { modal: true },
       STOP_SESSION,
     );
@@ -219,7 +221,7 @@ describe('Stop Session', () => {
     );
 
     expect(window.showWarningMessage).toHaveBeenLastCalledWith(
-      expect.stringMatching(/still on the stone.*process 39811 on thor/),
+      expect.stringMatching(/still on the stone.*process 39811 on elsewhere\.example/),
     );
   });
 
@@ -287,7 +289,7 @@ describe('Kill', () => {
     serial: 12,
     user: 'ewinger',
     gemPid: 39811,
-    host: 'uffda',
+    host: 'stonehost.example',
     loggedInAt: 0,
     transaction: 'in',
     holdsOldestCommitRecord: false,
@@ -320,7 +322,7 @@ describe('Kill', () => {
     await killStoneSessionCommand(row, d);
 
     expect(window.showWarningMessage).toHaveBeenCalledWith(
-      'Kill GemStone session 7 (ewinger on uffda)? Its gem, process 39811, will be ended on ' +
+      'Kill GemStone session 7 (ewinger on stonehost.example)? Its gem, process 39811, will be ended on ' +
         "this machine, and anything it hasn't committed will be lost.",
       { modal: true },
       KILL,
@@ -366,7 +368,7 @@ describe('Kill', () => {
 
     expect(window.showWarningMessage).toHaveBeenLastCalledWith(
       'GemStone session 7 could not be killed: kill: (39811) - Operation not permitted. ' +
-        'Someone allowed to end process 39811 on uffda can run: kill -9 39811',
+        'Someone allowed to end process 39811 on stonehost.example can run: kill -9 39811',
     );
     expect(d.refresh).toHaveBeenCalledWith(false);
   });
@@ -634,7 +636,7 @@ describe('signalableGems', () => {
     serial: 1,
     user: 'DataCurator',
     gemPid: 100,
-    host: 'uffda',
+    host: 'stonehost.example',
     loggedInAt: 0,
     transaction: 'out',
     holdsOldestCommitRecord: false,
@@ -688,16 +690,16 @@ describe('signalableGems', () => {
 });
 
 describe('gemIsHere', () => {
-  const isUffda = (host: string) => host === 'uffda';
+  const isStoneHost = (host: string) => host === 'stonehost.example';
 
   it('judges a gem the stone names by host by that name', () => {
-    expect(gemIsHere('uffda', 'thor', isUffda)).toBe(true);
-    expect(gemIsHere('thor', 'uffda', isUffda)).toBe(false);
+    expect(gemIsHere('stonehost.example', 'elsewhere.example', isStoneHost)).toBe(true);
+    expect(gemIsHere('elsewhere.example', 'stonehost.example', isStoneHost)).toBe(false);
   });
 
   it("takes a gem the stone calls localhost to be on the stone's own machine", () => {
-    expect(gemIsHere('localhost', 'thor', isUffda)).toBe(false);
-    expect(gemIsHere('127.0.0.1', 'thor', isUffda)).toBe(false);
-    expect(gemIsHere('localhost', 'uffda', isUffda)).toBe(true);
+    expect(gemIsHere('localhost', 'elsewhere.example', isStoneHost)).toBe(false);
+    expect(gemIsHere('127.0.0.1', 'elsewhere.example', isStoneHost)).toBe(false);
+    expect(gemIsHere('localhost', 'stonehost.example', isStoneHost)).toBe(true);
   });
 });
