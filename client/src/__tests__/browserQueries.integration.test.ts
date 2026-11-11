@@ -5,6 +5,7 @@ import { GciLibrary } from '../gciLibrary';
 import { GCI_ERR_OP_IN_PROGRESS, OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
 import {
   cancelRunOn,
+  isRunning,
   NbCancelledError,
   pollNbResultReady,
   runNbCall,
@@ -669,6 +670,76 @@ describe('browser queries (integration)', () => {
         constructor: queries.BrowserQueryError,
         gciErrorNumber: GCI_ERR_OP_IN_PROGRESS,
       });
+    });
+  });
+
+  describe('queries that wait their turn', () => {
+    function loggedInSession(): ActiveSession {
+      const transient = transientSession();
+      onTestFinished(() => {
+        transient.logout();
+      });
+      return transient;
+    }
+
+    it('answers queries that overlap on one session', async () => {
+      const execute = queries.queuedNbQueryExecutorUsing(loggedInSession());
+
+      const first = execute(`(Delay forMilliseconds: 200) wait. 'first'`);
+      const second = execute(`'second'`);
+
+      await expect(Promise.all([first, second])).resolves.toEqual(['first', 'second']);
+    });
+
+    it('starts a query at once when nothing is queued before it', async () => {
+      const transient = loggedInSession();
+
+      const query = queries.queuedNbQueryExecutorUsing(transient)(`'now'`);
+
+      expect(isRunning(transient)).toBe(true);
+      await expect(query).resolves.toBe('now');
+    });
+
+    it('settles queries in the order they were made', async () => {
+      const execute = queries.queuedNbQueryExecutorUsing(loggedInSession());
+      const settled: string[] = [];
+
+      await Promise.all([
+        execute(`(Delay forMilliseconds: 200) wait. 'slow'`).then((r) => settled.push(r)),
+        execute(`'fast'`).then((r) => settled.push(r)),
+      ]);
+
+      expect(settled).toEqual(['slow', 'fast']);
+    });
+
+    it('answers a later query when an earlier one fails', async () => {
+      const execute = queries.queuedNbQueryExecutorUsing(loggedInSession());
+
+      const failing = execute(`(Delay forMilliseconds: 200) wait. nil foo`);
+      const later = execute(`'later'`);
+
+      await Promise.all([
+        expect(failing).rejects.toBeInstanceOf(queries.BrowserQueryError),
+        expect(later).resolves.toBe('later'),
+      ]);
+    });
+
+    it('is refused as busy while a query outside the queue runs', async () => {
+      const transient = loggedInSession();
+      const outside = queries.executeFetchStringAsync(
+        transient,
+        `(Delay forMilliseconds: 200) wait. 'outside'`,
+      );
+
+      const queued = queries.queuedNbQueryExecutorUsing(transient)(`'queued'`);
+
+      await Promise.all([
+        expect(queued).rejects.toMatchObject({
+          constructor: queries.BrowserQueryError,
+          gciErrorNumber: GCI_ERR_OP_IN_PROGRESS,
+        }),
+        expect(outside).resolves.toBe('outside'),
+      ]);
     });
   });
 });

@@ -540,6 +540,52 @@ export function nbQueryExecutorUsing(
   return (code) => executeFetchStringAsync(activeSession, code, title);
 }
 
+// Each session's last queued query. Keyed by id, not by ActiveSession: tests
+// wrap one login in several objects (#802).
+const queryTails = new Map<number, Promise<unknown>>();
+
+/**
+ * Binds a session to the {@link NbQueryExecutor} shape, so its queries run
+ * without blocking the extension host and wait for the session's earlier
+ * queued queries to settle instead of being refused because one of them is
+ * still running. Queries settle in the order they were made, and one that
+ * fails doesn't hold up the ones behind it. A query with nothing queued
+ * before it starts at once.
+ *
+ * Only queued queries wait for each other. Anything else running on the
+ * session (another query, Execute It, a debugger step) still refuses a queued
+ * query as busy once its turn comes.
+ *
+ * A cancelled query can leave the session cleaning up its process for a
+ * while; queued queries whose turn comes then are refused with the notice
+ * that a previous run is still cleaning up, rather than waiting on it.
+ *
+ * @param activeSession - The active GCI session to execute against.
+ * @param title - What the notification of a query that runs long says.
+ * @returns An {@link NbQueryExecutor} that runs `code` in `session` after the
+ * session's earlier queued queries and resolves to its String result.
+ */
+export function queuedNbQueryExecutorUsing(
+  activeSession: ActiveSession,
+  title?: string,
+): NbQueryExecutor {
+  const id = activeSession.id;
+  return (code) => {
+    const previous = queryTails.get(id);
+    const mine = previous
+      ? previous
+          .catch(() => undefined)
+          .then(() => executeFetchStringAsync(activeSession, code, title))
+      : executeFetchStringAsync(activeSession, code, title);
+    queryTails.set(id, mine);
+    const forget = (): void => {
+      if (queryTails.get(id) === mine) queryTails.delete(id);
+    };
+    mine.then(forget, forget);
+    return mine;
+  };
+}
+
 // Non-blocking variant of executeFetchString for LONG-RUNNING queries (e.g. a
 // Rowan project load, which can take minutes). The synchronous GCI call would
 // freeze the whole extension host for the duration; this one starts the
