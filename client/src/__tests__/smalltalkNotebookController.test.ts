@@ -33,7 +33,7 @@ import {
 } from '../smalltalkNotebookController';
 import { GEMSTONE_NOTEBOOK_TYPE } from '../gemstoneNotebookKernel';
 import { MAX_CELL_RESULT } from '../notebookCellResult';
-import { runNbCall, type NbRunOptions } from '../nbRunner';
+import { NbCancelledError, runNbCall, type NbRunOptions } from '../nbRunner';
 import { SessionManager } from '../sessionManager';
 import { SMALLTALK_LANGUAGE } from '../languageIds';
 import { DebuggerPanel } from '../debugger/debuggerPanel';
@@ -478,6 +478,52 @@ describe('SmalltalkNotebookController', () => {
       String(c[1]).includes('jasperEndClientForwarderMode'),
     );
     expect(ends).toHaveLength(1);
+    ctrl.dispose();
+  });
+
+  // The runner can stop waiting while the settle loop is still collecting the call:
+  // the `finally`'s end is then refused, and the loop's own end, before its clear,
+  // must still be sent.
+  it('ends clientForwarder mode before a clean-up even after an earlier end was refused', async () => {
+    let settleLater: ((signal: AbortSignal) => Promise<unknown>) | undefined;
+    vi.mocked(runNbCall).mockImplementationOnce(async (_session, start, settle) => {
+      start();
+      settleLater = settle as typeof settleLater;
+      throw new NbCancelledError();
+    });
+    const clearStack = vi.fn((_handle: unknown, _gsProcess: bigint) => ({
+      success: true,
+      err: { number: 0 },
+    }));
+    let refuse = true;
+    const gci = makeGci({
+      executeAndFetchString: vi.fn((..._args: unknown[]) => {
+        if (refuse && String(_args[1]).includes('jasperEndClientForwarderMode')) {
+          refuse = false;
+          throw new Error('the session is busy');
+        }
+        return '';
+      }),
+      GciTsNbResult: vi.fn(() => ({
+        result: 0n,
+        err: { number: 2010, message: 'an error past the cell wrapper', context: 0x99n },
+      })),
+      GciTsClearStackAsync: clearStack,
+    });
+    const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
+
+    await runCells([makeCell('Foo new bar')]);
+    await settleLater!(new AbortController().signal).catch(() => {});
+
+    const ends = gci.executeAndFetchString.mock.calls
+      .map((c, i) => ({
+        code: String(c[1]),
+        order: gci.executeAndFetchString.mock.invocationCallOrder[i],
+      }))
+      .filter((c) => c.code.includes('jasperEndClientForwarderMode'));
+    expect(ends).toHaveLength(2);
+    expect(clearStack).toHaveBeenCalledTimes(1);
+    expect(ends[1].order).toBeLessThan(clearStack.mock.invocationCallOrder[0]);
     ctrl.dispose();
   });
 

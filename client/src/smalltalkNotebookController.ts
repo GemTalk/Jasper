@@ -2,7 +2,12 @@ import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from './sessionManager';
 import { executeCodeRaised, wrapCellCode } from './queries/executeCode';
 import { GemStoneNotebookKernel, GEMSTONE_NOTEBOOK_TYPE } from './gemstoneNotebookKernel';
-import { startClientForwarderMode, endClientForwarderMode, settleNbResult } from './transcriptSink';
+import {
+  startClientForwarderMode,
+  endClientForwarderMode,
+  tryEndClientForwarderMode,
+  settleNbResult,
+} from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
 import { NbCancelledError, NbRunOptions, runNbCall, whenSessionFree } from './nbRunner';
 import { failCell, fetchCellResult } from './notebookCellResult';
@@ -149,12 +154,16 @@ async function runCell(
 
   const code = wrapCellCode(source);
   // Before clearing a process too: a clean-up that writes to the Transcript
-  // while clientForwarder mode is on stops at that write.
+  // while clientForwarder mode is on stops at that write. A refused end (the
+  // `finally`'s, while the runner collects a call it stopped waiting for) leaves
+  // the mode on, so the settle loop's own end must still be sent.
   let forwarding = true;
   const endForwarding = (): void => {
     if (!forwarding) return;
+    const drained = tryEndClientForwarderMode(session);
+    if (drained === undefined) return;
     forwarding = false;
-    appendTranscriptOutput(endClientForwarderMode(session));
+    appendTranscriptOutput(drained);
   };
   appendTranscriptOutput(startClientForwarderMode(session, code));
   try {

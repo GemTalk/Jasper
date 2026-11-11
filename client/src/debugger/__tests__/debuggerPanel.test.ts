@@ -1075,6 +1075,44 @@ describe('DebuggerPanel', () => {
       );
     });
 
+    it('commits and closes when showing the finished run’s result throws', async () => {
+      vi.mocked(resumeOnWorker).mockResolvedValueOnce({ completed: true, resultOop: 0x55n });
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG, () => {
+        throw new Error('GCI error printing the result');
+      });
+      const panel = lastPanel();
+      sendReady(panel);
+      vi.mocked(vscode.window.showWarningMessage).mockClear();
+
+      sendMessage(panel, { command: 'resume' });
+      await tick();
+
+      expect(commitSpy).toHaveBeenCalledTimes(1);
+      expect(panel.dispose).toHaveBeenCalled();
+      expect(vi.mocked(vscode.window.showErrorMessage).mock.calls.at(-1)?.[0]).toContain(
+        'GCI error printing the result',
+      );
+      expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+    });
+
+    it('says the Debugger could not open when it fails part-way through opening', () => {
+      const persist = vi
+        .spyOn(
+          DebuggerPanel as unknown as { persistLiveSourceUris: () => void },
+          'persistLiveSourceUris',
+        )
+        .mockImplementationOnce(() => {
+          throw new Error('storage refused');
+        });
+      onTestFinished(() => persist.mockRestore());
+
+      expect(() => DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG)).toThrow('storage refused');
+
+      const warning = vi.mocked(vscode.window.showWarningMessage).mock.calls.at(-1)?.[0];
+      expect(warning).toContain("the Debugger couldn't open");
+      expect(warning).not.toContain('the debugged run did not finish');
+    });
+
     it('says nothing on Terminate on a session that is not auto-committing', async () => {
       _resetAutoCommitStateForTests();
       const panel = openPanel();

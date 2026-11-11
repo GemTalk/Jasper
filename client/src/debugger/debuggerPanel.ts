@@ -3528,14 +3528,26 @@ export class DebuggerPanel {
    * The process ran to completion (via Resume or step). Hand its result to the
    * onComplete callback (e.g. a halted Display It rendering its value back in
    * the workspace) — BEFORE dispose, while the result oop is still fetchable —
-   * then close the panel.
+   * then close the panel. A callback that throws (a GCI error printing the
+   * result) still lets the commit, the release and the dispose run.
    */
   private onCompleted(result: debug.StepResult): void {
     // Show Transcript output the completing run buffered (harmlessly empty if
     // an onComplete callback drains again).
     appendTranscriptOutput(drainTranscript(this.session));
-    const answered =
-      result.resultOop != null && this.onComplete ? this.onComplete(result.resultOop) : undefined;
+    let answered: boolean | void = undefined;
+    if (result.resultOop != null && this.onComplete) {
+      try {
+        answered = this.onComplete(result.resultOop);
+      } catch (e: unknown) {
+        // The run did finish; only showing its result failed.
+        const message = e instanceof Error ? e.message : String(e);
+        logError(this.sessionId, message);
+        void vscode.window.showErrorMessage(
+          `Session ${this.sessionId}: the run finished, but its result could not be shown: ${message}`,
+        );
+      }
+    }
     // The run finished, so what it changed is finished work, the same as a Do It that never
     // halted (issue #254): the hold commits it, with whatever was done while it was halted.
     // An answer its caller judges an error is not, as for a cell that never halted.
@@ -5325,9 +5337,11 @@ export class DebuggerPanel {
 
   private tearDown(): void {
     if (this.releaseAutoCommit(false)) {
+      const what = this.processReleasedByCaller
+        ? "the Debugger couldn't open, so the halted run's changes were not committed."
+        : 'the debugged run did not finish, so its changes were not committed.';
       void vscode.window.showWarningMessage(
-        `Session ${this.sessionId}: the debugged run did not finish, so its changes were not ` +
-          'committed. Abort to discard them — your next change would commit them.',
+        `Session ${this.sessionId}: ${what} Abort to discard them — your next change would commit them.`,
       );
     }
     // Capture the pair's columns before the tabs start closing — the panel is
