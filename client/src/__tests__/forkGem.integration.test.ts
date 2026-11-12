@@ -43,10 +43,29 @@ describe('forking a gem (integration)', () => {
   // itself is what protects users on those stones.
   const supported = (): boolean => canForkGem(execute);
 
+  // REPRO PROBE (throwaway branch): logs the stone's login serials around each fork.
+  const sleepMs = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  const serials = (): string =>
+    execute(
+      '(System currentSessions collect: [:s | | d | d := System descriptionOfSession: s. d isNil ifTrue: [-1] ifFalse: [d at: 9]]) printString',
+    ).trim();
+  const probe = (label: string) =>
+    process.stderr.write(`FORKPROBE ${new Date().toISOString()} ${label} sessions=${serials()}\n`);
+  const forkProbed = (expression: string): string => {
+    probe('before-fork');
+    const id = forkGemRunning(execute, expression, gemNrs());
+    probe(`after-fork id=${id.trim()}`);
+    for (let i = 1; i <= 12; i++) {
+      sleepMs(250);
+      probe(`+${i * 250}ms`);
+    }
+    return id;
+  };
+
   it('runs an expression in a gem of its own and answers its session id', (ctx) => {
     if (!supported()) return ctx.skip();
 
-    const id = forkGemRunning(execute, 'System sleep: 1', gemNrs());
+    const id = forkProbed('System sleep: 1');
 
     expect(id.trim()).toMatch(/^\d+$/);
   });
@@ -64,7 +83,7 @@ describe('forking a gem (integration)', () => {
     // sessions can never occupy the same slot, so this comparison is now exact.
     const mySession = execute('System session printString');
 
-    const id = forkGemRunning(execute, 'System sleep: 1', gemNrs());
+    const id = forkProbed('System sleep: 1');
 
     expect(id.trim()).not.toBe(mySession.trim());
   });
@@ -78,6 +97,6 @@ describe('forking a gem (integration)', () => {
     // successful fork is itself the evidence — minting for anyone else would
     // need privileges this session does not have.
     expect(me).not.toBe('SystemUser');
-    expect(forkGemRunning(execute, 'System sleep: 1', gemNrs()).trim()).toMatch(/^\d+$/);
+    expect(forkProbed('System sleep: 1').trim()).toMatch(/^\d+$/);
   });
 });

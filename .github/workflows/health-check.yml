@@ -229,7 +229,7 @@ jobs:
     # median, the same ratio as above. Windows (343-550s) and macOS (426-544s)
     # still fit their 12.
     timeout-minutes: ${{ fromJSON('{"ubuntu-latest":9,"windows-latest":12,"macos-latest":12}')[matrix.platform] }}
-    name: ${{ matrix.platform }} ${{ matrix.gemstone-version }}${{ matrix.node-version && format(' (Node {0})', matrix.node-version) || '' }}
+    name: ${{ matrix.platform }} ${{ matrix.gemstone-version }}${{ matrix.node-version && format(' (Node {0})', matrix.node-version) || '' }} rep ${{ matrix.rep }}
     needs: prepare
     if: needs.prepare.outputs.already-tested != 'true'
     runs-on: ${{ matrix.platform }}
@@ -271,50 +271,14 @@ jobs:
       # eject the PR. PR and main runs don't retry, so they show every flake.
       # The retry-report steps test this, not the event, so they follow it.
       VITEST_RETRY: ${{ github.event_name == 'merge_group' && '1' || '0' }}
+      VITEST_SEED: '1794434132666'
     strategy:
+      fail-fast: false
       matrix:
-        # macOS is deliberately absent from this axis — it gets a single
-        # leg via the `include` below instead of the full version sweep.
-        platform: [ubuntu-latest, windows-latest]
-        gemstone-version: ${{ fromJson(needs.prepare.outputs.versions) }}
-        node-version: ['']            # empty ⇒ dev jobs resolve Node from .nvmrc (node-version-file); floor include overrides
-        # node-version's declared axis value is only '' (which falls back to
-        # the .nvmrc Node version); '22.15.1' isn't one of the declared
-        # values, so GitHub can't merge this into an existing combination —
-        # it adds an additional job pinned to the oldest GemStone version
-        # and the Node floor, as a smoke test to verify tests run on the
-        # Node floor too. This is to support older VS Code versions.
-        include:
-          # Temporary: macOS ran the full version sweep like the other two
-          # platforms, but its runners show far more duration variance than
-          # ubuntu or windows, so those legs were the ones most likely to
-          # trip the timeout on a bad-runner day — noise that says nothing
-          # about the code under test. Cut to one leg while that variance is
-          # investigated; restore the platform to the axis above once it is
-          # understood. The macOS-specific mechanics are version-independent
-          # (the DMG mount and shared-memory setup are the same on every
-          # release), so one leg still covers those. What it gives up: the
-          # dropped legs were the only place a newer release's darwin GCI
-          # client got exercised.
-          #
-          # There is a second reason to keep it at one: GitHub runs at most 5
-          # macOS jobs at once across the whole GemTalk organization, shared
-          # with its other repos. Legs run in parallel, so extra macOS legs
-          # barely lengthen a run, but each one cuts how many PRs can run
-          # macOS CI at the same time. With few people pushing at once that
-          # limit matters less, and the legs could return.
-          #
-          # It runs the *oldest* supported version, not the newest: the newest
-          # is already exercised on ubuntu and windows, whereas the oldest is
-          # where GCI API gaps surface, and pairing that with the platform
-          # whose setup differs most is the combination least covered
-          # elsewhere.
-          - platform: macos-latest
-            gemstone-version: ${{ needs.prepare.outputs.oldest-version }}
-            node-version: '' # resolve Node from .nvmrc, like the dev legs above
-          - platform: ubuntu-latest # smoke test only cares about the Node floor, not the OS-specific WSL/GCI-DLL path
-            gemstone-version: ${{ needs.prepare.outputs.oldest-version }}
-            node-version: '22.15.1'   # pin the floor for the smoke-test
+        platform: [ubuntu-latest]
+        gemstone-version: ['3.7.2']
+        node-version: ['']
+        rep: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30]
 
     steps:
       - name: Checkout code
@@ -474,6 +438,7 @@ jobs:
         shell: bash
         run: node scripts/report-retried-tests.mjs "$SKIP_REPORT_PATH"
       - name: Upload skip report (without server plugin)
+        if: false
         # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
         # not a mutable tag like @v7
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -482,8 +447,10 @@ jobs:
           path: ${{ env.SKIP_REPORT_BARE_PATH }}
           if-no-files-found: ignore
       - name: Install server plugin
+        if: false
         run: npm run test:server:install-plugin
       - name: Run tests (with server plugin)
+        if: false
         env:
           VITEST_JSON_OUTPUT: ${{ env.SKIP_REPORT_PLUGIN_PATH }}
         run: npm test
