@@ -257,6 +257,26 @@ describe('the session gate ledger', () => {
       expect(leftOver).toEqual(stone(['5', 100]));
     });
 
+    it('made by a test worker before any file booked, still on the stone at the first look, are left as stray', () => {
+      const fresh = new SessionLedger<string>(9, () => now);
+      fresh.request('a', { file: 'a', pid: 100, n: 1 });
+      fresh.sample(stone(['5', 100], ['6', 555]));
+
+      const stray = fresh.stray();
+
+      expect(stray).toEqual([{ serial: '5', pid: 100 }]);
+    });
+
+    it('already on the stone at the first look are not stray for a worker that asked for a booking only later', () => {
+      const fresh = new SessionLedger<string>(9, () => now);
+      fresh.sample(stone(['5', 100]));
+      fresh.request('a', { file: 'a', pid: 100, n: 1 });
+
+      const stray = fresh.stray();
+
+      expect(stray).toEqual([]);
+    });
+
     it('made by a test worker after its booking are left as stray', () => {
       book('a', 1, 100);
       ledger.release('a');
@@ -327,6 +347,15 @@ describe('the session gate ledger', () => {
       expect(unseen.map(({ serial, running }) => ({ serial, running }))).toEqual([
         { serial: 12, running: ['a.test.ts'] },
       ]);
+    });
+
+    it("count the run's first serial from when the gate logged in", () => {
+      now = 5_000;
+      ledger.restartClock();
+
+      const [unseen] = ledger.loginsNeverSeen(10, 12);
+
+      expect(unseen.after).toEqual({ serial: 10, at: 5_000, how: 'run edge' });
     });
 
     it('are answered with the known serials either side, and how each became known', () => {
