@@ -1117,6 +1117,47 @@ interface ClassHierarchy {
 
 const noHierarchy = (): ClassHierarchy => ({ chain: [], subs: [] });
 
+function sameRow(a: ClassItem | DictItem, b: ClassItem | DictItem): boolean {
+  if (a instanceof ClassItem) return b instanceof ClassItem && a.className === b.className;
+  return b instanceof DictItem && a.dictName === b.dictName && a.dictIndex === b.dictIndex;
+}
+
+function samePane(a: ClassItem | DictItem, b: ClassItem | DictItem): boolean {
+  return a instanceof ClassItem === b instanceof ClassItem;
+}
+
+// A read that failed with a BrowserQueryError has already given the busy notice or logged
+// its error, and a cancelled one was the user's choice. So was one whose session the user
+// left while it ran (logged out of or switched away from): it fails with the session gone.
+function logClickFailure(e: unknown, sessionLeft: boolean): void {
+  if (sessionLeft || e instanceof queries.BrowserQueryError || e instanceof NbCancelledError)
+    return;
+  logWarning(`Explorer click failed: ${e instanceof Error ? e.message : String(e)}`);
+}
+
+function hierarchyFrom(entries: queries.ClassHierarchyEntry[]): ClassHierarchy {
+  const supers = entries.filter((e) => e.kind === 'superclass');
+  const self = entries.find((e) => e.kind === 'self');
+  // chain = superclasses (root-first) then the class itself (last element).
+  return {
+    chain: self ? [...supers, self] : supers,
+    subs: entries.filter((e) => e.kind === 'subclass'),
+  };
+}
+
+/** What selecting a class shows: its methods and its lineage. */
+interface ClassSelection {
+  envLines: queries.EnvCategoryLine[];
+  hierarchy: ClassHierarchy;
+}
+
+/** A row click whose reads haven't answered yet. */
+interface PendingClick {
+  item: ClassItem | DictItem;
+  /** Settles once the click has been committed or dropped; never rejects. */
+  done: Promise<void>;
+}
+
 /** What the Classes pane shows on each class row of a dictionary, besides its name. */
 interface ClassRowMetadata {
   definedIvarCounts: Map<string, number>;
@@ -1140,6 +1181,23 @@ function mapUnlessBusy<K, V>(read: () => Map<K, V>): Map<K, V> {
     if (queries.isBusyRefusal(e)) throw e;
     return new Map();
   }
+}
+
+// mapUnlessBusy for a non-blocking read, which the user can also cancel from its progress
+// notification: a cancelled read is thrown too.
+async function mapUnlessBusyAsync<K, V>(read: () => Promise<Map<K, V>>): Promise<Map<K, V>> {
+  try {
+    return await read();
+  } catch (e) {
+    if (queries.isBusyRefusal(e) || e instanceof NbCancelledError) throw e;
+    return new Map();
+  }
+}
+
+/** What selecting a dictionary shows: its classes and the details on their rows. */
+interface DictSelection {
+  entries: queries.ClassCategoryEntry[];
+  metadata: ClassRowMetadata;
 }
 
 export class ExplorerController {
@@ -1168,6 +1226,8 @@ export class ExplorerController {
   // dictionary; fetched once per dict so class rows know whether to show an
   // expansion chevron. What an expanded row shows is fetched lazily, see classRow.
   private definedIvarCounts = new Map<string, number>();
+  // Same, for locally-defined CLASS variables.
+  private definedClassVarCounts = new Map<string, number>();
   // Holds the fetch from the moment a class is first asked for, not just its answer: a
   // class row and its two side rows ask at once, and must share one query. A fetch
   // started before the class list reloaded fills nothing, since clearing drops it.
@@ -1177,8 +1237,12 @@ export class ExplorerController {
   private classRowsCleared = 0;
   // Settles once the last read queued by inReadOrder has; never rejects.
   private readsTail: Promise<void> = Promise.resolve();
-  // Same, for locally-defined CLASS variables.
-  private definedClassVarCounts = new Map<string, number>();
+  // The row click still waiting for its reads. Only this one may commit: a newer click
+  // replaces it, and every commit clears it, so a jump made meanwhile wins too.
+  private pendingClick: PendingClick | undefined;
+  // Counts refreshes. A dictionary click reads by the clicked row's index, which a refresh
+  // can shift to another dictionary, so a click that read across one is dropped.
+  private refreshes = 0;
   // className → {current,total} position in its class history, for classes with
   // more than one version in the current dictionary; fetched once per dict so a
   // reshaped class row can render `Foo[2/3]`. Single-version classes are absent
@@ -1865,6 +1929,7 @@ export class ExplorerController {
 
   // Called when the active session changes: reset everything and reload dicts.
   reset(): void {
+    this.pendingClick = undefined;
     this.state.dictName = undefined;
     this.state.dictIndex = undefined;
     this.state.classCategory = undefined;
@@ -1893,9 +1958,10 @@ export class ExplorerController {
     this.methodProvider.refresh();
     this.syncTitles();
     // Auto-select a default dictionary so the class/category panes are populated on
-    // first open. A programmatic tree selection does NOT fire the view's selection
-    // handler (which is what runs selectDict), so without this the panes stay empty
-    // until the user clicks a dictionary even though one looks highlighted.
+    // first open, instead of staying empty until the user clicks a dictionary. Selecting
+    // it here, not through the dictionary pane's selection handler: the reveal at the end
+    // does fire that handler, but only after a round trip to the window, by which time
+    // the dictionary is already selected and the handler skips it.
     this.autoSelectDefaultDict();
   }
 
@@ -1942,6 +2008,7 @@ export class ExplorerController {
   // selection highlighted across a data refresh on its own (stable row ids), so
   // skipping reveal loses nothing but the unwanted jump.
   async refreshRetainingSelection({ reveal = true }: { reveal?: boolean } = {}): Promise<void> {
+    this.refreshes++;
     // Before anything is re-read, not after: a refresh means what is held is suspect.
     this.onImageReread?.();
     const session = this.session();
@@ -2115,6 +2182,11 @@ export class ExplorerController {
     const session = this.session();
     const entries = session ? queries.getClassesWithCategory(session, item.dictIndex) : [];
     const metadata = this.fetchClassRowMetadata(item.dictIndex);
+    this.commitDictSelection(item, { entries, metadata });
+  }
+
+  private commitDictSelection(item: DictItem, { entries, metadata }: DictSelection): void {
+    this.pendingClick = undefined;
     this.state.dictName = item.dictName;
     this.state.dictIndex = item.dictIndex;
     this.state.classCategory = undefined;
@@ -2141,6 +2213,9 @@ export class ExplorerController {
   }
 
   selectClassCategory(item: ClassCategoryItem): void {
+    // A row click still reading would commit over this choice: a class the category may
+    // filter out of the Classes pane, or a dictionary whose commit clears the category.
+    this.pendingClick = undefined;
     this.state.classCategory = item.fullPath;
     // A category node keeps showing (and the classes pane keeps highlighting) a
     // selected class that still lives under it. Dropping the controller's className
@@ -2374,6 +2449,16 @@ export class ExplorerController {
         ? queries.getClassEnvironments(session, this.state.dictIndex, item.className, this.maxEnv())
         : [];
     const hierarchy = this.fetchHierarchy(item.className);
+    this.commitClassSelection(item, { envLines, hierarchy }, revealHierarchy);
+  }
+
+  private commitClassSelection(
+    item: ClassItem,
+    { envLines, hierarchy }: ClassSelection,
+    revealHierarchy: boolean,
+  ): void {
+    this.pendingClick = undefined;
+    const session = this.session();
     this.state.className = item.className;
     this.state.selectedSelector = undefined;
     this.state.selectedIsMeta = undefined;
@@ -2397,42 +2482,159 @@ export class ExplorerController {
     // Use the inline "Open Definition" button (gemstone.explorer.openDefinition).
   }
 
-  // A dictionary row the user clicked. When it can't be read (a run holds the session,
-  // say), the highlight VS Code already moved goes back to the dictionary still selected.
-  // Error handling is the same as for a clicked class row, below.
-  //
-  // The dictionary already selected is skipped: its row gets highlighted again by a
-  // refused click moving back, or by a jump that selects a dictionary and then reveals its
-  // row, and reading it again would only clear whatever was chosen under it.
-  selectDictFromTree(item: DictItem): void {
-    if (item.dictName === this.state.dictName && item.dictIndex === this.state.dictIndex) return;
-    try {
-      this.selectDict(item);
-    } catch (e) {
+  /**
+   * Selects a dictionary row the user clicked, reading its classes without blocking VS
+   * Code.
+   *
+   * VS Code moves the highlight before this runs. When the click doesn't take, because
+   * the dictionary can't be read (a run holds the session, say), a later click or jump
+   * replaced it, or a refresh ran while it read, the highlight goes back to the dictionary
+   * still selected. A failure once the clicked dictionary is selected leaves the highlight
+   * where it is, since there is nothing to go back to.
+   *
+   * Clicking the dictionary already selected reads nothing: its row also gets highlighted
+   * by a refused click moving back, or by a jump that selects a dictionary and then
+   * reveals its row, and reading it again would only clear whatever was chosen under it.
+   *
+   * @returns A promise that settles once the click has been committed or dropped, and
+   * never rejects: a failure is logged, unless the read already gave the busy notice or
+   * logged it.
+   */
+  selectDictFromTree(item: DictItem): Promise<void> {
+    const session = this.session();
+    const isSelected = () =>
+      item.dictName === this.state.dictName && item.dictIndex === this.state.dictIndex;
+    const refreshes = this.refreshes;
+    return this.startClick(item, isSelected(), async (isLatest) => {
+      const stillApplies = () => isLatest() && this.refreshes === refreshes;
+      try {
+        const selection = await this.inReadOrder(() => this.readDictSelection(item, stillApplies));
+        if (selection && stillApplies()) return this.commitDictSelection(item, selection);
+      } catch (e) {
+        logClickFailure(e, this.session() !== session);
+        if (isSelected()) return;
+      }
       const { dictName, dictIndex } = this.state;
-      if (dictName === item.dictName && dictIndex === item.dictIndex) throw e;
-      if (dictName !== undefined && dictIndex !== undefined)
+      if (this.dropClick(item, isLatest) && dictName !== undefined && dictIndex !== undefined)
         void this.revealCascade(this.views?.dict, new DictItem(dictName, dictIndex));
-      if (!(e instanceof queries.BrowserQueryError)) throw e;
-    }
+    });
   }
 
-  // A class row the user clicked. VS Code moves the highlight before this runs, so when
-  // the class can't be read (a run holds the session, say), the highlight goes back to the
-  // class still selected; otherwise it would light a row whose methods aren't the ones
-  // listed. A failed read has already given the busy notice or logged its error, so it
-  // ends here; anything else is thrown on, as is a failure once the clicked class is
-  // selected, which has no previous class to go back to.
-  selectClassFromTree(item: ClassItem): void {
-    try {
-      this.selectClass(item);
-    } catch (e) {
-      const previous = this.state.className;
-      if (previous === item.className) throw e;
-      if (previous !== undefined)
-        void this.revealCascade(this.views?.klass, new ClassItem(previous));
-      if (!(e instanceof queries.BrowserQueryError)) throw e;
+  // What selecting `item` would show, or undefined once the click no longer applies, so
+  // the queries it hasn't started yet are skipped. The row details mirror
+  // fetchClassRowMetadata: a detail added here must be added there too.
+  private async readDictSelection(
+    item: DictItem,
+    stillApplies: () => boolean,
+  ): Promise<DictSelection | undefined> {
+    const session = this.session();
+    if (!stillApplies()) return undefined;
+    if (!session) return { entries: [], metadata: noClassRowMetadata() };
+    const { dictIndex } = item;
+    const entries = await queries.getClassesWithCategoryAsync(session, dictIndex);
+    if (!stillApplies()) return undefined;
+    const definedIvarCounts = await mapUnlessBusyAsync(() =>
+      queries.getDefinedInstVarCountsAsync(session, dictIndex),
+    );
+    if (!stillApplies()) return undefined;
+    const definedClassVarCounts = await mapUnlessBusyAsync(() =>
+      queries.getDefinedClassVarCountsAsync(session, dictIndex),
+    );
+    if (!stillApplies()) return undefined;
+    const classVersions = await mapUnlessBusyAsync(() =>
+      queries.getClassVersionsAsync(session, dictIndex),
+    );
+    return { entries, metadata: { definedIvarCounts, definedClassVarCounts, classVersions } };
+  }
+
+  /**
+   * Selects a class row the user clicked, reading it without blocking VS Code.
+   *
+   * VS Code moves the highlight before this runs. When the click doesn't take, because
+   * the class can't be read (a run holds the session, say) or a later click or jump
+   * replaced it, the highlight goes back to the class still selected; otherwise it would
+   * light a row whose methods aren't the ones listed. A failure once the clicked class is
+   * selected leaves the highlight where it is, since there is nothing to go back to.
+   *
+   * @returns A promise that settles once the click has been committed or dropped, and
+   * never rejects: a failure is logged, unless the read already gave the busy notice or
+   * logged it.
+   */
+  selectClassFromTree(item: ClassItem): Promise<void> {
+    const session = this.session();
+    const { dictIndex } = this.state;
+    return this.startClick(item, item.className === this.state.className, async (isLatest) => {
+      // A refresh can move the selected dictionary to another index while the click reads,
+      // and a class read at the old one may be another dictionary's class of that name.
+      const stillApplies = () => isLatest() && this.state.dictIndex === dictIndex;
+      try {
+        const selection = await this.inReadOrder(() =>
+          this.readClassSelection(item, dictIndex, stillApplies),
+        );
+        if (selection && stillApplies()) return this.commitClassSelection(item, selection, true);
+      } catch (e) {
+        logClickFailure(e, this.session() !== session);
+        if (this.state.className === item.className) return;
+      }
+      if (this.dropClick(item, isLatest) && this.state.className !== undefined)
+        void this.revealCascade(this.views?.klass, new ClassItem(this.state.className));
+    });
+  }
+
+  // What selecting `item` in the dictionary at `dictIndex` would show, or undefined once
+  // the click no longer applies, so the queries it hasn't started yet are skipped.
+  private async readClassSelection(
+    item: ClassItem,
+    dictIndex: number | undefined,
+    stillApplies: () => boolean,
+  ): Promise<ClassSelection | undefined> {
+    const session = this.session();
+    if (!stillApplies()) return undefined;
+    if (!session) return { envLines: [], hierarchy: noHierarchy() };
+    const envLines =
+      dictIndex === undefined
+        ? []
+        : await queries.getClassEnvironmentsAsync(
+            session,
+            dictIndex,
+            item.className,
+            this.maxEnv(),
+          );
+    if (!stillApplies()) return undefined;
+    return {
+      envLines,
+      hierarchy: await this.fetchHierarchyAsync(session, item.className, dictIndex),
+    };
+  }
+
+  // Runs a row click, unless it repeats the one still pending (VS Code reports a class
+  // click twice, see handleClassClick) or clicks the row already selected. Clicking the
+  // selected row abandons a click pending in the same pane: the user went back. One
+  // pending in another pane is left alone, since a highlight moving back (dropClick)
+  // lands here too.
+  private startClick(
+    item: ClassItem | DictItem,
+    alreadySelected: boolean,
+    run: (isLatest: () => boolean) => Promise<void>,
+  ): Promise<void> {
+    const pending = this.pendingClick;
+    if (pending && sameRow(pending.item, item)) return pending.done;
+    if (alreadySelected) {
+      if (pending && samePane(pending.item, item)) this.pendingClick = undefined;
+      return Promise.resolve();
     }
+    const click: PendingClick = { item, done: Promise.resolve() };
+    this.pendingClick = click;
+    click.done = run(() => this.pendingClick === click);
+    return click.done;
+  }
+
+  // Ends a click that didn't commit. Answers whether its pane's highlight should go back to
+  // the selection: not when a later click in the same pane has already moved it.
+  private dropClick(item: ClassItem | DictItem, isLatest: () => boolean): boolean {
+    if (isLatest()) this.pendingClick = undefined;
+    const later = this.pendingClick;
+    return !(later && samePane(later.item, item));
   }
 
   // Resolve a class's dictionary (name + 1-based index). Prefers the given dict
@@ -2638,14 +2840,17 @@ export class ExplorerController {
     // highlighted while selectDict cleared the controller's className — and clicking
     // the already-highlighted row fires no onDidChangeSelection, so the hierarchy
     // would never reload. classClicked fires on EVERY click, so re-sync here. The
-    // matching guard on the classView selection wiring keeps this to exactly one
-    // selectClass per click that succeeds. A refused click leaves the previous class
-    // selected, so both try it; the busy notice still shows once.
-    if (className !== this.state.className) {
-      this.selectClassFromTree(new ClassItem(className));
-    }
+    // classView selection wiring reports the same click; selectClassFromTree reads it once.
+    const { dictIndex } = this.state;
+    const selected = this.selectClassFromTree(new ClassItem(className));
     if (this.classClicks.register(className)) {
-      void this.openClassDefinition(new ClassItem(className));
+      // Opening reads the definition with a blocking call, which is refused as busy while
+      // the click's own read still holds the session. A dropped click opens nothing, and
+      // neither does one whose class another dictionary's selection has since replaced.
+      void selected.then(() => {
+        if (this.state.className !== className || this.state.dictIndex !== dictIndex) return;
+        return this.openClassDefinition(new ClassItem(className));
+      });
     }
   }
 
@@ -2694,13 +2899,23 @@ export class ExplorerController {
       if (queries.isBusyRefusal(e)) throw e;
       return noHierarchy();
     }
-    const supers = entries.filter((e) => e.kind === 'superclass');
-    const self = entries.find((e) => e.kind === 'self');
-    // chain = superclasses (root-first) then the class itself (last element).
-    return {
-      chain: self ? [...supers, self] : supers,
-      subs: entries.filter((e) => e.kind === 'subclass'),
-    };
+    return hierarchyFrom(entries);
+  }
+
+  // fetchHierarchy without blocking VS Code. A cancelled read is thrown too.
+  private async fetchHierarchyAsync(
+    session: ActiveSession,
+    className: string,
+    dictIndex: number | undefined,
+  ): Promise<ClassHierarchy> {
+    let entries: queries.ClassHierarchyEntry[];
+    try {
+      entries = await queries.getClassHierarchyAsync(session, className, dictIndex);
+    } catch (e) {
+      if (queries.isBusyRefusal(e) || e instanceof NbCancelledError) throw e;
+      return noHierarchy();
+    }
+    return hierarchyFrom(entries);
   }
 
   // Children of a hierarchy node (for HierarchyProvider): the chain nests as a
@@ -2909,7 +3124,8 @@ export class ExplorerController {
   }
 
   // The row metadata of dictionary `dictIndex`. A read a busy session refused is thrown;
-  // any other failure leaves that map empty.
+  // any other failure leaves that map empty. readDictSelection reads the same details
+  // without blocking: a detail added here must be added there too.
   private fetchClassRowMetadata(dictIndex: number | undefined): ClassRowMetadata {
     const session = this.session();
     if (!session || dictIndex === undefined) return noClassRowMetadata();
@@ -5517,6 +5733,9 @@ export class ExplorerController {
     if (!session || this.state.dictName === undefined || this.state.className === undefined) {
       return;
     }
+    // A row click still reading would commit over this method, clearing it while its
+    // editor stays open.
+    this.pendingClick = undefined;
     this.state.selectedSelector = node.info.selector;
     this.syncTitles();
     this.recordLanding({ selector: node.info.selector, isMeta: node.isMeta });
@@ -6527,6 +6746,8 @@ export class ExplorerController {
     const previousDictIndex = this.state.dictIndex;
     const previousCategory = this.state.classCategory;
 
+    // A row click still reading would commit over this jump.
+    this.pendingClick = undefined;
     this.state.dictName = dictName;
     this.state.dictIndex = dictIndex;
     this.classCategoryEntries = entries;
@@ -9277,7 +9498,7 @@ export function registerGemStoneExplorer(
 
   dictView.onDidChangeSelection((e) => {
     const node = e.selection[0];
-    if (node instanceof DictItem) ctl.selectDictFromTree(node);
+    if (node instanceof DictItem) void ctl.selectDictFromTree(node);
   });
   categoryView.onDidChangeSelection((e) => {
     const node = e.selection[0];
@@ -9285,14 +9506,10 @@ export function registerGemStoneExplorer(
   });
   classView.onDidChangeSelection((e) => {
     // Only a class row navigates; selecting an ivar child is inert (it's acted on
-    // via its inline pencil, not selection). Skip when the class is already the
-    // selected one so a click doesn't run selectClass twice — the row's classClicked
-    // command also (re)selects; between the two, exactly one runs per click that
-    // succeeds (see handleClassClick).
+    // via its inline pencil, not selection). The row's classClicked command reports
+    // the same click (see handleClassClick); selectClassFromTree reads it once.
     const node = e.selection[0];
-    if (node instanceof ClassItem && node.className !== ctl.state.className) {
-      ctl.selectClassFromTree(node);
-    }
+    if (node instanceof ClassItem) void ctl.selectClassFromTree(node);
   });
   hierarchyView.onDidChangeSelection((e) => {
     if (e.selection[0]) ctl.selectHierarchyNode(e.selection[0]);
