@@ -136,7 +136,7 @@ describe('session methods (integration)', () => {
     expect(bitsFor('Character', false, 'methodOverrideBits')['max:'] & 1).toBe(1); // overrides a superclass (up arrow)
   });
 
-  it('serves the persistent base for an override and a placeholder for an extension', () => {
+  it('serves the persistent base for an override and a placeholder for an extension', async () => {
     if (isSystemProfile()) return;
     enablePolicy();
     compileSessionMethod('Character', 'jasperItSessionExt ^42');
@@ -149,7 +149,7 @@ describe('session methods (integration)', () => {
       'isVowel',
       0,
     );
-    const baseSource = browserQueries.getBaseMethodSource(
+    const baseSource = await browserQueries.baseMethodSource(
       session(),
       'Character',
       false,
@@ -161,7 +161,7 @@ describe('session methods (integration)', () => {
     expect(baseSource).not.toBe(overrideSource);
 
     // An extension has no persistent method to fall back to.
-    const extBase = browserQueries.getBaseMethodSource(
+    const extBase = await browserQueries.baseMethodSource(
       session(),
       'Character',
       false,

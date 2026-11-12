@@ -11,10 +11,11 @@ vi.mock('../browserQueries', () => ({
       this.gciErrorNumber = gciErrorNumber;
     }
   },
-  getMethodSource: vi.fn(() => 'at: index\n  ^self basicAt: index'),
-  getBaseMethodSource: vi.fn(() => 'isVowel\n  ^ base impl'),
+  methodSource: vi.fn(async () => 'at: index\n  ^self basicAt: index'),
+  baseMethodSource: vi.fn(async () => 'isVowel\n  ^ base impl'),
   getClassDefinition: vi.fn(() => "Object subclass: 'Array'\n  instVarNames: #()"),
-  getClassCategory: vi.fn(() => ''),
+  classDefinition: vi.fn(async () => "Object subclass: 'Array'\n  instVarNames: #()"),
+  classCategory: vi.fn(async () => ''),
   classExistsInDictionary: vi.fn(() => false),
   recategorizeClass: vi.fn(),
   // The class-category recorder's read, taken either side of a definition save so a
@@ -22,6 +23,7 @@ vi.mock('../browserQueries', () => ({
   getClassesWithCategory: vi.fn(() => [] as unknown[]),
   getClassComment: vi.fn(() => 'An ordered collection.'),
   getStoredClassComment: vi.fn(() => 'An ordered collection.'),
+  storedClassComment: vi.fn(async () => 'An ordered collection.'),
   compileMethod: vi.fn(() => 'Compiled: Array >> at:'),
   compileClassDefinition: vi.fn(),
   // Answers what the real query answers on success — the provider now checks it, because
@@ -419,11 +421,11 @@ describe('GemStoneFileSystemProvider', () => {
   });
 
   describe('readFile', () => {
-    it('reads a method source', () => {
+    it('reads a method source', async () => {
       const uri = Uri.parse('gemstone://1/Globals/Array/instance/accessing/at%3A');
-      const content = new TextDecoder().decode(provider.readFile(uri));
+      const content = new TextDecoder().decode(await provider.readFile(uri));
       expect(content).toBe('at: index\n  ^self basicAt: index');
-      expect(queries.getMethodSource).toHaveBeenCalledWith(
+      expect(queries.methodSource).toHaveBeenCalledWith(
         expect.objectContaining({ id: 1 }),
         'Array',
         false,
@@ -433,10 +435,10 @@ describe('GemStoneFileSystemProvider', () => {
       );
     });
 
-    it('reads a class-side method source', () => {
+    it('reads a class-side method source', async () => {
       const uri = Uri.parse('gemstone://1/Globals/Array/class/creation/new%3A');
-      provider.readFile(uri);
-      expect(queries.getMethodSource).toHaveBeenCalledWith(
+      await provider.readFile(uri);
+      expect(queries.methodSource).toHaveBeenCalledWith(
         expect.anything(),
         'Array',
         true,
@@ -446,10 +448,10 @@ describe('GemStoneFileSystemProvider', () => {
       );
     });
 
-    it('reads a method source with environment from query param', () => {
+    it('reads a method source with environment from query param', async () => {
       const uri = Uri.parse('gemstone://1/Globals/Array/instance/python/__len__?env=2');
-      provider.readFile(uri);
-      expect(queries.getMethodSource).toHaveBeenCalledWith(
+      await provider.readFile(uri);
+      expect(queries.methodSource).toHaveBeenCalledWith(
         expect.anything(),
         'Array',
         false,
@@ -459,10 +461,10 @@ describe('GemStoneFileSystemProvider', () => {
       );
     });
 
-    it('reads the persistent base source for a ?base=1 method URI', () => {
+    it('reads the persistent base source for a ?base=1 method URI', async () => {
       const uri = Uri.parse('gemstone://1/Globals/Character/instance/converting/isVowel?base=1');
-      const content = new TextDecoder().decode(provider.readFile(uri));
-      expect(queries.getBaseMethodSource).toHaveBeenCalledWith(
+      const content = new TextDecoder().decode(await provider.readFile(uri));
+      expect(queries.baseMethodSource).toHaveBeenCalledWith(
         expect.anything(),
         'Character',
         false,
@@ -470,23 +472,23 @@ describe('GemStoneFileSystemProvider', () => {
         0,
         'Globals',
       );
-      expect(queries.getMethodSource).not.toHaveBeenCalled();
+      expect(queries.methodSource).not.toHaveBeenCalled();
       expect(content).toContain('base impl');
     });
 
-    it('reads the session/merged source (not base) for a plain method URI', () => {
+    it('reads the session/merged source (not base) for a plain method URI', async () => {
       const uri = Uri.parse('gemstone://1/Globals/Character/instance/converting/isVowel');
-      provider.readFile(uri);
-      expect(queries.getMethodSource).toHaveBeenCalled();
-      expect(queries.getBaseMethodSource).not.toHaveBeenCalled();
+      await provider.readFile(uri);
+      expect(queries.methodSource).toHaveBeenCalled();
+      expect(queries.baseMethodSource).not.toHaveBeenCalled();
     });
 
-    it('strips the " (base)" diff label to recover the real selector', () => {
+    it('strips the " (base)" diff label to recover the real selector', async () => {
       const uri = Uri.parse(
         'gemstone://1/Globals/Character/instance/converting/isVowel%20(base)?base=1',
       );
-      provider.readFile(uri);
-      expect(queries.getBaseMethodSource).toHaveBeenCalledWith(
+      await provider.readFile(uri);
+      expect(queries.baseMethodSource).toHaveBeenCalledWith(
         expect.anything(),
         'Character',
         false,
@@ -496,12 +498,12 @@ describe('GemStoneFileSystemProvider', () => {
       );
     });
 
-    it('strips the " (session override)" diff label to recover the real selector', () => {
+    it('strips the " (session override)" diff label to recover the real selector', async () => {
       const uri = Uri.parse(
         'gemstone://1/Globals/Character/instance/converting/isVowel%20(session%20override)',
       );
-      provider.readFile(uri);
-      expect(queries.getMethodSource).toHaveBeenCalledWith(
+      await provider.readFile(uri);
+      expect(queries.methodSource).toHaveBeenCalledWith(
         expect.anything(),
         'Character',
         false,
@@ -511,12 +513,12 @@ describe('GemStoneFileSystemProvider', () => {
       );
     });
 
-    it('recovers a binary selector containing a slash', () => {
+    it('recovers a binary selector containing a slash', async () => {
       const uri = Uri.parse(
         `gemstone://1/Globals/FileReference/instance/accessing/${encodeURIComponent('/')}`,
       );
-      provider.readFile(uri);
-      expect(queries.getMethodSource).toHaveBeenCalledWith(
+      await provider.readFile(uri);
+      expect(queries.methodSource).toHaveBeenCalledWith(
         expect.anything(),
         'FileReference',
         false,
@@ -526,12 +528,12 @@ describe('GemStoneFileSystemProvider', () => {
       );
     });
 
-    it('recovers a binary selector made only of slashes', () => {
+    it('recovers a binary selector made only of slashes', async () => {
       const uri = Uri.parse(
         `gemstone://1/Globals/Number/instance/arithmetic/${encodeURIComponent('//')}`,
       );
-      provider.readFile(uri);
-      expect(queries.getMethodSource).toHaveBeenCalledWith(
+      await provider.readFile(uri);
+      expect(queries.methodSource).toHaveBeenCalledWith(
         expect.anything(),
         'Number',
         false,
@@ -541,11 +543,11 @@ describe('GemStoneFileSystemProvider', () => {
       );
     });
 
-    it('recovers a slash selector escaped with the sentinel (the real open path)', () => {
+    it('recovers a slash selector escaped with the sentinel (the real open path)', async () => {
       const seg = encodeURIComponent(escapeSelectorSlashes('/'));
       const uri = Uri.parse(`gemstone://1/Globals/FileReference/class/cross%20platform/${seg}`);
-      provider.readFile(uri);
-      expect(queries.getMethodSource).toHaveBeenCalledWith(
+      await provider.readFile(uri);
+      expect(queries.methodSource).toHaveBeenCalledWith(
         expect.anything(),
         'FileReference',
         true,
@@ -555,20 +557,16 @@ describe('GemStoneFileSystemProvider', () => {
       );
     });
 
-    it('reads a class definition, scoped to the dictionary (name fallback when no ?dict)', () => {
+    it('reads a class definition, scoped to the dictionary (name fallback when no ?dict)', async () => {
       const uri = Uri.parse('gemstone://1/Globals/Array/definition');
-      const content = new TextDecoder().decode(provider.readFile(uri));
+      const content = new TextDecoder().decode(await provider.readFile(uri));
       expect(content).toContain("Object subclass: 'Array'");
-      expect(queries.getClassDefinition).toHaveBeenCalledWith(
-        expect.anything(),
-        'Array',
-        'Globals',
-      );
+      expect(queries.classDefinition).toHaveBeenCalledWith(expect.anything(), 'Array', 'Globals');
     });
 
-    it('scopes a class definition to the SymbolList index given by ?dict', () => {
-      provider.readFile(Uri.parse('gemstone://1/Globals/Array/definition?dict=9'));
-      expect(queries.getClassDefinition).toHaveBeenCalledWith(expect.anything(), 'Array', 9);
+    it('scopes a class definition to the SymbolList index given by ?dict', async () => {
+      await provider.readFile(Uri.parse('gemstone://1/Globals/Array/definition?dict=9'));
+      expect(queries.classDefinition).toHaveBeenCalledWith(expect.anything(), 'Array', 9);
     });
 
     /**
@@ -577,11 +575,11 @@ describe('GemStoneFileSystemProvider', () => {
      * placeholder — and handing that to an editor makes it editable text, so
      * Ctrl+Z lands on the boilerplate and saving writes it in as a real comment.
      */
-    it('reads the comment a class actually stores, scoped to the dictionary', () => {
+    it('reads the comment a class actually stores, scoped to the dictionary', async () => {
       const uri = Uri.parse('gemstone://1/Globals/Array/comment');
-      const content = new TextDecoder().decode(provider.readFile(uri));
+      const content = new TextDecoder().decode(await provider.readFile(uri));
       expect(content).toBe('An ordered collection.');
-      expect(queries.getStoredClassComment).toHaveBeenCalledWith(
+      expect(queries.storedClassComment).toHaveBeenCalledWith(
         expect.anything(),
         'Array',
         'Globals',
@@ -589,11 +587,11 @@ describe('GemStoneFileSystemProvider', () => {
       expect(queries.getClassComment).not.toHaveBeenCalled();
     });
 
-    it('opens empty for a class with no comment of its own', () => {
-      vi.mocked(queries.getStoredClassComment).mockReturnValueOnce('');
+    it('opens empty for a class with no comment of its own', async () => {
+      vi.mocked(queries.storedClassComment).mockResolvedValueOnce('');
 
       const content = new TextDecoder().decode(
-        provider.readFile(Uri.parse('gemstone://1/Globals/Array/comment')),
+        await provider.readFile(Uri.parse('gemstone://1/Globals/Array/comment')),
       );
 
       // Empty means undo can mean "no comment": there is nothing to return to but
@@ -601,41 +599,52 @@ describe('GemStoneFileSystemProvider', () => {
       expect(content).toBe('');
     });
 
-    it('returns new-class template with dictionary name', () => {
+    it('returns new-class template with dictionary name', async () => {
       const uri = Uri.parse('gemstone://1/UserGlobals/new-class');
-      const content = new TextDecoder().decode(provider.readFile(uri));
+      const content = new TextDecoder().decode(await provider.readFile(uri));
       expect(content).toContain("Object subclass: 'NameOfClass'");
       expect(content).toContain('inDictionary: UserGlobals');
     });
 
-    it('new-class template always includes an editable category line, defaulting to User Classes when none was selected', () => {
+    it('new-class template always includes an editable category line, defaulting to User Classes when none was selected', async () => {
       const uri = Uri.parse('gemstone://1/UserGlobals/new-class');
-      const content = new TextDecoder().decode(provider.readFile(uri));
+      const content = new TextDecoder().decode(await provider.readFile(uri));
       expect(content).toContain("category: 'User Classes'\n  options: #()");
     });
 
-    it('new-class template pre-fills the selected category when one was passed', () => {
+    it('new-class template pre-fills the selected category when one was passed', async () => {
       const uri = Uri.parse('gemstone://1/UserGlobals/new-class?category=Kernel-Numbers');
-      const content = new TextDecoder().decode(provider.readFile(uri));
+      const content = new TextDecoder().decode(await provider.readFile(uri));
       expect(content).toContain("category: 'Kernel-Numbers'\n  options: #()");
     });
 
-    it('new-class template pre-fills a selected category containing "%"', () => {
+    it('new-class template pre-fills a selected category containing "%"', async () => {
       const uri = Uri.parse('gemstone://1/UserGlobals/new-class?category=50%25%20off');
-      const content = new TextDecoder().decode(provider.readFile(uri));
+      const content = new TextDecoder().decode(await provider.readFile(uri));
       expect(content).toContain("category: '50% off'\n  options: #()");
     });
 
-    it('returns new-method template', () => {
+    it('returns new-method template', async () => {
       const uri = Uri.parse('gemstone://1/Globals/Array/instance/accessing/new-method');
-      const content = new TextDecoder().decode(provider.readFile(uri));
+      const content = new TextDecoder().decode(await provider.readFile(uri));
       expect(content).toContain('messageSelector');
       expect(content).toContain('"comment"');
     });
 
-    it('throws FileNotFound for invalid URI', () => {
+    it('fails a method read with the error that refused it', async () => {
+      const refusal = new Error('Session is busy');
+      vi.mocked(queries.methodSource).mockRejectedValueOnce(refusal);
+
+      const read = provider.readFile(
+        Uri.parse('gemstone://1/Globals/Array/instance/accessing/at%3A'),
+      );
+
+      await expect(read).rejects.toBe(refusal);
+    });
+
+    it('throws FileNotFound for invalid URI', async () => {
       const uri = Uri.parse('gemstone://1/too/few');
-      expect(() => provider.readFile(uri)).toThrow();
+      await expect(provider.readFile(uri)).rejects.toThrow();
     });
   });
 
@@ -947,18 +956,18 @@ describe('GemStoneFileSystemProvider', () => {
       );
     });
 
-    it('shows the class category on its own line (Class>>definition omits it)', () => {
-      vi.mocked(queries.getClassDefinition).mockReturnValueOnce(
+    it('shows the class category on its own line (Class>>definition omits it)', async () => {
+      vi.mocked(queries.classDefinition).mockResolvedValueOnce(
         "Object subclass: 'Array'\n  inDictionary: Globals\n  options: #()",
       );
-      vi.mocked(queries.getClassCategory).mockReturnValueOnce('Collections-Ordered');
+      vi.mocked(queries.classCategory).mockResolvedValueOnce('Collections-Ordered');
 
       const content = new TextDecoder().decode(
-        provider.readFile(Uri.parse('gemstone://1/Globals/Array/definition')),
+        await provider.readFile(Uri.parse('gemstone://1/Globals/Array/definition')),
       );
 
       expect(content).toContain("category: 'Collections-Ordered'\n  options: #()");
-      expect(queries.getClassCategory).toHaveBeenCalledWith(expect.anything(), 'Array', 'Globals');
+      expect(queries.classCategory).toHaveBeenCalledWith(expect.anything(), 'Array', 'Globals');
     });
 
     it('strips the category line before compiling and applies it via recategorizeClass', () => {
@@ -1626,22 +1635,22 @@ describe('GemStoneFileSystemProvider', () => {
   });
 
   describe('session lookup', () => {
-    it('throws Unavailable when session is gone', () => {
+    it('throws Unavailable when session is gone', async () => {
       const mgr = {
         getSessions: vi.fn(() => []),
         getSession: vi.fn(() => undefined),
       } as unknown as SessionManager;
       const p = new GemStoneFileSystemProvider(mgr);
       const uri = Uri.parse('gemstone://99/Globals/Array/definition');
-      expect(() => p.readFile(uri)).toThrow();
+      await expect(p.readFile(uri)).rejects.toThrow();
     });
   });
 
   describe('URI parsing', () => {
-    it('parses method URI with special characters', () => {
+    it('parses method URI with special characters', async () => {
       const uri = Uri.parse('gemstone://1/Globals/Array/instance/accessing/at%3Aput%3A');
-      provider.readFile(uri);
-      expect(queries.getMethodSource).toHaveBeenCalledWith(
+      await provider.readFile(uri);
+      expect(queries.methodSource).toHaveBeenCalledWith(
         expect.anything(),
         'Array',
         false,
@@ -1651,10 +1660,10 @@ describe('GemStoneFileSystemProvider', () => {
       );
     });
 
-    it('parses class side correctly', () => {
+    it('parses class side correctly', async () => {
       const uri = Uri.parse('gemstone://1/Globals/Array/class/creation/new%3A');
-      provider.readFile(uri);
-      expect(queries.getMethodSource).toHaveBeenCalledWith(
+      await provider.readFile(uri);
+      expect(queries.methodSource).toHaveBeenCalledWith(
         expect.anything(),
         'Array',
         true,
@@ -1664,16 +1673,16 @@ describe('GemStoneFileSystemProvider', () => {
       );
     });
 
-    it('distinguishes new-method from regular method', () => {
+    it('distinguishes new-method from regular method', async () => {
       // new-method URI
       const uri1 = Uri.parse('gemstone://1/Globals/Array/instance/accessing/new-method');
-      const content1 = new TextDecoder().decode(provider.readFile(uri1));
+      const content1 = new TextDecoder().decode(await provider.readFile(uri1));
       expect(content1).toContain('messageSelector');
 
       // regular method called "size"
       const uri2 = Uri.parse('gemstone://1/Globals/Array/instance/accessing/size');
-      provider.readFile(uri2);
-      expect(queries.getMethodSource).toHaveBeenCalledWith(
+      await provider.readFile(uri2);
+      expect(queries.methodSource).toHaveBeenCalledWith(
         expect.anything(),
         'Array',
         false,

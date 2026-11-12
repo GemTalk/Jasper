@@ -5,6 +5,7 @@ import { GciLibrary } from '../gciLibrary';
 import { GCI_ERR_OP_IN_PROGRESS, OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
 import {
   cancelRunOn,
+  isRunning,
   NbCancelledError,
   pollNbResultReady,
   runNbCall,
@@ -165,6 +166,29 @@ describe('browser queries (integration)', () => {
       expect(source.length).toBeGreaterThan(0);
     });
 
+    it('answers the same source as the blocking read', async () => {
+      const [firstMethod] = queries.getMethodList(session(), 'Array').filter((m) => !m.isMeta);
+
+      const source = await queries.methodSource(session(), 'Array', false, firstMethod.selector);
+
+      expect(source).toBe(queries.getMethodSource(session(), 'Array', false, firstMethod.selector));
+    });
+
+    it('answers both sides of a session-override diff read at the same time', async () => {
+      const [first, second] = queries.getMethodList(session(), 'Array').filter((m) => !m.isMeta);
+      const expected = [
+        queries.getMethodSource(session(), 'Array', false, first.selector),
+        queries.getMethodSource(session(), 'Array', false, second.selector),
+      ];
+
+      const reads = Promise.all([
+        queries.methodSource(session(), 'Array', false, first.selector),
+        queries.baseMethodSource(session(), 'Array', false, second.selector),
+      ]);
+
+      await expect(reads).resolves.toEqual(expected);
+    });
+
     /**
      * What the doit does when there is no method to read.
      *
@@ -264,6 +288,21 @@ describe('browser queries (integration)', () => {
         source = queries.getMethodSource(session(), GONE_CLASS, false, GONE_SELECTOR, 0, globals);
       }).not.toThrow();
       expect(source).toBe('');
+    });
+  });
+
+  describe('baseMethodSource', () => {
+    it('answers the merged source for a method no session overrides', async () => {
+      const [firstMethod] = queries.getMethodList(session(), 'Array').filter((m) => !m.isMeta);
+
+      const source = await queries.baseMethodSource(
+        session(),
+        'Array',
+        false,
+        firstMethod.selector,
+      );
+
+      expect(source).toBe(queries.getMethodSource(session(), 'Array', false, firstMethod.selector));
     });
   });
 
@@ -392,6 +431,12 @@ describe('browser queries (integration)', () => {
 
       expect(definition).toContain('Array');
     });
+
+    it('answers the same definition as the blocking read', async () => {
+      const definition = await queries.classDefinition(session(), 'Array', 'Globals');
+
+      expect(definition).toBe(queries.getClassDefinition(session(), 'Array', 'Globals'));
+    });
   });
 
   describe('getClassComment', () => {
@@ -449,6 +494,15 @@ describe('browser queries (integration)', () => {
       queries.setClassComment(session(), COMMENT_CLASS, 'A stored comment.');
 
       expect(queries.getStoredClassComment(session(), COMMENT_CLASS)).toBe('A stored comment.');
+    });
+
+    it('answers the same stored text as the blocking read', async () => {
+      defineCommentClass();
+      queries.setClassComment(session(), COMMENT_CLASS, 'A stored comment.');
+
+      const comment = await queries.storedClassComment(session(), COMMENT_CLASS);
+
+      expect(comment).toBe(queries.getStoredClassComment(session(), COMMENT_CLASS));
     });
 
     /** The undo round trip: a comment added and then emptied leaves no comment. */
@@ -669,6 +723,76 @@ describe('browser queries (integration)', () => {
         constructor: queries.BrowserQueryError,
         gciErrorNumber: GCI_ERR_OP_IN_PROGRESS,
       });
+    });
+  });
+
+  describe('queries that wait their turn', () => {
+    function loggedInSession(): ActiveSession {
+      const transient = transientSession();
+      onTestFinished(() => {
+        transient.logout();
+      });
+      return transient;
+    }
+
+    it('answers queries that overlap on one session', async () => {
+      const execute = queries.queuedNbQueryExecutorUsing(loggedInSession());
+
+      const first = execute(`(Delay forMilliseconds: 200) wait. 'first'`);
+      const second = execute(`'second'`);
+
+      await expect(Promise.all([first, second])).resolves.toEqual(['first', 'second']);
+    });
+
+    it('starts a query at once when nothing is queued before it', async () => {
+      const transient = loggedInSession();
+
+      const query = queries.queuedNbQueryExecutorUsing(transient)(`'now'`);
+
+      expect(isRunning(transient)).toBe(true);
+      await expect(query).resolves.toBe('now');
+    });
+
+    it('settles queries in the order they were made', async () => {
+      const execute = queries.queuedNbQueryExecutorUsing(loggedInSession());
+      const settled: string[] = [];
+
+      await Promise.all([
+        execute(`(Delay forMilliseconds: 200) wait. 'slow'`).then((r) => settled.push(r)),
+        execute(`'fast'`).then((r) => settled.push(r)),
+      ]);
+
+      expect(settled).toEqual(['slow', 'fast']);
+    });
+
+    it('answers a later query when an earlier one fails', async () => {
+      const execute = queries.queuedNbQueryExecutorUsing(loggedInSession());
+
+      const failing = execute(`(Delay forMilliseconds: 200) wait. nil foo`);
+      const later = execute(`'later'`);
+
+      await Promise.all([
+        expect(failing).rejects.toBeInstanceOf(queries.BrowserQueryError),
+        expect(later).resolves.toBe('later'),
+      ]);
+    });
+
+    it('is refused as busy while a query outside the queue runs', async () => {
+      const transient = loggedInSession();
+      const outside = queries.executeFetchStringAsync(
+        transient,
+        `(Delay forMilliseconds: 200) wait. 'outside'`,
+      );
+
+      const queued = queries.queuedNbQueryExecutorUsing(transient)(`'queued'`);
+
+      await Promise.all([
+        expect(queued).rejects.toMatchObject({
+          constructor: queries.BrowserQueryError,
+          gciErrorNumber: GCI_ERR_OP_IN_PROGRESS,
+        }),
+        expect(outside).resolves.toBe('outside'),
+      ]);
     });
   });
 });
