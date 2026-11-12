@@ -90,13 +90,13 @@ describe('showClassHierarchy', () => {
     const [command, uri] = vi.mocked(vscode.commands.executeCommand).mock.calls[0];
     expect(command).toBe('gemstone.openDocument');
     const opened = uri as vscode.Uri;
-    expect(opened.path).toBe('/Later/Twin/definition');
+    expect(opened.path).toBe('/Later/Twin/definition/Twin');
     expect(opened.query).toBe('dict=2');
   });
 
-  it('opens a row no dictionary binds by name, as before', async () => {
+  it('marks a row no dictionary binds, and declines to open it by name', async () => {
     vi.mocked(queries.getClassHierarchy).mockReturnValue([
-      { className: 'OldTwin', dictName: '', kind: 'superclass', binding: 'superseded' },
+      { className: 'Twin', dictName: '', kind: 'superclass', binding: 'superseded' },
       ...hierarchy.slice(1),
     ]);
     pickInOrder(
@@ -106,8 +106,12 @@ describe('showClassHierarchy', () => {
 
     await showClassHierarchy(sessionManager);
 
-    const [, uri] = vi.mocked(vscode.commands.executeCommand).mock.calls[0];
-    expect((uri as vscode.Uri).query).toBe('');
+    const rows = vi.mocked(vscode.window.showQuickPick).mock.calls[1][0] as vscode.QuickPickItem[];
+    expect(rows[0].description).toBe('(old version)');
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
+    expect(vi.mocked(vscode.window.showWarningMessage).mock.calls[0][0]).toContain(
+      'an older version',
+    );
   });
 
   it('says so when the stone finds no hierarchy', async () => {

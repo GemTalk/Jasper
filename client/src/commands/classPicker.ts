@@ -43,12 +43,23 @@ export async function loadClassPickItems(
 
   // The stone answers dictionary by dictionary, unsorted within each. Same-named classes keep
   // their symbol-list order, so the one a bare name resolves to comes first.
+  const { compare } = new Intl.Collator();
   const sorted = [...entries].sort(
-    (a, b) => a.className.localeCompare(b.className) || a.dictIndex - b.dictIndex,
+    (a, b) => compare(a.className, b.className) || a.dictIndex - b.dictIndex,
   );
   return sorted.map((e) => ({
     label: e.className,
     description: e.dictName,
     entry: e,
   }));
+}
+
+/** Show the class list to pick from; `undefined` when it failed to load or was dismissed. */
+export async function pickClass(session: ActiveSession): Promise<ClassPickItem | undefined> {
+  const items = await loadClassPickItems(session);
+  if (!items) return undefined;
+  return await vscode.window.showQuickPick(items, {
+    placeHolder: 'Type to find a class…',
+    matchOnDescription: true,
+  });
 }

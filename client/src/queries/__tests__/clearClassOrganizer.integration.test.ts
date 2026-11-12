@@ -1,7 +1,7 @@
 // A commit or an abort drops the session's cached ClassOrganizer by running clearClassOrganizerCode
-// through executeFetchString, which fetches the doit's answer as a String. An answer that is not a
-// String (it used to be `true`) made every commit and abort log a MessageNotUnderstood for
-// #encodeAsUTF8 to the GemStone GCI channel, even though the cache was dropped.
+// through executeFetchString, which fetches the doit's answer as a String. Any other answer fails
+// the fetch with a MessageNotUnderstood for #encodeAsUTF8, logged to the GemStone GCI channel on
+// every commit and abort although the cache was dropped.
 import { describe, it, expect, vi } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
@@ -20,18 +20,19 @@ describe('clearClassOrganizerCode (integration)', () => {
     handle = testContext.session;
   });
   const session = (): ActiveSession => testActiveSession(gci, handle);
-  const cachedOrganizers = (): string =>
+  // Environment 0's organizer only: another test on this session may have cached one for another.
+  const organizerCached = (): string =>
     executeFetchString(
       session(),
-      `(SessionTemps current keys select: [:k | k isString and: [k asString beginsWith: 'JasperClassOrganizer_']]) size printString`,
+      `(SessionTemps current includesKey: #'JasperClassOrganizer_0') printString`,
     );
 
   it('drops the cached organizer and answers a String the fetch can read', () => {
     executeFetchString(session(), `${classOrganizerExpr()}. 'ok'`);
-    expect(cachedOrganizers()).toBe('1');
+    expect(organizerCached()).toBe('true');
 
     expect(() => executeFetchString(session(), clearClassOrganizerCode())).not.toThrow();
 
-    expect(cachedOrganizers()).toBe('0');
+    expect(organizerCached()).toBe('false');
   });
 });

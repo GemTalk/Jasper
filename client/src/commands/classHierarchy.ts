@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
 import * as queries from '../browserQueries';
 import { SessionManager } from '../sessionManager';
-import { loadClassPickItems, withLoadingProgress } from './classPicker';
+import { buildClassDefinitionUri } from '../gemstoneFileSystemProvider';
+import { unboundHierarchyMarker, unboundHierarchyTooltip } from '../hierarchyBinding';
+import { pickClass, withLoadingProgress } from './classPicker';
 
 /**
  * Command handler for "Class Hierarchy": pick a class from the stone's class list, then pick a
@@ -11,13 +13,7 @@ export async function showClassHierarchy(sessionManager: SessionManager): Promis
   const session = await sessionManager.resolveSession();
   if (!session) return;
 
-  const classItems = await loadClassPickItems(session);
-  if (!classItems) return;
-
-  const pickedClass = await vscode.window.showQuickPick(classItems, {
-    placeHolder: 'Type to find a class…',
-    matchOnDescription: true,
-  });
+  const pickedClass = await pickClass(session);
   if (!pickedClass) return;
 
   // The dictionary index scopes the lookup, so a class shadowed by a same-named one in an
@@ -45,7 +41,7 @@ export async function showClassHierarchy(sessionManager: SessionManager): Promis
     const marker = r.kind === 'self' ? ' ◀' : '';
     return {
       label: `${'  '.repeat(depth)}${r.className}${marker}`,
-      description: r.dictName,
+      description: r.binding === 'bound' ? r.dictName : unboundHierarchyMarker(r.binding),
       detail: r.kind === 'self' ? '(target class)' : undefined,
       entry: r,
     };
@@ -57,12 +53,15 @@ export async function showClassHierarchy(sessionManager: SessionManager): Promis
   });
   if (!picked) return;
 
-  const dictQuery = picked.entry.dictIndex === undefined ? '' : `?dict=${picked.entry.dictIndex}`;
-  const uri = vscode.Uri.parse(
-    `gemstone://${session.id}` +
-      `/${encodeURIComponent(picked.entry.dictName)}` +
-      `/${encodeURIComponent(picked.entry.className)}` +
-      `/definition${dictQuery}`,
+  const { entry } = picked;
+  // Opening one by name would show whichever class the name binds now, not this one.
+  if (entry.binding !== 'bound') {
+    const why = unboundHierarchyTooltip(entry.className, entry.binding).replace(/\n\n/g, ' ');
+    vscode.window.showWarningMessage(`Its definition can't be opened from here. ${why}`);
+    return;
+  }
+  vscode.commands.executeCommand(
+    'gemstone.openDocument',
+    buildClassDefinitionUri(session.id, entry.dictName, entry.className, entry.dictIndex),
   );
-  vscode.commands.executeCommand('gemstone.openDocument', uri);
 }

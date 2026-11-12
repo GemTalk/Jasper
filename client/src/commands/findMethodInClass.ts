@@ -63,8 +63,9 @@ export async function findMethodInClass(sessionManager: SessionManager): Promise
   }
 
   // Instance side first, then class side, each by selector — the `(class) ` rows stay together.
+  const { compare } = new Intl.Collator();
   const sorted = [...methods].sort(
-    (a, b) => Number(a.isMeta) - Number(b.isMeta) || a.selector.localeCompare(b.selector),
+    (a, b) => Number(a.isMeta) - Number(b.isMeta) || compare(a.selector, b.selector),
   );
   const items = sorted.map((m) => ({
     label: `${m.isMeta ? '(class) ' : ''}${m.selector}`,

@@ -20,19 +20,16 @@ const pos = (line: number, char: number) => new Position(line, char) as unknown 
 const mockImplementorsOf = vi.mocked(implementorsOf);
 const mockGetAllClassNames = vi.mocked(getAllClassNames);
 
-function makeSessionManager(hasSession: boolean) {
+const fakeSession = (id: number) =>
+  fakeActiveSession({ id, gci: {}, handle: {}, login: { label: 'Test' }, stoneVersion: '3.7.2' });
+
+// Session 1 is selected; `others` are logged in alongside it.
+function makeSessionManager(hasSession: boolean, others: number[] = []) {
+  const selected = hasSession ? fakeSession(1) : undefined;
+  const sessions = [...(selected ? [selected] : []), ...others.map(fakeSession)];
   return {
-    getSelectedSession: vi.fn(() =>
-      hasSession
-        ? fakeActiveSession({
-            id: 1,
-            gci: {},
-            handle: {},
-            login: { label: 'Test' },
-            stoneVersion: '3.7.2',
-          })
-        : undefined,
-    ),
+    getSelectedSession: vi.fn(() => selected),
+    getSessions: vi.fn(() => sessions),
     onDidChangeSelection: vi.fn(() => ({ dispose: () => {} })),
   } as unknown as SessionManager;
 }
@@ -73,6 +70,37 @@ describe('GemStoneDefinitionProvider', () => {
       const doc = makeDocument('self size');
       const results = await provider.provideDefinition(doc, pos(0, 5));
       expect(results).toEqual([]);
+    });
+  });
+
+  describe('which session answers', () => {
+    const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
+
+    it('asks the session a stone method was opened from, not the selected one', async () => {
+      const provider = new GemStoneDefinitionProvider(makeSessionManager(true, [2]), resolver);
+      const doc = makeDocument('self size', 'gemstone://2/Globals/Array/instance/accessing/size');
+
+      await provider.provideDefinition(doc, pos(0, 5));
+
+      expect(mockImplementorsOf).toHaveBeenCalled();
+      expect(mockImplementorsOf.mock.calls.every(([s]) => s.id === 2)).toBe(true);
+    });
+
+    it('answers nothing for a stone method whose session has logged out', async () => {
+      const provider = new GemStoneDefinitionProvider(makeSessionManager(true), resolver);
+      const doc = makeDocument('self size', 'gemstone://2/Globals/Array/instance/accessing/size');
+
+      expect(await provider.provideDefinition(doc, pos(0, 5))).toEqual([]);
+      expect(mockImplementorsOf).not.toHaveBeenCalled();
+    });
+
+    it('asks the selected session from a file on disk', async () => {
+      const provider = new GemStoneDefinitionProvider(makeSessionManager(true, [2]), resolver);
+      const doc = makeDocument('self size', 'file:///project/kernel.gs');
+
+      await provider.provideDefinition(doc, pos(0, 5));
+
+      expect(mockImplementorsOf.mock.calls.every(([s]) => s.id === 1)).toBe(true);
     });
   });
 

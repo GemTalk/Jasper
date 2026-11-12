@@ -126,7 +126,7 @@ import { shouldLoadAfterAddingDependency } from './rowanLoadPrompt';
 import { RowanDecorationProvider } from './rowanDecorations';
 import { ActiveEditorDecorationProvider } from './activeEditorDecoration';
 import { findMethodInClass } from './commands/findMethodInClass';
-import { loadClassPickItems } from './commands/classPicker';
+import { pickClass } from './commands/classPicker';
 import { showClassHierarchy } from './commands/classHierarchy';
 import { revealInspect } from './inspectRouter';
 import {
@@ -3575,13 +3575,7 @@ export function activate(context: vscode.ExtensionContext) {
       const session = await sessionManager.resolveSession();
       if (!session) return;
 
-      const items = await loadClassPickItems(session);
-      if (!items) return;
-
-      const picked = await vscode.window.showQuickPick(items, {
-        placeHolder: 'Type to find a class…',
-        matchOnDescription: true,
-      });
+      const picked = await pickClass(session);
       if (!picked) return;
 
       if (
