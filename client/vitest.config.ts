@@ -1,15 +1,17 @@
 import { defineConfig } from 'vitest/config';
 import { BaseSequencer } from 'vitest/node';
 
-// Both projects shuffle test order (sequence.shuffle) to surface hidden
+// Every project shuffles test order (sequence.shuffle) to surface hidden
 // order-dependencies. To keep a shuffled failure reproducible, we pick ONE seed
-// here — in the main config, before any worker spawns — and pin it into both
-// projects so every worker shuffles identically. The seed is printed on each
+// here — in the main config, before any worker spawns — and pin it into every
+// project so every worker shuffles identically. The seed is printed on each
 // run; re-run with `VITEST_SEED=<seed>` (e.g. in CI) to replay that exact order.
 const shuffleSeed = process.env.VITEST_SEED ? Number(process.env.VITEST_SEED) : Date.now();
 console.log(
   `vitest: shuffling test order with seed ${shuffleSeed} — re-run with VITEST_SEED=${shuffleSeed} to reproduce this order`,
 );
+// Every project uses this, so a new project can't leave the seed out.
+const projectSequence = { shuffle: true, seed: shuffleSeed };
 
 // Small seeded PRNG (mulberry32) for a deterministic file shuffle.
 function mulberry32(seed: number): () => number {
@@ -43,14 +45,20 @@ class SeededSequencer extends BaseSequencer {
   }
 }
 
-// Two projects so the VS Code Testing panel discovers both tiers from a single
+// Three projects so the VS Code Testing panel discovers every tier from a single
 // config (no second config file, which the extension would also auto-detect and
 // double-count):
 //   - 'default' : the default suite (unit tests + the automatic GCI test that
-//              uses useIntegrationTest). This is what `npm test` runs.
+//              uses useIntegrationTest). `npm test` runs this and 'supply-chain'.
+//   - 'supply-chain' : lintSupplyChain.test.ts, which needs no stone and behaves
+//              the same on every OS and GemStone version. health-check.yml runs
+//              it once in the Linux lint job and sets JASPER_SKIP_SUPPLY_CHAIN_TEST
+//              on the matrix legs, which leaves the project out. Locally it
+//              stays in `npm test`.
 //   - 'gci'  : the on-demand GCI suite (src/__tests__/gci/**). It shows up in the
 //              panel and can be run interactively, but is deliberately kept OUT
-//              of `npm test` (the "test" script pins --project default). Run it with
+//              of `npm test` (the "test" script pins --project default and
+//              --project supply-chain). Run it with
 //              `npm run test:gci` (which pins --project gci).
 export default defineConfig({
   test: {
@@ -85,7 +93,7 @@ export default defineConfig({
         test: {
           name: 'default',
           include: ['src/**/__tests__/**/*.test.ts'],
-          exclude: ['src/__tests__/gci/**'],
+          exclude: ['src/__tests__/gci/**', 'src/__tests__/lintSupplyChain.test.ts'],
           globalSetup: [
             'src/__tests__/gciTraceLogs.globalSetup.ts',
             'src/__tests__/serverPluginMatch.globalSetup.ts',
@@ -97,14 +105,22 @@ export default defineConfig({
             'src/__tests__/vitest.customErrorMatchers.ts',
             'src/__tests__/vitest.telemetrySetup.ts',
           ],
-          sequence: {
-            shuffle: true,
-            seed: shuffleSeed,
-          },
+          sequence: projectSequence,
           // health-check.yml sets VITEST_RETRY=1 in the merge queue only.
           retry: Number(process.env.VITEST_RETRY ?? 0),
         },
       },
+      ...(process.env.JASPER_SKIP_SUPPLY_CHAIN_TEST === '1'
+        ? []
+        : [
+            {
+              test: {
+                name: 'supply-chain',
+                include: ['src/__tests__/lintSupplyChain.test.ts'],
+                sequence: projectSequence,
+              },
+            },
+          ]),
       {
         test: {
           name: 'gci',
@@ -112,10 +128,7 @@ export default defineConfig({
           setupFiles: ['src/__tests__/vitest.telemetrySetup.ts'],
           maxConcurrency: 5,
           fileParallelism: false,
-          sequence: {
-            shuffle: true,
-            seed: shuffleSeed,
-          },
+          sequence: projectSequence,
         },
       },
     ],

@@ -1,4 +1,4 @@
-import { QueryExecutor } from './types';
+import { NbQueryExecutor, QueryExecutor } from './types';
 import { classOrganizerExpr, subclassesOfBlock, superclassesOfBlock } from './classOrganizer';
 import { classLookupExpr } from './util';
 import { classHomeIndexStatement } from './classHomeIndex';
@@ -36,6 +36,18 @@ export function getClassHierarchy(
   className: string,
   dict?: number | string,
 ): ClassHierarchyEntry[] {
+  return parseClassHierarchy(execute(classHierarchyCode(className, dict)));
+}
+
+export async function getClassHierarchyAsync(
+  execute: NbQueryExecutor,
+  className: string,
+  dict?: number | string,
+): Promise<ClassHierarchyEntry[]> {
+  return parseClassHierarchy(await execute(classHierarchyCode(className, dict)));
+}
+
+function classHierarchyCode(className: string, dict?: number | string): string {
   /**
    * In the Smalltalk code below, the superclasses block (superclassesOfBlock) returns root-first ([Object, Collection, ...]),
    *  which is the order we want to render — Object at indent 0, the
@@ -46,7 +58,7 @@ export function getClassHierarchy(
    * name); omit it for the unscoped global first-match. Scoping matters when a class name is
    * shadowed across dictionaries — an unscoped lookup could offer the wrong class's lineage.
    */
-  const code = `| organizer class supers subs stream classDict sl row |
+  return `| organizer class supers subs stream classDict sl row |
 organizer := ${classOrganizerExpr()}.
 class := ${classLookupExpr(className, dict)}.
 supers := ${superclassesOfBlock('organizer')} value: class.
@@ -73,8 +85,9 @@ supers do: [:each | row value: each value: 'superclass'].
 row value: class value: 'self'.
 (subs asSortedCollection: [:a :b | a name <= b name]) do: [:each | row value: each value: 'subclass'].
 stream contents`;
+}
 
-  const raw = execute(code);
+function parseClassHierarchy(raw: string): ClassHierarchyEntry[] {
   const results: ClassHierarchyEntry[] = [];
   for (const line of raw.split('\n')) {
     if (line.length === 0) continue;
