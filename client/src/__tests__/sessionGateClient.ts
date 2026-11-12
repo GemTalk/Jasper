@@ -4,6 +4,7 @@ import { inject } from 'vitest';
 import type { ActiveSession } from '../activeSession';
 import type { SessionManager } from '../sessionManager';
 import { LOGIN_SERIAL_CODE } from './sessionGateLedger';
+import { LOGIN_ERRORS } from '../loginFailureMessage';
 
 declare module 'vitest' {
   export interface ProvidedContext {
@@ -74,8 +75,7 @@ export function reportRefusedLogin(socket = held.at(-1)): void {
   socket?.write(JSON.stringify({ op: 'refused' }) + '\n');
 }
 
-// gcierr.ht, the same in every vendored release from 3.6.2 through 3.7.6.
-const GS_ERR_LOGIN_DENIAL = 4051;
+const { GS_ERR_LOGIN_DENIAL } = LOGIN_ERRORS;
 
 /**
  * Whether `error` is the stone refusing a login, a wrong user or password,
