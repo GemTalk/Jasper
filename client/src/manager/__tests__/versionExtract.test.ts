@@ -310,6 +310,7 @@ describe.runIf(process.platform === 'linux' && realUnzip && realPython)(
 // past vitest's default 5 s. Creating one takes about eight more, so the image is
 // built once and copied into each test. The tests share its volume name, so a
 // test that leaves it mounted fails in its own teardown rather than in the next test.
+// If even a forced eject fails, the tests after it fail as well.
 describe.runIf(process.platform === 'darwin')(
   'Unpacking a GemStone disk image on macOS',
   { timeout: 30_000 },
@@ -332,16 +333,29 @@ describe.runIf(process.platform === 'darwin')(
       fs.copyFileSync(image, f.archivePath, fs.constants.COPYFILE_FICLONE);
     });
 
+    // While the name is taken, macOS mounts the next attach at `/Volumes/<volume> 1`,
+    // so an eject of `/Volumes/<volume>` alone would leave that one behind.
+    const ourMounts = () =>
+      fs.readdirSync('/Volumes').filter((n) => n === volume || n.startsWith(`${volume} `));
+
     afterEach(async () => {
-      await tearDown(f);
-      // Only if a test left it mounted; the point of these tests is that none does.
       try {
-        execFileSync('hdiutil', ['detach', `/Volumes/${volume}`, '-force'], { stdio: 'ignore' });
-      } catch {
-        /* not mounted */
+        await tearDown(f);
+      } finally {
+        // Only if a test left it mounted; the point of these tests is that none does.
+        for (const name of ourMounts()) {
+          try {
+            execFileSync('hdiutil', ['detach', `/Volumes/${name}`, '-force'], { stdio: 'ignore' });
+          } catch {
+            /* already gone */
+          }
+        }
       }
-      if (fs.existsSync(`/Volumes/${volume}`)) {
-        throw new Error(`/Volumes/${volume} is still mounted, so the next test would see it`);
+      const left = ourMounts();
+      if (left.length > 0) {
+        throw new Error(
+          `Still mounted, so the next test would see it: /Volumes/${left.join(', /Volumes/')}`,
+        );
       }
     }, 30_000);
 
