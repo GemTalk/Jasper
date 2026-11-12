@@ -132,6 +132,14 @@ export class SessionManager {
   private _onDidChangeTransactionState = new vscode.EventEmitter<number>();
   readonly onDidChangeTransactionState = this._onDidChangeTransactionState.event;
 
+  // Fires with a session id whenever that session stops being busy, so a
+  // lookup a busy session refused can be made again. ActiveSession.onFreed
+  // tells us in the middle of the GCI call that freed the session, where a
+  // GCI call is unsafe, so this fires on a later task instead: a listener may
+  // query straight away. By then the session may be busy again or logged out.
+  private _onDidFreeSession = new vscode.EventEmitter<number>();
+  readonly onDidFreeSession = this._onDidFreeSession.event;
+
   get selectedId(): number | null {
     return this._selectedId;
   }
@@ -350,6 +358,7 @@ export class SessionManager {
     const session = new ActiveSession(this.nextId++, gci, handle, login, version);
     session.enhancedInspectorAvailable = false;
     session.rbSupportAvailable = false;
+    session.onFreed(() => setTimeout(() => this._onDidFreeSession.fire(session.id), 0));
 
     this.sessions.set(session.id, session);
     logInfo(
@@ -891,5 +900,6 @@ export class SessionManager {
     this._onDidRemoveSession.dispose();
     this._onDidAddSession.dispose();
     this._onDidChangeTransactionState.dispose();
+    this._onDidFreeSession.dispose();
   }
 }

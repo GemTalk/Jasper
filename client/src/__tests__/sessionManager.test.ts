@@ -1458,6 +1458,31 @@ describe('SessionManager', () => {
     });
   });
 
+  describe('announcing a session becoming free', () => {
+    it('names the session that stopped being busy', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
+      const freed: number[] = [];
+      manager.onDidFreeSession((id) => freed.push(id));
+      startNonBlockingCall(session);
+
+      session.forgetUncollectedCall();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(freed).toEqual([session.id]);
+    });
+
+    it('tells listeners only once the call that freed the session has returned', () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Busy' }, '/mock/lib');
+      const freed: number[] = [];
+      manager.onDidFreeSession((id) => freed.push(id));
+      startNonBlockingCall(session);
+
+      session.forgetUncollectedCall();
+
+      expect(freed).toEqual([]);
+    });
+  });
+
   // The property the palette's Commit and Abort are built on: they read the
   // current session directly, with no picker behind them, because a window with
   // any session logged in always HAS a current one. That is held up by two

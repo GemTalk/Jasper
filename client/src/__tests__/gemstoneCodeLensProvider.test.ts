@@ -24,7 +24,7 @@ vi.mock('../browserQueries', async (importOriginal) => {
   };
 });
 
-import { Uri } from 'vscode';
+import { EventEmitter, Uri } from 'vscode';
 import type { TextDocument, CodeLens } from 'vscode';
 import { CODE_LENS_SELECTORS, GemStoneCodeLensProvider } from '../gemstoneCodeLensProvider';
 import { SessionManager, ActiveSession } from '../sessionManager';
@@ -574,6 +574,141 @@ foo
       vi.runAllTimers();
 
       expect(queries.sendersOf).toHaveBeenCalledTimes(1);
+    });
+
+    describe('once a busy session frees up', () => {
+      const doc = () =>
+        createMockDocument(`method: MyClass
+foo
+  ^ 42
+%`);
+      let session: ActiveSession;
+      let announceFree: (id: number) => void;
+      let redraws: number;
+
+      beforeEach(() => {
+        const freed = new EventEmitter<number>();
+        announceFree = (id) => freed.fire(id);
+        // The manager fires its event only for a session it logged in itself.
+        Object.assign(sessionManager, { onDidFreeSession: freed.event });
+        provider.dispose();
+        provider = new GemStoneCodeLensProvider(sessionManager);
+        redraws = 0;
+        provider.onDidChangeCodeLenses(() => redraws++);
+        session = createMockSession();
+        sessionManager.getSelectedSession = () => session;
+        sessionManager.getSession = (id) => (id === session.id ? session : undefined);
+      });
+
+      function freeUp(id: number): void {
+        announceFree(id);
+        vi.runAllTimers();
+      }
+
+      function refuseOnce(): void {
+        (queries.sendersOf as ReturnType<typeof vi.fn>)
+          .mockImplementationOnce(() => {
+            throw busyRefusal();
+          })
+          .mockReturnValue([{}, {}]);
+      }
+
+      function refuseOneLens(): void {
+        refuseOnce();
+        resolveCount(methodLenses(provider.provideCodeLenses(doc()))[0]);
+        redraws = 0;
+      }
+
+      it('redraws the lenses whose lookup it refused', () => {
+        refuseOneLens();
+
+        freeUp(session.id);
+
+        expect(redraws).toBe(1);
+      });
+
+      it('counts a refused lookup even when it frees up before the lens shows no number', () => {
+        refuseOnce();
+        const lens = methodLenses(provider.provideCodeLenses(doc()))[0];
+        provider.resolveCodeLens(lens);
+        vi.runAllTimers();
+        freeUp(session.id);
+
+        const again = resolveCount(lens);
+
+        expect(again.command?.title).toBe('2 senders');
+      });
+
+      // A run made of many calls frees the session for a moment between them.
+      it('does not redraw for a session busy again a moment after it freed up', () => {
+        refuseOneLens();
+        announceFree(session.id);
+        vi.spyOn(session, 'isBusy').mockReturnValue(true);
+
+        vi.runAllTimers();
+
+        expect(redraws).toBe(0);
+      });
+
+      it('redraws once a session that was busy again frees up for good', () => {
+        refuseOneLens();
+        const busy = vi.spyOn(session, 'isBusy').mockReturnValue(true);
+        freeUp(session.id);
+        busy.mockReturnValue(false);
+
+        freeUp(session.id);
+
+        expect(redraws).toBe(1);
+      });
+
+      it('does not redraw for a session that logged out before it could', () => {
+        refuseOneLens();
+        announceFree(session.id);
+        sessionManager.getSession = () => undefined;
+
+        vi.runAllTimers();
+
+        expect(redraws).toBe(0);
+      });
+
+      it('does not redraw again for refusals a refresh already recounted', () => {
+        refuseOneLens();
+        announceFree(session.id);
+        provider.refresh();
+        redraws = 0;
+
+        vi.runAllTimers();
+
+        expect(redraws).toBe(0);
+      });
+
+      it('does not redraw when a session that refused nothing frees up', () => {
+        refuseOneLens();
+
+        freeUp(session.id + 1);
+
+        expect(redraws).toBe(0);
+      });
+
+      it('does not redraw when no lookup was refused', () => {
+        (queries.sendersOf as ReturnType<typeof vi.fn>).mockReturnValue([{}]);
+        resolveCount(methodLenses(provider.provideCodeLenses(doc()))[0]);
+        redraws = 0;
+
+        freeUp(session.id);
+
+        expect(redraws).toBe(0);
+      });
+
+      it('redraws only once for refusals it already redrew for', () => {
+        refuseOneLens();
+        freeUp(session.id);
+        redraws = 0;
+
+        freeUp(session.id);
+
+        expect(redraws).toBe(0);
+      });
     });
 
     it('counts a lookup that fails for another reason as none, without asking again', () => {
