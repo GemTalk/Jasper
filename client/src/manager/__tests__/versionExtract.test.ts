@@ -308,9 +308,9 @@ describe.runIf(process.platform === 'linux' && realUnzip && realPython)(
 
 // Attaching and ejecting a disk image can take several seconds on a CI runner,
 // past vitest's default 5 s. Creating one takes about eight more, so the image is
-// built once and copied into each test. The tests share its volume name, so a
-// test that leaves it mounted fails in its own teardown rather than in the next test.
-// If even a forced eject fails, the tests after it fail as well.
+// built once and copied into each test. The tests share its volume name, so
+// `afterEach` force-ejects any mount a test leaves behind, and fails if that eject
+// fails. The tests after it then fail as well.
 describe.runIf(process.platform === 'darwin')(
   'Unpacking a GemStone disk image on macOS',
   { timeout: 30_000 },
