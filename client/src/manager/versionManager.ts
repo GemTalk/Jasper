@@ -66,6 +66,21 @@ function stderrTail(stderr: string): string {
 }
 
 /**
+ * The mount point from `hdiutil attach -plist`, or undefined if nothing mounted.
+ * Found by its key, not its position, because hdiutil's output has no fixed
+ * order. The text form sorts disk names as strings, so with disk9 and disk10
+ * its last line is `/dev/disk9s1 Apple_APFS`, which has no mount point.
+ *
+ * The value is read as is, not XML-unescaped, because GemTalk's volume names
+ * have no `&`, `<` or `>`. If a future image's name had one, hdiutil would
+ * report it escaped (`R&amp;D`) and the unpack would fail on a folder that
+ * doesn't exist.
+ */
+export function mountPointFromAttachPlist(plist: string): string | undefined {
+  return plist.match(/<key>mount-point<\/key>\s*<string>([^<]*)<\/string>/)?.[1];
+}
+
+/**
  * What to say when an install did not finish and removing what it left failed
  * too: how it ended, then the folder to remove by hand. `detail` is why the
  * removal failed, already punctuated. Shared by the GemStone and Windows-client
@@ -596,7 +611,7 @@ export class VersionManager {
     // Not cancellable: an attach killed partway can leave the image mounted with
     // no mount point to detach. It takes seconds; the copy is what takes minutes.
     const attachLines: string[] = [];
-    const attach = await this.run('hdiutil', ['attach', '-nobrowse', dmgPath], {
+    const attach = await this.run('hdiutil', ['attach', '-nobrowse', '-plist', dmgPath], {
       onLine: (line) => attachLines.push(line),
     });
     if (attach.code !== 0) {
@@ -604,17 +619,11 @@ export class VersionManager {
         `hdiutil attach failed with exit code ${attach.code}${stderrTail(attach.stderr)}`,
       );
     }
-    // Parse mount point from last line: /dev/diskXsY  Apple_HFS  /Volumes/GemStone64Bit...
-    const lastLine =
-      attachLines
-        .filter((l) => l.trim())
-        .at(-1)
-        ?.trimEnd() ?? '';
-    const mountMatch = lastLine.match(/\t(\/Volumes\/.+)$/);
-    if (!mountMatch) {
-      throw new Error(`Failed to parse mount point from: ${lastLine}`);
+    const attached = attachLines.join('\n');
+    const mountPoint = mountPointFromAttachPlist(attached);
+    if (!mountPoint) {
+      throw new Error(`hdiutil attach reported no mount point for ${dmgPath}:\n${attached}`);
     }
-    const mountPoint = mountMatch[1];
 
     try {
       // A server image holds one GemStone64Bit… folder, copied in by name. A

@@ -409,6 +409,12 @@ describe.runIf(process.platform === 'darwin')(
       expect(fs.existsSync(`/Volumes/${volume}`)).toBe(false);
     });
 
+    it('fails, showing what hdiutil said, when the image attaches but no volume mounts', async () => {
+      fakeCommand(f, 'hdiutil', 'echo /dev/disk9s1');
+
+      await expect(extract()).rejects.toThrow(/no mount point[\s\S]*\/dev\/disk9s1/);
+    });
+
     it('warns, naming the volume, when the image will not eject', async () => {
       fakeCommand(
         f,

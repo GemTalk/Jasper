@@ -608,7 +608,10 @@ describe('VersionManager.downloadAndExtractClient on macOS', () => {
       });
       if (cmd === 'hdiutil' && args[0] === 'attach') {
         setImmediate(() =>
-          child.stdout.emit('data', Buffer.from(`/dev/disk4s1\tApple_HFS\t${mountPoint}\n`)),
+          child.stdout.emit(
+            'data',
+            Buffer.from(`<key>mount-point</key><string>${mountPoint}</string>\n`),
+          ),
         );
       }
       if (cmd === 'cp') {
