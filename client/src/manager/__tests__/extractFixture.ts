@@ -105,11 +105,16 @@ export function buildZip(f: ExtractFixture, python: string, comment = ''): void 
 /** Writes `<productName>.dmg` in `workDir` and returns its path. */
 export function buildDmg(workDir: string, productName: string, volume: string): string {
   const image = path.join(workDir, `${productName}.dmg`);
-  execFileSync(
-    'hdiutil',
-    ['create', '-srcfolder', buildTree(workDir, productName), '-volname', volume, image],
-    { stdio: 'ignore' },
-  );
+  const args = ['create', '-srcfolder', buildTree(workDir, productName), '-volname', volume, image];
+  // Piped so a failure's message carries hdiutil's own words.
+  const create = () => execFileSync('hdiutil', args, { stdio: 'pipe' });
+  // Retried because it can fail. It won't overwrite, so remove what it left.
+  try {
+    create();
+  } catch {
+    fs.rmSync(image, { force: true });
+    create();
+  }
   return image;
 }
 
