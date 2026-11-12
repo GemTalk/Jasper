@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
@@ -29,6 +30,7 @@ import {
   isAlive,
   makeFixture,
   partialTree,
+  productDirName,
   progressLog,
   tearDown,
   until,
@@ -304,27 +306,56 @@ describe.runIf(process.platform === 'linux' && realUnzip && realPython)(
   },
 );
 
-// Attaching and detaching a disk image takes seconds apiece on a CI runner,
-// which puts these past vitest's default 5 s.
+// Attaching and ejecting a disk image can take several seconds on a CI runner,
+// past vitest's default 5 s. Creating one takes about eight more, so the image is
+// built once and copied into each test. The tests share its volume name, so
+// `afterEach` force-ejects any mount a test leaves behind, and fails if that eject
+// fails. The tests after it then fail as well.
 describe.runIf(process.platform === 'darwin')(
   'Unpacking a GemStone disk image on macOS',
   { timeout: 30_000 },
   () => {
-    let volume: string;
+    const volume = `JasperTest${process.pid}${Date.now()}`;
+    let imageDir: string;
+    let image: string;
+
+    beforeAll(() => {
+      imageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jasper-dmg-'));
+      image = buildDmg(imageDir, productDirName(new SysadminStorage().getPlatformSuffix()), volume);
+    }, 30_000);
+
+    afterAll(() => {
+      if (imageDir) fs.rmSync(imageDir, { recursive: true, force: true });
+    });
 
     beforeEach(() => {
       setUp('dmg');
-      volume = `JasperTest${process.pid}${Date.now()}`;
-      buildDmg(f, volume);
-    }, 30_000);
+      fs.copyFileSync(image, f.archivePath, fs.constants.COPYFILE_FICLONE);
+    });
+
+    // While the name is taken, macOS mounts the next attach at `/Volumes/<volume> 1`,
+    // so an eject of `/Volumes/<volume>` alone would leave that one behind.
+    const ourMounts = () =>
+      fs.readdirSync('/Volumes').filter((n) => n === volume || n.startsWith(`${volume} `));
 
     afterEach(async () => {
-      await tearDown(f);
-      // Only if a test left it mounted; the point of these tests is that none does.
       try {
-        execFileSync('hdiutil', ['detach', `/Volumes/${volume}`, '-force'], { stdio: 'ignore' });
-      } catch {
-        /* not mounted */
+        await tearDown(f);
+      } finally {
+        // Only if a test left it mounted; the point of these tests is that none does.
+        for (const name of ourMounts()) {
+          try {
+            execFileSync('hdiutil', ['detach', `/Volumes/${name}`, '-force'], { stdio: 'ignore' });
+          } catch {
+            /* already gone */
+          }
+        }
+      }
+      const left = ourMounts();
+      if (left.length > 0) {
+        throw new Error(
+          `Still mounted, so the next test would see it: /Volumes/${left.join(', /Volumes/')}`,
+        );
       }
     }, 30_000);
 
