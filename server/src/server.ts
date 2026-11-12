@@ -22,11 +22,7 @@ import { toDiagnostics } from './services/diagnostics';
 import { getDocumentSymbols } from './services/documentSymbols';
 import { getCompletions } from './services/completion';
 import { getHover } from './services/hover';
-import {
-  getDefinition,
-  getWorkspaceDefinition,
-  getWorkspaceReferences,
-} from './services/definition';
+import { resolveDefinition, getWorkspaceReferences } from './services/definition';
 import { findSelectorAtPosition } from './utils/astUtils';
 import { getFoldingRanges } from './services/folding';
 import { formatDocument, isFormattableDocument } from './services/formatting';
@@ -246,12 +242,7 @@ connection.onDefinition((params) => {
   const region = documentManager.findRegionAt(doc, params.position.line);
   if (!region) return null;
 
-  // Try local variable definition first
-  const localDef = getDefinition(doc, params.position, region);
-  if (localDef) return localDef;
-
-  // Fall through to workspace-wide implementor lookup
-  return getWorkspaceDefinition(doc, params.position, region, workspaceIndex);
+  return resolveDefinition(doc, params.position, region, workspaceIndex);
 });
 
 // ── Find References (Senders) ───────────────────────────────

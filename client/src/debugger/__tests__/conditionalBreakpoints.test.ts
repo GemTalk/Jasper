@@ -4,11 +4,16 @@ vi.mock('../../nbRunner', async (original) => ({
   ...(await original<typeof import('../../nbRunner')>()),
   isRunning: vi.fn(() => false),
 }));
+vi.mock('../../gciLog', async (original) => ({
+  ...(await original<typeof import('../../gciLog')>()),
+  logInfo: vi.fn(),
+}));
 
 import {
   BreakpointRule,
   DECISION,
   resumeOnWorker,
+  setBreakpointRuleSource,
   deciderSource,
   decodeDecision,
   applyBreakpointRules,
@@ -16,6 +21,7 @@ import {
 } from '../conditionalBreakpoints';
 import { OOP_NIL } from '../../gciConstants';
 import { isRunning, NbCancelledError } from '../../nbRunner';
+import { logInfo } from '../../gciLog';
 import type { StepResult } from '../debugQueries';
 import * as vscode from 'vscode';
 import { fakeActiveSession } from '../../__tests__/fakeActiveSession';
@@ -740,5 +746,41 @@ describe("the debugger's Resume", () => {
         errorContext: 7n,
       }),
     );
+  });
+
+  describe('the breakpoint-rules line in the GemStone GCI channel', () => {
+    const completes: ScriptedResume = { result: 0x55n, err: { number: 0, message: '' } };
+    const rulesLines = (): string[] =>
+      vi
+        .mocked(logInfo)
+        .mock.calls.map(([line]) => String(line))
+        .filter((line) => line.includes('breakpoint rules:'));
+
+    it('is not written when no rules are armed', async () => {
+      vi.mocked(logInfo).mockClear();
+      setBreakpointRuleSource(undefined);
+      const { session } = stubSession([DECISION.Stop], [completes]);
+
+      const result = await resumeOnWorker(session, 7n);
+
+      expect(result).toEqual(expect.objectContaining({ completed: true }));
+      expect(rulesLines()).toEqual([]);
+    });
+
+    it('is written when rules are armed', async () => {
+      vi.mocked(logInfo).mockClear();
+      setBreakpointRuleSource({ breakpointRulesFor: () => [spec()] });
+      try {
+        const { session } = stubSession([DECISION.Stop], [completes]);
+
+        await resumeOnWorker(session, 7n);
+
+        expect(rulesLines()).toEqual([
+          `[Session ${session.id}] breakpoint rules: completed after 0 skipped hit(s)`,
+        ]);
+      } finally {
+        setBreakpointRuleSource(undefined);
+      }
+    });
   });
 });

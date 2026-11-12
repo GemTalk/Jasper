@@ -127,6 +127,7 @@ import { RowanDecorationProvider } from './rowanDecorations';
 import { ActiveEditorDecorationProvider } from './activeEditorDecoration';
 import { findMethodInClass } from './commands/findMethodInClass';
 import { loadClassPickItems } from './commands/classPicker';
+import { showClassHierarchy } from './commands/classHierarchy';
 import { revealInspect } from './inspectRouter';
 import {
   maybeOfferServerSupport,
@@ -3433,72 +3434,9 @@ export function activate(context: vscode.ExtensionContext) {
       await showMethodResults(session, results, `Implementors of #${selector}`);
     }),
 
-    vscode.commands.registerCommand('gemstone.classHierarchy', async () => {
-      const session = await sessionManager.resolveSession();
-      if (!session) return;
-
-      const className = await vscode.window.showInputBox({
-        prompt: 'Enter class name',
-        placeHolder: 'e.g. Array',
-      });
-      if (!className) return;
-
-      let results: queries.ClassHierarchyEntry[];
-      try {
-        results = await vscode.window.withProgress(
-          {
-            location: vscode.ProgressLocation.Notification,
-            title: `Fetching hierarchy for ${className}...`,
-            cancellable: false,
-          },
-          () => Promise.resolve(queries.getClassHierarchy(session, className)),
-        );
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        vscode.window.showErrorMessage(`Hierarchy query failed: ${msg}`);
-        return;
-      }
-
-      if (results.length === 0) {
-        vscode.window.showInformationMessage(`No hierarchy found for ${className}.`);
-        return;
-      }
-
-      const superCount = results.filter((r) => r.kind === 'superclass').length;
-
-      const items = results.map((r) => {
-        let indent: string;
-        if (r.kind === 'superclass') {
-          const idx = results.indexOf(r);
-          indent = '  '.repeat(idx);
-        } else if (r.kind === 'self') {
-          indent = '  '.repeat(superCount);
-        } else {
-          indent = '  '.repeat(superCount + 1);
-        }
-        const marker = r.kind === 'self' ? ' \u25C0' : '';
-        return {
-          label: `${indent}${r.className}${marker}`,
-          description: r.dictName,
-          detail: r.kind === 'self' ? '(target class)' : undefined,
-          entry: r,
-        };
-      });
-
-      const picked = await vscode.window.showQuickPick(items, {
-        placeHolder: `Hierarchy for ${className}`,
-        matchOnDescription: true,
-      });
-      if (!picked) return;
-
-      const uri = vscode.Uri.parse(
-        `gemstone://${session.id}` +
-          `/${encodeURIComponent(picked.entry.dictName)}` +
-          `/${encodeURIComponent(picked.entry.className)}` +
-          `/definition`,
-      );
-      vscode.commands.executeCommand('gemstone.openDocument', uri);
-    }),
+    vscode.commands.registerCommand('gemstone.classHierarchy', () =>
+      showClassHierarchy(sessionManager),
+    ),
 
     vscode.commands.registerCommand('gemstone.breakpoints.toggleAtCursor', () => {
       const editor = vscode.window.activeTextEditor;

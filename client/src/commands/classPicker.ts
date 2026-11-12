@@ -30,8 +30,8 @@ export async function withLoadingProgress<T>(
 
 /**
  * Load the full class list behind a progress notification and map it to
- * quick-pick items. Returns `undefined` when the load failed (the error is
- * already surfaced to the user).
+ * quick-pick items, sorted by class name. Returns `undefined` when the load
+ * failed (the error is already surfaced to the user).
  */
 export async function loadClassPickItems(
   session: ActiveSession,
@@ -41,7 +41,12 @@ export async function loadClassPickItems(
   );
   if (!entries) return undefined;
 
-  return entries.map((e) => ({
+  // The stone answers dictionary by dictionary, unsorted within each. Same-named classes keep
+  // their symbol-list order, so the one a bare name resolves to comes first.
+  const sorted = [...entries].sort(
+    (a, b) => a.className.localeCompare(b.className) || a.dictIndex - b.dictIndex,
+  );
+  return sorted.map((e) => ({
     label: e.className,
     description: e.dictName,
     entry: e,

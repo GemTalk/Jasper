@@ -62,7 +62,11 @@ export async function findMethodInClass(sessionManager: SessionManager): Promise
     return;
   }
 
-  const items = methods.map((m) => ({
+  // Instance side first, then class side, each by selector — the `(class) ` rows stay together.
+  const sorted = [...methods].sort(
+    (a, b) => Number(a.isMeta) - Number(b.isMeta) || a.selector.localeCompare(b.selector),
+  );
+  const items = sorted.map((m) => ({
     label: `${m.isMeta ? '(class) ' : ''}${m.selector}`,
     description: m.category,
     method: m,

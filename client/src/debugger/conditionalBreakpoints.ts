@@ -955,9 +955,11 @@ export async function resolveBreakpointStop(
     return stopHere;
   }
 
-  logInfo(
-    `[Session ${session.id}] breakpoint rules: ${outcome.kind} after ${outcome.skipped} skipped hit(s)`,
-  );
+  // A Resume with no rules armed still comes through here; it has nothing to report.
+  if (specs.length > 0 || outcome.skipped > 0)
+    logInfo(
+      `[Session ${session.id}] breakpoint rules: ${outcome.kind} after ${outcome.skipped} skipped hit(s)`,
+    );
 
   switch (outcome.kind) {
     case 'completed':

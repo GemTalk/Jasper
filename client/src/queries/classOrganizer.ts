@@ -111,10 +111,11 @@ export function droppingClassOrganizer(code: string): string {
 
 /** The same, as a whole doit for callers with nothing else to run — a commit, an
  *  abort, and GemStone Search's explicit refresh, none of which have a class
- *  change of their own to append it to. */
+ *  change of their own to append it to. It answers a String because those callers
+ *  fetch the answer as one, and a fetch sends `encodeAsUTF8` to it. */
 export function clearClassOrganizerCode(): string {
   return `${clearClassOrganizerStatement()}
-true`;
+'ok'`;
 }
 
 /**
