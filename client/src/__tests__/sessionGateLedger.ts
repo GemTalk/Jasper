@@ -59,6 +59,10 @@ export class SessionLedger<K> {
   private live: Set<string> | undefined;
   // Sessions already on the stone at the watcher's first look belong to no test file.
   private before: Map<string, number> | undefined;
+  // Workers that had asked for a booking by the first look. Only their sessions
+  // in `before` can be their own unreported logins: a pid that turns up later
+  // may be a reused one matching a gem a killed run left behind.
+  private pidsAtFirstLook: Set<number> | undefined;
   private readonly sightings = new Map<string, Sighting>();
   // Login serial -> when a file reported it.
   private readonly reported = new Map<string, number>();
@@ -183,6 +187,7 @@ export class SessionLedger<K> {
     let leftOver: Map<string, number> | undefined;
     if (!this.before) {
       this.before = sessions;
+      this.pidsAtFirstLook = new Set(this.workerPids);
       leftOver = sessions;
     }
     const now = this.clock();
@@ -273,8 +278,9 @@ export class SessionLedger<K> {
 
   /**
    * Logins from test workers no file reported and no file was blamed for, such
-   * as one made after its file gave its booking back, or one a worker made
-   * before any file booked that was still on the stone at the first look.
+   * as one made after its file gave its booking back, or one a worker that had
+   * already asked for a booking made before any file booked, still on the stone
+   * at the first look.
    */
   stray(): { serial: string; pid: number }[] {
     const fromSightings = [...this.sightings]
@@ -287,7 +293,7 @@ export class SessionLedger<K> {
       )
       .map(([serial, s]) => ({ serial, pid: s.pid }));
     const fromBefore = [...(this.before ?? [])]
-      .filter(([, pid]) => this.workerPids.has(pid))
+      .filter(([, pid]) => this.pidsAtFirstLook?.has(pid))
       .map(([serial, pid]) => ({ serial, pid }));
     return [...fromBefore, ...fromSightings];
   }

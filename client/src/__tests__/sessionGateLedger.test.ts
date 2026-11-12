@@ -259,12 +259,22 @@ describe('the session gate ledger', () => {
 
     it('made by a test worker before any file booked, still on the stone at the first look, are left as stray', () => {
       const fresh = new SessionLedger<string>(9, () => now);
-      fresh.sample(stone(['5', 100], ['6', 555]));
       fresh.request('a', { file: 'a', pid: 100, n: 1 });
+      fresh.sample(stone(['5', 100], ['6', 555]));
 
       const stray = fresh.stray();
 
       expect(stray).toEqual([{ serial: '5', pid: 100 }]);
+    });
+
+    it('already on the stone at the first look are not stray for a worker that asked for a booking only later', () => {
+      const fresh = new SessionLedger<string>(9, () => now);
+      fresh.sample(stone(['5', 100]));
+      fresh.request('a', { file: 'a', pid: 100, n: 1 });
+
+      const stray = fresh.stray();
+
+      expect(stray).toEqual([]);
     });
 
     it('made by a test worker after its booking are left as stray', () => {
@@ -339,7 +349,7 @@ describe('the session gate ledger', () => {
       ]);
     });
 
-    it("date the run's first serial from when the clock was last started", () => {
+    it("count the run's first serial from when the gate logged in", () => {
       now = 5_000;
       ledger.restartClock();
 

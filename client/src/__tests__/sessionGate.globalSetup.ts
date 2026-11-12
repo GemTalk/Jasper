@@ -114,7 +114,7 @@ export async function startGate(
                 failWaiting('the session watching the test stone failed', error),
               );
             } catch (error) {
-              failWaiting('could not log in the session that watches the test stone', error);
+              failWaiting('could not start the session that watches the test stone', error);
               reply(socket, { error: watcherFailure });
               continue;
             }
@@ -187,7 +187,7 @@ export async function startGate(
     const leftOver = ledger.sample(sessions);
     if (leftOver && leftOver.size > 0) {
       console.warn(
-        `session gate: ${leftOver.size} session(s) were already on the test stone when the first file booked, and take slots for the whole run: ${[...leftOver].map(([serial, pid]) => `login serial ${serial} (client process ${pid})`).join(', ')}. Usually these are gems left behind by a test run that was killed; end them to free their slots.`,
+        `session gate: ${leftOver.size} session(s) were already on the test stone when the first file booked, and take slots for the whole run: ${[...leftOver].map(([serial, pid]) => `login serial ${serial} (client process ${pid})`).join(', ')}. Usually these are gems left behind by a test run that was killed; end them to free their slots. A login a test made before its file booked shows here too, and then fails the run as a stray login.`,
       );
     }
     tryGrant();
@@ -323,7 +323,7 @@ function startGciWatcher(
   if (!Number.isInteger(sessionLimit) || sessionLimit < 2) {
     gci.logout(session);
     throw new Error(
-      `session gate: the test stone answered ${limitText} for its session limit (StnMaxSessions); expected a whole number of at least 2`,
+      `the test stone answered ${limitText} for its session limit (StnMaxSessions); expected a whole number of at least 2`,
     );
   }
   const lookMs: number[] = [];
