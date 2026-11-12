@@ -42,6 +42,29 @@ export const knownGemStoneBugs = {
     osName: 'Darwin',
     brokenIn: [{ from: '3.7.2', through: '3.7.6' }],
   },
+  /**
+   * GciTsNbLogout refuses a logout while another thread of the client is
+   * inside a call on the session, as it should, but 3.7.6 answers FALSE
+   * without an error (number 0, no message) where 3.7.5 gave 2203. The defect
+   * is in libgcits, not the gem; the gem's version stands in for it because
+   * the two always match here.
+   */
+  logoutRefusalUnexplained: {
+    description:
+      'GemStone bug 52223 (GemTalk/Jasper#879): GciTsNbLogout refuses a logout during a call on another thread without an error number',
+    brokenIn: [{ from: '3.7.6', through: '3.7.6' }],
+  },
+
+  /**
+   * Compiling method source that holds a non-ASCII character fails in the
+   * compiler's ComStrmSetCursor (error 1001). 3.7.5 compiles the same source
+   * cleanly.
+   */
+  nonAsciiSourceCompile: {
+    description:
+      'GemStone compiler bug: method source holding a non-ASCII character fails to compile (ComStrmSetCursor, error 1001)',
+    brokenIn: [{ from: '3.6.2', through: '3.7.4.3' }],
+  },
 } satisfies Record<string, KnownGemStoneBug>;
 
 /**

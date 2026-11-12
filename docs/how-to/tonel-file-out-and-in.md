@@ -111,14 +111,13 @@ deliberate differences:
 
 `#category` is worth being precise about: for every class in the base image — which is
 what this feature is for — Rowan has loaded it, and Jasper writes the **package name**,
-exactly as Rowan does. That is why the header-identity check can require byte-identical
-headers. The class-category fallback applies only to a class you defined yourself, which
+exactly as Rowan does, so the header comes out byte-identical to Rowan's. The class-category fallback applies only to a class you defined yourself, which
 Rowan knows nothing about.
 
 So a Jasper file drops into a Rowan package tree only after splitting out any extension
 methods (and editing `#category` if the class is one of your own). Everything else — the header keys, the method
-blocks, their order — is byte-for-byte what Rowan's own writer produces; that is
-checked against the 720 reference files GemStone ships under
+blocks, their order — is byte-for-byte what Rowan's own writer produces; that was
+measured against the 720 reference files GemStone ships under
 `$GEMSTONE/projects/gemstoneBaseImage/rowan/src/`.
 
 ## What survives a round trip, and what does not
@@ -151,21 +150,21 @@ image, `Object`, files out at about 218 KB.
 
 ## Running the tests
 
-The Tonel tests need a rowan3 stone and **skip** on any other, which means a green
-`npm test` against the default test stone says nothing about this feature.
+The tests that write a class into the image
+(`client/src/fileTransfer/__tests__/tonelFileIn.integration.test.ts`) build the class
+description by hand rather than reading it from a file, so they need no Rowan and run
+on the default test stone and in CI. Reading and writing the Tonel text is Rowan's
+work, which Rowan's own `Rowan-Tests` package covers; the unit tests here check only
+the doits Jasper sends it.
+
+To try the whole feature by hand, start a 3.7.5 stone on the rowan3 extent:
 
 ```sh
-npm run test:server:start:rowan3   # 3.7.5 on extent0.rowan3.dbf
-JASPER_REQUIRE_ROWAN3=1 npm test
+cd client && ./bin/gs-test-server.sh --start 3.7.5 jasper-rowan3 --extent extent0.rowan3.dbf
 ```
 
-`JASPER_REQUIRE_ROWAN3=1` turns every Tonel skip into a **failure** naming the
-capabilities that are absent. Use it whenever you mean to verify this feature: a green
-run under it cannot have silently skipped the tier, which a green run without it can.
-Leave it unset in CI and on a base extent, where skipping is the correct behaviour.
-
-`test:server:start:rowan3` repoints `client/.env.test` at that stone, so the two
-tiers do not run side by side — start whichever one you are verifying.
+This repoints `client/.env.test` at that stone, so restart the default one before the
+next `npm test`.
 
 ### If the stone will not start
 

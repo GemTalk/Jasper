@@ -63,7 +63,13 @@ const gciTsFetchSize = vi.fn((..._args: unknown[]) => ({
   result: pingErrNumber ? -1n : 0n,
   err: { number: pingErrNumber, message: pingErrNumber ? 'boom' : '' },
 }));
-const gciLogout = vi.fn((..._args: unknown[]) => ({ sessionFreed: true }));
+const gciLogout = vi.fn(
+  (
+    ..._args: unknown[]
+  ): { sessionFreed: boolean; failure?: { number: number; message: string } } => ({
+    sessionFreed: true,
+  }),
+);
 // login() aborts once after setup to drop the session-method-policy's spurious
 // write; capture those calls so tests can assert on them.
 const gciTsBegin = vi.fn((..._args: unknown[]) => ({
@@ -722,8 +728,8 @@ describe('SessionManager', () => {
     });
   });
 
-  // GemStone refuses a logout while a worker thread owns the session. Dropping
-  // the session anyway would leave its gem running with nothing to reach it.
+  // A logout is refused while a worker thread owns the session. Dropping the
+  // session anyway would leave its gem running with nothing to reach it.
   /** Whether the code the gem was asked to run includes `fragment`. */
   const ran = (fragment: string): boolean =>
     executeAndFetchStringMock.mock.calls.some((args) => String(args[1]).includes(fragment));
@@ -807,6 +813,83 @@ describe('SessionManager', () => {
       expect(stopCallsOn).not.toHaveBeenCalled();
       expect(vscode.window.withProgress).not.toHaveBeenCalled();
       expect(ran('System sendSignal:')).toBe(false);
+    });
+  });
+
+  // GemStone 3.7.6 refuses a logout without saying why (GemStone bug 52223),
+  // which reads as a session already gone while its gem is still logged in.
+  describe('a logout GemStone fails without a refusal', () => {
+    it('ends the gem if it is still on the server', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Unexplained' }, '/mock/lib');
+      gciLogout.mockReturnValueOnce({ sessionFreed: true, failure: { number: 0, message: '' } });
+
+      await expect(manager.logout(session.id)).resolves.toBe(true);
+
+      expect(ran('descriptionOfSessionSerialNum: 7')).toBe(true);
+      expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+      expect(manager.getSession(session.id)).toBeUndefined();
+    });
+
+    // The gem may be gone: a logout failed with no error number doesn't say.
+    it('says only that the gem may be left when the user may not check', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Unprivileged' }, '/mock/lib');
+      gciLogout.mockReturnValueOnce({ sessionFreed: true, failure: { number: 0, message: '' } });
+      executeAndFetchStringMock.mockImplementation((...args: unknown[]) => {
+        if (String(args[1]).includes('descriptionOfSessionSerialNum:')) {
+          throw GciLibraryError.fromGciError({ number: 2151, message: 'no privilege' });
+        }
+        return stoneAnswer(...args);
+      });
+
+      await manager.logout(session.id);
+
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /may still be on the server\. Checking for it needs the SessionAccess and SystemControl privileges.* If it is still there, an administrator can end it with: System stopSession: 42$/,
+        ),
+      );
+    });
+
+    it('says only that the gem may be left when the check fails', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Stone gone' }, '/mock/lib');
+      gciLogout.mockReturnValueOnce({ sessionFreed: true, failure: { number: 0, message: '' } });
+      executeAndFetchStringMock.mockImplementation((...args: unknown[]) => {
+        if (String(args[1]).includes('descriptionOfSessionSerialNum:')) {
+          throw new Error('stone not running');
+        }
+        return stoneAnswer(...args);
+      });
+
+      await manager.logout(session.id);
+
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /may still be on the server\. Jasper could not check for it \(stone not running\)\. If it is still there, an administrator can end it with: System stopSession: 42$/,
+        ),
+      );
+    });
+
+    it('leaves the server alone after a logout GemStone confirmed', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Clean' }, '/mock/lib');
+
+      await manager.logout(session.id);
+
+      expect(ran('descriptionOfSessionSerialNum:')).toBe(false);
+    });
+
+    // The check logs in again, which blocks until a stone it can't reach times out.
+    it('leaves the server alone after a logout that failed with an error number', async () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Unreachable' }, '/mock/lib');
+      gciLogout.mockReturnValueOnce({
+        sessionFreed: true,
+        failure: { number: 4147, message: 'network error' },
+      });
+
+      await manager.logout(session.id);
+
+      expect(ran('descriptionOfSessionSerialNum:')).toBe(false);
+      expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+      expect(manager.getSession(session.id)).toBeUndefined();
     });
   });
 

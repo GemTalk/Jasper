@@ -71,8 +71,7 @@ describe('tonelCapability', () => {
       })(),
     );
     // Gating on version would freeze the feature to the releases we happened to
-    // know about, and would keep the rowan3 test tier dark forever after rowan3
-    // reached CI. The probe must ask only what responds.
+    // know about. The probe must ask only what responds.
     expect(code).not.toContain('System _version');
     expect(code).not.toContain('versionString');
     expect(code).not.toMatch(/3\.7|3\.6/);

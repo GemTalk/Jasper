@@ -43,9 +43,9 @@
 // That last line is the point, not a defect: a Jasper user looking at a class
 // sees all of its methods and has no notion of a package, so the file carries
 // what they see. The corpus is a package-partitioned export; this is a
-// class-complete one. Comparing the two whole-file is meaningless, which is why
-// the integration tests assert header identity, method fidelity and selector
-// completeness separately rather than diffing.
+// class-complete one. Comparing the two whole-file is meaningless; header
+// identity, method fidelity and selector completeness each have to be compared
+// on their own.
 //
 // What is deliberately left out: trait methods
 // ----------------------------------------------

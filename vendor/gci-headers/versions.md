@@ -1,6 +1,6 @@
 # GCI header versions
 
-Every GemStone version whose GCI headers have been checked against a local install under `~/Documents/GemStone/`, and which content folder its headers match. Captured 2026-08-12 from installs present on that machine at the time.
+Every GemStone version whose GCI headers have been checked against a local install under `~/Documents/GemStone/`, and which content folder its headers match. Captured 2026-08-12 from installs present on that machine at the time; 3.7.6 was added 2026-11-06 from its Linux download.
 
 | GemStone version | Folder | gci.ht sha256 | gcicmn.ht sha256 | gcits.hf sha256 | gcits.ht sha256 | gcioop.ht sha256 | gcioc.ht sha256 | gcierr.ht sha256 |
 |---|---|---|---|---|---|---|---|---|
@@ -17,6 +17,7 @@ Every GemStone version whose GCI headers have been checked against a local insta
 | 3.7.4.1 | [3.7.4.1](3.7.4.1/) | `b4883655` | `cb4fdb1d` | `5ca21076` | `7058fb85` | `cf362002` | `16e1b5c1` | `80fa97ac` |
 | 3.7.4.3 | [3.7.4.1](3.7.4.1/) | `b4883655` | `cb4fdb1d` | `5ca21076` | `7058fb85` | `cf362002` | `16e1b5c1` | `80fa97ac` |
 | 3.7.5 | [3.7.5](3.7.5/) | `c3af9c02` | `ec9dd5cb` | `46e936d5` | `98381241` | `09576634` | `20aed16e` | `de9edcbe` |
+| 3.7.6 | [3.7.6](3.7.6/) | `c3af9c02` | `ec9dd5cb` | `46e936d5` | `98381241` | `09576634` | `20aed16e` | `e407d841` |
 
 Hashes are truncated to the first 8 hex characters for readability; run `shasum -a 256` on a file to verify the full digest.
 
@@ -24,6 +25,7 @@ Hashes are truncated to the first 8 hex characters for readability; run `shasum 
 
 - `gcits.ht` doesn't exist before 3.7.2 — that's a real absence in the vendor distribution, not a gap in this snapshot.
 - 3.6.4/3.6.5, 3.7.2/3.7.2.2, and 3.7.4.1/3.7.4.3 each ship byte-identical headers within the pair, hence the shared folder.
+- 3.7.6 has its own folder although six of its seven files match 3.7.5: its `gcierr.ht` differs by one word in one comment (`PageGetTranHints()` became `GetTranHints()`).
 - 3.6.2 and 3.6.3 are **not** such a pair, despite looking like one: their `gci.ht`, `gcicmn.ht`, `gcits.hf`, and `gcioop.ht` are byte-identical, but `gcioc.ht` and `gcierr.ht` differ. They get one folder each. This is exactly the kind of near-miss the snapshot exists to catch — 3.6.3 constants read off 3.6.2's headers would be wrong.
 - Headers reachable from these but deliberately not vendored: `flag.ht` and `l2unix.hf` (from `gci.ht`), `version.ht` (from `gcicmn.ht`), `gcirtl.hf` and `gcistring.hf` (from `gcits.hf`). They carry build-configuration, platform, and version-stamp plumbing rather than the signatures, struct layouts, and constants this project transcribes. The seven vendored files are closed under `#include` for that purpose: `gcioop.ht` and `gcioc.ht` include nothing, and `gcierr.ht` includes only `gcioop.ht`.
 - Source install path pattern: `~/Documents/GemStone/GemStone64Bit<version>-<arch>.<platform>/include/` — e.g. `-arm64.Darwin` on Apple silicon, `-x86_64.Linux` on Linux devs and CI.

@@ -59,9 +59,8 @@ describe('fileOutClassTonel', () => {
     // the corpus emits `sends:` before `sendTo:`, codepoint order is the reverse.
     //
     // These files go into git, so order is not cosmetic: a different order makes
-    // every later diff noise. The reference corpus is the authority, and the
-    // method-order oracle in the integration suite is what actually checks it —
-    // this case only pins the choice so switching it is a visible edit.
+    // every later diff noise. The reference corpus is the authority; this case
+    // pins the choice so switching it is a visible edit.
     const code = codeFor();
     expect(code).toContain('_unicodeLessThan:');
     expect(code).not.toContain('codePointCompareTo:');

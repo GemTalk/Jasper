@@ -11,10 +11,10 @@ import type { EnvCategoryLine } from '../queries/getClassEnvironments';
 import { testActiveSession } from './testActiveSession';
 
 /**
- * Automatic GCI integration tests for session-method detection (grail #13).
+ * Automatic GCI integration tests for session-method detection.
  *
- * Runs across the whole `npm run test:server:start` matrix (3.6.2 → 3.7.5), so
- * it also validates the detection selectors on the 3.6.2 floor. Everything is
+ * Runs across the whole `npm run test:server:start` matrix, so it also
+ * validates the detection selectors on the 3.6.2 floor. Everything is
  * transient: each test enables GsPackagePolicy and compiles session methods on
  * a kernel class, and the `afterEach` disables the policy + refreshes (dropping
  * the transient dicts) while the harness aborts the transaction — nothing is

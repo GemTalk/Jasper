@@ -69,10 +69,16 @@ describe("a stone's session list", () => {
       commitRecordBacklog: 1,
       abortThreshold: 20,
       canStopSessions: true,
-      stoneHostname: 'uffda',
+      stoneHostname: 'stonehost.example',
       sessions: [
         stoneSession({ id: 4, serial: 3, gemPid: 41022 }),
-        stoneSession({ id: 5, serial: 9, user: 'ewinger', gemPid: 39811, host: 'thor' }),
+        stoneSession({
+          id: 5,
+          serial: 9,
+          user: 'ewinger',
+          gemPid: 39811,
+          host: 'elsewhere.example',
+        }),
         stoneSession({ id: 2, serial: 1, user: 'SymbolUser', systemGem: 'symbolgem' }),
       ],
     };
@@ -81,7 +87,7 @@ describe("a stone's session list", () => {
       signalableGems: vi.fn(
         (all: StoneSession[]) => new Set(all.filter((s) => !s.systemGem).map((s) => s.gemPid)),
       ),
-      isThisMachine: (host) => host === 'uffda',
+      isThisMachine: (host) => host === 'stonehost.example',
       stuck: (s) => stuck.has(s.id),
       // Jasper session 1 is GemStone's session 4, whose login is serial 3.
       loginSerialOf: (id) => (id === 1 ? '3' : undefined),
@@ -108,10 +114,10 @@ describe("a stone's session list", () => {
   // a container's published port the login says localhost too, so only the
   // stone's own hostname tells where they are.
   it('offers no Kill on the localhost gems of a stone on another machine, though the login says localhost', () => {
-    list = { ...listed(), stoneHostname: 'thor' };
+    list = { ...listed(), stoneHostname: 'elsewhere.example' };
     expect(windowSessions[0].login.gem_host).toBe('localhost');
     // As the real check does.
-    deps.isThisMachine = (host) => host === 'uffda' || host === 'localhost';
+    deps.isThisMachine = (host) => host === 'stonehost.example' || host === 'localhost';
     expect(rowsOf(describeIt()).some((r) => r.canKill)).toBe(false);
   });
 
@@ -132,10 +138,10 @@ describe("a stone's session list", () => {
 
   // The check blocks the window, on Windows for a wsl.exe.
   it('asks which gems Kill can end only once a gem is judged here, and only once per read', () => {
-    list = { ...listed(), stoneHostname: 'thor' };
+    list = { ...listed(), stoneHostname: 'elsewhere.example' };
     describeIt();
     expect(deps.signalableGems).not.toHaveBeenCalled();
-    deps.isThisMachine = (host) => host === 'thor';
+    deps.isThisMachine = (host) => host === 'elsewhere.example';
     describeIt();
     describeIt();
     expect(deps.signalableGems).toHaveBeenCalledTimes(1);
@@ -263,9 +269,9 @@ describe("a stone's session list", () => {
   // even while the Jasper session that had it is still open here.
   // Stop and Kill log a marked session out after ending its gem.
   it("marks a session of this window on this stone that reached it by another of this machine's names", () => {
-    deps.isThisMachine = (host) => host === 'uffda' || host === 'localhost';
+    deps.isThisMachine = (host) => host === 'stonehost.example' || host === 'localhost';
     deps.loginSerialOf = (id) => (id === 1 ? '3' : id === 2 ? '9' : undefined);
-    windowSessions = [makeSession(1), makeSession(2, DEFAULT_LOGIN.stone, 'uffda')];
+    windowSessions = [makeSession(1), makeSession(2, DEFAULT_LOGIN.stone, 'stonehost.example')];
     const rows = rowsOf(describeIt());
     expect(rows.find((r) => r.serial === 9)?.jasperSessionId).toBe(2);
   });
@@ -284,7 +290,7 @@ describe("a stone's session list", () => {
     expect(rowsOf(describeIt())[1]).toMatchObject({
       user: 'ewinger',
       gemPid: 39811,
-      host: 'thor',
+      host: 'elsewhere.example',
       age: '2h',
     });
     expect(rowsOf(describeIt())[1].tip).toBe('Not in a transaction.');

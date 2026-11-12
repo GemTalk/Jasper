@@ -2256,19 +2256,34 @@ export class GciLibrary {
    * Clears the session's cached Utf8 class oop only once the session is freed;
    * a refused logout leaves the session, and so its cache, alive.
    *
+   * GemStone refuses a logout while a call on another thread holds the
+   * session, but 3.7.6 no longer says why (GemStone bug 52223): it fails with
+   * no error number. While `ownCallRunning`, that answer is taken as the
+   * refusal. This assumes 3.7.6 never answers it for a session it did free,
+   * whose retried logout would then reach a freed handle; on 3.7.6 a stopped
+   * gem ends the call with 4059 and the next logout succeeds. Untested
+   * against a stopped stone.
+   *
    * @param session - The GemStone session to log out.
+   * @param ownCallRunning - whether a call made through this session is still
+   *   running on a worker thread.
    * @returns `sessionFreed`: whether the handle is gone. A failed logout frees
    *   it too. Only a refusal because a call is still in progress on another
-   *   thread (`GCI_ERR_OP_IN_PROGRESS`) leaves it usable. Other failures count
-   *   as freed, so an unforeseen one costs a live session rather than a call
-   *   on a freed handle.
+   *   thread leaves it usable. Other failures count as freed, so an unforeseen
+   *   one costs a live session rather than a call on a freed handle. `failure`
+   *   is GemStone's error whenever the logout failed, when its gem may still be
+   *   logged in.
    */
-  public logout(session: unknown): { sessionFreed: boolean } {
+  public logout(
+    session: unknown,
+    ownCallRunning = false,
+  ): { sessionFreed: boolean; failure?: GciError } {
     const { success, err } = this.GciTsNbLogout(session);
     if (!success) console.warn(`GciTsNbLogout failed [${err.number}]: ${err.message}`);
-    const sessionFreed = success || err.number !== GCI_ERR_OP_IN_PROGRESS;
+    const refused = err.number === GCI_ERR_OP_IN_PROGRESS || (err.number === 0 && ownCallRunning);
+    const sessionFreed = success || !refused;
     if (sessionFreed) this.deleteCachedUtf8OopFor(session);
-    return { sessionFreed };
+    return success ? { sessionFreed } : { sessionFreed, failure: err };
   }
 
   /**

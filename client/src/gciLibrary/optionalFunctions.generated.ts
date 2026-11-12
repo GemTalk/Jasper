@@ -12,7 +12,7 @@
  * omitted. Removal is not derivable — every vendored snapshot predates it — so
  * `removedIn` entries are hand-written in `optionalFunctions.ts`.
  *
- * Derived from 10 vendored revision(s), 3.6.2 through 3.7.5.
+ * Derived from 11 vendored revision(s), 3.6.2 through 3.7.6.
  */
 
 export const HEADER_DERIVED_OPTIONAL_FUNCTIONS = {

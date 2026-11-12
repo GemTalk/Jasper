@@ -1,8 +1,8 @@
 // Integration test for getMethodInstVarAccess against a live stone. Confirms the
 // synthesized Smalltalk actually runs and that GsNMethod>>instVarsRead /
 // instVarsWritten report reader / writer / both / neither correctly — over the
-// whole release matrix (3.6.2 and 3.7.5). No server plugin needed: this is
-// base-image reflection, so it runs in both the bare and plugin CI passes.
+// whole release matrix. No server plugin needed: this is base-image reflection,
+// so it runs in both the bare and plugin CI passes.
 import { describe, it, expect, vi } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 

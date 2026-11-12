@@ -1431,7 +1431,7 @@ describe("each stone's sessions", () => {
     gem_host: 'localhost',
     version: '3.7.5',
   };
-  const FAR = { ...DC, stone: 'far', gem_host: 'thor' };
+  const FAR = { ...DC, stone: 'far', gem_host: 'elsewhere.example' };
   const session = (id: number, login: typeof DC) => ({ id, login }) as unknown;
 
   function withStoneSessions(logins: (typeof DC)[], open: unknown[], running = true) {
@@ -1514,20 +1514,28 @@ describe("each stone's sessions", () => {
     await sendMessage({ command: 'ready' });
 
     expect(state().otherStoneSessions).toEqual([
-      { key: 'stone:thor/far', kind: 'sessions', rows: [], stone: 'far', host: 'thor' },
+      {
+        key: 'stone:elsewhere.example/far',
+        kind: 'sessions',
+        rows: [],
+        stone: 'far',
+        host: 'elsewhere.example',
+      },
     ]);
     expect(stoneSessions.describe).toHaveBeenCalledTimes(1);
   });
 
   // Its sessions would show, and be stopped, under the database here, and under Other Logins too.
   it("lists a stone elsewhere that shares a database's name only under Other Logins", async () => {
-    const twin = { ...DC, label: 'twin', gem_host: 'thor' };
+    const twin = { ...DC, label: 'twin', gem_host: 'elsewhere.example' };
     const { deps, stoneSessions } = withStoneSessions([DC, twin], [session(2, twin)]);
     DatabasesPanel.show(deps);
     await sendMessage({ command: 'ready' });
 
     expect(state().databases[0].stoneSessions).toMatchObject({ kind: 'message' });
-    expect(state().otherStoneSessions.map((l) => l.key)).toEqual(['stone:thor/gs64stone']);
+    expect(state().otherStoneSessions.map((l) => l.key)).toEqual([
+      'stone:elsewhere.example/gs64stone',
+    ]);
     expect(stoneSessions.describe).toHaveBeenCalledTimes(1);
   });
 
@@ -1579,7 +1587,9 @@ describe("each stone's sessions", () => {
     const { deps, stoneSessions } = withStoneSessions([DC, FAR], [session(1, DC), session(2, FAR)]);
     DatabasesPanel.show(deps);
     await sendMessage({ command: 'ready' });
-    expect(stoneSessions.retain).toHaveBeenLastCalledWith(new Set(['db:db-1', 'stone:thor/far']));
+    expect(stoneSessions.retain).toHaveBeenLastCalledWith(
+      new Set(['db:db-1', 'stone:elsewhere.example/far']),
+    );
   });
 
   it('keeps no list for a stone that is down', async () => {

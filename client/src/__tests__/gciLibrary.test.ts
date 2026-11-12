@@ -1597,7 +1597,10 @@ describe('GciLibrary', () => {
     it('answers that the session is still there when a call in progress refuses the logout', () => {
       simulateLogoutFailure(GCI_ERR_OP_IN_PROGRESS);
 
-      expect(gciLibrary.logout(session)).toEqual({ sessionFreed: false });
+      expect(gciLibrary.logout(session)).toEqual({
+        sessionFreed: false,
+        failure: expect.objectContaining({ number: GCI_ERR_OP_IN_PROGRESS }),
+      });
     });
 
     it('keeps the cached Utf8 oop when a call in progress refuses the logout', () => {
@@ -1609,10 +1612,34 @@ describe('GciLibrary', () => {
       expectUtf8OopToBeCached(session, gciLibrary);
     });
 
+    // GemStone 3.7.6 refuses a logout with no error number (GemStone bug 52223).
+    it('answers that the session is still there when a logout with a call of ours running fails with no error number', () => {
+      gciLibrary.utf8ClassOop(session);
+      simulateLogoutFailure(0);
+
+      expect(gciLibrary.logout(session, true)).toEqual({
+        sessionFreed: false,
+        failure: expect.objectContaining({ number: 0 }),
+      });
+      expectUtf8OopToBeCached(session, gciLibrary);
+    });
+
+    it('answers that the session is gone when a logout with no call of ours running fails with no error number', () => {
+      simulateLogoutFailure(0);
+
+      expect(gciLibrary.logout(session)).toEqual({
+        sessionFreed: true,
+        failure: expect.objectContaining({ number: 0 }),
+      });
+    });
+
     it('answers that the session is gone when the logout fails for any other reason', () => {
       simulateLogoutFailure(GS_ERR_SESSION_SHUTDOWN);
 
-      expect(gciLibrary.logout(session)).toEqual({ sessionFreed: true });
+      expect(gciLibrary.logout(session)).toEqual({
+        sessionFreed: true,
+        failure: expect.objectContaining({ number: GS_ERR_SESSION_SHUTDOWN }),
+      });
     });
 
     it('never waits for the gem: it logs out with the non-blocking call', () => {
