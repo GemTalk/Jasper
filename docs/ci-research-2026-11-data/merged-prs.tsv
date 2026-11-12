@@ -1,0 +1,168 @@
+927	2026-11-13T11:35	app/dependabot	Bump @hono/node-server from 2.1.5 to 2.1.8
+920	2026-11-12T18:18	npapagna	Show a stuck gem's state when a stop wait times out
+919	2026-11-12T17:33	npapagna	Run supply-chain script tests once, not per leg
+918	2026-11-12T21:42	npapagna	Open GemStone tabs without freezing VS Code
+917	2026-11-12T22:23	ericwinger	Build the macOS unpack tests' disk image once per file
+914	2026-11-12T21:24	ericwinger	Run unit tests without a test stone
+912	2026-11-12T22:00	npapagna	Count CodeLens lookups refused while busy once a run ends
+908	2026-11-12T18:32	npapagna	Keep a click made while the highlight moves back
+894	2026-11-11T18:13	ericwinger	Stop the Windows flake in the Rowan repo-update tests
+893	2026-11-12T23:07	ericwinger	Say what to check when a login fails or a stone has no key file
+890	2026-11-11T22:04	ericwinger	Run the Jasper tests that never ran in CI, and drop the Rowan- and Grail-only ones
+889	2026-11-11T18:59	ericwinger	Make never-run tests visible at the top of a CI run, and show their paths correctly
+887	2026-11-10T22:08	app/dependabot	Bump zizmorcore/zizmor-action from 0.8.0 to 0.8.1 in the github-actions group
+886	2026-11-10T21:55	app/dependabot	Bump the dev-dependencies group with 6 updates
+885	2026-11-11T19:41	ericwinger	Stop at breakpoints and halts in Smalltalk notebook cells
+884	2026-11-11T22:49	ericwinger	Merge queue: skip tests a PR run already passed, retry a failing test once
+882	2026-11-11T22:33	ericwinger	Test against GemStone 3.7.6, and keep a refused logout from leaving its session running
+881	2026-11-06T21:59	ericwinger	Release 1.18.0
+877	2026-11-12T13:37	npapagna	Click Explorer classes and dictionaries without freezing VS Code
+875	2026-11-06T18:31	ericwinger	Stop PRs getting stuck waiting for a retired Ubuntu 22.04 runner
+870	2026-11-06T21:16	ericwinger	Tell users when a stone's server support isn't this Jasper's, and offer to reinstall it
+869	2026-11-05T21:50	MatiasFernandez	Prune orphaned vscode-languageserver-node entries from the lockfile
+868	2026-11-05T20:40	MatiasFernandez	Document release freeze, floor review, CI rationale and fork support
+866	2026-11-06T21:38	ericwinger	Auto-commit: a session can commit each change as you make it
+865	2026-11-06T18:15	ericwinger	Stop integration tests being refused a login when the test stone is full
+864	2026-11-05T18:49	npapagna	Keep the Explorer whole when a click is refused
+856	2026-11-03T21:38	ericwinger	Keep GemStone logins only in user settings
+855	2026-11-04T19:51	npapagna	Expand an Explorer class row without freezing VS Code
+849	2026-11-03T17:36	app/dependabot	Bump zizmorcore/zizmor-action from 0.7.1 to 0.8.0 in the github-actions group
+848	2026-11-03T19:40	app/dependabot	Bump vscode-languageserver from 10.1.2 to 11.0.0
+847	2026-11-03T19:40	app/dependabot	Bump vscode-languageclient from 10.1.2 to 11.0.0
+846	2026-11-03T18:32	app/dependabot	Bump the prod-dependencies group with 2 updates
+845	2026-11-03T18:00	app/dependabot	Bump the dev-dependencies group with 3 updates
+838	2026-11-03T18:20	ericwinger	Fix three acceptance specs that failed on every local run
+837	2026-11-03T18:38	npapagna	Stop remembering a busy refusal as the answer
+835	2026-10-30T23:32	ericwinger	Release 1.17.0
+830	2026-10-30T23:26	ericwinger	Find what holds a database's files without fuser, and ask before stopping when unsure
+828	2026-11-03T12:34	npapagna	Free a cancelled run's process however it stops
+827	2026-11-02T20:14	npapagna	Search method source without freezing VS Code
+822	2026-10-30T17:01	ericwinger	Make tests prove which session a call or logout used
+821	2026-10-30T18:45	ericwinger	See every session on a stone, and end one
+819	2026-10-28T21:42	app/dependabot	Bump @hono/node-server from 2.0.12 to 2.1.5
+818	2026-10-28T22:49	ericwinger	Show the whole message when a test fails or errors
+817	2026-10-29T22:16	ericwinger	Log in without an open folder; keep the class mirror in Jasper's own storage
+814	2026-10-28T20:18	ericwinger	Point first-time users at a login, not a database, for a stone on another machine
+813	2026-10-28T20:29	npapagna	Don't crash polling a session a worker owns
+810	2026-10-28T18:48	ericwinger	Close a stopped stone's inspectors and debuggers, and clear its breakpoints
+809	2026-10-28T21:11	ericwinger	Make every Stop behave the same, and never leave the user unable to stop a run
+808	2026-10-28T21:27	app/dependabot	Bump the dev-dependencies group with 7 updates
+807	2026-10-27T20:56	npapagna	Say "Session is busy" while code is running
+805	2026-10-26T22:34	ericwinger	Skip the conditional-breakpoint error test on macOS 3.7 until GemStone fixes it
+801	2026-10-23T23:54	app/dependabot	Bump zod from 4.4.3 to 4.6.7
+800	2026-10-24T00:05	app/dependabot	Bump undici from 7.29.1 to 7.30.1
+799	2026-10-24T00:15	app/dependabot	Bump body-parser from 2.3.0 to 2.4.0
+798	2026-10-24T00:16	app/dependabot	Bump fast-uri from 3.1.8 to 3.1.9
+796	2026-10-23T23:13	ericwinger	Release 1.16.0
+793	2026-10-23T22:45	ericwinger	Keep login passwords in the OS keychain by default, host password included
+792	2026-10-26T11:56	npapagna	Stop the extension host crashing when a reload interrupts a GCI call
+788	2026-10-23T18:15	npapagna	Time out Windows GemStone setup to diagnose CI hangs
+787	2026-10-22T22:11	ericwinger	Move the debugger and breakpoint code into its own feature folder
+785	2026-10-22T21:30	app/dependabot	Bump ip-address from 10.7.2 to 10.7.4
+783	2026-10-22T21:27	app/dependabot	Bump markdown-it from 14.3.2 to 14.3.3
+779	2026-10-22T20:36	ericwinger	Add conditional breakpoints, logpoints and triggered breakpoints
+777	2026-10-22T21:33	npapagna	Keep a session whose logout GemStone refused
+776	2026-10-21T21:56	ericwinger	Free a session whose stopped run outlives the drain
+771	2026-10-21T18:19	ericwinger	Ask before replacing a saved GCI library that can't be loaded
+766	2026-10-20T19:34	app/dependabot	Bump vite from 8.0.16 to 8.3.4
+765	2026-10-20T18:51	app/dependabot	Bump follow-redirects from 1.16.0 to 1.16.1
+764	2026-10-20T18:26	npapagna	Hold GitHub Actions bumps for 7 days, like npm
+763	2026-10-20T17:51	app/dependabot	Bump hono from 4.13.7 to 4.13.13
+762	2026-10-20T19:07	app/dependabot	Bump the dev-dependencies group across 1 directory with 5 updates
+761	2026-10-20T17:57	app/dependabot	Bump zizmorcore/zizmor-action from 0.6.4 to 0.7.1 in the github-actions group across 1 directory
+760	2026-10-20T18:13	app/dependabot	Bump express from 5.2.1 to 5.3.0 in the prod-dependencies group across 1 directory
+757	2026-10-20T16:06	npapagna	Let GemStone 3.6.x load on ubuntu-latest's glibc
+756	2026-10-21T23:35	npapagna	Test that a call rejects when its session logs out
+752	2026-10-22T00:20	npapagna	Give each transient login its own session id
+749	2026-10-16T21:37	ericwinger	Release doc: wait for Health Check on the merge commit before dispatching
+748	2026-10-19T19:31	npapagna	Refuse GCI calls on a logged-out session
+746	2026-10-16T21:03	ericwinger	Release 1.15.0
+745	2026-10-16T19:32	app/dependabot	Bump the dev-dependencies group across 1 directory with 9 updates
+743	2026-10-16T20:44	ericwinger	Open methods whose selector or category contains '/' or '%'
+728	2026-10-15T18:32	npapagna	[1/4] Move ActiveSession into its own vscode-free module
+725	2026-10-16T18:04	app/dependabot	Bump @modelcontextprotocol/sdk from 1.31.0 to 1.32.1 in the prod-dependencies group across 1 directory
+724	2026-10-16T17:41	app/dependabot	Bump the github-actions group with 3 updates
+723	2026-10-15T22:17	npapagna	[4/4] Make ActiveSession's GCI and handle private
+722	2026-10-15T22:17	npapagna	[3/4] Call GCI through ActiveSession methods
+721	2026-10-15T20:48	npapagna	[2/4] Make ActiveSession a class that owns its logins
+717	2026-10-15T18:27	ericwinger	Stop running wsl.exe on Windows machines without WSL
+716	2026-10-14T23:00	ericwinger	Download only the client libraries a login needs, on every platform
+713	2026-10-14T16:58	ericwinger	Simplify BreakpointManager.applyToUri to (session, uri): void
+712	2026-10-14T18:26	ericwinger	Fix five small bugs: tab reveal, paged preview labels, undo plan, dictionary removal, test discovery
+709	2026-10-15T19:15	ericwinger	Code-health cleanups: shared Enter guard, one scan per method removal, one undo-entry path
+707	2026-10-13T17:19	ericwinger	Remove the debug session's setBreakpoints handler, which never ran
+706	2026-10-15T19:48	ericwinger	Fix the small bugs in the issue 674 catch-all
+704	2026-10-08T19:35	npapagna	Package and secret-scan every PR like a release
+702	2026-10-07T20:52	MatiasFernandez	Report which editor app Jasper runs in
+701	2026-10-07T17:44	jgfoster	Allow the 1DS SDK's minified disableXhr in the secret scan
+700	2026-10-06T23:03	jgfoster	Release 1.14.0
+699	2026-10-07T12:19	app/dependabot	Bump the prod-dependencies group across 1 directory with 3 updates
+698	2026-10-06T22:34	app/dependabot	Bump the dev-dependencies group across 1 directory with 5 updates
+697	2026-10-06T22:09	app/dependabot	Bump @modelcontextprotocol/sdk from 1.30.0 to 1.31.0
+696	2026-10-06T22:04	app/dependabot	Bump source-map-js from 1.2.1 to 1.2.2
+695	2026-10-06T22:04	app/dependabot	Bump proxy-addr from 2.0.7 to 2.0.8
+692	2026-10-06T22:10	MatiasFernandez	Report each connect attempt with the configured GemStone version
+690	2026-10-06T20:54	npapagna	Fail npm ci when a dependency outgrows the Node floor
+688	2026-10-01T21:03	ericwinger	Release 1.13.0
+686	2026-10-02T12:41	app/dependabot	Bump brace-expansion from 5.0.9 to 5.0.12
+685	2026-10-02T12:39	app/dependabot	Bump fast-uri from 3.1.7 to 3.1.8
+682	2026-10-05T11:49	npapagna	Lint misused and unawaited promises
+681	2026-10-01T20:24	ericwinger	Show which session editors, panels and the status bar are on, in multiple-session mode
+680	2026-10-01T16:28	ericwinger	Resolve classes by identity so a shadowed name cannot misdirect a refactoring
+676	2026-10-02T13:17	app/dependabot	Bump dotenv from 17.4.2 to 18.0.3
+675	2026-10-02T12:06	app/dependabot	Bump the dev-dependencies group across 1 directory with 5 updates
+673	2026-10-02T11:55	app/dependabot	Bump ip-address from 10.4.0 to 10.7.2
+672	2026-09-30T19:02	ericwinger	Fix the small bugs in the issue 631 catch-all
+670	2026-09-28T22:08	ericwinger	Unpack a downloaded GemStone without freezing the editor, and let it be cancelled
+669	2026-09-28T22:52	ericwinger	Notebooks: Open Notebook, Learn Smalltalk, and the session shown
+668	2026-09-28T20:32	ericwinger	Install the Enhanced Inspector on a rowan3 extent
+667	2026-09-25T23:57	ericwinger	Handle GemStone's three transaction modes
+666	2026-09-25T23:22	ericwinger	Tie clientForwarder mode to the Execute It process, not the session
+663	2026-09-24T22:25	ericwinger	Release 1.12.0
+661	2026-09-25T00:52	npapagna	Make GCI async-failure test simulators persist
+660	2026-09-24T23:28	npapagna	Share the non-blocking contract across GCI tests
+659	2026-10-05T17:03	MatiasFernandez	Add basic usage telemetry: one `activated` event
+658	2026-09-28T21:02	npapagna	Add non-blocking string fetch
+657	2026-09-24T21:06	ericwinger	Survive a version number Jasper cannot read, and say what went wrong
+654	2026-09-23T23:27	ericwinger	Share the evaluate panes' keys, walk and wording instead of keeping two copies
+653	2026-09-24T23:30	MatiasFernandez	Migrate the async, session-utility and debug GCI tests into CI
+652	2026-09-28T21:38	MatiasFernandez	Migrate gciLogin tests into CI (GCI migration phase 9b + 9d)
+647	2026-09-24T20:38	ericwinger	Make Transcript writes work, and survive a failed resume
+645	2026-09-23T21:26	ericwinger	Tonel file out and file in, one class at a time
+642	2026-09-23T20:42	ericwinger	Fix three small bugs from the catch-all issue, and pin the fourth as not a bug
+638	2026-09-23T17:23	app/dependabot	Bump @vscode/vsce from 3.9.2 to 4.0.0
+637	2026-09-22T19:43	app/dependabot	Bump the dev-dependencies group with 5 updates
+635	2026-09-23T20:01	ericwinger	Load the refactoring engine correctly on a rowan3 extent
+634	2026-09-22T20:17	ericwinger	Sweep method environments in the selector hover and Go to Definition
+633	2026-09-22T21:02	ericwinger	Bring the GemStone Explorer up when you jump into it
+627	2026-09-22T23:43	jgfoster	Show servers whose version carries a pre-release tag
+626	2026-09-21T17:12	ericwinger	Method search: honor the environment in hierarchy implementors and references
+625	2026-09-21T19:52	ericwinger	Scan Smalltalk literals in one place per workspace, and stop Format Document dropping comment text
+624	2026-09-21T18:30	ericwinger	Undo and redo a Session Configuration change
+623	2026-09-21T18:10	ericwinger	Command Palette: make Commit and Abort work, and keep a current session for them to act in
+617	2026-09-17T22:10	ericwinger	Release 1.11.0
+615	2026-09-21T21:58	MatiasFernandez	Migrate GCI symbol-gated tests into CI, add requireGciCapability gate
+613	2026-09-16T17:35	MatiasFernandez	Fix cascading failures and wall-clock flake in sunitRunNb integration test
+612	2026-09-15T21:53	MatiasFernandez	Only report skipped tests when the matrix finished
+610	2026-09-15T20:12	app/dependabot	Bump zizmorcore/zizmor-action from 0.6.3 to 0.6.4 in the github-actions group
+609	2026-09-16T13:20	app/dependabot	Bump vitest from 4.1.11 to 5.0.0
+608	2026-09-15T22:30	app/dependabot	Bump @vitest/coverage-v8 from 4.1.11 to 5.0.0
+607	2026-09-15T19:57	app/dependabot	Bump the dev-dependencies group with 5 updates
+606	2026-09-15T18:46	ericwinger	Catch-all fixes: Explorer pane reveals, class comments, abort resync, Inspector Meta tab, Source search chip
+605	2026-09-13T03:45	jgfoster	Release 1.10.0
+602	2026-09-14T21:48	MatiasFernandez	Compile on TypeScript 7, keep TS 6 for eslint
+601	2026-09-14T16:27	MatiasFernandez	Bump nanoid to 3.3.18 to clear its npm audit advisory
+600	2026-09-11T22:31	ericwinger	Catch-all fixes: pin flash, Format Document on methods, Change Signature colon
+593	2026-09-10T20:52	ericwinger	Seven small fixes from the catch-all issue: debugger column, completion caches, and Databases panel wording
+591	2026-09-10T13:29	npapagna	Stop tests from calling GCI on logged-out sessions
+590	2026-09-10T18:32	npapagna	Capture GCI crash dumps from Windows CI on failure
+588	2026-09-10T23:30	ericwinger	Debugger entry points: one Debug button, Browse into the Explorer, and a source pane that opens with the debugger
+587	2026-09-10T18:24	npapagna	Add performAsync for non-blocking message sends
+583	2026-09-10T20:46	app/dependabot	Bump hono from 4.12.34 to 4.13.7
+581	2026-09-14T16:21	ericwinger	Take Rowan and MCP Server out of the GemStone sidebar
+574	2026-09-10T19:05	app/dependabot	Bump @eslint/js from 9.39.5 to 10.0.1
+573	2026-09-11T21:48	app/dependabot	Bump the prod-dependencies group across 1 directory with 2 updates
+558	2026-09-10T20:05	jgfoster	Attribute the Enhanced Inspector payload to the holders its upstreams name
+552	2026-09-13T02:54	jgfoster	Publish releases from a manual pipeline
+541	2026-09-14T22:12	MatiasFernandez	Gate every axis of the GCI optionality registry, in lint
+507	2026-09-11T22:55	ericwinger	Undo for GemStone code changes — manual/UX review first, please
