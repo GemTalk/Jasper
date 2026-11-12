@@ -7,6 +7,7 @@ vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 import { useIntegrationTest } from '../useIntegrationTest';
 import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
+import { isRunning } from '../../nbRunner';
 import type { ActiveSession } from '../../sessionManager';
 import { testActiveSession } from '../testActiveSession';
 
@@ -125,6 +126,22 @@ describe('explorer queries (integration)', () => {
         ivarsCanMoveDown: true,
       });
       expect(child).toEqual({ instVarNames: [], classVarNames: [], ivarsCanMoveDown: false });
+    });
+
+    it('waits for a document read that is still running', async () => {
+      defineParentAndChild();
+      const dict = userIndex();
+      const declared = q.getDefinedInstVarNames(session(), WIDGET, dict);
+      const documentRead = q.queuedNbQueryExecutorUsing(session())(
+        `(Delay forMilliseconds: 200) wait. 'document'`,
+      );
+      await vi.waitFor(() => expect(isRunning(session())).toBe(true));
+
+      const row = q.classRowContents(session(), WIDGET, dict);
+
+      const [document, contents] = await Promise.all([documentRead, row]);
+      expect(document).toBe('document');
+      expect(contents.instVarNames).toEqual(declared);
     });
 
     it('answers no subclasses for a class that declares no instance variables', async () => {

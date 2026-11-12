@@ -1242,7 +1242,7 @@ export function classRowContents(
   dict?: number | string,
 ): Promise<ClassRowContents> {
   return sharedClassRowContents(
-    nbQueryExecutorUsing(session, 'GemStone: Loading class contents…'),
+    queuedNbQueryExecutorUsing(session, 'GemStone: Loading class contents…'),
     className,
     dict,
   );

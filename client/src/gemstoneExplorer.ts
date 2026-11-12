@@ -3274,11 +3274,11 @@ export class ExplorerController {
   }
 
   /**
-   * Runs `read` once every read queued before it has settled. The non-blocking
-   * executor refuses a query while another holds the session, so rows VS Code
-   * expands together (re-expanding the ones it remembers after a reload) would
-   * refuse each other, each with the busy notice. These are reads, so running
-   * them one at a time is all they need.
+   * Runs `read` once every read queued before it has settled. Each query
+   * already waits its turn on the session, so this isn't what keeps rows from
+   * refusing each other. It keeps the Explorer's reads in the order they were
+   * asked for, and lets a row read decide whether it is still wanted when its
+   * turn comes rather than when it was asked for.
    */
   private async inReadOrder<T>(read: () => Promise<T>): Promise<T> {
     const previous = this.readsTail;
