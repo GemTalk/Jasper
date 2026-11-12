@@ -2886,9 +2886,8 @@ export class ExplorerController {
     const { dictIndex } = this.state;
     const selected = this.selectClassFromTree(new ClassItem(className));
     if (this.classClicks.register(className)) {
-      // Opening reads the definition with a blocking call, which is refused as busy while
-      // the click's own read still holds the session. A dropped click opens nothing, and
-      // neither does one whose class another dictionary's selection has since replaced.
+      // Opens only once the click settles: a dropped click opens nothing, and neither
+      // does one whose class another dictionary's selection has since replaced.
       void selected.then(() => {
         if (this.state.className !== className || this.state.dictIndex !== dictIndex) return;
         return this.openClassDefinition(new ClassItem(className));

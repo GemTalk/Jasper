@@ -871,7 +871,7 @@ export function getClassesWithCategory(
 
 export function getClassesWithCategoryAsync(session: ActiveSession, dict: number | string) {
   return sharedGetClassesWithCategoryAsync(
-    nbQueryExecutorUsing(session, 'GemStone: Loading classes…'),
+    queuedNbQueryExecutorUsing(session, 'GemStone: Loading classes…'),
     dict,
   );
 }
@@ -921,7 +921,7 @@ export function getClassEnvironmentsAsync(
   maxEnv: number,
 ) {
   return sharedGetClassEnvironmentsAsync(
-    nbQueryExecutorUsing(session, 'GemStone: Loading methods…'),
+    queuedNbQueryExecutorUsing(session, 'GemStone: Loading methods…'),
     dictIndex,
     className,
     maxEnv,
@@ -1094,7 +1094,7 @@ export function getClassHierarchyAsync(
   dict?: number | string,
 ) {
   return sharedGetClassHierarchyAsync(
-    nbQueryExecutorUsing(session, 'GemStone: Loading class hierarchy…'),
+    queuedNbQueryExecutorUsing(session, 'GemStone: Loading class hierarchy…'),
     className,
     dict,
   );
@@ -1257,7 +1257,7 @@ export function getDefinedInstVarCounts(
 
 export function getDefinedInstVarCountsAsync(session: ActiveSession, dict: number | string) {
   return sharedGetDefinedInstVarCountsAsync(
-    nbQueryExecutorUsing(session, 'GemStone: Loading classes…'),
+    queuedNbQueryExecutorUsing(session, 'GemStone: Loading classes…'),
     dict,
   );
 }
@@ -1364,7 +1364,7 @@ export function getDefinedClassVarCounts(
 
 export function getDefinedClassVarCountsAsync(session: ActiveSession, dict: number | string) {
   return sharedGetDefinedClassVarCountsAsync(
-    nbQueryExecutorUsing(session, 'GemStone: Loading classes…'),
+    queuedNbQueryExecutorUsing(session, 'GemStone: Loading classes…'),
     dict,
   );
 }
@@ -1378,7 +1378,7 @@ export function getClassVersions(
 
 export function getClassVersionsAsync(session: ActiveSession, dict: number | string) {
   return sharedGetClassVersionsAsync(
-    nbQueryExecutorUsing(session, 'GemStone: Loading classes…'),
+    queuedNbQueryExecutorUsing(session, 'GemStone: Loading classes…'),
     dict,
   );
 }
