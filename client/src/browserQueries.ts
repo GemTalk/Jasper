@@ -4,6 +4,8 @@ import { explainGciError, GciLibraryError, SESSION_BUSY_MESSAGE } from './gciLib
 import { logError } from './gciLog';
 import {
   abandonedRunHolds,
+  diagLog,
+  diagRunnerState,
   discardStoppedProcess,
   isRunning,
   NbCancelledError,
@@ -432,6 +434,7 @@ export function quietly<T>(query: () => T): T {
  * notice that lets the user stop what holds the session.
  */
 function refusedAsBusy(session: ActiveSession): BrowserQueryError {
+  diagLog(session, `query refused as busy; ${diagRunnerState(session)}`);
   logError(session.id, SESSION_BUSY_MESSAGE);
   if (!quiet) {
     if (abandonedRunHolds(session)) sayStillRunning(session);

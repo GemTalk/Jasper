@@ -67,13 +67,22 @@ export class NbSessionBusyError extends Error {
 export function pollNbResultReady(session: ActiveSession): { result: number; err: GciError } {
   if (session.isAvailable('GciTsNbPoll')) {
     // eslint-disable-next-line no-restricted-syntax -- guarded by isAvailable above; the else branch below is the 3.6.x path (GciTsSocket + a native poll)
-    return session.GciTsNbPoll(0);
+    const polled = session.GciTsNbPoll(0);
+    if (polled.result === -1) {
+      diag(
+        session,
+        `poll via GciTsNbPoll answered -1: err=${polled.err?.number} ${polled.err?.message}`,
+      );
+    }
+    return polled;
   }
   const { fd, err } = session.GciTsSocket();
   if (err.number !== 0 || fd < 0) {
+    diag(session, `poll via GciTsSocket answered -1: fd=${fd} err=${err.number} ${err.message}`);
     return { result: -1, err };
   }
   const ready = pollReadable(fd, 0);
+  if (ready === -1) diag(session, `poll via native socket poll answered -1: fd=${fd}`);
   return {
     result: ready,
     err:
@@ -81,6 +90,34 @@ export function pollNbResultReady(session: ActiveSession): { result: number; err
         ? ({ number: -1, message: 'Failed to poll the GemStone session socket' } as GciError)
         : err,
   };
+}
+
+/**
+ * TEMPORARY CI diagnostics (throwaway branch): to stderr, so vitest prints them
+ * under the test that was running.
+ */
+function diag(session: ActiveSession, message: string): void {
+  console.error(`[CI-DIAG ${new Date().toISOString()}] [Session ${session.id}] ${message}`);
+}
+
+/** TEMPORARY: the runner's view of a session, next to what GemStone says. */
+export function diagRunnerState(session: ActiveSession): string {
+  let gemBusy: string;
+  try {
+    gemBusy = String(session.isBusy());
+  } catch (e) {
+    gemBusy = `threw ${e instanceof Error ? e.message : String(e)}`;
+  }
+  return (
+    `draining=${draining.has(session.id)} uncollected=${uncollected.has(session.id)} ` +
+    `live=${live.has(session.id)} liveStopRequested=${live.get(session.id)?.stopRequested()} ` +
+    `clearing=${clearing.has(session.id)} gemIsBusy=${gemBusy}`
+  );
+}
+
+/** TEMPORARY: see {@link diag}. */
+export function diagLog(session: ActiveSession, message: string): void {
+  diag(session, message);
 }
 
 export interface NbRunOptions {
@@ -444,12 +481,19 @@ function drainAbandonedCall(
         return;
       }
       const { state, reason } = tryCollect();
+      if (state !== 'pending') {
+        diag(
+          session,
+          `drain attempt ${n} after ${Date.now() - startedAt}ms: ${state}${reason ? ` (${reason})` : ''}`,
+        );
+      }
       if (state === 'collected' || state === 'gone') {
         resolve();
         return;
       }
       failuresInARow = state === 'failed' ? failuresInARow + 1 : 0;
       if (failuresInARow >= COLLECT_FAILURES_TO_GIVE_UP) {
+        diag(session, `drain gives up and forgets the call; ${diagRunnerState(session)}`);
         // Persistent, not transient (a broken connection, say): hold nobody up
         // with a session that will never answer, and don't call it busy.
         session.forgetUncollectedCall();
@@ -461,6 +505,10 @@ function drainAbandonedCall(
         return;
       }
       if (n >= DRAIN_ATTEMPTS) {
+        diag(
+          session,
+          `drain budget spent after ${Date.now() - startedAt}ms; handing to collectLate`,
+        );
         collectLate(session, tryCollect, startedAt);
         resolve();
         return;
@@ -511,6 +559,10 @@ function collectLate(
     }
     if (state === 'failed' && ++failuresInARow < COLLECT_FAILURES_TO_GIVE_UP) return false;
     forget();
+    diag(
+      session,
+      `collectLate settled after ${Date.now() - startedAt}ms: ${state}${reason ? ` (${reason})` : ''}`,
+    );
     if (state === 'collected') {
       logInfo(
         `[Session ${session.id}] Collected a cancelled call after ` +
@@ -1101,6 +1153,10 @@ export function pollNbToCompletion<T>(
         return;
       }
       if (pollResult === -1) {
+        diag(
+          session,
+          `run's own poll answered -1 (err ${pollErr?.number} ${pollErr?.message}); ${diagRunnerState(session)}`,
+        );
         // Abandoning the call without collecting its result leaves the session
         // reporting a call in progress, and every later call on it refused. A
         // break that the gem turns into a poll error takes this path, so the
