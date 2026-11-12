@@ -23,7 +23,7 @@ vi.mock('../../gciLog', async (orig) => ({
 }));
 
 import { window } from '../../__mocks__/vscode';
-import { ExplorerController, ClassItem, ClassCategoryItem } from '../../gemstoneExplorer';
+import { ExplorerController, ClassItem, ClassCategoryItem, DictItem } from '../../gemstoneExplorer';
 import {
   BrowserQueryError,
   getClassesWithCategory,
@@ -42,7 +42,7 @@ import { logWarning } from '../../gciLog';
 import { GCI_ERR_OP_IN_PROGRESS } from '../../gciConstants';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 import { fakeViews } from '../helpers/explorerContainerFocus';
-import { settle } from '../helpers/explorerClicks';
+import { highlightMoveHeldBack, settle } from '../helpers/explorerClicks';
 
 type DictRow = Parameters<ExplorerController['selectDict']>[0];
 const dictRow = (dictName: string, dictIndex: number) => ({ dictName, dictIndex }) as DictRow;
@@ -363,6 +363,65 @@ describe('dictionary clicks made before the previous one answers', () => {
 
     expect(ctl.state.dictName).toBe('GammaDict');
     expect(dict.reveal).not.toHaveBeenCalled();
+  });
+});
+
+describe('a dictionary clicked while a refused click moves the highlight back', () => {
+  // Leaves a click on GammaDict reading while a refused click on BetaDict moves the
+  // highlight back to AlphaDict.
+  async function clickDuringMoveBack() {
+    const { ctl, dict } = controllerOnAlpha();
+    const moveBack = highlightMoveHeldBack(dict);
+    sessionBusy = true;
+    await ctl.selectDictFromTree(BETA);
+    sessionBusy = false;
+    const gamma = classesHeldBack(3);
+    const click = ctl.selectDictFromTree(GAMMA);
+    await settle();
+    // The move-back's selection event carries the tree's own row, not a test stand-in.
+    const moveBackFiresSelection = () => ctl.selectDictFromTree(new DictItem('AlphaDict', 1));
+    return { ctl, dict, gamma, moveBack, click, moveBackFiresSelection };
+  }
+
+  it('is selected even though the move-back highlights the previous dictionary', async () => {
+    const { ctl, gamma, moveBack, click, moveBackFiresSelection } = await clickDuringMoveBack();
+
+    await moveBackFiresSelection();
+    gamma.answer();
+    moveBack.finish();
+    await click;
+
+    expect(ctl.state.dictName).toBe('GammaDict');
+  });
+
+  it('highlights the clicked dictionary once it is selected', async () => {
+    const { dict, gamma, moveBack, click, moveBackFiresSelection } = await clickDuringMoveBack();
+
+    await moveBackFiresSelection();
+    gamma.answer();
+    moveBack.finish();
+    await click;
+
+    expect(dict.reveal.mock.calls.at(-1)?.[0]).toMatchObject({ dictName: 'GammaDict' });
+  });
+
+  it('gives way to a click back to the previous dictionary once the move is done', async () => {
+    const { ctl, dict } = controllerOnAlpha();
+    const moveBack = highlightMoveHeldBack(dict);
+    sessionBusy = true;
+    await ctl.selectDictFromTree(BETA);
+    sessionBusy = false;
+    moveBack.finish();
+    await settle();
+    const gamma = classesHeldBack(3);
+    const click = ctl.selectDictFromTree(GAMMA);
+    await settle();
+
+    await ctl.selectDictFromTree(new DictItem('AlphaDict', 1));
+    gamma.answer();
+    await click;
+
+    expect(ctl.state.dictName).toBe('AlphaDict');
   });
 });
 

@@ -36,7 +36,7 @@ import { logWarning } from '../../gciLog';
 import { GCI_ERR_OP_IN_PROGRESS } from '../../gciConstants';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 import { fakeViews } from '../helpers/explorerContainerFocus';
-import { settle } from '../helpers/explorerClicks';
+import { highlightMoveHeldBack, settle } from '../helpers/explorerClicks';
 
 const methodsOf = (className: string) => [
   { isMeta: false, envId: 0, category: `${className} methods`, selectors: ['foo'] },
@@ -382,6 +382,64 @@ describe('clicks made before the previous one answers', () => {
 
     expect(ctl.state.className).toBe('Gamma');
     expect(klass.reveal).not.toHaveBeenCalled();
+  });
+});
+
+describe('a class clicked while a refused click moves the highlight back', () => {
+  // Leaves a click on Gamma reading while a refused click on Beta moves the highlight
+  // back to Alpha.
+  async function clickDuringMoveBack() {
+    const { ctl, klass } = controllerOnClass('Alpha');
+    const moveBack = highlightMoveHeldBack(klass);
+    sessionBusy = true;
+    await ctl.selectClassFromTree(new ClassItem('Beta'));
+    sessionBusy = false;
+    const gamma = methodsHeldBack('Gamma');
+    const click = ctl.selectClassFromTree(new ClassItem('Gamma'));
+    await settle();
+    const moveBackFiresSelection = () => ctl.selectClassFromTree(new ClassItem('Alpha'));
+    return { ctl, klass, gamma, moveBack, click, moveBackFiresSelection };
+  }
+
+  it('is selected even though the move-back highlights the previous class', async () => {
+    const { ctl, gamma, moveBack, click, moveBackFiresSelection } = await clickDuringMoveBack();
+
+    await moveBackFiresSelection();
+    gamma.answer();
+    moveBack.finish();
+    await click;
+
+    expect(ctl.state.className).toBe('Gamma');
+  });
+
+  it('highlights the clicked class once it is selected', async () => {
+    const { klass, gamma, moveBack, click, moveBackFiresSelection } = await clickDuringMoveBack();
+
+    await moveBackFiresSelection();
+    gamma.answer();
+    moveBack.finish();
+    await click;
+
+    expect(klass.reveal.mock.calls.at(-1)?.[0]).toMatchObject({ className: 'Gamma' });
+  });
+
+  it('gives way to a click back to the previous class once the move is done', async () => {
+    const { ctl, klass } = controllerOnClass('Alpha');
+    const moveBack = highlightMoveHeldBack(klass);
+    sessionBusy = true;
+    await ctl.selectClassFromTree(new ClassItem('Beta'));
+    sessionBusy = false;
+    moveBack.finish();
+    await settle();
+    const gamma = methodsHeldBack('Gamma');
+    const click = ctl.selectClassFromTree(new ClassItem('Gamma'));
+    await settle();
+
+    await ctl.selectClassFromTree(new ClassItem('Alpha'));
+    gamma.answer();
+    await click;
+
+    expect(ctl.state.className).toBe('Alpha');
   });
 });
 
