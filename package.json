@@ -3850,6 +3850,8 @@
     "test:mcp": "npm test --workspace mcp-server",
     "//test:gci": "Runs only the on-demand 'gci' vitest project (client/vitest.config.ts); needs a live test stone (npm run test:server:start). `npm test` runs the 'default' project and excludes these.",
     "test:gci": "cd client && npx vitest run --project gci",
+    "//test:supply-chain": "Runs only lintSupplyChain.test.ts (client 'supply-chain' vitest project); needs no stone. CI runs it once in the lint job.",
+    "test:supply-chain": "cd client && npx vitest run --project supply-chain",
     "//test:acceptance": "End-user acceptance tests that drive a real VS Code window (Playwright + Electron). Slow and GUI-bound, so excluded from `npm test`. Run `npm run compile` first.",
     "test:acceptance": "bddgen -c acceptance/playwright.config.ts && playwright test -c acceptance/playwright.config.ts",
     "test:acceptance:report": "playwright show-report acceptance/playwright-report",
