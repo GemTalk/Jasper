@@ -57,8 +57,12 @@ export class SessionLedger<K> {
   private readonly holders = new Map<K, Holder>();
   private readonly queue: Waiter<K>[] = [];
   private live: Set<string> | undefined;
-  // Sessions already on the stone when the run started belong to no test file.
-  private before: Set<string> | undefined;
+  // Sessions already on the stone at the watcher's first look belong to no test file.
+  private before: Map<string, number> | undefined;
+  // Workers that had asked for a booking by the first look. Only their sessions
+  // in `before` can be their own unreported logins: a pid that turns up later
+  // may be a reused one matching a gem a killed run left behind.
+  private pidsAtFirstLook: Set<number> | undefined;
   private readonly sightings = new Map<string, Sighting>();
   // Login serial -> when a file reported it.
   private readonly reported = new Map<string, number>();
@@ -72,14 +76,19 @@ export class SessionLedger<K> {
   readonly grants: Grant[] = [];
   peakCommitted = 0;
   peakLive = 0;
-  readonly startedAt: number;
+  private startedAt: number;
 
-  /** `capacity` can be set later, once the stone has said how many sessions it takes, but before any {@link grant}. */
+  /** `capacity` can be set later, once the stone has said how many sessions it takes, but before any {@link request}. */
   constructor(
     public capacity: number,
     private readonly clock: () => number = Date.now,
   ) {
     this.startedAt = clock();
+  }
+
+  /** Starts the run's clock again, as the watcher logs in: times in the run are counted from here. */
+  restartClock(): void {
+    this.startedAt = this.clock();
   }
 
   /** Puts `key` in line for `request.n` sessions; {@link grant} answers who gets in. */
@@ -167,7 +176,7 @@ export class SessionLedger<K> {
 
   /**
    * The watcher's look at the stone: each user session's login serial and its
-   * GCI client's process id. The first look is what was there before the run.
+   * GCI client's process id. The first look is what was there before any file booked.
    * Answers the sessions that were there before, on the first look only.
    */
   sample(sessions: Map<string, number>): Map<string, number> | undefined {
@@ -177,7 +186,8 @@ export class SessionLedger<K> {
     const serials = new Set(sessions.keys());
     let leftOver: Map<string, number> | undefined;
     if (!this.before) {
-      this.before = serials;
+      this.before = sessions;
+      this.pidsAtFirstLook = new Set(this.workerPids);
       leftOver = sessions;
     }
     const now = this.clock();
@@ -266,9 +276,14 @@ export class SessionLedger<K> {
     return found;
   }
 
-  /** Logins from test workers no file reported and no file was blamed for, such as one made after its file gave its booking back. */
+  /**
+   * Logins from test workers no file reported and no file was blamed for, such
+   * as one made after its file gave its booking back, or one a worker that had
+   * already asked for a booking made before any file booked, still on the stone
+   * at the first look.
+   */
   stray(): { serial: string; pid: number }[] {
-    return [...this.sightings]
+    const fromSightings = [...this.sightings]
       .filter(
         ([serial, s]) =>
           this.workerPids.has(s.pid) &&
@@ -277,6 +292,10 @@ export class SessionLedger<K> {
           !this.excused.has(serial),
       )
       .map(([serial, s]) => ({ serial, pid: s.pid }));
+    const fromBefore = [...(this.before ?? [])]
+      .filter(([, pid]) => this.pidsAtFirstLook?.has(pid))
+      .map(([serial, pid]) => ({ serial, pid }));
+    return [...fromBefore, ...fromSightings];
   }
 
   /**
