@@ -306,8 +306,10 @@ describe.runIf(process.platform === 'linux' && realUnzip && realPython)(
   },
 );
 
-// Attaching and detaching a disk image takes about a second on a CI runner, and
-// creating one about eight, so the image is built once and copied per test.
+// Attaching and ejecting a disk image can take several seconds on a CI runner,
+// past vitest's default 5 s. Creating one takes about eight more, so the image is
+// built once and copied into each test. The tests share its volume name, so a
+// test that leaves it mounted fails in its own teardown rather than in the next test.
 describe.runIf(process.platform === 'darwin')(
   'Unpacking a GemStone disk image on macOS',
   { timeout: 30_000 },
@@ -322,12 +324,12 @@ describe.runIf(process.platform === 'darwin')(
     }, 30_000);
 
     afterAll(() => {
-      fs.rmSync(imageDir, { recursive: true, force: true });
+      if (imageDir) fs.rmSync(imageDir, { recursive: true, force: true });
     });
 
     beforeEach(() => {
       setUp('dmg');
-      fs.copyFileSync(image, f.archivePath);
+      fs.copyFileSync(image, f.archivePath, fs.constants.COPYFILE_FICLONE);
     });
 
     afterEach(async () => {
@@ -337,6 +339,9 @@ describe.runIf(process.platform === 'darwin')(
         execFileSync('hdiutil', ['detach', `/Volumes/${volume}`, '-force'], { stdio: 'ignore' });
       } catch {
         /* not mounted */
+      }
+      if (fs.existsSync(`/Volumes/${volume}`)) {
+        throw new Error(`/Volumes/${volume} is still mounted, so the next test would see it`);
       }
     }, 30_000);
 

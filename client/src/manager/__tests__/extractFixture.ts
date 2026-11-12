@@ -67,7 +67,7 @@ export function makeFixture(platformSuffix: string, ext: 'zip' | 'dmg'): Extract
   };
 }
 
-/** A few files shaped like a product tree: an executable, a read-only file and directory, a space. */
+/** A few files shaped like a product tree: an executable, a read-only file, a space. */
 function buildTree(workDir: string, productName: string): string {
   const src = path.join(workDir, 'src');
   fs.rmSync(src, { recursive: true, force: true });
@@ -107,10 +107,8 @@ export function buildDmg(workDir: string, productName: string, volume: string): 
   const image = path.join(workDir, `${productName}.dmg`);
   execFileSync(
     'hdiutil',
-    ['create', '-srcfolder', buildTree(workDir, productName), '-volname', volume, '-ov', image],
-    {
-      stdio: 'ignore',
-    },
+    ['create', '-srcfolder', buildTree(workDir, productName), '-volname', volume, image],
+    { stdio: 'ignore' },
   );
   return image;
 }
