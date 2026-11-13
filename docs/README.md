@@ -21,6 +21,7 @@ New docs are organized by [Diátaxis](https://diataxis.fr/) category — `how-to
 - [Integration test isolation](explanation/integration-test-isolation.md) — why transaction-abort is the isolation mechanism for `useIntegrationTest`, and why the commit guard is armed per-session and irreversible.
 - [Auto-commit](explanation/auto-commit.md) — where the commit hook goes and why not at the GCI round trip or the refactoring apply; why a committed change is still undoable but no longer abortable.
 - [Why CI is shaped the way it is](explanation/ci-pipeline.md) — what the matrix covers, why packaging and the secret scan run on every PR, why runner concurrency, not minutes, is the constraint, and why the skipped-tests report doesn't fail yet.
+- [Non-blocking GemStone calls](explanation/non-blocking-gemstone-calls.md): why GCI calls are moving off the extension host thread, the rules that keep async GCI code safe, what has moved, what is left, and where the GCI layers are headed.
 - [GCI cross-version compatibility](explanation/gci-version-compatibility.md) — how Jasper stays loadable across every supported GemStone release and platform: the vendored headers, the registry generated from them, and which tool catches which mistake.
 
 ## Reference
