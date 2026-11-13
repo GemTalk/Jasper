@@ -1,5 +1,6 @@
 import * as https from 'https';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { ChildProcess, execSync, spawn } from 'child_process';
@@ -593,28 +594,32 @@ export class VersionManager {
     wholeImage = false,
   ): Promise<void> {
     progress.report({ message: 'Mounting disk image...' });
-    // Not cancellable: an attach killed partway can leave the image mounted with
-    // no mount point to detach. It takes seconds; the copy is what takes minutes.
-    const attachLines: string[] = [];
-    const attach = await this.run('hdiutil', ['attach', '-nobrowse', dmgPath], {
-      onLine: (line) => attachLines.push(line),
+    // Not cancellable: an attach killed partway can leave the image attached but
+    // not yet mounted, which a detach of the mount point cannot reach. It takes
+    // seconds; the copy is what takes minutes.
+    // Jasper picks the mount point rather than reading it back out of hdiutil's
+    // output, whose order isn't fixed (#925). An image with nothing to mount
+    // then fails the attach itself, leaving nothing attached.
+    const mountPoint = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'jasper-mount-'));
+    // Only an empty temp folder, so failing to remove it must not replace the
+    // error that brought us here, nor fail an unpack that worked.
+    const removeMountPoint = () => fs.promises.rmdir(mountPoint).catch(() => undefined);
+    const attach = await this.run('hdiutil', [
+      'attach',
+      '-nobrowse',
+      '-mountpoint',
+      mountPoint,
+      dmgPath,
+    ]).catch(async (e: unknown) => {
+      await removeMountPoint();
+      throw e;
     });
     if (attach.code !== 0) {
+      await removeMountPoint();
       throw new Error(
         `hdiutil attach failed with exit code ${attach.code}${stderrTail(attach.stderr)}`,
       );
     }
-    // Parse mount point from last line: /dev/diskXsY  Apple_HFS  /Volumes/GemStone64Bit...
-    const lastLine =
-      attachLines
-        .filter((l) => l.trim())
-        .at(-1)
-        ?.trimEnd() ?? '';
-    const mountMatch = lastLine.match(/\t(\/Volumes\/.+)$/);
-    if (!mountMatch) {
-      throw new Error(`Failed to parse mount point from: ${lastLine}`);
-    }
-    const mountPoint = mountMatch[1];
 
     try {
       // A server image holds one GemStone64Bit… folder, copied in by name. A
@@ -653,10 +658,13 @@ export class VersionManager {
     } finally {
       progress.report({ message: 'Unmounting disk image...' });
       const detach = await this.run('hdiutil', ['detach', mountPoint]);
-      if (detach.code !== 0) {
+      if (detach.code === 0) {
+        await removeMountPoint();
+      } else {
+        // -nobrowse keeps the image out of Finder, so Finder can't eject it.
         const message =
           `The GemStone disk image is still mounted at ${mountPoint}` +
-          `${stderrTail(detach.stderr)}. Eject it in Finder.`;
+          `${stderrTail(detach.stderr)}. Eject it with: hdiutil detach "${mountPoint}"`;
         appendSysadmin(message);
         void vscode.window.showWarningMessage(message);
       }

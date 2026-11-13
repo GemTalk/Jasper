@@ -8,8 +8,12 @@
 // stone counts as taken. A login no file reports fails the file whose test
 // worker made it, or the run, when it was too short for the watcher to see.
 // So does a file that has more sessions logged in at once than it booked.
-// If the watcher fails mid-run, every file still waiting on the gate, and the
-// run itself, fails with that error rather than vitest crashing.
+// If the watcher can't log in, or fails mid-run, every file still waiting on
+// the gate, and the run itself, fails with that error rather than vitest crashing.
+// The watcher logs in only when the first file asks for sessions, so a run in
+// which no file books never logs the gate in or needs client/.env.test. A login
+// a test worker made before then, already gone by the watcher's first look,
+// goes unseen.
 // The bookkeeping is in sessionGateLedger.ts; this is its sockets and watcher.
 import { writeFileSync, rmSync } from 'node:fs';
 import { createServer, type Socket } from 'node:net';
@@ -58,8 +62,9 @@ export type StartWatcher = (
 
 /**
  * Serves the gate on `socketPath`; answers the teardown, which fails the run if
- * a rule was broken. Tests get the stone's session limit less the watcher's
- * own session, unless `capacity` says otherwise.
+ * a rule was broken. The watcher starts on the first booking. Tests get the
+ * stone's session limit less the watcher's own session, unless `capacity` says
+ * otherwise.
  */
 export async function startGate(
   socketPath: string,
@@ -69,6 +74,7 @@ export async function startGate(
   const ledger = new SessionLedger<Socket>(capacity ?? 0);
   const waitTimers = new Map<Socket, NodeJS.Timeout>();
   const afterNextSample: (() => void)[] = [];
+  let watcher: Watcher | undefined;
   let watcherFailure: string | undefined;
 
   const reply = (socket: Socket, msg: object) => {
@@ -101,6 +107,20 @@ export async function startGate(
         if (watcherFailure && (msg.op === 'acquire' || msg.op === 'check')) {
           reply(socket, { error: watcherFailure });
         } else if (msg.op === 'acquire') {
+          if (!watcher) {
+            ledger.restartClock();
+            try {
+              watcher = startWatcher(onSample, (error) =>
+                failWaiting('the session watching the test stone failed', error),
+              );
+            } catch (error) {
+              failWaiting('could not start the session that watches the test stone', error);
+              reply(socket, { error: watcherFailure });
+              continue;
+            }
+            // The watcher's own session takes one.
+            ledger.capacity = capacity ?? watcher.sessionLimit - 1;
+          }
           if (msg.n > ledger.capacity) {
             reply(socket, {
               error: `${msg.file} declares ${msg.n} stone sessions; only ${ledger.capacity} are available to tests`,
@@ -152,8 +172,8 @@ export async function startGate(
   rmSync(socketPath, { force: true });
   await new Promise<void>((resolve) => server.listen(socketPath, resolve));
 
-  const failWaiting = (error: unknown) => {
-    watcherFailure = `the session watching the test stone failed, so the gate can no longer tell which sessions are free: ${error instanceof Error ? error.message : String(error)}`;
+  const failWaiting = (what: string, error: unknown) => {
+    watcherFailure = `${what}, so the gate cannot tell which sessions are free: ${error instanceof Error ? error.message : String(error)}`;
     console.error(`session gate: ${watcherFailure}`);
     for (const [socket, timer] of waitTimers) {
       clearTimeout(timer);
@@ -167,29 +187,20 @@ export async function startGate(
     const leftOver = ledger.sample(sessions);
     if (leftOver && leftOver.size > 0) {
       console.warn(
-        `session gate: ${leftOver.size} session(s) were already on the test stone before the run started, and take slots for the whole run: ${[...leftOver].map(([serial, pid]) => `login serial ${serial} (client process ${pid})`).join(', ')}. Usually these are gems left behind by a test run that was killed; end them to free their slots.`,
+        `session gate: ${leftOver.size} session(s) were already on the test stone when the first file booked, and take slots for the whole run: ${[...leftOver].map(([serial, pid]) => `login serial ${serial} (client process ${pid})`).join(', ')}. Usually these are gems left behind by a test run that was killed; end them to free their slots. A login a test made before its file booked shows here too, and then fails the run as a stray login.`,
       );
     }
     tryGrant();
     for (const done of afterNextSample.splice(0)) done();
   };
 
-  let watcher: Watcher;
-  try {
-    watcher = startWatcher(onSample, failWaiting);
-  } catch (error) {
-    // Left listening, the server would hold vitest open for its 10 s close timeout.
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    throw error;
-  }
-  // The watcher's own session takes one.
-  ledger.capacity = capacity ?? watcher.sessionLimit - 1;
-
   return async () => {
-    watcher.stop();
+    watcher?.stop();
     // Files still connected are given their answer before the server closes.
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (watcherFailure) throw new Error(`session gate: ${watcherFailure}`);
+    // No file booked, so none logged in through the harness: nothing to check.
+    if (!watcher) return;
     const endSerial = watcher.freshLoginSerial();
     const waits = ledger.grants.map((g) => g.waitMs).sort((a, b) => a - b);
     const total = waits.reduce((a, b) => a + b, 0);
@@ -312,7 +323,7 @@ function startGciWatcher(
   if (!Number.isInteger(sessionLimit) || sessionLimit < 2) {
     gci.logout(session);
     throw new Error(
-      `session gate: the test stone answered ${limitText} for its session limit (StnMaxSessions); expected a whole number of at least 2`,
+      `the test stone answered ${limitText} for its session limit (StnMaxSessions); expected a whole number of at least 2`,
     );
   }
   const lookMs: number[] = [];

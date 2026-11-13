@@ -7,7 +7,7 @@ import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL, GS_ERR_HALT } from '../gciConstan
 import { pollNbResultReady, runNbCall } from '../nbRunner';
 import { testActiveSession } from './testActiveSession';
 import { useIntegrationTest } from './useIntegrationTest';
-import { endGemAfterTest, stillOnStone } from './leftoverGem';
+import { endGemAfterTest, waitUntilOffTheStone } from './leftoverGem';
 import { reportedSerialOf, reportedTransientLogin } from './sessionGateClient';
 
 /**
@@ -71,9 +71,9 @@ describe('a logged-out session (integration)', () => {
     session.executeAndFetchString(`System stopSession: ${id}. 'ok'`);
     // The stone deregisters the stopped gem asynchronously: about half a second on
     // CI, but a loaded runner has taken past 4s. 15s stays inside the test's own 20s.
-    await vi.waitFor(() => expect(stillOnStone(session, serial)).toBe(false), {
-      timeout: 15_000,
-    });
+    // 15s stays inside the test's own 20s: past that, vitest's timeout would fire
+    // first and hide the diagnostic the wait throws.
+    await waitUntilOffTheStone(session, serial, 15_000);
     // Succeeds, since it doesn't wait for the gem; the session must still refuse
     // every call afterwards.
     stopped.logout();
@@ -141,17 +141,8 @@ describe('logging out never waits for the gem (integration)', () => {
     { sessions: 4 },
   );
 
-  /**
-   * Polls until `serial` is off the stone, or fails after `ms`; never a hung test.
-   * The gem usually leaves within 3s on CI, but a loaded runner has taken past 10s.
-   */
-  async function expectOffTheStone(serial: string, ms = 30_000): Promise<void> {
-    const deadline = Date.now() + ms;
-    while (stillOnStone(session, serial) && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-    expect(stillOnStone(session, serial)).toBe(false);
-  }
+  const expectOffTheStone = (serial: string): Promise<void> =>
+    waitUntilOffTheStone(session, serial, 30_000);
 
   function transientWithSerial(): { transient: ActiveSession; serial: string } {
     const { session: transient, err } = reportedTransientLogin(session);
@@ -436,5 +427,80 @@ describe('whether a session is busy (integration)', () => {
 
     expect(err.number, err.message).toBe(0);
     expect(transient.GciTsOopToI64(result).value).toBe(7n);
+  });
+  function freedCount(on: ActiveSession): () => number {
+    let count = 0;
+    on.onFreed(() => count++);
+    return () => count;
+  }
+
+  it('tells its listeners once the answer to code started without waiting is read', async () => {
+    const transient = transientSession();
+    const timesFreed = freedCount(transient);
+    startNonBlocking(transient, 'true');
+    await resultReady(transient);
+
+    transient.GciTsNbResult();
+
+    expect(timesFreed()).toBe(1);
+  });
+
+  it('does not tell its listeners while the answer to code started without waiting is unread', async () => {
+    const transient = transientSession();
+    const timesFreed = freedCount(transient);
+
+    startNonBlocking(transient, 'true');
+    await resultReady(transient);
+
+    expect(timesFreed()).toBe(0);
+  });
+
+  it('tells its listeners once it stops waiting for an answer nobody will read', () => {
+    const transient = transientSession();
+    const timesFreed = freedCount(transient);
+    startNonBlocking(transient, '(Delay forMilliseconds: 300) wait');
+
+    transient.forgetUncollectedCall();
+
+    expect(timesFreed()).toBe(1);
+  });
+
+  it('tells its listeners once a call on another thread finishes', async () => {
+    const transient = transientSession();
+    const timesFreed = freedCount(transient);
+
+    await startOnWorker(transient);
+
+    expect(timesFreed()).toBe(1);
+  });
+
+  it('does not tell its listeners while another call on another thread is still running', async () => {
+    const transient = transientSession();
+    const timesFreed = freedCount(transient);
+    const shortDelay = delayOn(transient, 0);
+    void startOnWorker(transient);
+    // Starting the short call only once the long one holds the session fixes which of the two
+    // GemStone refuses.
+    await vi.waitFor(() => expect(transient.GciTsCallInProgress().result).toBe(1), {
+      timeout: 5_000,
+    });
+
+    await transient.GciTsPerformAsync(shortDelay, OOP_ILLEGAL, 'wait', [], 0, 0);
+
+    expect(transient.isBusy()).toBe(true);
+    expect(timesFreed()).toBe(0);
+  });
+
+  it('stops telling a listener that unsubscribed', async () => {
+    const transient = transientSession();
+    let timesFreed = 0;
+    const unsubscribe = transient.onFreed(() => timesFreed++);
+    startNonBlocking(transient, 'true');
+    await resultReady(transient);
+
+    unsubscribe();
+    transient.GciTsNbResult();
+
+    expect(timesFreed).toBe(0);
   });
 });

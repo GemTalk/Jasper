@@ -26,7 +26,7 @@ import * as crypto from 'crypto';
 import * as path from 'path';
 
 import { SysadminStorage } from '../sysadminStorage';
-import { DatabaseManager } from './databaseManager';
+import { CreatedDatabase, DatabaseManager } from './databaseManager';
 import { VersionManager, CatalogEntry } from './versionManager';
 import { DiscoveredServer, ProcessManager, versionsMatch } from './processManager';
 import { REGISTERED_REASON, isRegisteredDatabase, registeredPaths } from './registeredDatabase';
@@ -1586,7 +1586,7 @@ export class DatabasesPanel {
     }
 
     try {
-      const db: GemStoneDatabase = await vscode.window.withProgress(
+      const db: CreatedDatabase = await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
           title: `Creating database ${msg.stoneName}...`,
@@ -1605,7 +1605,10 @@ export class DatabasesPanel {
       const newLogin = dataCuratorLoginToCreate(this.deps.getLogins(), db.config);
       if (newLogin) await this.deps.saveLogin(newLogin);
       appendSysadmin(`Created database ${db.config.stoneName} in ${db.path}`);
-      vscode.window.showInformationMessage(`Database "${path.basename(db.path)}" created.`);
+      // Creation has already warned that the stone can't start yet.
+      if (!db.keyMissing) {
+        vscode.window.showInformationMessage(`Database "${path.basename(db.path)}" created.`);
+      }
       this.deps.refreshAdminViews();
     } catch (e) {
       this.actionFailed(e);

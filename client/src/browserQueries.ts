@@ -23,30 +23,46 @@ import {
   TransactionConflicts,
   tryTransactionConflicts as sharedTryTransactionConflicts,
 } from './queries/transactionConflicts';
-import { getMethodSource as sharedGetMethodSource } from './queries/getMethodSource';
-import { getBaseMethodSource as sharedGetBaseMethodSource } from './queries/getBaseMethodSource';
+import {
+  getMethodSource as sharedGetMethodSource,
+  methodSource as sharedMethodSource,
+} from './queries/getMethodSource';
+import { baseMethodSource as sharedBaseMethodSource } from './queries/getBaseMethodSource';
 import { getDictionaryNames as sharedGetDictionaryNames } from './queries/getDictionaryNames';
 import { getClassNames as sharedGetClassNames } from './queries/getClassNames';
 import {
   ClassCategoryEntry,
   getClassesWithCategory as sharedGetClassesWithCategory,
+  getClassesWithCategoryAsync as sharedGetClassesWithCategoryAsync,
 } from './queries/getClassesWithCategory';
 import { getDictionaryClassFileOutOrder as sharedGetDictionaryClassFileOutOrder } from './queries/getDictionaryClassFileOutOrder';
 import { getDictionaryEntries as sharedGetDictionaryEntries } from './queries/getDictionaryEntries';
 import { getGlobalsForDictionary as sharedGetGlobalsForDictionary } from './queries/getGlobalsForDictionary';
 import { getMethodCategories as sharedGetMethodCategories } from './queries/getMethodCategories';
-import { getClassEnvironments as sharedGetClassEnvironments } from './queries/getClassEnvironments';
-import { getMethodInstVarAccess as sharedGetMethodInstVarAccess } from './queries/getMethodInstVarAccess';
-import { getClassDefinition as sharedGetClassDefinition } from './queries/getClassDefinition';
 import {
-  getClassCategory as sharedGetClassCategory,
+  getClassEnvironments as sharedGetClassEnvironments,
+  getClassEnvironmentsAsync as sharedGetClassEnvironmentsAsync,
+} from './queries/getClassEnvironments';
+import { getMethodInstVarAccess as sharedGetMethodInstVarAccess } from './queries/getMethodInstVarAccess';
+import {
+  getClassDefinition as sharedGetClassDefinition,
+  classDefinition as sharedClassDefinition,
+} from './queries/getClassDefinition';
+import {
+  classCategory as sharedClassCategory,
   classExistsInDictionary as sharedClassExistsInDictionary,
 } from './queries/getClassCategory';
 import { getClassComment as sharedGetClassComment } from './queries/getClassComment';
-import { getStoredClassComment as sharedGetStoredClassComment } from './queries/getStoredClassComment';
+import {
+  getStoredClassComment as sharedGetStoredClassComment,
+  storedClassComment as sharedStoredClassComment,
+} from './queries/getStoredClassComment';
 import { canClassBeWritten as sharedCanClassBeWritten } from './queries/canClassBeWritten';
 import { getAllClassNames as sharedGetAllClassNames } from './queries/getAllClassNames';
-import { getClassHierarchy as sharedGetClassHierarchy } from './queries/getClassHierarchy';
+import {
+  getClassHierarchy as sharedGetClassHierarchy,
+  getClassHierarchyAsync as sharedGetClassHierarchyAsync,
+} from './queries/getClassHierarchy';
 import { dictionariesContainingClass as sharedDictionariesContainingClass } from './queries/dictionariesContainingClass';
 import {
   tonelCapability as sharedTonelCapability,
@@ -85,16 +101,23 @@ import {
   ShadowingHolder,
 } from './refactoring/queries/dictionariesShadowedByRename';
 export type { ShadowingHolder };
-import { getDefinedInstVarCounts as sharedGetDefinedInstVarCounts } from './queries/getDefinedInstVarCounts';
+import {
+  getDefinedInstVarCounts as sharedGetDefinedInstVarCounts,
+  getDefinedInstVarCountsAsync as sharedGetDefinedInstVarCountsAsync,
+} from './queries/getDefinedInstVarCounts';
 import {
   classRowContents as sharedClassRowContents,
   type ClassRowContents,
 } from './queries/classRowContents';
 import { getDefinedClassVarNames as sharedGetDefinedClassVarNames } from './refactoring/queries/getDefinedClassVarNames';
 import { getVisibleClassVarNames as sharedGetVisibleClassVarNames } from './refactoring/queries/getVisibleClassVarNames';
-import { getDefinedClassVarCounts as sharedGetDefinedClassVarCounts } from './refactoring/queries/getDefinedClassVarCounts';
+import {
+  getDefinedClassVarCounts as sharedGetDefinedClassVarCounts,
+  getDefinedClassVarCountsAsync as sharedGetDefinedClassVarCountsAsync,
+} from './refactoring/queries/getDefinedClassVarCounts';
 import {
   getClassVersions as sharedGetClassVersions,
+  getClassVersionsAsync as sharedGetClassVersionsAsync,
   ClassVersionInfo,
 } from './refactoring/queries/getClassVersions';
 import {
@@ -526,6 +549,52 @@ export function nbQueryExecutorUsing(
   return (code) => executeFetchStringAsync(activeSession, code, title);
 }
 
+// Each session's last queued query. Keyed by id, not by ActiveSession: tests
+// wrap one login in several objects (#802).
+const queryTails = new Map<number, Promise<unknown>>();
+
+/**
+ * Binds a session to the {@link NbQueryExecutor} shape, so its queries run
+ * without blocking the extension host and wait for the session's earlier
+ * queued queries to settle instead of being refused because one of them is
+ * still running. Queries settle in the order they were made, and one that
+ * fails doesn't hold up the ones behind it. A query with nothing queued
+ * before it starts at once.
+ *
+ * Only queued queries wait for each other. Anything else running on the
+ * session (another query, Execute It, a debugger step) still refuses a queued
+ * query as busy once its turn comes.
+ *
+ * A cancelled query can leave the session cleaning up its process for a
+ * while; queued queries whose turn comes then are refused with the notice
+ * that a previous run is still cleaning up, rather than waiting on it.
+ *
+ * @param activeSession - The active GCI session to execute against.
+ * @param title - What the notification of a query that runs long says.
+ * @returns An {@link NbQueryExecutor} that runs `code` in `session` after the
+ * session's earlier queued queries and resolves to its String result.
+ */
+export function queuedNbQueryExecutorUsing(
+  activeSession: ActiveSession,
+  title?: string,
+): NbQueryExecutor {
+  const id = activeSession.id;
+  return (code) => {
+    const previous = queryTails.get(id);
+    const mine = previous
+      ? previous
+          .catch(() => undefined)
+          .then(() => executeFetchStringAsync(activeSession, code, title))
+      : executeFetchStringAsync(activeSession, code, title);
+    queryTails.set(id, mine);
+    const forget = (): void => {
+      if (queryTails.get(id) === mine) queryTails.delete(id);
+    };
+    mine.then(forget, forget);
+    return mine;
+  };
+}
+
 // Non-blocking variant of executeFetchString for LONG-RUNNING queries (e.g. a
 // Rowan project load, which can take minutes). The synchronous GCI call would
 // freeze the whole extension host for the duration; this one starts the
@@ -800,6 +869,13 @@ export function getClassesWithCategory(
   return sharedGetClassesWithCategory(defaultQueryExecutorUsing(session), dict);
 }
 
+export function getClassesWithCategoryAsync(session: ActiveSession, dict: number | string) {
+  return sharedGetClassesWithCategoryAsync(
+    queuedNbQueryExecutorUsing(session, 'GemStone: Loading classes…'),
+    dict,
+  );
+}
+
 export function getDictionaryClassFileOutOrder(
   session: ActiveSession,
   dict: number | string,
@@ -838,6 +914,20 @@ export function getClassEnvironments(
   );
 }
 
+export function getClassEnvironmentsAsync(
+  session: ActiveSession,
+  dictIndex: number,
+  className: string,
+  maxEnv: number,
+) {
+  return sharedGetClassEnvironmentsAsync(
+    queuedNbQueryExecutorUsing(session, 'GemStone: Loading methods…'),
+    dictIndex,
+    className,
+    maxEnv,
+  );
+}
+
 export function getMethodInstVarAccess(
   session: ActiveSession,
   dictIndex: number,
@@ -851,6 +941,10 @@ export function getMethodInstVarAccess(
     maxEnv,
   );
 }
+
+const OPENING_METHOD = 'GemStone: Opening method…';
+const OPENING_CLASS_DEFINITION = 'GemStone: Opening class definition…';
+const OPENING_CLASS_COMMENT = 'GemStone: Opening class comment…';
 
 export function getMethodSource(
   session: ActiveSession,
@@ -870,16 +964,34 @@ export function getMethodSource(
   );
 }
 
-export function getBaseMethodSource(
+export function methodSource(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
   selector: string,
   environmentId: number = 0,
   dict?: number | string,
-): string {
-  return sharedGetBaseMethodSource(
-    defaultQueryExecutorUsing(session),
+): Promise<string> {
+  return sharedMethodSource(
+    queuedNbQueryExecutorUsing(session, OPENING_METHOD),
+    className,
+    isMeta,
+    selector,
+    environmentId,
+    dict,
+  );
+}
+
+export function baseMethodSource(
+  session: ActiveSession,
+  className: string,
+  isMeta: boolean,
+  selector: string,
+  environmentId: number = 0,
+  dict?: number | string,
+): Promise<string> {
+  return sharedBaseMethodSource(
+    queuedNbQueryExecutorUsing(session, OPENING_METHOD),
     className,
     isMeta,
     selector,
@@ -896,12 +1008,28 @@ export function getClassDefinition(
   return sharedGetClassDefinition(defaultQueryExecutorUsing(session), className, dict);
 }
 
-export function getClassCategory(
+export function classDefinition(
   session: ActiveSession,
   className: string,
   dict?: number | string,
-): string {
-  return sharedGetClassCategory(defaultQueryExecutorUsing(session), className, dict);
+): Promise<string> {
+  return sharedClassDefinition(
+    queuedNbQueryExecutorUsing(session, OPENING_CLASS_DEFINITION),
+    className,
+    dict,
+  );
+}
+
+export function classCategory(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): Promise<string> {
+  return sharedClassCategory(
+    queuedNbQueryExecutorUsing(session, OPENING_CLASS_DEFINITION),
+    className,
+    dict,
+  );
 }
 
 export function classExistsInDictionary(
@@ -928,6 +1056,18 @@ export function getStoredClassComment(
   return sharedGetStoredClassComment(defaultQueryExecutorUsing(session), className, dict);
 }
 
+export function storedClassComment(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): Promise<string> {
+  return sharedStoredClassComment(
+    queuedNbQueryExecutorUsing(session, OPENING_CLASS_COMMENT),
+    className,
+    dict,
+  );
+}
+
 export function canClassBeWritten(
   session: ActiveSession,
   className: string,
@@ -946,6 +1086,18 @@ export function getClassHierarchy(
   dict?: number | string,
 ) {
   return sharedGetClassHierarchy(defaultQueryExecutorUsing(session), className, dict);
+}
+
+export function getClassHierarchyAsync(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+) {
+  return sharedGetClassHierarchyAsync(
+    queuedNbQueryExecutorUsing(session, 'GemStone: Loading class hierarchy…'),
+    className,
+    dict,
+  );
 }
 
 export function getClassDescendantNames(
@@ -1090,7 +1242,7 @@ export function classRowContents(
   dict?: number | string,
 ): Promise<ClassRowContents> {
   return sharedClassRowContents(
-    nbQueryExecutorUsing(session, 'GemStone: Loading class contents…'),
+    queuedNbQueryExecutorUsing(session, 'GemStone: Loading class contents…'),
     className,
     dict,
   );
@@ -1101,6 +1253,13 @@ export function getDefinedInstVarCounts(
   dict: number | string,
 ): Map<string, number> {
   return sharedGetDefinedInstVarCounts(defaultQueryExecutorUsing(session), dict);
+}
+
+export function getDefinedInstVarCountsAsync(session: ActiveSession, dict: number | string) {
+  return sharedGetDefinedInstVarCountsAsync(
+    queuedNbQueryExecutorUsing(session, 'GemStone: Loading classes…'),
+    dict,
+  );
 }
 
 export function getDefiningClassOfInstVar(
@@ -1203,11 +1362,25 @@ export function getDefinedClassVarCounts(
   return sharedGetDefinedClassVarCounts(defaultQueryExecutorUsing(session), dict);
 }
 
+export function getDefinedClassVarCountsAsync(session: ActiveSession, dict: number | string) {
+  return sharedGetDefinedClassVarCountsAsync(
+    queuedNbQueryExecutorUsing(session, 'GemStone: Loading classes…'),
+    dict,
+  );
+}
+
 export function getClassVersions(
   session: ActiveSession,
   dict: number | string,
 ): Map<string, ClassVersionInfo> {
   return sharedGetClassVersions(defaultQueryExecutorUsing(session), dict);
+}
+
+export function getClassVersionsAsync(session: ActiveSession, dict: number | string) {
+  return sharedGetClassVersionsAsync(
+    queuedNbQueryExecutorUsing(session, 'GemStone: Loading classes…'),
+    dict,
+  );
 }
 
 export function startRenameInstVarPreview(

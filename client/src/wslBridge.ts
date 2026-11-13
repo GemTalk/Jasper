@@ -514,6 +514,24 @@ export function windowsPathToWsl(windowsPath: string): string {
 }
 
 /**
+ * On Windows, a path WSL can reach, as File Explorer opens it and as WSL names
+ * it, since a user may act on it from either side; given in either form. A WSL
+ * mount of a Windows drive (`/mnt/c/...`) gets its drive form, not `\\wsl$\...`.
+ * Anything else, such as `C:\...`, is returned unchanged.
+ */
+export function inBothPathForms(p: string): string {
+  if (!needsWsl()) return p;
+  const linux = windowsPathToWsl(p);
+  if (linux !== p) return `${p} (in WSL: ${linux})`;
+  if (!p.startsWith('/')) return p;
+  const drive = /^\/mnt\/([a-z])(\/.*)?$/i.exec(p);
+  const windows = drive
+    ? `${drive[1].toUpperCase()}:${(drive[2] ?? '/').replace(/\//g, '\\')}`
+    : wslPathToWindows(p);
+  return `${windows} (in WSL: ${p})`;
+}
+
+/**
  * Spawn a command, routing through wsl.exe on Windows.
  * On Linux, wraps the command with `ulimit -n 1024` to reset the open-file
  * limit inherited from Electron (~1 billion), which GemStone uses in its

@@ -60,6 +60,10 @@ Comments explain what the code cannot: a constraint, a non-obvious/counterintuit
 
 Length is not the signal, density is. A 15-line comment carrying a real invariant is correct; a one-liner paraphrasing an identifier is too long. Never flatten an existing load-bearing explanation to make it shorter.
 
+## GemStone calls
+
+The extension mixes blocking and non-blocking GCI calls. The goal is non-blocking, but blocking is fine when there's a good reason (e.g. delivery time); state that reason in the PR, and ask the user when the choice isn't clear. Don't convert existing calls as a side effect of other work. Before writing or changing code that calls GemStone, read [Non-blocking GemStone calls](docs/explanation/non-blocking-gemstone-calls.md) and follow its design principles.
+
 ## Additional information
 
 Digging into an unfamiliar area? Project docs are indexed in [docs/README.md](docs/README.md) — check there first.

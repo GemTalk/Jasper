@@ -23,6 +23,9 @@ vi.mock('../../wslBridge', async () => {
   return {
     ...actual,
     needsWsl: vi.fn(() => false),
+    // The real one asks the real needsWsl, so a Windows CI leg would rewrite
+    // the Linux paths these tests expect; it has tests of its own.
+    inBothPathForms: vi.fn((p: string) => p),
     wslExecSync: vi.fn(),
     wslExec: vi.fn(async () => ''),
   };
@@ -2273,6 +2276,65 @@ describe('ProcessManager', () => {
 
       expect(error.message).toContain('shared memory');
       expect(error.message).not.toContain('Held by');
+    });
+  });
+
+  describe('startStone when the key file is missing', () => {
+    // What startstone prints when the stone config's KEYFILE does not exist.
+    const MISSING_KEY = [
+      '|     ERROR: Unable to stat() key file /db-1/conf/gemstone.key:',
+      '| ENOENT No such file or directory                                               |',
+    ].join('\n');
+
+    let gsPath: string;
+
+    beforeEach(() => {
+      setPlatform('linux');
+      vi.mocked(wslBridge.needsWsl).mockReturnValue(false);
+      vi.mocked(wslBridge.wslExec).mockReset();
+      gsPath = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'jasper-gs-'));
+      fs.mkdirSync(nodePath.join(gsPath, 'sys'));
+    });
+
+    afterEach(() => fs.rmSync(gsPath, { recursive: true, force: true }));
+
+    async function failedStart(): Promise<Error> {
+      const proc = makeChildProcess(3);
+      mockSpawnReturn(proc);
+      const promise = new ProcessManager(makeStorage(gsPath)).startStone(makeDatabase());
+      proc.emitStderr(MISSING_KEY);
+      proc.finish();
+      return (await promise.catch((e: Error) => e)) as Error;
+    }
+
+    it('names the missing key file, and the free one when the install has it', async () => {
+      // Named with '/' on every host: on Windows gsPath is the stone's path inside WSL.
+      const starterKey = `${gsPath}/sys/community.starter.key`;
+      fs.writeFileSync(nodePath.join(gsPath, 'sys', 'community.starter.key'), '');
+
+      const error = await failedStart();
+
+      expect(error.message).toMatch(/its key file \/db-1\/conf\/gemstone.key does not exist/);
+      expect(error.message).toContain(`The free one is ${starterKey}.`);
+    });
+
+    it('writes both paths as the user should see them', async () => {
+      fs.writeFileSync(nodePath.join(gsPath, 'sys', 'community.starter.key'), '');
+      vi.mocked(wslBridge.inBothPathForms).mockImplementation((p) => `<${p}>`);
+
+      const error = await failedStart().finally(() =>
+        vi.mocked(wslBridge.inBothPathForms).mockImplementation((p) => p),
+      );
+
+      expect(error.message).toContain('its key file </db-1/conf/gemstone.key> does not exist');
+      expect(error.message).toContain(`The free one is <${gsPath}/sys/community.starter.key>.`);
+    });
+
+    it('does not name a free key file the install does not have', async () => {
+      const error = await failedStart();
+
+      expect(error.message).toMatch(/its key file \/db-1\/conf\/gemstone.key does not exist/);
+      expect(error.message).toContain('has no free key file to copy');
     });
   });
 

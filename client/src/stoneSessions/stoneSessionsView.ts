@@ -396,6 +396,11 @@ export interface StoneSessionCommandDeps {
 export const STOP_SESSION = 'Stop Session';
 export const KILL = 'Kill';
 
+/** `text` ending in one full stop. An explained login failure already ends in ".)". */
+function asSentence(text: string): string {
+  return /\.\)?$/.test(text) ? text : `${text}.`;
+}
+
 /**
  * End a session on the stone, after a warning that its uncommitted work is
  * lost. Where that can't work, says so and names what an administrator can run,
@@ -428,8 +433,8 @@ export async function stopStoneSessionCommand(
       e instanceof GciLibraryError && e.number === NO_PRIVILEGE_ERROR
         ? `Stopping a session needs the SessionAccess and SystemControl privileges, which ` +
             `${target.loginUser} doesn't have. ${administrator}`
-        : `GemStone session ${id} could not be stopped (${e instanceof Error ? e.message : String(e)}). ` +
-            administrator,
+        : `GemStone session ${id} could not be stopped: ` +
+            `${asSentence(e instanceof Error ? e.message : String(e))} ${administrator}`,
     );
     deps.refresh(false);
     return;
@@ -487,7 +492,7 @@ export async function killStoneSessionCommand(
     );
   } catch (e) {
     void vscode.window.showWarningMessage(
-      `GemStone session ${id} could not be killed: ${(e instanceof Error ? e.message : String(e)).replace(/\.?$/, '.')} ` +
+      `GemStone session ${id} could not be killed: ${asSentence(e instanceof Error ? e.message : String(e))} ` +
         `Someone allowed to end process ${gemPid} on ${host} can run: kill -9 ${gemPid}`,
     );
     deps.refresh(false);

@@ -3,7 +3,7 @@ vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 import { GciLibrary } from '../../gciLibrary';
 import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../../gciConstants';
-import { runNbCall } from '../../nbRunner';
+import { isRunning, runNbCall } from '../../nbRunner';
 import * as queries from '../../browserQueries';
 import { ClassItem, ExplorerController } from '../../gemstoneExplorer';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
@@ -87,6 +87,19 @@ describe("the Classes pane's lookups (integration)", () => {
     return run;
   }
 
+  // Reads the way an opening tab does, holding the session long enough for a click to
+  // arrive while it runs.
+  function readDocumentSlowly(on: ActiveSession): Promise<string> {
+    const read = queries.queuedNbQueryExecutorUsing(on)(
+      `(Delay forMilliseconds: 300) wait. 'document'`,
+    );
+    onTestFinished(async () => {
+      await read.catch(() => {});
+      on.logout();
+    });
+    return read;
+  }
+
   function controllerOn(on: ActiveSession): ExplorerController {
     const sessionManager = { getSelectedSession: () => on } as unknown as SessionManager;
     const ctl = new ExplorerController(sessionManager);
@@ -141,27 +154,86 @@ describe("the Classes pane's lookups (integration)", () => {
     expect(blocking).not.toHaveBeenCalled();
   });
 
-  it('keeps the selected class when a click is refused during a run', () => {
+  it('selects a clicked class without a call that blocks until GemStone answers', async () => {
+    const transient = transientSession();
+    onTestFinished(() => {
+      transient.logout();
+    });
+    defineFixture(transient);
+    const ctl = controllerOn(transient);
+    const blocking = vi.spyOn(transient, 'executeAndFetchString');
+
+    await ctl.selectClassFromTree(new ClassItem(CHILD));
+
+    expect(blocking).not.toHaveBeenCalled();
+    expect(ctl.state.className).toBe(CHILD);
+    expect(ctl.hierarchyChildren()).not.toEqual([]);
+  });
+
+  it('keeps the selected class when a click is refused during a run', async () => {
     const transient = transientSession();
     defineFixture(transient);
     const ctl = controllerOn(transient);
     ctl.selectClass(new ClassItem(PARENT), false);
     void runFor(transient, 1);
 
-    ctl.selectClassFromTree(new ClassItem(CHILD));
+    await ctl.selectClassFromTree(new ClassItem(CHILD));
 
     expect(ctl.state.className).toBe(PARENT);
   });
 
-  it('keeps the selected dictionary when a click is refused during a run', () => {
+  it('selects a clicked dictionary without a call that blocks until GemStone answers', async () => {
+    const transient = transientSession();
+    onTestFinished(() => {
+      transient.logout();
+    });
+    const ctl = controllerOn(transient);
+    const globals = queries.getDictionaryNames(transient).indexOf('Globals') + 1;
+    const blocking = vi.spyOn(transient, 'executeAndFetchString');
+
+    await ctl.selectDictFromTree({ dictName: 'Globals', dictIndex: globals });
+
+    expect(blocking).not.toHaveBeenCalled();
+    expect(ctl.state.dictName).toBe('Globals');
+    expect(ctl.filteredCategoryPaths()).not.toEqual([]);
+  });
+
+  it('keeps the selected dictionary when a click is refused during a run', async () => {
     const transient = transientSession();
     const ctl = controllerOn(transient);
     const globals = queries.getDictionaryNames(transient).indexOf('Globals') + 1;
     void runFor(transient, 1);
 
-    ctl.selectDictFromTree({ dictName: 'Globals', dictIndex: globals });
+    await ctl.selectDictFromTree({ dictName: 'Globals', dictIndex: globals });
 
     expect(ctl.state.dictName).toBe('UserGlobals');
+  });
+
+  it('selects a class clicked while a document is still loading', async () => {
+    const transient = transientSession();
+    defineFixture(transient);
+    const ctl = controllerOn(transient);
+    ctl.selectClass(new ClassItem(PARENT), false);
+    const documentRead = readDocumentSlowly(transient);
+    await vi.waitFor(() => expect(isRunning(transient)).toBe(true));
+
+    await ctl.selectClassFromTree(new ClassItem(CHILD));
+
+    await documentRead;
+    expect(ctl.state.className).toBe(CHILD);
+  });
+
+  it('selects a dictionary clicked while a document is still loading', async () => {
+    const transient = transientSession();
+    const ctl = controllerOn(transient);
+    const globals = queries.getDictionaryNames(transient).indexOf('Globals') + 1;
+    const documentRead = readDocumentSlowly(transient);
+    await vi.waitFor(() => expect(isRunning(transient)).toBe(true));
+
+    await ctl.selectDictFromTree({ dictName: 'Globals', dictIndex: globals });
+
+    await documentRead;
+    expect(ctl.state.dictName).toBe('Globals');
   });
 
   it('selects a dictionary clicked again once the run that refused it ends', async () => {
@@ -169,10 +241,10 @@ describe("the Classes pane's lookups (integration)", () => {
     const ctl = controllerOn(transient);
     const globals = queries.getDictionaryNames(transient).indexOf('Globals') + 1;
     const run = runFor(transient, 1);
-    ctl.selectDictFromTree({ dictName: 'Globals', dictIndex: globals });
+    await ctl.selectDictFromTree({ dictName: 'Globals', dictIndex: globals });
     await run;
 
-    ctl.selectDictFromTree({ dictName: 'Globals', dictIndex: globals });
+    await ctl.selectDictFromTree({ dictName: 'Globals', dictIndex: globals });
 
     expect(ctl.state.dictName).toBe('Globals');
   });
@@ -195,10 +267,10 @@ describe("the Classes pane's lookups (integration)", () => {
     const ctl = controllerOn(transient);
     ctl.selectClass(new ClassItem(PARENT), false);
     const run = runFor(transient, 1);
-    ctl.selectClassFromTree(new ClassItem(CHILD));
+    await ctl.selectClassFromTree(new ClassItem(CHILD));
     await run;
 
-    ctl.selectClassFromTree(new ClassItem(CHILD));
+    await ctl.selectClassFromTree(new ClassItem(CHILD));
 
     expect(ctl.state.className).toBe(CHILD);
   });

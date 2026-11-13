@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
@@ -29,6 +30,7 @@ import {
   isAlive,
   makeFixture,
   partialTree,
+  productDirName,
   progressLog,
   tearDown,
   until,
@@ -304,28 +306,67 @@ describe.runIf(process.platform === 'linux' && realUnzip && realPython)(
   },
 );
 
-// Attaching and detaching a disk image takes seconds apiece on a CI runner,
-// which puts these past vitest's default 5 s.
+// Attaching and ejecting a disk image can take several seconds on a CI runner,
+// past vitest's default 5 s. Creating one takes about eight more, so the image is
+// built once and copied into each test. Each test points TMPDIR at a folder of
+// its own, where the unpack makes its mount point, so `afterEach` can force-eject
+// whatever a test left mounted there, and fails if that eject fails.
 describe.runIf(process.platform === 'darwin')(
   'Unpacking a GemStone disk image on macOS',
   { timeout: 30_000 },
   () => {
-    let volume: string;
+    const volume = `JasperTest${process.pid}${Date.now()}`;
+    let imageDir: string;
+    let image: string;
+    let mountsDir: string;
+    const savedTmpdir = process.env.TMPDIR;
+
+    beforeAll(() => {
+      imageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jasper-dmg-'));
+      image = buildDmg(imageDir, productDirName(new SysadminStorage().getPlatformSuffix()), volume);
+    }, 30_000);
+
+    afterAll(() => {
+      if (imageDir) fs.rmSync(imageDir, { recursive: true, force: true });
+    });
 
     beforeEach(() => {
       setUp('dmg');
-      volume = `JasperTest${process.pid}${Date.now()}`;
-      buildDmg(f, volume);
-    }, 30_000);
+      fs.copyFileSync(image, f.archivePath, fs.constants.COPYFILE_FICLONE);
+      mountsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jasper-mounts-'));
+      process.env.TMPDIR = mountsDir;
+    });
+
+    /** Mount points an unpack made and did not remove. */
+    const mountPointsLeft = () => fs.readdirSync(mountsDir).map((n) => path.join(mountsDir, n));
 
     afterEach(async () => {
-      await tearDown(f);
-      // Only if a test left it mounted; the point of these tests is that none does.
+      // Assigning undefined would set it to the string "undefined", which
+      // os.tmpdir() then answers as a folder relative to the working directory.
+      if (savedTmpdir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = savedTmpdir;
       try {
-        execFileSync('hdiutil', ['detach', `/Volumes/${volume}`, '-force'], { stdio: 'ignore' });
-      } catch {
-        /* not mounted */
+        await tearDown(f);
+      } finally {
+        // Only if a test left one; the point of these tests is that none does.
+        for (const dir of mountPointsLeft()) {
+          try {
+            execFileSync('hdiutil', ['detach', dir, '-force'], { stdio: 'ignore' });
+          } catch {
+            /* not mounted: an empty folder the rmdir below removes */
+          }
+          try {
+            fs.rmdirSync(dir);
+          } catch {
+            /* still mounted, which the check below reports */
+          }
+        }
       }
+      const left = mountPointsLeft();
+      if (left.length > 0) {
+        throw new Error(`Still mounted, so the next test would see it: ${left.join(', ')}`);
+      }
+      fs.rmdirSync(mountsDir);
     }, 30_000);
 
     it('copies the tree out, counting against its total, and ejects the image', async () => {
@@ -335,7 +376,7 @@ describe.runIf(process.platform === 'darwin')(
 
       expect(fs.existsSync(path.join(f.productDir, 'bin', 'gem'))).toBe(true);
       expect(messages).toContainEqual(expect.stringMatching(/^Copied \d+ of \d+ files \(\d+%\)/));
-      expect(fs.existsSync(`/Volumes/${volume}`)).toBe(false);
+      expect(mountPointsLeft()).toEqual([]);
     });
 
     it('unpacking again replaces the files of the existing tree rather than nesting a copy in it', async () => {
@@ -363,7 +404,7 @@ describe.runIf(process.platform === 'darwin')(
       await expect(extracting).rejects.toBeInstanceOf(InstallCancelledError);
       expect(fakePids(f).filter(isAlive)).toEqual([]);
       expect(fs.existsSync(f.productDir)).toBe(false);
-      expect(fs.existsSync(`/Volumes/${volume}`)).toBe(false);
+      expect(mountPointsLeft()).toEqual([]);
       expect(fs.existsSync(f.archivePath)).toBe(true);
     });
 
@@ -375,7 +416,24 @@ describe.runIf(process.platform === 'darwin')(
       );
 
       expect(fs.existsSync(f.productDir)).toBe(false);
-      expect(fs.existsSync(`/Volumes/${volume}`)).toBe(false);
+      expect(mountPointsLeft()).toEqual([]);
+    });
+
+    it('fails with hdiutil’s words, leaving nothing attached, when the image has nothing to mount', async () => {
+      // A partition with no file system on it.
+      execFileSync(
+        'hdiutil',
+        ['create', '-ov', '-size', '1m', '-layout', 'GPTSPUD', f.archivePath],
+        {
+          stdio: 'ignore',
+        },
+      );
+
+      await expect(extract()).rejects.toThrow(/attach failed with exit code 1: \S/);
+
+      expect(mountPointsLeft()).toEqual([]);
+      const attached = execFileSync('hdiutil', ['info'], { encoding: 'utf8' });
+      expect(attached).not.toContain(fs.realpathSync(f.archivePath));
     });
 
     it('warns, naming the volume, when the image will not eject', async () => {
@@ -387,9 +445,10 @@ describe.runIf(process.platform === 'darwin')(
 
       await extract();
 
+      const [mountPoint] = mountPointsLeft();
       expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
-        `The GemStone disk image is still mounted at /Volumes/${volume}: resource busy. ` +
-          'Eject it in Finder.',
+        `The GemStone disk image is still mounted at ${mountPoint}: resource busy. ` +
+          `Eject it with: hdiutil detach "${mountPoint}"`,
       );
     });
   },
