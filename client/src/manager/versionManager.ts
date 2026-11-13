@@ -61,6 +61,19 @@ interface ChildResult {
 /** Progress for an unpack: a message, and an increment that fills the notification's bar. */
 type UnpackProgress = vscode.Progress<{ message?: string; increment?: number }>;
 
+/** How each unpack's mount point in the temp folder is named; the pid of the process that made it follows. */
+const MOUNT_PREFIX = 'jasper-mount-';
+
+/** True unless no process has this pid; one owned by another user still counts as alive. */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
 /** The last few lines of a child's stderr, for an error message. */
 function stderrTail(stderr: string): string {
   return stderr ? `: ${stderr.trim().split('\n').slice(-3).join(' | ')}` : '';
@@ -594,80 +607,129 @@ export class VersionManager {
     wholeImage = false,
   ): Promise<void> {
     progress.report({ message: 'Mounting disk image...' });
-    // Not cancellable: an attach killed partway can leave the image attached but
-    // not yet mounted, which a detach of the mount point cannot reach. It takes
-    // seconds; the copy is what takes minutes.
+    await this.ejectLeftoverMounts();
     // Jasper picks the mount point rather than reading it back out of hdiutil's
     // output, whose order isn't fixed (#925). An image with nothing to mount
-    // then fails the attach itself, leaving nothing attached.
-    const mountPoint = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'jasper-mount-'));
-    // Only an empty temp folder, so failing to remove it must not replace the
-    // error that brought us here, nor fail an unpack that worked.
-    const removeMountPoint = () => fs.promises.rmdir(mountPoint).catch(() => undefined);
-    const attach = await this.run('hdiutil', [
-      'attach',
-      '-nobrowse',
-      '-mountpoint',
-      mountPoint,
-      dmgPath,
-    ]).catch(async (e: unknown) => {
-      await removeMountPoint();
-      throw e;
-    });
-    if (attach.code !== 0) {
-      await removeMountPoint();
-      throw new Error(
-        `hdiutil attach failed with exit code ${attach.code}${stderrTail(attach.stderr)}`,
-      );
-    }
-
+    // then fails the attach itself, leaving nothing attached. The pid in its
+    // name tells a later unpack whether the window that made it is still alive.
+    const mountPoint = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), `${MOUNT_PREFIX}${process.pid}-`),
+    );
     try {
-      // A server image holds one GemStone64Bit… folder, copied in by name. A
-      // client image's whole contents go into destDir; hidden volume entries
-      // (.Trashes, .fseventsd) are not GemTalk's and are left behind.
-      const entries = await fs.promises.readdir(mountPoint);
-      const picked = wholeImage
-        ? entries.filter((e) => !e.startsWith('.'))
-        : entries.filter((e) => e.startsWith('GemStone64Bit')).slice(0, 1);
-      if (!picked.length) {
-        throw new Error(`No GemStone directory found in mounted DMG at ${mountPoint}`);
+      // Not cancellable: an attach killed partway can leave the image attached but
+      // not yet mounted, which a detach of the mount point cannot reach. It takes
+      // seconds; the copy is what takes minutes.
+      const attach = await this.run('hdiutil', [
+        'attach',
+        '-nobrowse',
+        '-mountpoint',
+        mountPoint,
+        dmgPath,
+      ]);
+      if (attach.code !== 0) {
+        throw new Error(
+          `hdiutil attach failed with exit code ${attach.code}${stderrTail(attach.stderr)}`,
+        );
       }
-      progress.report({ message: 'Copying files...' });
-      await fs.promises.mkdir(destDir, { recursive: true });
-      for (const entry of picked) {
-        const srcPath = path.join(mountPoint, entry);
-        // Undefined for a plain file, which readdir refuses.
-        const names = await fs.promises
-          .readdir(srcPath, { recursive: true })
-          .catch(() => undefined);
-        // cp -v names the top directory too, hence the one.
-        const total = names && names.length + 1;
-        // `src/.` copies a folder's contents, so a re-download replaces the files
-        // of an existing copy instead of nesting a second one inside it.
-        const source = names ? `${srcPath}/.` : srcPath;
-        // -v prints a line per file, which is all the progress cp can give.
-        const cp = await this.run('cp', ['-Rv', source, path.join(destDir, entry)], {
-          token,
-          onLine: this.fileCounter(progress, 'Copied', total),
-        });
-        if (cp.code !== 0) {
-          throw new Error(`cp failed with exit code ${cp.code}${stderrTail(cp.stderr)}`);
-        }
+      try {
+        await this.copyFromImage(mountPoint, destDir, progress, token, wholeImage);
+      } finally {
+        progress.report({ message: 'Unmounting disk image...' });
+        await this.detachImage(mountPoint);
       }
-      appendSysadmin(`Extracted ${picked.join(', ')} to ${destDir}`);
     } finally {
-      progress.report({ message: 'Unmounting disk image...' });
-      const detach = await this.run('hdiutil', ['detach', mountPoint]);
-      if (detach.code === 0) {
-        await removeMountPoint();
-      } else {
-        // -nobrowse keeps the image out of Finder, so Finder can't eject it.
-        const message =
-          `The GemStone disk image is still mounted at ${mountPoint}` +
-          `${stderrTail(detach.stderr)}. Eject it with: hdiutil detach "${mountPoint}"`;
-        appendSysadmin(message);
-        void vscode.window.showWarningMessage(message);
+      // Fails harmlessly while the image is still mounted there, and must not
+      // replace the error that brought us here, nor fail an unpack that worked.
+      await fs.promises.rmdir(mountPoint).catch(() => undefined);
+    }
+  }
+
+  private async copyFromImage(
+    mountPoint: string,
+    destDir: string,
+    progress: UnpackProgress,
+    token: vscode.CancellationToken,
+    wholeImage: boolean,
+  ): Promise<void> {
+    // A server image holds one GemStone64Bit… folder, copied in by name. A
+    // client image's whole contents go into destDir; hidden volume entries
+    // (.Trashes, .fseventsd) are not GemTalk's and are left behind.
+    const entries = await fs.promises.readdir(mountPoint);
+    const picked = wholeImage
+      ? entries.filter((e) => !e.startsWith('.'))
+      : entries.filter((e) => e.startsWith('GemStone64Bit')).slice(0, 1);
+    if (!picked.length) {
+      throw new Error(`No GemStone directory found in mounted DMG at ${mountPoint}`);
+    }
+    progress.report({ message: 'Copying files...' });
+    await fs.promises.mkdir(destDir, { recursive: true });
+    for (const entry of picked) {
+      const srcPath = path.join(mountPoint, entry);
+      // Undefined for a plain file, which readdir refuses.
+      const names = await fs.promises.readdir(srcPath, { recursive: true }).catch(() => undefined);
+      // cp -v names the top directory too, hence the one.
+      const total = names && names.length + 1;
+      // `src/.` copies a folder's contents, so a re-download replaces the files
+      // of an existing copy instead of nesting a second one inside it.
+      const source = names ? `${srcPath}/.` : srcPath;
+      // -v prints a line per file, which is all the progress cp can give.
+      const cp = await this.run('cp', ['-Rv', source, path.join(destDir, entry)], {
+        token,
+        onLine: this.fileCounter(progress, 'Copied', total),
+      });
+      if (cp.code !== 0) {
+        throw new Error(`cp failed with exit code ${cp.code}${stderrTail(cp.stderr)}`);
       }
+    }
+    appendSysadmin(`Extracted ${picked.join(', ')} to ${destDir}`);
+  }
+
+  /**
+   * Eject the image, or warn that it is still mounted. Never throws: it runs in
+   * a `finally`, where a throw would replace the unpack's own error.
+   */
+  private async detachImage(mountPoint: string): Promise<void> {
+    const detach = await this.run('hdiutil', ['detach', mountPoint]).catch(
+      (e: unknown): ChildResult => ({
+        code: -1,
+        stderr: e instanceof Error ? e.message : String(e),
+      }),
+    );
+    if (detach.code === 0) return;
+    // -nobrowse keeps the image out of Finder, so Finder can't eject it.
+    const message =
+      `The GemStone disk image is still mounted at ${mountPoint}` +
+      `${stderrTail(detach.stderr)}. Eject it with: hdiutil detach "${mountPoint}"`;
+    appendSysadmin(message);
+    void vscode.window.showWarningMessage(message);
+  }
+
+  /**
+   * Eject and remove what an unpack in a window that has since died left in
+   * the temp folder: its `finally` never ran. A mount point whose window is
+   * still alive may be mid-copy, so it is left alone. Nothing here may fail
+   * the unpack about to start.
+   */
+  private async ejectLeftoverMounts(): Promise<void> {
+    const tmp = os.tmpdir();
+    const names = await fs.promises.readdir(tmp).catch(() => [] as string[]);
+    for (const name of names) {
+      const pid = Number(new RegExp(`^${MOUNT_PREFIX}(\\d+)-`).exec(name)?.[1]);
+      if (!pid || isProcessAlive(pid)) continue;
+      const dir = path.join(tmp, name);
+      // Fails on a folder with nothing mounted on it, which then just goes.
+      const detach = await this.run('hdiutil', ['detach', dir]).catch(() => undefined);
+      if (detach?.code === 0) {
+        appendSysadmin(`Ejected a GemStone disk image an earlier unpack left mounted at ${dir}`);
+      }
+      await fs.promises
+        .rmdir(dir)
+        .catch(() =>
+          appendSysadmin(
+            `An earlier unpack left ${dir} behind, and it could not be removed. If a GemStone ` +
+              `disk image is still mounted there, eject it with: hdiutil detach "${dir}"`,
+          ),
+        );
     }
   }
 
