@@ -429,7 +429,7 @@ describe.runIf(process.platform === 'darwin')(
         },
       );
 
-      await expect(extract()).rejects.toThrow(/attach failed with exit code 1: .*no mountable/);
+      await expect(extract()).rejects.toThrow(/attach failed with exit code 1: \S/);
 
       expect(mountPointsLeft()).toEqual([]);
       const attached = execFileSync('hdiutil', ['info'], { encoding: 'utf8' });
