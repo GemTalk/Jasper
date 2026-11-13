@@ -34,6 +34,8 @@ jobs:
       PROBE_OUT_DIR: ${{ github.workspace }}/probe852
       PROBE_SECONDS: '150'
       PROBE_LOOP_MINUTES: '40'
+      # Enough stuck gems to compare an immediate stop with one 3 s after login.
+      PROBE_STOP_AFTER_STUCK: '6'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -84,9 +86,11 @@ jobs:
             npm run test:client > "$PROBE_OUT_DIR/suite-$i.log" 2>&1 || echo "iteration $i: suite exited non-zero"
             grep -E 'had not left the stone|took [0-9]+ ms to leave|STUCK|Test Files|Tests ' "$PROBE_OUT_DIR/suite-$i.log" | sed 's/\x1b\[[0-9;]*m//g'
             echo "::endgroup::"
-            if grep -q 'STUCK' "$PROBE_OUT_DIR/$PROBE_LEG.txt" 2>/dev/null || grep -q 'had not left the stone' "$PROBE_OUT_DIR/suite-$i.log"; then
-              echo "::error::A gem stayed on the stone in iteration $i"
-              grep -h -E '^(busy|idle)' "$PROBE_OUT_DIR/$PROBE_LEG.txt" | tail -n 9
+            n=$(grep -c '^##### STUCK' "$PROBE_OUT_DIR/$PROBE_LEG.txt" 2>/dev/null || true)
+            echo "stuck so far: ${n:-0}"
+            grep -h -E '^(busy|idle)' "$PROBE_OUT_DIR/$PROBE_LEG.txt" | tail -n 4
+            if [ "${n:-0}" -ge "$PROBE_STOP_AFTER_STUCK" ] || grep -q 'had not left the stone' "$PROBE_OUT_DIR/suite-$i.log"; then
+              echo "::error::${n:-0} gems stayed on the stone by iteration $i"
               exit 1
             fi
             # Keep only failing suite logs, so the artifact stays small.
