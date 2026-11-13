@@ -1,55 +1,55 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
-import { buildDmg } from './extractFixture';
+import { ExtractFixture, buildDmg, fakeCommand, makeFixture, tearDown } from './extractFixture';
 
 const product = 'GemStone64Bit3.7.5-arm64.Darwin';
-const savedPath = process.env.PATH;
-let dir: string;
-
-function fakeHdiutil(script: string): void {
-  const bin = path.join(dir, 'bin');
-  fs.mkdirSync(bin);
-  fs.writeFileSync(path.join(bin, 'hdiutil'), `#!/bin/sh\n${script}\n`, { mode: 0o755 });
-  process.env.PATH = `${bin}${path.delimiter}${savedPath}`;
-}
+let f: ExtractFixture;
 
 describe.runIf(process.platform === 'darwin')(
   'Building the unpack tests’ disk image',
   { timeout: 30_000 },
   () => {
     beforeEach(() => {
-      dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jasper-builddmg-'));
+      f = makeFixture('-arm64.Darwin', 'dmg');
     });
 
-    afterEach(() => {
-      process.env.PATH = savedPath;
-      fs.rmSync(dir, { recursive: true, force: true });
+    afterEach(async () => {
+      await tearDown(f);
     });
 
     it('tries again, over what it left, when creating the image fails once', () => {
       // The image path is hdiutil's last argument.
-      fakeHdiutil(
-        `if [ ! -f "${dir}/failed" ]; then touch "${dir}/failed"\n` +
+      fakeCommand(
+        f,
+        'hdiutil',
+        `if [ ! -f "${f.tmpDir}/failed" ]; then touch "${f.tmpDir}/failed"\n` +
           '  for a; do last="$a"; done; echo junk > "$last"\n' +
           '  echo "hdiutil: create failed - Resource busy" >&2; exit 1\n' +
           'fi\nexec /usr/bin/hdiutil "$@"',
       );
 
-      const image = buildDmg(dir, product, `JasperRetry${process.pid}${Date.now()}`);
+      const image = buildDmg(f.tmpDir, product, `JasperRetry${process.pid}${Date.now()}`);
 
-      expect(fs.existsSync(path.join(dir, 'failed'))).toBe(true);
+      expect(fs.existsSync(path.join(f.tmpDir, 'failed'))).toBe(true);
       expect(fs.readFileSync(image, 'utf8')).not.toBe('junk\n');
     });
 
-    it('fails with hdiutil’s own words when creating the image fails twice', () => {
-      fakeHdiutil('echo "hdiutil: create failed - Resource busy" >&2; exit 1');
+    it('fails with hdiutil’s words from both attempts when creating the image fails twice', () => {
+      fakeCommand(
+        f,
+        'hdiutil',
+        `if [ ! -f "${f.tmpDir}/failed" ]; then touch "${f.tmpDir}/failed"\n` +
+          '  echo "hdiutil: create failed - Resource busy" >&2; exit 1\n' +
+          'fi\necho "hdiutil: create failed - No space left on device" >&2; exit 1',
+      );
 
-      expect(() => buildDmg(dir, product, 'JasperRetry')).toThrow(/create failed - Resource busy/);
+      expect(() => buildDmg(f.tmpDir, product, 'JasperRetry')).toThrow(
+        /Resource busy[\s\S]*No space left on device/,
+      );
     });
   },
 );

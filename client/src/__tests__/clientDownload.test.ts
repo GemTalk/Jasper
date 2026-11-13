@@ -578,11 +578,13 @@ describe('VersionManager.versionsFrom (client files)', () => {
 describe('VersionManager.downloadAndExtractClient on macOS', () => {
   const dmgPath = () => path.join(tmpDir, 'GemStoneClientLibs3.7.5-arm64.Darwin.dmg');
   const clientDir = () => path.join(tmpDir, 'GemStoneClientLibs3.7.5-arm64.Darwin');
-  const mountPoint = '/Volumes/GemStoneClientLibs3.7.5-arm64.Darwin';
+  /** Where Jasper asked hdiutil to mount the image, taken from the attach. */
+  let mountPoint = '';
 
   /** Downloads 3.7.5 from a mounted image holding one 3.7.5 folder; returns the commands run. */
   async function downloadFromImage(): Promise<[string, readonly string[]][]> {
     onPlatform('darwin', 'arm64');
+    mountPoint = '';
     const manager = new VersionManager(new SysadminStorage());
     vi.spyOn(manager as unknown as PrivateDownloadHost, 'downloadFile').mockImplementation(
       async () => fs.writeFileSync(dmgPath(), ''),
@@ -594,8 +596,8 @@ describe('VersionManager.downloadAndExtractClient on macOS', () => {
     ) =>
       String(p) === mountPoint
         ? Promise.resolve(['.fseventsd', '3.7.5'])
-        : // path.join gives backslashes on Windows; the mount point is a POSIX path.
-          path.normalize(String(p)).startsWith(path.normalize(mountPoint))
+        : // normalize, so separators compare alike on Windows.
+          mountPoint && path.normalize(String(p)).startsWith(path.normalize(mountPoint))
           ? Promise.resolve([])
           : realReaddir(p, opts as never)) as typeof fs.promises.readdir);
     const calls: [string, readonly string[]][] = [];
@@ -607,12 +609,7 @@ describe('VersionManager.downloadAndExtractClient on macOS', () => {
         kill: () => true,
       });
       if (cmd === 'hdiutil' && args[0] === 'attach') {
-        setImmediate(() =>
-          child.stdout.emit(
-            'data',
-            Buffer.from(`<key>mount-point</key><string>${mountPoint}</string>\n`),
-          ),
-        );
+        mountPoint = args[args.indexOf('-mountpoint') + 1];
       }
       if (cmd === 'cp') {
         // What the copy lands: the image's 3.7.5/64bit folder.
@@ -638,6 +635,7 @@ describe('VersionManager.downloadAndExtractClient on macOS', () => {
       ['cp', ['-Rv', `${path.join(mountPoint, '3.7.5')}/.`, path.join(clientDir(), '3.7.5')]],
     ]);
     expect(calls.map(([cmd, args]) => `${cmd} ${args[0]}`)).toContain('hdiutil detach');
+    expect(fs.existsSync(mountPoint)).toBe(false);
     expect(fs.existsSync(dmgPath())).toBe(false);
     expect(new SysadminStorage().getClientGciPath('3.7.5')).toBe(
       path.join(clientDir(), '3.7.5', '64bit', 'libgcits-3.7.5-64.dylib'),

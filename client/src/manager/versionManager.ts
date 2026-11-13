@@ -1,5 +1,6 @@
 import * as https from 'https';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { ChildProcess, execSync, spawn } from 'child_process';
@@ -63,21 +64,6 @@ type UnpackProgress = vscode.Progress<{ message?: string; increment?: number }>;
 /** The last few lines of a child's stderr, for an error message. */
 function stderrTail(stderr: string): string {
   return stderr ? `: ${stderr.trim().split('\n').slice(-3).join(' | ')}` : '';
-}
-
-/**
- * The mount point from `hdiutil attach -plist`, or undefined if nothing mounted.
- * Found by its key, not its position, because hdiutil's output has no fixed
- * order. The text form sorts disk names as strings, so with disk9 and disk10
- * its last line is `/dev/disk9s1 Apple_APFS`, which has no mount point.
- *
- * The value is read as is, not XML-unescaped, because GemTalk's volume names
- * have no `&`, `<` or `>`. If a future image's name had one, hdiutil would
- * report it escaped (`R&amp;D`) and the unpack would fail on a folder that
- * doesn't exist.
- */
-export function mountPointFromAttachPlist(plist: string): string | undefined {
-  return plist.match(/<key>mount-point<\/key>\s*<string>([^<]*)<\/string>/)?.[1];
 }
 
 /**
@@ -608,21 +594,31 @@ export class VersionManager {
     wholeImage = false,
   ): Promise<void> {
     progress.report({ message: 'Mounting disk image...' });
-    // Not cancellable: an attach killed partway can leave the image mounted with
-    // no mount point to detach. It takes seconds; the copy is what takes minutes.
-    const attachLines: string[] = [];
-    const attach = await this.run('hdiutil', ['attach', '-nobrowse', '-plist', dmgPath], {
-      onLine: (line) => attachLines.push(line),
+    // Not cancellable: an attach killed partway can leave the image attached but
+    // not yet mounted, which a detach of the mount point cannot reach. It takes
+    // seconds; the copy is what takes minutes.
+    // Jasper picks the mount point rather than reading it back out of hdiutil's
+    // output, whose order isn't fixed (#925). An image with nothing to mount
+    // then fails the attach itself, leaving nothing attached.
+    const mountPoint = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'jasper-mount-'));
+    // Only an empty temp folder, so failing to remove it must not replace the
+    // error that brought us here, nor fail an unpack that worked.
+    const removeMountPoint = () => fs.promises.rmdir(mountPoint).catch(() => undefined);
+    const attach = await this.run('hdiutil', [
+      'attach',
+      '-nobrowse',
+      '-mountpoint',
+      mountPoint,
+      dmgPath,
+    ]).catch(async (e: unknown) => {
+      await removeMountPoint();
+      throw e;
     });
     if (attach.code !== 0) {
+      await removeMountPoint();
       throw new Error(
         `hdiutil attach failed with exit code ${attach.code}${stderrTail(attach.stderr)}`,
       );
-    }
-    const attached = attachLines.join('\n');
-    const mountPoint = mountPointFromAttachPlist(attached);
-    if (!mountPoint) {
-      throw new Error(`hdiutil attach reported no mount point for ${dmgPath}:\n${attached}`);
     }
 
     try {
@@ -662,10 +658,13 @@ export class VersionManager {
     } finally {
       progress.report({ message: 'Unmounting disk image...' });
       const detach = await this.run('hdiutil', ['detach', mountPoint]);
-      if (detach.code !== 0) {
+      if (detach.code === 0) {
+        await removeMountPoint();
+      } else {
+        // -nobrowse keeps the image out of Finder, so Finder can't eject it.
         const message =
           `The GemStone disk image is still mounted at ${mountPoint}` +
-          `${stderrTail(detach.stderr)}. Eject it in Finder.`;
+          `${stderrTail(detach.stderr)}. Eject it with: hdiutil detach "${mountPoint}"`;
         appendSysadmin(message);
         void vscode.window.showWarningMessage(message);
       }
