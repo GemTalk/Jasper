@@ -1,0 +1,103 @@
+name: Probe 852 (stuck logout)
+
+# THROWAWAY workflow for GemTalk/Jasper#852, only on the eric/issue852-probe branch, never merged.
+# Each leg loops the client suite with stuckLogoutProbe.integration.test.ts running alongside it,
+# and stops as soon as a gem stays on the stone (the probe's STUCK report, or the activeSession
+# tests' own "had not left the stone"). fail-fast then cancels the other legs.
+
+on:
+  push:
+    branches: [eric/issue852-probe]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: probe-852
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: ${{ matrix.platform }} ${{ matrix.gemstone-version }}
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 55
+    strategy:
+      fail-fast: true
+      matrix:
+        platform: [ubuntu-latest, windows-latest, macos-latest]
+        gemstone-version: ['3.6.2']
+    env:
+      GLIBC_TUNABLES: glibc.rtld.execstack=2
+      JASPER_SKIP_SUPPLY_CHAIN_TEST: '1'
+      VITEST_RETRY: '0'
+      PROBE_LEG: ${{ matrix.platform }}-${{ matrix.gemstone-version }}
+      PROBE_OUT_DIR: ${{ github.workspace }}/probe852
+      PROBE_SECONDS: '150'
+      PROBE_LOOP_MINUTES: '40'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run compile
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: client/tmp/downloads
+          key: gemstone-server-download-${{ runner.os == 'macOS' && 'darwin' || 'linux' }}-${{ matrix.gemstone-version }}
+          enableCrossOsArchive: true
+      - name: Setup GemStone in Windows
+        if: runner.os == 'Windows'
+        timeout-minutes: 6
+        uses: ./.github/actions/setup-gemstone-in-windows # zizmor: ignore[self-repository]
+        with:
+          gemstone-version: ${{ matrix.gemstone-version }}
+      - name: gdb in WSL
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: wsl-bash {0}
+        run: (apt-get update -qq && apt-get install -y -qq gdb) || (sudo apt-get update -qq && sudo apt-get install -y -qq gdb)
+      - name: gdb on Linux
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gdb
+      - name: Configure macOS shared memory
+        if: runner.os == 'macOS'
+        run: sudo ./resources/setSharedMemory.sh
+      - name: Setup GemStone in Linux
+        if: runner.os != 'Windows'
+        env:
+          GEMSTONE_VERSION: ${{ matrix.gemstone-version }}
+        run: npm run test:server:start -- "$GEMSTONE_VERSION"
+      - name: Loop the client suite with the probe until a gem sticks
+        shell: bash
+        run: |
+          mkdir -p "$PROBE_OUT_DIR"
+          end=$(( $(date +%s) + PROBE_LOOP_MINUTES * 60 ))
+          i=0
+          while [ "$(date +%s)" -lt "$end" ]; do
+            i=$((i + 1))
+            echo "::group::iteration $i"
+            npm run test:client > "$PROBE_OUT_DIR/suite-$i.log" 2>&1 || echo "iteration $i: suite exited non-zero"
+            grep -E 'had not left the stone|took [0-9]+ ms to leave|STUCK|Test Files|Tests ' "$PROBE_OUT_DIR/suite-$i.log" | sed 's/\x1b\[[0-9;]*m//g'
+            echo "::endgroup::"
+            if grep -q 'STUCK' "$PROBE_OUT_DIR/$PROBE_LEG.txt" 2>/dev/null || grep -q 'had not left the stone' "$PROBE_OUT_DIR/suite-$i.log"; then
+              echo "::error::A gem stayed on the stone in iteration $i"
+              grep -h -E '^(busy|idle)' "$PROBE_OUT_DIR/$PROBE_LEG.txt" | tail -n 9
+              exit 1
+            fi
+            # Keep only failing suite logs, so the artifact stays small.
+            grep -q ' failed' "$PROBE_OUT_DIR/suite-$i.log" || rm -f "$PROBE_OUT_DIR/suite-$i.log"
+          done
+          echo "No stuck gem in $i iterations"
+          grep -h -E '^(busy|idle)' "$PROBE_OUT_DIR/$PROBE_LEG.txt" | tail -n 30
+      - name: Upload probe output
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: probe852-${{ matrix.platform }}-${{ matrix.gemstone-version }}
+          path: ${{ github.workspace }}/probe852
+          if-no-files-found: ignore
