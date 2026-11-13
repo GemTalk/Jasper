@@ -105,11 +105,25 @@ export function buildZip(f: ExtractFixture, python: string, comment = ''): void 
 /** Writes `<productName>.dmg` in `workDir` and returns its path. */
 export function buildDmg(workDir: string, productName: string, volume: string): string {
   const image = path.join(workDir, `${productName}.dmg`);
-  execFileSync(
-    'hdiutil',
-    ['create', '-srcfolder', buildTree(workDir, productName), '-volname', volume, image],
-    { stdio: 'ignore' },
-  );
+  const src = buildTree(workDir, productName);
+  // -ov, so the retry can write over what a failed attempt left.
+  const args = ['create', '-ov', '-srcfolder', src, '-volname', volume, image];
+  // Piped so a failure's message carries hdiutil's own words.
+  const create = () => execFileSync('hdiutil', args, { stdio: 'pipe' });
+  // Retried once: it has failed on a macOS CI runner and passed on a re-run (#925).
+  // The pause gives whatever failed it, such as a busy volume, time to clear.
+  try {
+    create();
+  } catch (first) {
+    execFileSync('sleep', ['1']);
+    try {
+      create();
+    } catch (second) {
+      throw new Error(`hdiutil create failed twice:\n${String(first)}\n${String(second)}`, {
+        cause: second,
+      });
+    }
+  }
   return image;
 }
 
