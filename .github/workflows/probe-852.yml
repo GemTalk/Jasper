@@ -20,11 +20,11 @@ jobs:
   probe:
     name: ${{ matrix.platform }} ${{ matrix.gemstone-version }}
     runs-on: ${{ matrix.platform }}
-    timeout-minutes: 55
+    timeout-minutes: 110
     strategy:
       fail-fast: true
       matrix:
-        platform: [ubuntu-latest, windows-latest, macos-latest]
+        platform: [ubuntu-latest]
         gemstone-version: ['3.6.2']
     env:
       GLIBC_TUNABLES: glibc.rtld.execstack=2
@@ -33,9 +33,9 @@ jobs:
       PROBE_LEG: ${{ matrix.platform }}-${{ matrix.gemstone-version }}
       PROBE_OUT_DIR: ${{ github.workspace }}/probe852
       PROBE_SECONDS: '150'
-      PROBE_LOOP_MINUTES: '40'
-      # Enough stuck gems to compare an immediate stop with one 3 s after login.
-      PROBE_STOP_AFTER_STUCK: '6'
+      PROBE_LOOP_MINUTES: '90'
+      # Run the full time: the point is stuck counts per delay, not the first stuck gem.
+      PROBE_STOP_AFTER_STUCK: '100000'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -88,8 +88,8 @@ jobs:
             echo "::endgroup::"
             n=$(grep -c '^##### STUCK' "$PROBE_OUT_DIR/$PROBE_LEG.txt" 2>/dev/null || true)
             echo "stuck so far: ${n:-0}"
-            grep -h -E '^(busy|idle)' "$PROBE_OUT_DIR/$PROBE_LEG.txt" | tail -n 4
-            if [ "${n:-0}" -ge "$PROBE_STOP_AFTER_STUCK" ] || grep -q 'had not left the stone' "$PROBE_OUT_DIR/suite-$i.log"; then
+            grep -h -E '^idle' "$PROBE_OUT_DIR/$PROBE_LEG.txt" | tail -n 4
+            if [ "${n:-0}" -ge "$PROBE_STOP_AFTER_STUCK" ]; then
               echo "::error::${n:-0} gems stayed on the stone by iteration $i"
               exit 1
             fi
@@ -97,7 +97,7 @@ jobs:
             grep -q ' failed' "$PROBE_OUT_DIR/suite-$i.log" || rm -f "$PROBE_OUT_DIR/suite-$i.log"
           done
           echo "No stuck gem in $i iterations"
-          grep -h -E '^(busy|idle)' "$PROBE_OUT_DIR/$PROBE_LEG.txt" | tail -n 30
+          grep -h -E '^idle' "$PROBE_OUT_DIR/$PROBE_LEG.txt" | tail -n 30
       - name: Upload probe output
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

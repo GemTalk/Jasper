@@ -8,8 +8,6 @@ import { join } from 'node:path';
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 import type { ActiveSession } from '../activeSession';
-import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
-import { runNbCall } from '../nbRunner';
 import { testActiveSession } from './testActiveSession';
 import { useIntegrationTest } from './useIntegrationTest';
 import { stillOnStone } from './leftoverGem';
@@ -21,20 +19,13 @@ const LANES = Number(process.env.PROBE_LANES ?? 4);
 const STUCK_MS = Number(process.env.PROBE_STUCK_MS ?? 20_000);
 const OUT_DIR = process.env.PROBE_OUT_DIR ?? join(process.cwd(), 'probe852');
 const LEG = process.env.PROBE_LEG ?? 'local';
-const BUSY_CODE = '[[true] whileTrue: [nil]] on: Break do: [:e | e resume]';
 
-// Run 43337129662 caught only idle gems stopped right after login, so the stop scenarios get most
-// of the turns: right away, and again after LATE_MS, to test whether the early stop is the trigger.
-type Scenario = 'busy-nblogout' | 'idle-stopsession' | 'idle-stopsession-late' | 'idle-logout';
-const SCENARIOS: Scenario[] = [
-  'idle-stopsession',
-  'idle-stopsession-late',
-  'busy-nblogout',
-  'idle-stopsession',
-  'idle-stopsession-late',
-  'idle-logout',
-];
-const LATE_MS = Number(process.env.PROBE_LATE_MS ?? 3_000);
+// Run 43338665854: a stop sent right after login stuck 7 of 687 times, one 3 s later 0 of 690.
+// Each scenario here is a delay between login and the stop, to find how short a wait still holds.
+const DELAYS = (process.env.PROBE_DELAYS ?? '0,250,500,1000').split(',').map(Number);
+type Scenario = string;
+const SCENARIOS: Scenario[] = DELAYS.map((d) => `idle-stop-${d}ms`);
+const delayOf = (scenario: Scenario) => Number(/idle-stop-(\d+)ms/.exec(scenario)![1]);
 
 function out(line: string): void {
   mkdirSync(OUT_DIR, { recursive: true });
@@ -101,34 +92,24 @@ describe('stuck logout probe (integration)', () => {
     return Date.now() - from;
   }
 
+  const gaps: Record<Scenario, number[]> = Object.fromEntries(
+    SCENARIOS.map((sc) => [sc, [] as number[]]),
+  );
+
   async function runOnce(
     scenario: Scenario,
   ): Promise<{ serial: string; ms: number; pid: string; t: ActiveSession }> {
     const { t, serial } = transient();
+    const loggedIn = Date.now();
     const pid = gemPidOf(serial);
-    let from: number;
-    if (scenario === 'busy-nblogout') {
-      const call = runNbCall(
-        t,
-        () => t.GciTsNbExecute(BUSY_CODE, OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL, 0, 0),
-        () => t.GciTsNbResult(),
-        { suppressNotification: true },
-      );
-      call.catch(() => {});
-      from = Date.now();
-      if (!t.logout()) throw new Error(`logout refused for ${serial}`);
-      await call.catch(() => {});
-    } else if (scenario === 'idle-stopsession' || scenario === 'idle-stopsession-late') {
-      const id = t.executeAndFetchString('System session printString');
-      if (scenario === 'idle-stopsession-late') await pause(LATE_MS);
-      from = Date.now();
-      session.executeAndFetchString(`System stopSession: ${id}. 'ok'`);
-    } else {
-      from = Date.now();
-      if (!t.logout()) throw new Error(`logout refused for ${serial}`);
-    }
+    const id = t.executeAndFetchString('System session printString');
+    const wait = delayOf(scenario) - (Date.now() - loggedIn);
+    if (wait > 0) await pause(wait);
+    const from = Date.now();
+    gaps[scenario].push(from - loggedIn);
+    session.executeAndFetchString(`System stopSession: ${id}. 'ok'`);
     const ms = await leaveTime(serial, from);
-    if (scenario.startsWith('idle-stopsession') && ms >= 0) t.logout();
+    if (ms >= 0) t.logout();
     return { serial, ms, pid, t };
   }
 
@@ -136,18 +117,8 @@ describe('stuck logout probe (integration)', () => {
     'logs gems out until one stays on the stone',
     async () => {
       const deadline = Date.now() + PROBE_SECONDS * 1000;
-      const stats: Record<Scenario, number[]> = {
-        'busy-nblogout': [],
-        'idle-stopsession': [],
-        'idle-stopsession-late': [],
-        'idle-logout': [],
-      };
-      const stuckCount: Record<Scenario, number> = {
-        'busy-nblogout': 0,
-        'idle-stopsession': 0,
-        'idle-stopsession-late': 0,
-        'idle-logout': 0,
-      };
+      const stats = Object.fromEntries(SCENARIOS.map((sc) => [sc, [] as number[]]));
+      const stuckCount = Object.fromEntries(SCENARIOS.map((sc) => [sc, 0]));
       let stuck: string | undefined;
       out(`# ${LEG} start ${new Date().toISOString()} lanes=${LANES} seconds=${PROBE_SECONDS}`);
 
@@ -174,7 +145,7 @@ describe('stuck logout probe (integration)', () => {
           // Has the stop reached the gem? A request from its own client makes an idle gem look
           // at its state: if the stop was delivered but never woke it, this request fails with the
           // stop and the gem leaves; if the stone never delivered it, the request just answers.
-          if (scenario.startsWith('idle-stopsession')) {
+          {
             let poke: string;
             try {
               poke = `answered ${t.executeAndFetchString('3 + 4')}`;
@@ -217,7 +188,7 @@ describe('stuck logout probe (integration)', () => {
         const v = [...stats[scenario]].sort((a, b) => a - b);
         const at = (q: number) => v[Math.min(v.length - 1, Math.floor(v.length * q))];
         out(
-          `${scenario}: n=${v.length} stuck=${stuckCount[scenario]} p50=${at(0.5)} p99=${at(0.99)} max=${v.at(-1)}`,
+          `${scenario}: n=${v.length} stuck=${stuckCount[scenario]} p50=${at(0.5)} p99=${at(0.99)} max=${v.at(-1)} login-to-stop min=${Math.min(...gaps[scenario])} max=${Math.max(...gaps[scenario])}`,
         );
       }
       if (stuck) throw new Error(`A gem stayed on the stone; see ${join(OUT_DIR, `${LEG}.txt`)}`);
