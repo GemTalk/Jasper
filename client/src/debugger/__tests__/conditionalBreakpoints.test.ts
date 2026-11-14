@@ -756,28 +756,90 @@ describe("the debugger's Resume", () => {
         .mock.calls.map(([line]) => String(line))
         .filter((line) => line.includes('breakpoint rules:'));
 
-    it('is not written when no rules are armed', async () => {
+    const raises: ScriptedResume = {
+      err: { number: 2010, message: 'doesNotUnderstand: #foo', context: 91n },
+    };
+    // How a Resume can end: the run completes, stops at another breakpoint, or raises an error.
+    const endings = [
+      { ending: 'completes', resumes: [completes] },
+      { ending: 'stops at another breakpoint', resumes: [hitsBreakpoint(8n)] },
+      { ending: 'raises an error', resumes: [raises] },
+    ];
+    // A breakpoint with neither a condition nor a log message arms no rule, nor does one
+    // with only a hit count: GemStone ignores hit counts. A halt arms none either.
+    const noRules = [
+      { armed: 'no rule source is registered', source: undefined },
+      {
+        armed: 'the breakpoints are plain, or carry only a hit count',
+        source: { breakpointRulesFor: () => [] },
+      },
+    ];
+
+    it.each(noRules.flatMap((r) => endings.map((e) => ({ ...r, ...e }))))(
+      'is not written when $armed and the run $ending',
+      async ({ source, resumes }) => {
+        vi.mocked(logInfo).mockClear();
+        setBreakpointRuleSource(source);
+        try {
+          const { session } = stubSession([DECISION.Stop], resumes);
+
+          await resumeOnWorker(session, 7n);
+
+          expect(rulesLines()).toEqual([]);
+        } finally {
+          setBreakpointRuleSource(undefined);
+        }
+      },
+    );
+
+    it.each([
+      {
+        armed: 'a condition',
+        rules: [spec()],
+        decisions: [DECISION.Stop],
+        resumes: [completes],
+        line: 'completed after 0 skipped hit(s)',
+      },
+      {
+        armed: 'a condition that is false once, then holds',
+        rules: [spec()],
+        decisions: [DECISION.Go, DECISION.Stop],
+        resumes: [hitsBreakpoint(8n), hitsBreakpoint(9n)],
+        line: 'stopped after 1 skipped hit(s)',
+      },
+      {
+        armed: 'a condition, and the run raises an error',
+        rules: [spec()],
+        decisions: [DECISION.Stop],
+        resumes: [raises],
+        line: 'raised after 0 skipped hit(s)',
+      },
+      {
+        armed: 'a logpoint',
+        rules: [spec({ condition: undefined, logMessage: "'reached'" })],
+        decisions: [DECISION.Log],
+        resumes: [hitsBreakpoint(8n), completes],
+        line: 'completed after 1 skipped hit(s)',
+      },
+      {
+        armed: 'a breakpoint waiting on a trigger',
+        rules: [
+          spec({ stepPoint: 3 }),
+          spec({ stepPoint: 9, condition: undefined, triggeredBy: 1 }),
+        ],
+        decisions: [DECISION.Go, DECISION.Stop],
+        resumes: [hitsBreakpoint(8n), hitsBreakpoint(9n)],
+        line: 'stopped after 1 skipped hit(s)',
+      },
+    ])('is written when $armed is armed', async ({ rules, decisions, resumes, line }) => {
       vi.mocked(logInfo).mockClear();
-      setBreakpointRuleSource(undefined);
-      const { session } = stubSession([DECISION.Stop], [completes]);
-
-      const result = await resumeOnWorker(session, 7n);
-
-      expect(result).toEqual(expect.objectContaining({ completed: true }));
-      expect(rulesLines()).toEqual([]);
-    });
-
-    it('is written when rules are armed', async () => {
-      vi.mocked(logInfo).mockClear();
-      setBreakpointRuleSource({ breakpointRulesFor: () => [spec()] });
+      setBreakpointRuleSource({ breakpointRulesFor: () => rules });
       try {
-        const { session } = stubSession([DECISION.Stop], [completes]);
+        const { session } = stubSession(decisions, resumes, 'reached');
 
         await resumeOnWorker(session, 7n);
 
-        expect(rulesLines()).toEqual([
-          `[Session ${session.id}] breakpoint rules: completed after 0 skipped hit(s)`,
-        ]);
+        expect(rulesLines()).toEqual([`[Session ${session.id}] breakpoint rules: ${line}`]);
       } finally {
         setBreakpointRuleSource(undefined);
       }
