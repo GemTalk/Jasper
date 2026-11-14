@@ -44,6 +44,24 @@ export function getDefinition(
   return null;
 }
 
+/**
+ * Go to Definition: a local variable's declaration first, then implementors from the workspace
+ * index. Not for a method opened from the stone (`gemstone:`): the client asks the stone for its
+ * implementors, and VS Code lists `file:` answers ahead of `gemstone:` ones, so the files on disk
+ * would bury the code that actually runs.
+ */
+export function resolveDefinition(
+  doc: ParsedDocument,
+  position: Position,
+  region: ParsedRegion | undefined,
+  index: WorkspaceIndex,
+): Location | Location[] | null {
+  const localDef = getDefinition(doc, position, region);
+  if (localDef) return localDef;
+  if (doc.uri.startsWith('gemstone:')) return null;
+  return getWorkspaceDefinition(doc, position, region, index);
+}
+
 /** Cross-file definition: find implementors of the selector at the cursor. */
 export function getWorkspaceDefinition(
   doc: ParsedDocument,
@@ -74,13 +92,17 @@ export function getWorkspaceDefinition(
   }));
 }
 
-/** Cross-file references: find senders of the selector at the cursor. */
+/**
+ * Cross-file references: find senders of the selector at the cursor. Not for a method opened from
+ * the stone, for the same reason as resolveDefinition: the client asks the stone for its senders.
+ */
 export function getWorkspaceReferences(
   doc: ParsedDocument,
   position: Position,
   region: ParsedRegion | undefined,
   index: WorkspaceIndex,
 ): Location[] | null {
+  if (doc.uri.startsWith('gemstone:')) return null;
   const ast = region?.ast ?? doc.ast;
   if (!ast) return null;
 

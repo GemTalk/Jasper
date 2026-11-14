@@ -1378,6 +1378,20 @@ describe('BreakpointManager', () => {
         expect(manager.breakpointRulesFor(session())).toEqual([]);
       });
 
+      it('answers nothing for a breakpoint with only a hit count, which GemStone ignores', () => {
+        debug.breakpoints = [
+          new SourceBreakpoint(
+            new Location(Uri.parse(METHOD_URI), new Position(1, 0)),
+            true,
+            undefined,
+            '5',
+          ),
+        ];
+        const manager = makeManager();
+        manager.applyToUri(session(), Uri.parse(METHOD_URI));
+        expect(manager.breakpointRulesFor(session())).toEqual([]);
+      });
+
       it('labels the method for a log line, without an environment when it is 0', () => {
         debug.breakpoints = [
           new SourceBreakpoint(

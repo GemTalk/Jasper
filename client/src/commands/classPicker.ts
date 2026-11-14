@@ -30,8 +30,8 @@ export async function withLoadingProgress<T>(
 
 /**
  * Load the full class list behind a progress notification and map it to
- * quick-pick items. Returns `undefined` when the load failed (the error is
- * already surfaced to the user).
+ * quick-pick items, sorted by class name, then dictionary name. Returns `undefined` when the load
+ * failed (the error is already surfaced to the user).
  */
 export async function loadClassPickItems(
   session: ActiveSession,
@@ -41,9 +41,27 @@ export async function loadClassPickItems(
   );
   if (!entries) return undefined;
 
-  return entries.map((e) => ({
+  // The stone answers dictionary by dictionary, unsorted within each.
+  const { compare } = new Intl.Collator();
+  const sorted = [...entries].sort(
+    (a, b) =>
+      compare(a.className, b.className) ||
+      compare(a.dictName, b.dictName) ||
+      a.dictIndex - b.dictIndex,
+  );
+  return sorted.map((e) => ({
     label: e.className,
     description: e.dictName,
     entry: e,
   }));
+}
+
+/** Show the class list to pick from; `undefined` when it failed to load or was dismissed. */
+export async function pickClass(session: ActiveSession): Promise<ClassPickItem | undefined> {
+  const items = await loadClassPickItems(session);
+  if (!items) return undefined;
+  return await vscode.window.showQuickPick(items, {
+    placeHolder: 'Type to find a class…',
+    matchOnDescription: true,
+  });
 }

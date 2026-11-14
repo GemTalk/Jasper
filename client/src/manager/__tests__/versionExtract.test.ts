@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -450,6 +450,125 @@ describe.runIf(process.platform === 'darwin')(
         `The GemStone disk image is still mounted at ${mountPoint}: resource busy. ` +
           `Eject it with: hdiutil detach "${mountPoint}"`,
       );
+    });
+  },
+);
+
+// What an unpack leaves when hdiutil can't do its part, or when the window
+// running it died. A fake hdiutil "mounts" by writing the product tree into the
+// mount point and "ejects" by emptying it, so this runs off macOS too; the
+// unpack is told it is on macOS.
+describe.runIf(process.platform !== 'win32')(
+  'Cleaning up after a disk-image unpack',
+  { timeout: 30_000 },
+  () => {
+    const savedPlatform = process.platform;
+    const savedTmpdir = process.env.TMPDIR;
+    let mountsDir: string;
+
+    /** hdiutil's arguments, one call per line. */
+    const hdiutilCalls = () =>
+      fs.existsSync(path.join(f.binDir, 'calls'))
+        ? fs.readFileSync(path.join(f.binDir, 'calls'), 'utf8').trim().split('\n')
+        : [];
+
+    /** A fake hdiutil; `onDetach` runs in place of the eject. */
+    function fakeHdiutil(onDetach = 'rm -rf "$2"/*'): void {
+      const product = path.basename(f.productDir);
+      fakeCommand(
+        f,
+        'hdiutil',
+        `echo "$@" >> "${f.binDir}/calls"\n` +
+          `if [ "$1" = attach ]; then mkdir -p "$4/${product}/bin" && echo gem > "$4/${product}/bin/gem"; exit 0; fi\n` +
+          `if [ "$1" = detach ]; then ${onDetach}; fi`,
+      );
+    }
+
+    /** A pid no process has any longer. */
+    function deadPid(): number {
+      const pid = spawnSync('true').pid;
+      expect(isAlive(pid)).toBe(false);
+      return pid;
+    }
+
+    beforeEach(() => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      setUp('dmg');
+      fs.writeFileSync(f.archivePath, 'not really an image');
+      mountsDir = fs.mkdtempSync(path.join(f.tmpDir, 'mounts-'));
+      process.env.TMPDIR = mountsDir;
+    });
+
+    afterEach(async () => {
+      Object.defineProperty(process, 'platform', { value: savedPlatform, configurable: true });
+      if (savedTmpdir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = savedTmpdir;
+      await tearDown(f);
+    });
+
+    it('copies the tree out, ejects the image and removes the mount point', async () => {
+      fakeHdiutil();
+
+      await extract();
+
+      expect(fs.readFileSync(path.join(f.productDir, 'bin', 'gem'), 'utf8')).toBe('gem\n');
+      expect(hdiutilCalls().map((c) => c.split(' ')[0])).toEqual(['attach', 'detach']);
+      expect(fs.readdirSync(mountsDir)).toEqual([]);
+    });
+
+    it('keeps the unpack’s own error, and removes the mount point, when hdiutil detach cannot be started', async () => {
+      // The image mounts empty, so the unpack fails; then hdiutil can't be run,
+      // which makes starting it throw rather than exit 127 as a missing one does.
+      fakeCommand(f, 'hdiutil', `[ "$1" = attach ] && chmod -x "$0"; exit 0`);
+      onlyFakesOnPath('cp', 'chmod', 'rm');
+
+      await expect(extract()).rejects.toThrow('No GemStone directory found in mounted DMG');
+
+      expect(fs.readdirSync(mountsDir)).toEqual([]);
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+        expect.stringMatching(/^The GemStone disk image is still mounted at .*EACCES/),
+      );
+    });
+
+    it('removes the mount point when hdiutil is missing', async () => {
+      onlyFakesOnPath('cp', 'chmod', 'rm');
+
+      await expect(extract()).rejects.toThrow();
+
+      expect(fs.readdirSync(mountsDir)).toEqual([]);
+    });
+
+    it('ejects and removes the mount point of an unpack whose window died', async () => {
+      fakeHdiutil();
+      const left = path.join(mountsDir, `jasper-mount-${deadPid()}-abc123`);
+      fs.mkdirSync(path.join(left, 'GemStone64Bit'), { recursive: true });
+
+      await extract();
+
+      expect(hdiutilCalls()[0]).toBe(`detach ${left}`);
+      expect(fs.readdirSync(mountsDir)).toEqual([]);
+    });
+
+    it('leaves alone the mount point of an unpack whose window is still running', async () => {
+      fakeHdiutil();
+      const busy = path.join(mountsDir, `jasper-mount-${process.ppid}-abc123`);
+      fs.mkdirSync(path.join(busy, 'GemStone64Bit'), { recursive: true });
+
+      await extract();
+
+      expect(hdiutilCalls().some((c) => c.includes(busy))).toBe(false);
+      expect(fs.readdirSync(mountsDir)).toEqual([path.basename(busy)]);
+    });
+
+    it('goes ahead with the unpack when a leftover mount point will not eject', async () => {
+      fakeHdiutil('case "$2" in *abc123) exit 16;; *) rm -rf "$2"/*;; esac');
+      const stuck = path.join(mountsDir, `jasper-mount-${deadPid()}-abc123`);
+      fs.mkdirSync(path.join(stuck, 'GemStone64Bit'), { recursive: true });
+
+      await extract();
+
+      expect(fs.existsSync(path.join(f.productDir, 'bin', 'gem'))).toBe(true);
+      expect(fs.readdirSync(mountsDir)).toEqual([path.basename(stuck)]);
     });
   },
 );

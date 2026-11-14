@@ -29,6 +29,7 @@ import {
 import * as crypto from 'crypto';
 import { SessionManager, ActiveSession } from './sessionManager';
 import * as queries from './browserQueries';
+import { unboundHierarchyMarker, unboundHierarchyTooltip } from './hierarchyBinding';
 import { NbCancelledError } from './nbRunner';
 import { ALL_METHODS_CATEGORY, SESSION_METHODS_CATEGORY } from './systemBrowser';
 import {
@@ -715,36 +716,6 @@ function hierarchyRowKey(
   return `${dictIndex ?? dictName}:${className}`;
 }
 
-function unboundHierarchyTooltip(
-  className: string,
-  binding: 'aliased' | 'superseded' | 'unbound',
-): string {
-  if (binding === 'aliased') {
-    return (
-      `${className} — held only under another name.\n\n` +
-      'A dictionary holds this class, but not under its own name, so commands that look a class ' +
-      'up by its name in a dictionary cannot reach it. Browse it through the name it is bound under.'
-    );
-  }
-  if (binding === 'unbound') {
-    return (
-      `${className} — no class of this name is bound in any dictionary.\n\n` +
-      'It is still this class\u2019s real superclass, but it has been removed from the symbol ' +
-      'list, so commands that work through a dictionary cannot reach it.'
-    );
-  }
-  return (
-    `${className} — an older version.\n\n` +
-    `The name ${className} now binds a newer version of the class. This one is still real, and ` +
-    'still the superclass of the class below it, but no dictionary holds it, so Class History, ' +
-    'Rename, Insert/Extract Superclass and Split cannot act on it.\n\n' +
-    'Redefining a class does not carry its subclasses onto the new version. This row appears ' +
-    'after a redefinition made outside a refactoring — and after a refactoring that failed ' +
-    'part-way, which stops at the first failure with the classes before it already re-versioned. ' +
-    'If that is what happened, Undo reverses it and puts the subtree back together.'
-  );
-}
-
 // ── Hierarchy pane ───────────────────────────────────────────────────────────
 // Shows the selected class's lineage: superclasses (root-first) → the class
 // itself → its immediate subclasses. Clicking any row navigates to that class.
@@ -781,12 +752,7 @@ export class HierarchyItem extends vscode.TreeItem {
     // row is indistinguishable from any other ancestor, and every command on it failed with
     // "not a class" -- which reads as a broken tool rather than as what it is.
     if (binding !== 'bound') {
-      this.description =
-        binding === 'superseded'
-          ? '(old version)'
-          : binding === 'aliased'
-            ? '(alias only)'
-            : '(unbound)';
+      this.description = unboundHierarchyMarker(binding);
       this.tooltip = unboundHierarchyTooltip(className, binding);
     }
     // The dictionary position is part of the id: every subclass has chainIndex -1, so two

@@ -4,11 +4,16 @@ vi.mock('../../nbRunner', async (original) => ({
   ...(await original<typeof import('../../nbRunner')>()),
   isRunning: vi.fn(() => false),
 }));
+vi.mock('../../gciLog', async (original) => ({
+  ...(await original<typeof import('../../gciLog')>()),
+  logInfo: vi.fn(),
+}));
 
 import {
   BreakpointRule,
   DECISION,
   resumeOnWorker,
+  setBreakpointRuleSource,
   deciderSource,
   decodeDecision,
   applyBreakpointRules,
@@ -16,6 +21,7 @@ import {
 } from '../conditionalBreakpoints';
 import { OOP_NIL } from '../../gciConstants';
 import { isRunning, NbCancelledError } from '../../nbRunner';
+import { logInfo } from '../../gciLog';
 import type { StepResult } from '../debugQueries';
 import * as vscode from 'vscode';
 import { fakeActiveSession } from '../../__tests__/fakeActiveSession';
@@ -740,5 +746,103 @@ describe("the debugger's Resume", () => {
         errorContext: 7n,
       }),
     );
+  });
+
+  describe('the breakpoint-rules line in the GemStone GCI channel', () => {
+    const completes: ScriptedResume = { result: 0x55n, err: { number: 0, message: '' } };
+    const rulesLines = (): string[] =>
+      vi
+        .mocked(logInfo)
+        .mock.calls.map(([line]) => String(line))
+        .filter((line) => line.includes('breakpoint rules:'));
+
+    const raises: ScriptedResume = {
+      err: { number: 2010, message: 'doesNotUnderstand: #foo', context: 91n },
+    };
+    // How a Resume can end: the run completes, stops at another breakpoint, or raises an error.
+    const endings = [
+      { ending: 'completes', resumes: [completes] },
+      { ending: 'stops at another breakpoint', resumes: [hitsBreakpoint(8n)] },
+      { ending: 'raises an error', resumes: [raises] },
+    ];
+    // A breakpoint with neither a condition nor a log message arms no rule, nor does one
+    // with only a hit count: GemStone ignores hit counts. A halt arms none either.
+    const noRules = [
+      { armed: 'no rule source is registered', source: undefined },
+      {
+        armed: 'the breakpoints are plain, or carry only a hit count',
+        source: { breakpointRulesFor: () => [] },
+      },
+    ];
+
+    it.each(noRules.flatMap((r) => endings.map((e) => ({ ...r, ...e }))))(
+      'is not written when $armed and the run $ending',
+      async ({ source, resumes }) => {
+        vi.mocked(logInfo).mockClear();
+        setBreakpointRuleSource(source);
+        try {
+          const { session } = stubSession([DECISION.Stop], resumes);
+
+          await resumeOnWorker(session, 7n);
+
+          expect(rulesLines()).toEqual([]);
+        } finally {
+          setBreakpointRuleSource(undefined);
+        }
+      },
+    );
+
+    it.each([
+      {
+        armed: 'a condition',
+        rules: [spec()],
+        decisions: [DECISION.Stop],
+        resumes: [completes],
+        line: 'completed after 0 skipped hit(s)',
+      },
+      {
+        armed: 'a condition that is false once, then holds',
+        rules: [spec()],
+        decisions: [DECISION.Go, DECISION.Stop],
+        resumes: [hitsBreakpoint(8n), hitsBreakpoint(9n)],
+        line: 'stopped after 1 skipped hit(s)',
+      },
+      {
+        armed: 'a condition, and the run raises an error',
+        rules: [spec()],
+        decisions: [DECISION.Stop],
+        resumes: [raises],
+        line: 'raised after 0 skipped hit(s)',
+      },
+      {
+        armed: 'a logpoint',
+        rules: [spec({ condition: undefined, logMessage: "'reached'" })],
+        decisions: [DECISION.Log],
+        resumes: [hitsBreakpoint(8n), completes],
+        line: 'completed after 1 skipped hit(s)',
+      },
+      {
+        armed: 'a breakpoint waiting on a trigger',
+        rules: [
+          spec({ stepPoint: 3 }),
+          spec({ stepPoint: 9, condition: undefined, triggeredBy: 1 }),
+        ],
+        decisions: [DECISION.Go, DECISION.Stop],
+        resumes: [hitsBreakpoint(8n), hitsBreakpoint(9n)],
+        line: 'stopped after 1 skipped hit(s)',
+      },
+    ])('is written when $armed is armed', async ({ rules, decisions, resumes, line }) => {
+      vi.mocked(logInfo).mockClear();
+      setBreakpointRuleSource({ breakpointRulesFor: () => rules });
+      try {
+        const { session } = stubSession(decisions, resumes, 'reached');
+
+        await resumeOnWorker(session, 7n);
+
+        expect(rulesLines()).toEqual([`[Session ${session.id}] breakpoint rules: ${line}`]);
+      } finally {
+        setBreakpointRuleSource(undefined);
+      }
+    });
   });
 });

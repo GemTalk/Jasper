@@ -913,6 +913,7 @@ function createMockDiagnosticCollection() {
 export const languages = {
   registerWorkspaceSymbolProvider: vi.fn(() => ({ dispose: () => {} })),
   registerDefinitionProvider: vi.fn(() => ({ dispose: () => {} })),
+  registerReferenceProvider: vi.fn(() => ({ dispose: () => {} })),
   registerHoverProvider: vi.fn(() => ({ dispose: () => {} })),
   registerCompletionItemProvider: vi.fn(() => ({ dispose: () => {} })),
   registerCodeLensProvider: vi.fn(() => ({ dispose: () => {} })),

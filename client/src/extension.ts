@@ -126,7 +126,8 @@ import { shouldLoadAfterAddingDependency } from './rowanLoadPrompt';
 import { RowanDecorationProvider } from './rowanDecorations';
 import { ActiveEditorDecorationProvider } from './activeEditorDecoration';
 import { findMethodInClass } from './commands/findMethodInClass';
-import { loadClassPickItems } from './commands/classPicker';
+import { pickClass } from './commands/classPicker';
+import { showClassHierarchy } from './commands/classHierarchy';
 import { revealInspect } from './inspectRouter';
 import {
   maybeOfferServerSupport,
@@ -211,6 +212,7 @@ import {
 } from './refactoring/renameRefactorCodeActions';
 import { GemStoneWorkspaceSymbolProvider } from './gemstoneSymbolProvider';
 import { GemStoneDefinitionProvider } from './gemstoneDefinitionProvider';
+import { GemStoneReferenceProvider } from './gemstoneReferenceProvider';
 import { GemStoneHoverProvider } from './gemstoneHoverProvider';
 import { GemStoneCompletionProvider } from './gemstoneCompletionProvider';
 import { BreakpointManager } from './debugger/breakpointManager';
@@ -1255,7 +1257,7 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
 
-  // ── GCI-backed providers (Definition + Hover + Completion) ─
+  // ── GCI-backed providers (Definition + References + Hover + Completion) ─
   const selectorResolver = {
     getSelector: (uri: string, position: vscode.Position) =>
       client.sendRequest<string | null>('gemstone/selectorAtPosition', {
@@ -1270,6 +1272,10 @@ export function activate(context: vscode.ExtensionContext) {
   const workspaceSessionLens = new WorkspaceSessionLensProvider(sessionManager);
   context.subscriptions.push(
     vscode.languages.registerDefinitionProvider(GCI_PROVIDER_SELECTORS, definitionProvider),
+    vscode.languages.registerReferenceProvider(
+      GCI_PROVIDER_SELECTORS,
+      new GemStoneReferenceProvider(sessionManager, selectorResolver),
+    ),
     vscode.languages.registerHoverProvider(GCI_PROVIDER_SELECTORS, hoverProvider),
     vscode.languages.registerCompletionItemProvider(GCI_PROVIDER_SELECTORS, completionProvider),
     completionProvider, // dispose() cancels a prime still waiting out its debounce
@@ -3433,72 +3439,9 @@ export function activate(context: vscode.ExtensionContext) {
       await showMethodResults(session, results, `Implementors of #${selector}`);
     }),
 
-    vscode.commands.registerCommand('gemstone.classHierarchy', async () => {
-      const session = await sessionManager.resolveSession();
-      if (!session) return;
-
-      const className = await vscode.window.showInputBox({
-        prompt: 'Enter class name',
-        placeHolder: 'e.g. Array',
-      });
-      if (!className) return;
-
-      let results: queries.ClassHierarchyEntry[];
-      try {
-        results = await vscode.window.withProgress(
-          {
-            location: vscode.ProgressLocation.Notification,
-            title: `Fetching hierarchy for ${className}...`,
-            cancellable: false,
-          },
-          () => Promise.resolve(queries.getClassHierarchy(session, className)),
-        );
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        vscode.window.showErrorMessage(`Hierarchy query failed: ${msg}`);
-        return;
-      }
-
-      if (results.length === 0) {
-        vscode.window.showInformationMessage(`No hierarchy found for ${className}.`);
-        return;
-      }
-
-      const superCount = results.filter((r) => r.kind === 'superclass').length;
-
-      const items = results.map((r) => {
-        let indent: string;
-        if (r.kind === 'superclass') {
-          const idx = results.indexOf(r);
-          indent = '  '.repeat(idx);
-        } else if (r.kind === 'self') {
-          indent = '  '.repeat(superCount);
-        } else {
-          indent = '  '.repeat(superCount + 1);
-        }
-        const marker = r.kind === 'self' ? ' \u25C0' : '';
-        return {
-          label: `${indent}${r.className}${marker}`,
-          description: r.dictName,
-          detail: r.kind === 'self' ? '(target class)' : undefined,
-          entry: r,
-        };
-      });
-
-      const picked = await vscode.window.showQuickPick(items, {
-        placeHolder: `Hierarchy for ${className}`,
-        matchOnDescription: true,
-      });
-      if (!picked) return;
-
-      const uri = vscode.Uri.parse(
-        `gemstone://${session.id}` +
-          `/${encodeURIComponent(picked.entry.dictName)}` +
-          `/${encodeURIComponent(picked.entry.className)}` +
-          `/definition`,
-      );
-      vscode.commands.executeCommand('gemstone.openDocument', uri);
-    }),
+    vscode.commands.registerCommand('gemstone.classHierarchy', () =>
+      showClassHierarchy(sessionManager),
+    ),
 
     vscode.commands.registerCommand('gemstone.breakpoints.toggleAtCursor', () => {
       const editor = vscode.window.activeTextEditor;
@@ -3637,13 +3580,7 @@ export function activate(context: vscode.ExtensionContext) {
       const session = await sessionManager.resolveSession();
       if (!session) return;
 
-      const items = await loadClassPickItems(session);
-      if (!items) return;
-
-      const picked = await vscode.window.showQuickPick(items, {
-        placeHolder: 'Type to find a class…',
-        matchOnDescription: true,
-      });
+      const picked = await pickClass(session);
       if (!picked) return;
 
       if (
