@@ -25,17 +25,17 @@ describe('loadClassPickItems', () => {
     expect(items?.map((i) => i.label)).toEqual(['Apple', 'Mango', 'SdScanTwin2bbc', 'Zebra']);
   });
 
-  it('keeps same-named classes in symbol-list order, each with its own dictionary', async () => {
+  it('lists same-named classes by dictionary name, not symbol-list order', async () => {
     vi.mocked(queries.getAllClassNames).mockReturnValue([
-      { dictIndex: 3, dictName: 'Later', className: 'Twin' },
-      { dictIndex: 1, dictName: 'Earlier', className: 'Twin' },
+      { dictIndex: 1, dictName: 'Published', className: 'Twin' },
+      { dictIndex: 3, dictName: 'GsEnhancedInspector', className: 'Twin' },
     ]);
 
     const items = await loadClassPickItems(session);
 
     expect(items?.map((i) => [i.label, i.description, i.entry.dictIndex])).toEqual([
-      ['Twin', 'Earlier', 1],
-      ['Twin', 'Later', 3],
+      ['Twin', 'GsEnhancedInspector', 3],
+      ['Twin', 'Published', 1],
     ]);
   });
 

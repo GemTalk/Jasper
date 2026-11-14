@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { Location } from 'vscode-languageserver';
 import { DocumentManager } from '../../utils/documentManager';
 import { WorkspaceIndex, detectFormat } from '../../utils/workspaceIndex';
-import { resolveDefinition } from '../definition';
+import { getWorkspaceReferences, resolveDefinition } from '../definition';
 
 // A GemStone source file in the open folder, implementing #size.
 const diskUri = 'file:///project/kernel.gs';
@@ -43,5 +43,34 @@ describe('resolveDefinition', () => {
     );
 
     expect(uris(result)).toEqual([diskUri]);
+  });
+});
+
+// A GemStone source file in the open folder, sending #size.
+const senderUri = 'file:///project/sender.gs';
+
+function referencesAt(uri: string, source: string, line: number, character: number) {
+  const index = new WorkspaceIndex();
+  index.indexFileFromDisk(senderUri, 'method: Collection\ncount\n  ^items size\n%');
+  const dm = new DocumentManager();
+  const doc = dm.update(uri, 1, source, detectFormat(uri));
+  const region = dm.findRegionAt(doc, line);
+  return getWorkspaceReferences(doc, { line, character }, region, index);
+}
+
+describe('getWorkspaceReferences', () => {
+  it('leaves the senders of a selector in a method opened from the stone to the stone', () => {
+    expect(referencesAt(stoneUri, 'orderCount\n  ^orders size', 1, 13)).toBeNull();
+  });
+
+  it('lists senders from the workspace for a selector in a file on disk', () => {
+    const result = referencesAt(
+      'file:///project/customer.gs',
+      'method: DemoCustomer\norderCount\n  ^orders size\n%',
+      2,
+      13,
+    );
+
+    expect(uris(result)).toEqual([senderUri]);
   });
 });

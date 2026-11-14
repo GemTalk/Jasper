@@ -212,6 +212,7 @@ import {
 } from './refactoring/renameRefactorCodeActions';
 import { GemStoneWorkspaceSymbolProvider } from './gemstoneSymbolProvider';
 import { GemStoneDefinitionProvider } from './gemstoneDefinitionProvider';
+import { GemStoneReferenceProvider } from './gemstoneReferenceProvider';
 import { GemStoneHoverProvider } from './gemstoneHoverProvider';
 import { GemStoneCompletionProvider } from './gemstoneCompletionProvider';
 import { BreakpointManager } from './debugger/breakpointManager';
@@ -1256,7 +1257,7 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
 
-  // ── GCI-backed providers (Definition + Hover + Completion) ─
+  // ── GCI-backed providers (Definition + References + Hover + Completion) ─
   const selectorResolver = {
     getSelector: (uri: string, position: vscode.Position) =>
       client.sendRequest<string | null>('gemstone/selectorAtPosition', {
@@ -1271,6 +1272,10 @@ export function activate(context: vscode.ExtensionContext) {
   const workspaceSessionLens = new WorkspaceSessionLensProvider(sessionManager);
   context.subscriptions.push(
     vscode.languages.registerDefinitionProvider(GCI_PROVIDER_SELECTORS, definitionProvider),
+    vscode.languages.registerReferenceProvider(
+      GCI_PROVIDER_SELECTORS,
+      new GemStoneReferenceProvider(sessionManager, selectorResolver),
+    ),
     vscode.languages.registerHoverProvider(GCI_PROVIDER_SELECTORS, hoverProvider),
     vscode.languages.registerCompletionItemProvider(GCI_PROVIDER_SELECTORS, completionProvider),
     completionProvider, // dispose() cancels a prime still waiting out its debounce

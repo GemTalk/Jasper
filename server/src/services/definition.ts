@@ -92,13 +92,17 @@ export function getWorkspaceDefinition(
   }));
 }
 
-/** Cross-file references: find senders of the selector at the cursor. */
+/**
+ * Cross-file references: find senders of the selector at the cursor. Not for a method opened from
+ * the stone, for the same reason as resolveDefinition: the client asks the stone for its senders.
+ */
 export function getWorkspaceReferences(
   doc: ParsedDocument,
   position: Position,
   region: ParsedRegion | undefined,
   index: WorkspaceIndex,
 ): Location[] | null {
+  if (doc.uri.startsWith('gemstone:')) return null;
   const ast = region?.ast ?? doc.ast;
   if (!ast) return null;
 

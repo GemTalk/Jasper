@@ -7,7 +7,8 @@ import { pickClass, withLoadingProgress } from './classPicker';
 
 /**
  * Command handler for "Class Hierarchy": pick a class from the stone's class list, then pick a
- * row of its hierarchy (superclasses, the class, its subclasses) to open that class's definition.
+ * row of its hierarchy (superclasses, the class, its subclasses) to open that class's definition
+ * and show the class in the GemStone Explorer, with its Hierarchy pane open.
  */
 export async function showClassHierarchy(sessionManager: SessionManager): Promise<void> {
   const session = await sessionManager.resolveSession();
@@ -60,7 +61,11 @@ export async function showClassHierarchy(sessionManager: SessionManager): Promis
     vscode.window.showWarningMessage(`Its definition can't be opened from here. ${why}`);
     return;
   }
-  vscode.commands.executeCommand(
+  // The Explorer follows the opened definition and selects its class, and its Hierarchy pane
+  // follows that. Focusing the pane shows the Explorer and expands the pane even if it was
+  // collapsed, which plain navigation never does: here the user asked for the hierarchy.
+  await vscode.commands.executeCommand('gemstoneExplorerClassHierarchy.focus');
+  await vscode.commands.executeCommand(
     'gemstone.openDocument',
     buildClassDefinitionUri(session.id, entry.dictName, entry.className, entry.dictIndex),
   );

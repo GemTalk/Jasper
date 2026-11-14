@@ -30,7 +30,7 @@ export async function withLoadingProgress<T>(
 
 /**
  * Load the full class list behind a progress notification and map it to
- * quick-pick items, sorted by class name. Returns `undefined` when the load
+ * quick-pick items, sorted by class name, then dictionary name. Returns `undefined` when the load
  * failed (the error is already surfaced to the user).
  */
 export async function loadClassPickItems(
@@ -41,11 +41,13 @@ export async function loadClassPickItems(
   );
   if (!entries) return undefined;
 
-  // The stone answers dictionary by dictionary, unsorted within each. Same-named classes keep
-  // their symbol-list order, so the one a bare name resolves to comes first.
+  // The stone answers dictionary by dictionary, unsorted within each.
   const { compare } = new Intl.Collator();
   const sorted = [...entries].sort(
-    (a, b) => compare(a.className, b.className) || a.dictIndex - b.dictIndex,
+    (a, b) =>
+      compare(a.className, b.className) ||
+      compare(a.dictName, b.dictName) ||
+      a.dictIndex - b.dictIndex,
   );
   return sorted.map((e) => ({
     label: e.className,

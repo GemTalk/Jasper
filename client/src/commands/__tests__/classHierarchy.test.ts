@@ -78,7 +78,7 @@ describe('showClassHierarchy', () => {
     expect(rows.map((r) => r.label)).toEqual(['Object', '  Twin ◀', '    TwinChild']);
   });
 
-  it('opens the picked row’s definition scoped to its dictionary', async () => {
+  it('opens the Explorer’s Hierarchy pane, then the picked row’s definition scoped to its dictionary', async () => {
     pickInOrder(
       (items) => items.find((i) => i.description === 'Later'),
       (rows) => rows[1],
@@ -86,9 +86,12 @@ describe('showClassHierarchy', () => {
 
     await showClassHierarchy(sessionManager);
 
-    expect(vscode.commands.executeCommand).toHaveBeenCalledTimes(1);
-    const [command, uri] = vi.mocked(vscode.commands.executeCommand).mock.calls[0];
-    expect(command).toBe('gemstone.openDocument');
+    const calls = vi.mocked(vscode.commands.executeCommand).mock.calls;
+    expect(calls.map((c) => c[0])).toEqual([
+      'gemstoneExplorerClassHierarchy.focus',
+      'gemstone.openDocument',
+    ]);
+    const uri = calls[1][1];
     const opened = uri as vscode.Uri;
     expect(opened.path).toBe('/Later/Twin/definition/Twin');
     expect(opened.query).toBe('dict=2');
