@@ -4,12 +4,16 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-11-13
+
 ### Added
 
 - **A Smalltalk notebook cell stops at breakpoints and `self halt`.** A cell that calls a method with a breakpoint in it, or runs `self halt`, opens the GemStone Debugger straight away and waits while you step or inspect. Resume or step to the end, and the cell shows the result it would have shown. Close the debugger or press the cell's stop, and the cell says "Stopped." and the cells queued after it don't run. Errors such as `doesNotUnderstand` or `ZeroDivide` still appear in the cell's output, as before. The **Breakpoints not honored** note on each Smalltalk cell is gone. ([#559](https://github.com/GemTalk/Jasper/issues/559))
 
 ### Changed
 
+- **Clicking a class or dictionary in the Explorer no longer freezes VS Code.** Each click used to hold up VS Code, and every other extension, until GemStone answered, which a slow or remote stone made worse. The click is now read in the background. If you click again before the answer comes, the newest click wins and the older one is dropped. VS Code reports a class click twice, and Jasper now reads it only once. ([#877](https://github.com/GemTalk/Jasper/pull/877), [#908](https://github.com/GemTalk/Jasper/pull/908))
+- **Opening a method, class definition or class comment no longer freezes VS Code.** This covers opening one from the Explorer, Go to Definition, a search result, or a tab restored at startup. VS Code used to wait on GemStone for each one. Reads now run in the background, and one that takes more than about 2 seconds shows a cancellable "Opening method…", "Opening class definition…" or "Opening class comment…" notice. Tabs that open together, such as both sides of a diff or tabs reloading after a change, all open now instead of refusing each other as busy. ([#918](https://github.com/GemTalk/Jasper/pull/918))
 - **Developer tooling and test-suite work.** No user-facing behavior change: CI now also tests against GemStone 3.7.6, the newest release, on Linux and Windows, and keeps testing 3.7.5 alongside it. 3.7.6 adds no GCI functions. ([#879](https://github.com/GemTalk/Jasper/issues/879))
 
 ### Fixed
@@ -23,6 +27,8 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 - **A failed login says what to check.** GemStone often reports different mistakes the same way: error 4147 means a mistyped or stopped NetLDI, a host that doesn't exist, a login set to the wrong GemStone version, or a NetLDI that wants a host password. Jasper now reads GemStone's text to tell them apart and starts the message with what to check, followed by GemStone's own text and error number. When GemStone doesn't say why a login failed, the message says so and offers its advice only as something to try. ([#891](https://github.com/GemTalk/Jasper/issues/891))
 - **A database with no key file no longer fails silently.** When the GemStone install has no free key file to copy, creating a database now warns that its stone can't start yet and says where to put a key file. Quick Setup then sets up everything but the stone start, which can only fail, and says what is left to do. Starting a stone whose key file is missing now says so in one line, naming the file, instead of leaving it at the end of a long block of `startstone` output; that output is still in the GemStone Admin log. On Windows, both messages give each path as File Explorer opens it and as WSL names it. ([#892](https://github.com/GemTalk/Jasper/issues/892))
 - **Logging out on GemStone 3.7.6 no longer leaves the session running on the server.** When a logout reached GemStone while a call on that session was still going, GemStone 3.7.6 refused it without saying why, and Jasper took the session as already gone: it disappeared from Jasper but stayed logged in on the stone, holding its slot until an administrator stopped it. Jasper now reads that answer as the refusal it is while one of its own calls is running, waits for the call, and logs out again; and after a logout GemStone fails without saying why, it checks the stone and ends the session if it is still there. Checking and ending it need the SessionAccess and SystemControl privileges; without them Jasper says the session may still be there, and how an administrator can end it. The 3.7.6 behaviour is reported to GemTalk as bug 52223. ([#879](https://github.com/GemTalk/Jasper/issues/879))
+- **CodeLens counts come back once a run ends.** While a run held the session, the senders and implementors lenses showed no number, and they stayed blank after the run until an edit or a scroll redrew them. They now count again once the session has been free for a moment. ([#850](https://github.com/GemTalk/Jasper/issues/850))
+- **Installing GemStone on macOS no longer fails with "Failed to parse mount point".** Depending on which disks the Mac had in use, Jasper could misread where macOS had mounted the downloaded disk image, and the install failed every time on that Mac. Jasper now picks the mount folder itself. ([#844](https://github.com/GemTalk/Jasper/issues/844))
 
 ## [1.18.0] - 2026-11-06
 
