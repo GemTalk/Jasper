@@ -1,12 +1,11 @@
 # Non-blocking GemStone calls: progress since the hand-off
 
 [Non-blocking GemStone calls](non-blocking-gemstone-calls.md) is the hand-off of this work as it
-stood on 2026-11-13, and is kept as written. Read it first: its design principles, contention
-categories and verified GCI facts still apply. This page records what has moved since, so its
-"Where it stands" and "Remaining work" sections are read together with the tables below.
-
-The hand-off exactly as written:
+stood on 2026-11-13, kept as written at
 [`48f11032`](https://github.com/GemTalk/Jasper/blob/48f1103213c44a5edede4cfc7d15c60bb79df3c2/docs/explanation/non-blocking-gemstone-calls.md).
+Read it first: its design principles, contention categories and verified GCI facts still apply.
+This page records what has moved since; read its "Where it stands" and "Remaining work" together
+with the tables below.
 
 ## Already non-blocking at the hand-off
 
@@ -23,9 +22,10 @@ work on `main`.
 
 ## Made non-blocking since the hand-off
 
-| Feature                                                           | Category | PR   | Status      |
-| ----------------------------------------------------------------- | -------- | ---- | ----------- |
-| VS Code's Find All References on a selector in a Smalltalk editor | E        | #940 | In progress |
+| Feature                                                           | Category | PR   |
+| ----------------------------------------------------------------- | -------- | ---- |
+| VS Code's Find All References on a selector in a Smalltalk editor | E        | #940 |
+| The **Class Hierarchy** command, once a class is picked           | E        | #940 |
 
 ## Still blocking, though it looks done
 
@@ -45,6 +45,6 @@ Most other GemStone calls still block too; the hand-off's
 
 The hand-off's "Remaining work" list, by its own numbers. Items not listed have not started.
 
-| Item | Work                                                       | PR   | Status      |
-| ---- | ---------------------------------------------------------- | ---- | ----------- |
-| 2    | More E and D features (VS Code's Find All References only) | #940 | In progress |
+| Item | Work                                                                   | PR   |
+| ---- | ---------------------------------------------------------------------- | ---- |
+| 2    | More E and D features (VS Code's Find All References, Class Hierarchy) | #940 |

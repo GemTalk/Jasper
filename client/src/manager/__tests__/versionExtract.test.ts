@@ -517,7 +517,7 @@ describe.runIf(process.platform !== 'win32')(
       expect(fs.readdirSync(mountsDir)).toEqual([]);
     });
 
-    it('keeps the unpack’s own error, and removes the mount point, when hdiutil detach cannot be started', async () => {
+    it('keeps the unpack’s own error, and warns the image is still mounted, when hdiutil detach cannot be started', async () => {
       // The image mounts empty, so the unpack fails; then hdiutil can't be run,
       // which makes starting it throw rather than exit 127 as a missing one does.
       fakeCommand(f, 'hdiutil', `[ "$1" = attach ] && chmod -x "$0"; exit 0`);
@@ -525,7 +525,6 @@ describe.runIf(process.platform !== 'win32')(
 
       await expect(extract()).rejects.toThrow('No GemStone directory found in mounted DMG');
 
-      expect(fs.readdirSync(mountsDir)).toEqual([]);
       expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
         expect.stringMatching(/^The GemStone disk image is still mounted at .*EACCES/),
       );

@@ -5,6 +5,9 @@ import { dedupeMethodResults } from './queries/methodSearch';
 import { sweepEnvironmentsAsync } from './methodEnvironments';
 import { SelectorResolver, sessionForDocument } from './selectorProviders';
 import * as queries from './browserQueries';
+import { BrowserQueryError } from './browserQueries';
+import { NbCancelledError } from './nbRunner';
+import { logError } from './gciLog';
 
 /**
  * VS Code's Find All References on a selector: the stone's senders of it, one location per method.
@@ -35,14 +38,21 @@ export class GemStoneReferenceProvider implements vscode.ReferenceProvider {
 
     const sel = selector;
     // After a failure the rest are skipped, not asked: a busy session would refuse each of them
-    // with its own notice. The failure has already been logged or shown to the user.
+    // with its own notice.
     let failed = false;
     const all = await sweepEnvironmentsAsync(async (env) => {
       if (failed) return [];
       try {
         return await queries.sendersOfAsync(session, sel, env);
-      } catch {
+      } catch (e) {
         failed = true;
+        // A query failure is logged where it is raised, and a cancel needs no word.
+        if (!(e instanceof BrowserQueryError) && !(e instanceof NbCancelledError)) {
+          logError(
+            session.id,
+            `Find All References: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
         return [];
       }
     }, token);

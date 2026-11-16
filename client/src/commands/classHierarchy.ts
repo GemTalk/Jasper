@@ -3,7 +3,8 @@ import * as queries from '../browserQueries';
 import { SessionManager } from '../sessionManager';
 import { buildClassDefinitionUri } from '../gemstoneFileSystemProvider';
 import { unboundHierarchyMarker, unboundHierarchyTooltip } from '../hierarchyBinding';
-import { pickClass, withLoadingProgress } from './classPicker';
+import { pickClass } from './classPicker';
+import { NbCancelledError } from '../nbRunner';
 
 /**
  * Command handler for "Class Hierarchy": pick a class from the stone's class list, then pick a
@@ -20,12 +21,18 @@ export async function showClassHierarchy(sessionManager: SessionManager): Promis
   // The dictionary index scopes the lookup, so a class shadowed by a same-named one in an
   // earlier dictionary shows its own lineage.
   const { className, dictIndex } = pickedClass.entry;
-  const results = await withLoadingProgress(
-    `Fetching hierarchy for ${className}...`,
-    'Hierarchy query failed',
-    () => queries.getClassHierarchy(session, className, dictIndex),
-  );
-  if (!results) return;
+  let results: Awaited<ReturnType<typeof queries.getClassHierarchyAsync>>;
+  try {
+    results = await queries.getClassHierarchyAsync(session, className, dictIndex);
+  } catch (e) {
+    // A cancel needs no message, and a busy refusal has had its own.
+    if (!(e instanceof NbCancelledError) && !queries.isBusyRefusal(e)) {
+      vscode.window.showErrorMessage(
+        `Hierarchy query failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+    return;
+  }
 
   if (results.length === 0) {
     vscode.window.showInformationMessage(`No hierarchy found for ${className}.`);
@@ -62,9 +69,7 @@ export async function showClassHierarchy(sessionManager: SessionManager): Promis
     vscode.window.showWarningMessage(`${why} Its definition can't be opened from here.`);
     return;
   }
-  // The Explorer follows the opened definition and selects its class, and its Hierarchy pane
-  // follows that. Focusing the pane shows the Explorer and expands the pane even if it was
-  // collapsed, which plain navigation never does: here the user asked for the hierarchy.
+  // Focusing expands the Hierarchy pane even when collapsed, which plain navigation never does.
   await vscode.commands.executeCommand('gemstoneExplorerClassHierarchy.focus');
   await vscode.commands.executeCommand(
     'gemstone.openDocument',

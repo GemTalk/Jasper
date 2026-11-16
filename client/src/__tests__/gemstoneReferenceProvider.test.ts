@@ -2,17 +2,21 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
-vi.mock('../browserQueries', () => ({
+vi.mock('../browserQueries', async (orig) => ({
+  BrowserQueryError: (await orig<typeof import('../browserQueries')>()).BrowserQueryError,
   sendersOf: vi.fn(() => []),
   sendersOfAsync: vi.fn(async () => []),
 }));
+vi.mock('../gciLog', () => ({ logError: vi.fn() }));
 
 import { Position, Location, Uri, __setConfig, __resetConfig } from '../__mocks__/vscode';
 import type * as vscode from 'vscode';
 import { GemStoneReferenceProvider } from '../gemstoneReferenceProvider';
 import { SelectorResolver } from '../selectorProviders';
 import { SessionManager } from '../sessionManager';
-import { sendersOf, sendersOfAsync } from '../browserQueries';
+import { BrowserQueryError, sendersOf, sendersOfAsync } from '../browserQueries';
+import { logError } from '../gciLog';
+import { NbCancelledError } from '../nbRunner';
 import { fakeActiveSession } from './fakeActiveSession';
 
 const pos = (line: number, char: number) => new Position(line, char) as unknown as vscode.Position;
@@ -50,6 +54,7 @@ describe('GemStoneReferenceProvider', () => {
   beforeEach(() => {
     __resetConfig();
     mockSendersOf.mockReset();
+    vi.mocked(logError).mockClear();
     mockSendersOf.mockResolvedValue([]);
   });
 
@@ -144,6 +149,26 @@ describe('GemStoneReferenceProvider', () => {
 
     expect(mockSendersOf.mock.calls.map((c) => c[2])).toEqual([0, 1]);
     expect(results).toHaveLength(1);
+  });
+
+  it('logs a failure nothing else reported', async () => {
+    mockSendersOf.mockRejectedValue(new Error('poll failed'));
+    const provider = new GemStoneReferenceProvider(makeSessionManager(true), resolving('size'));
+
+    expect(await provider.provideReferences(document(), pos(2, 12))).toEqual([]);
+    expect(logError).toHaveBeenCalledWith(1, 'Find All References: poll failed');
+  });
+
+  it.each([
+    ['a query failure, logged where it was raised', new BrowserQueryError('busy', 2203)],
+    ['a cancel', new NbCancelledError()],
+  ])('adds no log line for %s', async (_what, error) => {
+    mockSendersOf.mockRejectedValue(error);
+    const provider = new GemStoneReferenceProvider(makeSessionManager(true), resolving('size'));
+
+    await provider.provideReferences(document(), pos(2, 12));
+
+    expect(logError).not.toHaveBeenCalled();
   });
 
   it('answers nothing, without asking the stone, when the cursor is on no selector', async () => {

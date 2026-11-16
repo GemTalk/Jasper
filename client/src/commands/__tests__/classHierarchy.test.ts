@@ -3,13 +3,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', () => ({
   getAllClassNames: vi.fn(),
-  getClassHierarchy: vi.fn(),
+  getClassHierarchyAsync: vi.fn(),
+  isBusyRefusal: vi.fn(() => false),
 }));
 
 import * as vscode from 'vscode';
 import * as queries from '../../browserQueries';
 import { ActiveSession, SessionManager } from '../../sessionManager';
 import { showClassHierarchy } from '../classHierarchy';
+import { NbCancelledError } from '../../nbRunner';
 
 const session = { id: 7 } as ActiveSession;
 const sessionManager = {
@@ -42,7 +44,7 @@ describe('showClassHierarchy', () => {
       { dictIndex: 1, dictName: 'Earlier', className: 'Twin' },
       { dictIndex: 3, dictName: 'Globals', className: 'Array' },
     ]);
-    vi.mocked(queries.getClassHierarchy).mockReturnValue(hierarchy);
+    vi.mocked(queries.getClassHierarchyAsync).mockResolvedValue(hierarchy);
   });
 
   it('offers the class list, alphabetically with each dictionary, instead of a blank text box', async () => {
@@ -58,7 +60,7 @@ describe('showClassHierarchy', () => {
       'Twin Earlier',
       'Twin Later',
     ]);
-    expect(queries.getClassHierarchy).not.toHaveBeenCalled();
+    expect(queries.getClassHierarchyAsync).not.toHaveBeenCalled();
   });
 
   it('asks for the hierarchy of the class in the dictionary that was picked', async () => {
@@ -66,7 +68,7 @@ describe('showClassHierarchy', () => {
 
     await showClassHierarchy(sessionManager);
 
-    expect(queries.getClassHierarchy).toHaveBeenCalledWith(session, 'Twin', 2);
+    expect(queries.getClassHierarchyAsync).toHaveBeenCalledWith(session, 'Twin', 2);
   });
 
   it('indents the hierarchy rows and marks the picked class', async () => {
@@ -98,7 +100,7 @@ describe('showClassHierarchy', () => {
   });
 
   it('marks a row no dictionary binds, and declines to open it by name', async () => {
-    vi.mocked(queries.getClassHierarchy).mockReturnValue([
+    vi.mocked(queries.getClassHierarchyAsync).mockResolvedValue([
       { className: 'Twin', dictName: '', kind: 'superclass', binding: 'superseded' },
       ...hierarchy.slice(1),
     ]);
@@ -118,7 +120,7 @@ describe('showClassHierarchy', () => {
   });
 
   it('says so when the stone finds no hierarchy', async () => {
-    vi.mocked(queries.getClassHierarchy).mockReturnValue([]);
+    vi.mocked(queries.getClassHierarchyAsync).mockResolvedValue([]);
     pickInOrder((items) => items[0]);
 
     await showClassHierarchy(sessionManager);
@@ -130,7 +132,7 @@ describe('showClassHierarchy', () => {
   });
 
   it('reports a failed hierarchy query instead of throwing', async () => {
-    vi.mocked(queries.getClassHierarchy).mockImplementation(() => {
+    vi.mocked(queries.getClassHierarchyAsync).mockImplementation(() => {
       throw new Error('boom');
     });
     pickInOrder((items) => items[0]);
@@ -139,5 +141,24 @@ describe('showClassHierarchy', () => {
 
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('Hierarchy query failed: boom');
     expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet when the query is cancelled', async () => {
+    vi.mocked(queries.getClassHierarchyAsync).mockRejectedValue(new NbCancelledError());
+    pickInOrder((items) => items[0]);
+
+    await showClassHierarchy(sessionManager);
+
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  it('adds no error to the notice a busy session already showed', async () => {
+    vi.mocked(queries.getClassHierarchyAsync).mockRejectedValue(new Error('busy'));
+    vi.mocked(queries.isBusyRefusal).mockReturnValueOnce(true);
+    pickInOrder((items) => items[0]);
+
+    await showClassHierarchy(sessionManager);
+
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
   });
 });

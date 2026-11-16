@@ -5,6 +5,7 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../browserQueries', () => ({
   implementorsOf: vi.fn(() => []),
   getAllClassNames: vi.fn(() => []),
+  quietly: vi.fn((query: () => unknown) => query()),
 }));
 
 import { Position, Range, Location, Uri, __setConfig, __resetConfig } from '../__mocks__/vscode';
@@ -12,7 +13,7 @@ import type * as vscode from 'vscode';
 import { GemStoneDefinitionProvider } from '../gemstoneDefinitionProvider';
 import { SelectorResolver } from '../selectorProviders';
 import { SessionManager } from '../sessionManager';
-import { implementorsOf, getAllClassNames } from '../browserQueries';
+import { implementorsOf, getAllClassNames, quietly } from '../browserQueries';
 import { fakeActiveSession } from './fakeActiveSession';
 
 // Cast mock Position to vscode.Position to satisfy type checker
@@ -61,6 +62,7 @@ describe('GemStoneDefinitionProvider', () => {
     __resetConfig();
     mockImplementorsOf.mockReset();
     mockGetAllClassNames.mockReset();
+    vi.mocked(quietly).mockClear();
     mockImplementorsOf.mockReturnValue([]);
     mockGetAllClassNames.mockReturnValue([]);
   });
@@ -257,6 +259,50 @@ describe('GemStoneDefinitionProvider', () => {
       const results = await provider.provideDefinition(doc, pos(0, 5));
 
       expect(results).toEqual([]);
+    });
+  });
+
+  describe('while a background search holds the session', () => {
+    const busy = () => {
+      throw new Error('session busy');
+    };
+
+    it('keeps the implementors other environments found, and asks quietly', async () => {
+      __setConfig('gemstone', 'maxEnvironment', 1);
+      mockImplementorsOf.mockImplementation((_session, _selector, env) =>
+        env === 1
+          ? busy()
+          : [
+              {
+                dictName: 'Globals',
+                className: 'Array',
+                isMeta: false,
+                selector: 'size',
+                category: 'accessing',
+                environmentId: 0,
+              },
+            ],
+      );
+      const provider = new GemStoneDefinitionProvider(makeSessionManager(true), {
+        getSelector: vi.fn(async () => 'size'),
+      });
+
+      const results = await provider.provideDefinition(makeDocument('self size'), pos(0, 5));
+
+      expect(results).toHaveLength(1);
+      expect(quietly).toHaveBeenCalledTimes(2);
+    });
+
+    it('answers no class, quietly, instead of failing', async () => {
+      mockGetAllClassNames.mockImplementation(busy);
+      const provider = new GemStoneDefinitionProvider(makeSessionManager(true), {
+        getSelector: vi.fn(async () => null),
+      });
+
+      await expect(
+        provider.provideDefinition(makeDocument('Array new'), pos(0, 0)),
+      ).resolves.toEqual([]);
+      expect(quietly).toHaveBeenCalledTimes(1);
     });
   });
 
