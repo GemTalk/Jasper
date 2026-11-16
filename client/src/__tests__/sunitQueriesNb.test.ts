@@ -22,10 +22,11 @@ vi.mock('../browserQueries', () => {
 vi.mock('../nbRunner', async (orig) => ({
   ...(await orig()),
   stoppedRunCleared: vi.fn(() => Promise.resolve()),
+  sayStillRunningUnlessItEnds: vi.fn(),
 }));
 
 import { BrowserQueryError, executeFetchStringNb, StoppedByBreakError } from '../browserQueries';
-import { NbCancelledError, stoppedRunCleared } from '../nbRunner';
+import { NbCancelledError, sayStillRunningUnlessItEnds, stoppedRunCleared } from '../nbRunner';
 import { runTestClassNb, runTestMethodNb } from '../sunitQueries';
 import { runTestClassCode, parseTestClassResults } from '../queries/runTestClass';
 import { runTestMethodCode, parseTestMethodResult } from '../queries/runTestMethod';
@@ -37,6 +38,7 @@ const nb = vi.mocked(executeFetchStringNb);
 beforeEach(() => {
   nb.mockClear();
   vi.mocked(stoppedRunCleared).mockClear();
+  vi.mocked(sayStillRunningUnlessItEnds).mockClear();
 });
 
 describe('runTestMethodNb', () => {
@@ -83,6 +85,7 @@ describe('runTestMethodNb', () => {
     const result = await runTestMethodNb(session, 'MyTestCase', 'testAdd');
 
     expect(cleared).toBe(true);
+    expect(sayStillRunningUnlessItEnds).toHaveBeenCalledWith(session);
     expect(result).toMatchObject({ status: 'error', message: 'Break: a Break occurred' });
   });
 
@@ -108,6 +111,7 @@ describe('runTestClassNb', () => {
 
     await expect(runTestClassNb(session, 'MyTestCase')).rejects.toBe(stopped);
     expect(cleared).toBe(true);
+    expect(sayStillRunningUnlessItEnds).toHaveBeenCalledWith(session);
   });
 
   it('passes any other failure through without waiting', async () => {

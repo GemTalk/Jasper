@@ -31,6 +31,7 @@ import {
   forgetSession,
   stopCallsOn,
   stoppedRunCleared,
+  sayStillRunningUnlessItEnds,
 } from '../nbRunner';
 import { OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
 import { fakeActiveSession } from './fakeActiveSession';
@@ -1640,6 +1641,39 @@ describe('stoppedRunCleared', () => {
       vi.clearAllTimers();
       vi.useRealTimers();
     }
+  });
+});
+
+describe('telling the user a stopped run is still cleaning up', () => {
+  // A stopped SUnit run waits for its clean-up, which runs the test's tearDown.
+  async function noticeFor(clearMs: number): Promise<ReturnType<typeof vi.fn>> {
+    vi.useFakeTimers();
+    const told = vi.fn();
+    setStillRunningHandler(told);
+    try {
+      const { session, gci } = makeSession([]);
+      gci.GciTsClearStackAsync.mockReturnValueOnce(
+        new Promise((resolve) =>
+          setTimeout(() => resolve({ success: true, err: noErr }), clearMs),
+        ) as never,
+      );
+      void clearInBackground(session, 0x4242n);
+      sayStillRunningUnlessItEnds(session);
+      await vi.advanceTimersByTimeAsync(NOTICE_GRACE_MS + clearMs + 100);
+      return told;
+    } finally {
+      setStillRunningHandler(undefined);
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  }
+
+  it('says so when the clean-up outlasts the grace, as a slow tearDown does', async () => {
+    expect(await noticeFor(NOTICE_GRACE_MS * 4)).toHaveBeenCalledTimes(1);
+  });
+
+  it('says nothing when the clean-up ends within the grace', async () => {
+    expect(await noticeFor(30)).not.toHaveBeenCalled();
   });
 });
 
