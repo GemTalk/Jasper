@@ -19,6 +19,7 @@ vi.mock('../../wslBridge', () => ({
 import * as vscode from 'vscode';
 import { __resetConfig, __setConfig } from '../../__mocks__/vscode';
 import { SysadminStorage } from '../../sysadminStorage';
+import { appendSysadmin } from '../../sysadminChannel';
 import { InstallCancelledError, VersionManager } from '../versionManager';
 import {
   ExtractFixture,
@@ -558,6 +559,32 @@ describe.runIf(process.platform !== 'win32')(
 
       expect(hdiutilCalls().some((c) => c.includes(busy))).toBe(false);
       expect(fs.readdirSync(mountsDir)).toEqual([path.basename(busy)]);
+    });
+
+    it('removes an empty mount point an older Jasper left, without ejecting anything', async () => {
+      fakeHdiutil();
+      const left = path.join(mountsDir, 'jasper-mount-Ab12Cd');
+      fs.mkdirSync(left);
+
+      await extract();
+
+      expect(hdiutilCalls().some((c) => c.includes(left))).toBe(false);
+      expect(fs.readdirSync(mountsDir)).toEqual([]);
+    });
+
+    it('reports, and never ejects, a mount point an older Jasper left in use', async () => {
+      fakeHdiutil();
+      // Not empty, as a folder with an image mounted on it looks: rmdir refuses it.
+      const inUse = path.join(mountsDir, 'jasper-mount-Ab12Cd');
+      fs.mkdirSync(path.join(inUse, 'GemStone64Bit'), { recursive: true });
+
+      await extract();
+
+      expect(hdiutilCalls().some((c) => c.includes(inUse))).toBe(false);
+      expect(fs.readdirSync(mountsDir)).toEqual([path.basename(inUse)]);
+      expect(vi.mocked(appendSysadmin)).toHaveBeenCalledWith(
+        expect.stringContaining(`hdiutil detach "${inUse}"`),
+      );
     });
 
     it('goes ahead with the unpack when a leftover mount point will not eject', async () => {

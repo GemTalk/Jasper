@@ -3,7 +3,7 @@ import { SessionManager } from './sessionManager';
 import { buildMethodUri } from './gemstoneFileSystemProvider';
 import { dedupeMethodResults } from './queries/methodSearch';
 import { sweepEnvironmentsAsync } from './methodEnvironments';
-import { SelectorResolver, sessionForDocument } from './gemstoneDefinitionProvider';
+import { SelectorResolver, sessionForDocument } from './selectorProviders';
 import * as queries from './browserQueries';
 
 /**
@@ -34,10 +34,18 @@ export class GemStoneReferenceProvider implements vscode.ReferenceProvider {
     if (!selector) return [];
 
     const sel = selector;
-    const all = await sweepEnvironmentsAsync(
-      (env) => queries.sendersOfAsync(session, sel, env),
-      token,
-    );
+    // After a failure the rest are skipped, not asked: a busy session would refuse each of them
+    // with its own notice. The failure has already been logged or shown to the user.
+    let failed = false;
+    const all = await sweepEnvironmentsAsync(async (env) => {
+      if (failed) return [];
+      try {
+        return await queries.sendersOfAsync(session, sel, env);
+      } catch {
+        failed = true;
+        return [];
+      }
+    }, token);
     if (token?.isCancellationRequested) return [];
     return dedupeMethodResults(all).map(
       (r) =>

@@ -112,8 +112,8 @@ describe('showClassHierarchy', () => {
     const rows = vi.mocked(vscode.window.showQuickPick).mock.calls[1][0] as vscode.QuickPickItem[];
     expect(rows[0].description).toBe('(old version)');
     expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
-    expect(vi.mocked(vscode.window.showWarningMessage).mock.calls[0][0]).toContain(
-      'an older version',
+    expect(vi.mocked(vscode.window.showWarningMessage).mock.calls[0][0]).toBe(
+      "Twin — an older version. Its definition can't be opened from here.",
     );
   });
 

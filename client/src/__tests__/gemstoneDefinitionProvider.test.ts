@@ -9,7 +9,8 @@ vi.mock('../browserQueries', () => ({
 
 import { Position, Range, Location, Uri, __setConfig, __resetConfig } from '../__mocks__/vscode';
 import type * as vscode from 'vscode';
-import { GemStoneDefinitionProvider, SelectorResolver } from '../gemstoneDefinitionProvider';
+import { GemStoneDefinitionProvider } from '../gemstoneDefinitionProvider';
+import { SelectorResolver } from '../selectorProviders';
 import { SessionManager } from '../sessionManager';
 import { implementorsOf, getAllClassNames } from '../browserQueries';
 import { fakeActiveSession } from './fakeActiveSession';

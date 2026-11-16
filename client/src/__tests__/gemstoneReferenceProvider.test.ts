@@ -10,7 +10,7 @@ vi.mock('../browserQueries', () => ({
 import { Position, Location, Uri, __setConfig, __resetConfig } from '../__mocks__/vscode';
 import type * as vscode from 'vscode';
 import { GemStoneReferenceProvider } from '../gemstoneReferenceProvider';
-import { SelectorResolver } from '../gemstoneDefinitionProvider';
+import { SelectorResolver } from '../selectorProviders';
 import { SessionManager } from '../sessionManager';
 import { sendersOf, sendersOfAsync } from '../browserQueries';
 import { fakeActiveSession } from './fakeActiveSession';
@@ -130,6 +130,20 @@ describe('GemStoneReferenceProvider', () => {
 
     expect(mockSendersOf).toHaveBeenCalledTimes(1);
     expect(results).toEqual([]);
+  });
+
+  it('keeps what earlier environments found, and asks no more, once one fails', async () => {
+    __setConfig('gemstone', 'maxEnvironment', 3);
+    mockSendersOf.mockImplementation(async (_s, _sel, env) => {
+      if (env === 1) throw new Error('session busy');
+      return [sender('Object', env)];
+    });
+    const provider = new GemStoneReferenceProvider(makeSessionManager(true), resolving('size'));
+
+    const results = await provider.provideReferences(document(), pos(2, 12));
+
+    expect(mockSendersOf.mock.calls.map((c) => c[2])).toEqual([0, 1]);
+    expect(results).toHaveLength(1);
   });
 
   it('answers nothing, without asking the stone, when the cursor is on no selector', async () => {

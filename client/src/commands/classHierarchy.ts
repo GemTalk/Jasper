@@ -57,8 +57,9 @@ export async function showClassHierarchy(sessionManager: SessionManager): Promis
   const { entry } = picked;
   // Opening one by name would show whichever class the name binds now, not this one.
   if (entry.binding !== 'bound') {
-    const why = unboundHierarchyTooltip(entry.className, entry.binding).replace(/\n\n/g, ' ');
-    vscode.window.showWarningMessage(`Its definition can't be opened from here. ${why}`);
+    // Only the tooltip's marker line: the rest explains the Explorer row, too much for a toast.
+    const [why] = unboundHierarchyTooltip(entry.className, entry.binding).split('\n\n');
+    vscode.window.showWarningMessage(`${why} Its definition can't be opened from here.`);
     return;
   }
   // The Explorer follows the opened definition and selects its class, and its Hierarchy pane

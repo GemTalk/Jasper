@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { SessionManager } from './sessionManager';
-import { SelectorResolver } from './gemstoneDefinitionProvider';
+import { SelectorResolver } from './selectorProviders';
 import { dedupeMethodResults } from './queries/methodSearch';
 import { maxEnvironment, sweepEnvironments } from './methodEnvironments';
 import * as queries from './browserQueries';

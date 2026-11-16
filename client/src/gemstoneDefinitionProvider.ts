@@ -1,13 +1,10 @@
 import * as vscode from 'vscode';
-import { ActiveSession, SessionManager } from './sessionManager';
+import { SessionManager } from './sessionManager';
+import { SelectorResolver, sessionForDocument } from './selectorProviders';
 import { buildMethodUri } from './gemstoneFileSystemProvider';
 import { dedupeMethodResults } from './queries/methodSearch';
 import { sweepEnvironments } from './methodEnvironments';
 import * as queries from './browserQueries';
-
-export interface SelectorResolver {
-  getSelector(uri: string, position: vscode.Position): Promise<string | null>;
-}
 
 export class GemStoneDefinitionProvider implements vscode.DefinitionProvider {
   constructor(
@@ -19,7 +16,7 @@ export class GemStoneDefinitionProvider implements vscode.DefinitionProvider {
     document: vscode.TextDocument,
     position: vscode.Position,
   ): Promise<vscode.Location[]> {
-    const session = this.sessionFor(document);
+    const session = sessionForDocument(this.sessionManager, document);
     if (!session) return [];
 
     // 1. Try selector via LSP
@@ -67,21 +64,4 @@ export class GemStoneDefinitionProvider implements vscode.DefinitionProvider {
       return new vscode.Location(uri, new vscode.Position(0, 0));
     });
   }
-
-  private sessionFor(document: vscode.TextDocument): ActiveSession | undefined {
-    return sessionForDocument(this.sessionManager, document);
-  }
-}
-
-/**
- * A method opened from the stone answers from the session it was opened in, which need not be
- * the selected one; the language server leaves its implementors and senders to the stone.
- */
-export function sessionForDocument(
-  sessionManager: SessionManager,
-  document: vscode.TextDocument,
-): ActiveSession | undefined {
-  if (document.uri.scheme !== 'gemstone') return sessionManager.getSelectedSession();
-  const id = Number(document.uri.authority);
-  return sessionManager.getSessions().find((s) => s.id === id);
 }

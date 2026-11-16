@@ -15,7 +15,7 @@ import type { TextDocument, CodeLens } from 'vscode';
 import { Uri, Position, Range, __setConfig, __resetConfig } from '../__mocks__/vscode';
 import { CODE_LENS_SELECTORS, GemStoneCodeLensProvider } from '../gemstoneCodeLensProvider';
 import { GemStoneHoverProvider } from '../gemstoneHoverProvider';
-import { SelectorResolver } from '../gemstoneDefinitionProvider';
+import { SelectorResolver } from '../selectorProviders';
 import { GCI_PROVIDER_SELECTORS, METHOD_LANGUAGE } from '../languageIds';
 import { SessionManager } from '../sessionManager';
 import { implementorsOf, sendersOf } from '../browserQueries';

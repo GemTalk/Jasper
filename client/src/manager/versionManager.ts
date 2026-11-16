@@ -63,6 +63,9 @@ type UnpackProgress = vscode.Progress<{ message?: string; increment?: number }>;
 
 /** How each unpack's mount point in the temp folder is named; the pid of the process that made it follows. */
 const MOUNT_PREFIX = 'jasper-mount-';
+const MOUNT_PID = new RegExp(`^${MOUNT_PREFIX}(\\d+)-`);
+/** Jasper 1.19.0 and earlier named it by `mkdtemp` alone, so it names no window to check. */
+const PIDLESS_MOUNT = new RegExp(`^${MOUNT_PREFIX}[A-Za-z0-9]{6}$`);
 
 /** True unless no process has this pid; one owned by another user still counts as alive. */
 function isProcessAlive(pid: number): boolean {
@@ -714,7 +717,11 @@ export class VersionManager {
     const tmp = os.tmpdir();
     const names = await fs.promises.readdir(tmp).catch(() => [] as string[]);
     for (const name of names) {
-      const pid = Number(new RegExp(`^${MOUNT_PREFIX}(\\d+)-`).exec(name)?.[1]);
+      if (PIDLESS_MOUNT.test(name)) {
+        await this.reportPidlessMount(path.join(tmp, name));
+        continue;
+      }
+      const pid = Number(MOUNT_PID.exec(name)?.[1]);
       if (!pid || isProcessAlive(pid)) continue;
       const dir = path.join(tmp, name);
       // Fails on a folder with nothing mounted on it, which then just goes.
@@ -731,6 +738,24 @@ export class VersionManager {
           ),
         );
     }
+  }
+
+  /**
+   * A mount point an older Jasper left. Its window can't be told apart from one still copying,
+   * so it is never ejected: an empty one is removed (`rmdir` refuses a folder with an image
+   * mounted on it), and one with an image still mounted is reported.
+   */
+  private async reportPidlessMount(dir: string): Promise<void> {
+    const removed = await fs.promises.rmdir(dir).then(
+      () => true,
+      () => false,
+    );
+    if (removed) return;
+    appendSysadmin(
+      `An older version of Jasper left ${dir} behind, possibly with a GemStone disk image still ` +
+        `mounted. If no GemStone install is running in another window, eject it with: ` +
+        `hdiutil detach "${dir}"`,
+    );
   }
 
   /**

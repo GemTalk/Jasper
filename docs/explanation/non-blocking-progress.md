@@ -31,6 +31,8 @@ work on `main`.
 
 The senders and references searches behind these still freeze Jasper. #940 does not change them,
 although they could reuse its `sendersOfAsync` and `sweepEnvironmentsAsync`.
+Most other GemStone calls still block too; the hand-off's
+[Where it stands](non-blocking-gemstone-calls.md#where-it-stands) lists them under "Still blocking".
 
 | Feature                                                                         | Code                                                        |
 | ------------------------------------------------------------------------------- | ----------------------------------------------------------- |
