@@ -73,7 +73,14 @@ export function runTestClassNb(
     `GemStone: running ${className} tests…`,
     false,
     onStart,
-  ).then((data) => parseTestClassResults(data, className));
+  ).then(
+    (data) => parseTestClassResults(data, className),
+    // SUnit's suite run doesn't catch a Break, so every stop of a class ends here.
+    async (e: unknown) => {
+      if (e instanceof StoppedByBreakError) await stoppedRunCleared(session);
+      throw e;
+    },
+  );
 }
 
 export function runTestMethodNb(

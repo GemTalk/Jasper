@@ -1,7 +1,7 @@
 import { ActiveSession } from './sessionManager';
 import { GCI_ERR_OP_IN_PROGRESS, OOP_ILLEGAL, OOP_NIL } from './gciConstants';
 import { explainGciError, GciLibraryError, SESSION_BUSY_MESSAGE } from './gciLibraryError';
-import { logError } from './gciLog';
+import { logError, logInfo } from './gciLog';
 import {
   abandonedRunHolds,
   discardStoppedProcess,
@@ -363,9 +363,9 @@ export class BrowserQueryError extends Error {
 }
 
 /**
- * The user's own Stop, arriving as a raw Break error. A gem that starts the
- * call late takes the break before the run's code can catch it.
- * Its process is already being cleared.
+ * The user's own Stop, arriving as a raw Break error: the run's code has no
+ * handler for it, or the gem took it before the handler was set up (a gem that
+ * starts the call late). Its process is already being cleared.
  */
 export class StoppedByBreakError extends BrowserQueryError {}
 
@@ -571,7 +571,8 @@ export async function executeFetchStringNb(
       if (err.number !== 0) {
         const stopped = discardStoppedProcess(session, err);
         const msg = err.message || `GCI error ${err.number}`;
-        logError(session.id, msg);
+        if (stopped) logInfo(`[Session ${session.id}] Stopped: ${msg}`);
+        else logError(session.id, msg);
         throw stopped
           ? new StoppedByBreakError(msg, err.number)
           : new BrowserQueryError(msg, err.number);

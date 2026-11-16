@@ -98,6 +98,26 @@ describe('runTestMethodNb', () => {
 });
 
 describe('runTestClassNb', () => {
+  it('fails with a raw Break from its own stop only once the session is clear', async () => {
+    let cleared = false;
+    vi.mocked(stoppedRunCleared).mockImplementationOnce(async () => {
+      cleared = true;
+    });
+    const stopped = new StoppedByBreakError('a Break occurred');
+    nb.mockRejectedValueOnce(stopped);
+
+    await expect(runTestClassNb(session, 'MyTestCase')).rejects.toBe(stopped);
+    expect(cleared).toBe(true);
+  });
+
+  it('passes any other failure through without waiting', async () => {
+    const cancelled = new NbCancelledError();
+    nb.mockRejectedValueOnce(cancelled);
+
+    await expect(runTestClassNb(session, 'MyTestCase')).rejects.toBe(cancelled);
+    expect(stoppedRunCleared).not.toHaveBeenCalled();
+  });
+
   it('sends the same code the blocking query sends, and parses every line', async () => {
     nb.mockResolvedValueOnce(
       'MyTestCase\ttestAdd\tpassed\t\nMyTestCase\ttestRemove\tfailed\tTestFailure: nope\n',

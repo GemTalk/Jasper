@@ -1622,6 +1622,25 @@ describe('stoppedRunCleared', () => {
     expect(cleared).toBe(true);
     expect(clearHolds(session)).toBe(false);
   });
+
+  it('settles when the hold on the session gives up, even if the clean-up never ends', async () => {
+    vi.useFakeTimers();
+    try {
+      const { session, gci } = makeSession([]);
+      gci.GciTsClearStackAsync.mockReturnValueOnce(new Promise(() => {}) as never);
+      void clearInBackground(session, 0x4242n);
+      let cleared = false;
+      void stoppedRunCleared(session).then(() => (cleared = true));
+
+      await vi.advanceTimersByTimeAsync(29_000);
+      expect(cleared).toBe(false);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(cleared).toBe(true);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('a stopped call that outlives its hold on the session', () => {

@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
+vi.mock('../gciLog', async (orig) => ({
+  ...(await orig()),
+  logError: vi.fn(),
+  logInfo: vi.fn(),
+}));
 
 import {
   executeFetchStringNb,
@@ -9,6 +14,7 @@ import {
   StoppedByBreakError,
 } from '../browserQueries';
 import type { ActiveSession } from '../sessionManager';
+import { logError, logInfo } from '../gciLog';
 import { NbSessionBusyError } from '../nbRunner';
 import { SOFT_BREAK_ERROR } from '../gciConstants';
 import { fakeActiveSession, startNonBlockingCall } from './fakeActiveSession';
@@ -77,6 +83,8 @@ describe('executeFetchStringNb', () => {
   });
 
   it("marks a Break that answers the caller's own stop as the stop", async () => {
+    vi.mocked(logError).mockClear();
+    vi.mocked(logInfo).mockClear();
     let stopped = false;
     const session = fakeSession({
       GciTsNbPoll: vi.fn(() => ({ result: stopped ? 1 : 0, err: { number: 0 } })),
@@ -97,6 +105,9 @@ describe('executeFetchStringNb', () => {
     );
 
     await expect(run).rejects.toBeInstanceOf(StoppedByBreakError);
+    // A stop the user asked for is no error.
+    expect(logError).not.toHaveBeenCalled();
+    expect(logInfo).toHaveBeenCalledWith(expect.stringContaining('Stopped: a Break occurred'));
   });
 
   it('leaves a Break nobody asked for as an ordinary error', async () => {
