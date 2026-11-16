@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import { QueryExecutor } from '../types';
+import { NbQueryExecutor, QueryExecutor } from '../types';
 import {
   searchMethodSource,
   sendersOf,
+  sendersOfAsync,
   implementorsOf,
   referencesToObject,
   referencesToClassInDict,
@@ -280,6 +281,18 @@ describe('sendersOf', () => {
     const code = execute.mock.calls[0][0];
     expect(code).toContain('environmentId: 3');
     expect(code).toContain('categoryOfSelector: each selector environmentId: 3');
+  });
+});
+
+describe('sendersOfAsync', () => {
+  it('sends the same query as sendersOf, without blocking, and parses the same rows', async () => {
+    const blocking = vi.fn<QueryExecutor>(() => row);
+    const nonBlocking = vi.fn<NbQueryExecutor>(async () => row);
+
+    const rows = await sendersOfAsync(nonBlocking, ['at:', 'size'], 2);
+
+    expect(rows).toEqual(sendersOf(blocking, ['at:', 'size'], 2));
+    expect(nonBlocking.mock.calls[0][0]).toBe(blocking.mock.calls[0][0]);
   });
 });
 

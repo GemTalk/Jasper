@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 import { __setConfig, __resetConfig } from '../__mocks__/vscode';
-import { maxEnvironment, sweepEnvironments } from '../methodEnvironments';
+import { maxEnvironment, sweepEnvironments, sweepEnvironmentsAsync } from '../methodEnvironments';
 
 describe('sweepEnvironments', () => {
   beforeEach(() => {
@@ -53,5 +53,47 @@ describe('sweepEnvironments', () => {
       return [];
     });
     expect(asked).toEqual([0, 1, 2]);
+  });
+});
+
+describe('sweepEnvironmentsAsync', () => {
+  beforeEach(() => {
+    __resetConfig();
+  });
+
+  it('asks each environment up to the ceiling, one at a time, in order', async () => {
+    __setConfig('gemstone', 'maxEnvironment', 2);
+    const events: string[] = [];
+    const rows = await sweepEnvironmentsAsync(async (env) => {
+      events.push(`start ${env}`);
+      await Promise.resolve();
+      events.push(`end ${env}`);
+      return [env];
+    });
+    expect(rows).toEqual([0, 1, 2]);
+    expect(events).toEqual(['start 0', 'end 0', 'start 1', 'end 1', 'start 2', 'end 2']);
+  });
+
+  it('asks no further environment once cancelled, and keeps what was found', async () => {
+    __setConfig('gemstone', 'maxEnvironment', 3);
+    const token = { isCancellationRequested: false } as { isCancellationRequested: boolean };
+    const asked: number[] = [];
+    const rows = await sweepEnvironmentsAsync(async (env) => {
+      asked.push(env);
+      if (env === 1) token.isCancellationRequested = true;
+      return [env];
+    }, token as never);
+    expect(asked).toEqual([0, 1]);
+    expect(rows).toEqual([0, 1]);
+  });
+
+  it('lets a rejection out, as the blocking sweep lets a throw out', async () => {
+    __setConfig('gemstone', 'maxEnvironment', 1);
+    await expect(
+      sweepEnvironmentsAsync(async (env) => {
+        if (env === 1) throw new Error('session busy');
+        return [env];
+      }),
+    ).rejects.toThrow('session busy');
   });
 });

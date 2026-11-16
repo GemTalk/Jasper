@@ -4,6 +4,15 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Fixed
+
+- **Class Hierarchy lets you pick the class from a list.** It used to ask for the exact class name. It now offers the same list as **Find Class…**, with each class's dictionary, and picking a row opens that class's definition with the GemStone Explorer's Hierarchy pane open. VS Code no longer freezes while the hierarchy loads. ([#871](https://github.com/GemTalk/Jasper/issues/871))
+- **Find Class… and Find Method in Class… list classes alphabetically.** The class list came in the order the stone keeps its dictionaries, unsorted within each, so it could not be scanned before typing. Classes are now sorted by name (same-named classes by dictionary name), and the method list that follows is sorted by selector, instance side first and then class side. ([#871](https://github.com/GemTalk/Jasper/issues/871))
+- **Go to Definition, Peek Definition and Find All References in a method opened from the stone list only the stone's methods.** With a folder of GemStone source files open, matches from those files were listed ahead of the stone's implementors, burying the code that actually runs. Find All References never asked the stone at all: it listed senders from files on disk, plus any stone method that had been open in an editor, once for each time it was opened. It now lists the stone's senders, and VS Code keeps responding while it searches (GemStone Search's references still hold VS Code up until they finish). With two sessions logged in, the answer now comes from the session the method was opened from rather than the selected one. In a `.gs`, `.st` or `.tpz` file you are editing, the files are still searched as before and, while you are logged in, the stone's senders and implementors are listed with them. ([#871](https://github.com/GemTalk/Jasper/issues/871))
+- **Commit and abort no longer log a false error.** Each one wrote `a Boolean does not understand #'encodeAsUTF8'` to the **GemStone GCI** output channel, which with auto-commit on meant almost every change, although nothing had gone wrong. ([#871](https://github.com/GemTalk/Jasper/issues/871))
+- **Resume in the GemStone Debugger no longer logs a breakpoint-rules line when no rules are set.** The line is still written when a breakpoint has a condition or a log message. ([#871](https://github.com/GemTalk/Jasper/issues/871))
+- **Unpacking GemStone on macOS no longer leaves a disk image attached.** If VS Code closed or crashed during an unpack, the disk image stayed attached until a restart. The next unpack now ejects it, unless another open window is still using it. One left by Jasper 1.19.0 or earlier is never ejected for you; the **GemStone Admin** log says how to eject it. A failed unpack now reports its own error rather than the eject's. ([#871](https://github.com/GemTalk/Jasper/issues/871))
+
 ## [1.19.0] - 2026-11-13
 
 ### Added

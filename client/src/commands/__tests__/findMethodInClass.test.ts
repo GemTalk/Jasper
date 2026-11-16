@@ -202,6 +202,32 @@ describe('findMethodInClass', () => {
     });
   });
 
+  describe('method list order', () => {
+    beforeEach(() => {
+      vi.spyOn(SystemBrowser, 'getSelectedClassName').mockReturnValue(null);
+    });
+
+    it('lists instance-side methods by selector, then class-side methods by selector', async () => {
+      // The stone answers category by category: instance side, then class side.
+      const unsorted =
+        '0\tprinting\tprintOn:\n0\taccessing\tname\n0\taccessing\tage\n' +
+        '1\tinstance creation\tnew\n1\tdefaults\tdefaultName\n';
+      const { qp, done } = await openClassPicker(unsorted);
+
+      await acceptClass(qp, done, 'Array');
+
+      const shown = vi.mocked(vscode.window.showQuickPick).mock
+        .calls[0][0] as vscode.QuickPickItem[];
+      expect(shown.map((i) => i.label)).toEqual([
+        'age',
+        'name',
+        'printOn:',
+        '(class) defaultName',
+        '(class) new',
+      ]);
+    });
+  });
+
   describe('when no class is selected in the System Browser', () => {
     beforeEach(() => {
       vi.spyOn(SystemBrowser, 'getSelectedClassName').mockReturnValue(null);

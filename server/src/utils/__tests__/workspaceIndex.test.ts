@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { indexFile, WorkspaceIndex, detectFormat } from '../workspaceIndex';
+import { DocumentManager } from '../documentManager';
 
 describe('detectFormat', () => {
   it('returns tonel for .st files', () => {
@@ -257,5 +258,32 @@ describe('WorkspaceIndex', () => {
       const idx = makeIndex(['file:///a.gs', 'method: Foo\nbar\n  ^1\n%']);
       expect(idx.searchMethods('Foo >> bar')).toHaveLength(1);
     });
+  });
+});
+
+describe('WorkspaceIndex.updateFromParsedDocument', () => {
+  function indexOpenEditor(uri: string, source: string): WorkspaceIndex {
+    const idx = new WorkspaceIndex();
+    idx.updateFromParsedDocument(new DocumentManager().update(uri, 1, source, detectFormat(uri)));
+    return idx;
+  }
+
+  it('indexes a file open in an editor', () => {
+    const idx = indexOpenEditor(
+      'file:///project/customer.gs',
+      'method: Foo\ncount\n  ^items size\n%',
+    );
+
+    expect(idx.findSenders('size').map((m) => m.uri)).toEqual(['file:///project/customer.gs']);
+  });
+
+  it('leaves out a method opened from the stone', () => {
+    const idx = indexOpenEditor(
+      'gemstone://1/UserGlobals/DemoCustomer/instance/accessing/orderCount',
+      'orderCount\n  ^orders size',
+    );
+
+    expect(idx.findSenders('size')).toEqual([]);
+    expect(idx.findImplementors('orderCount')).toEqual([]);
   });
 });

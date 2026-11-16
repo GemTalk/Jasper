@@ -125,6 +125,24 @@ describe('browser queries (integration)', () => {
     });
   });
 
+  describe('sendersOfAsync', () => {
+    it('finds the same senders as the blocking query', async () => {
+      const blocking = queries.sendersOf(session(), 'subclassResponsibility', 0);
+
+      const found = queries.sendersOfAsync(session(), 'subclassResponsibility', 0);
+
+      expect(blocking).not.toEqual([]);
+      await expect(found).resolves.toEqual(blocking);
+    });
+
+    it('hands the thread back while the stone searches', async () => {
+      const found = queries.sendersOfAsync(session(), 'subclassResponsibility', 0);
+
+      expect(isRunning(session())).toBe(true);
+      await found;
+    });
+  });
+
   describe('getClassNames', () => {
     it('lists the classes a dictionary holds', () => {
       const names = queries.getClassNames(session(), dictionaryIndexOf('Globals'));
