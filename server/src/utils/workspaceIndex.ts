@@ -66,8 +66,13 @@ export class WorkspaceIndex {
     this.replaceFile(uri, indexFile(uri, text));
   }
 
-  /** Index a file from an already-parsed document (for open editors). */
+  /**
+   * Index a file from an already-parsed document (for open editors). A method opened from the
+   * stone (`gemstone:`) is skipped: the stone answers for it, and its entries would outlive its
+   * tab, listing it once for each time it was opened.
+   */
   updateFromParsedDocument(doc: ParsedDocument): void {
+    if (doc.uri.startsWith('gemstone:')) return;
     const methods: MethodEntry[] = [];
 
     for (const pr of doc.parsedRegions) {

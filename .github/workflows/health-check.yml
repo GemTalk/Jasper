@@ -156,6 +156,10 @@ jobs:
         run: npm ci
       - name: Supply-chain config check
         run: npm run lint:supply-chain
+      # Tests of the script above. OS-independent, so it runs here once
+      # instead of in every matrix leg (see JASPER_SKIP_SUPPLY_CHAIN_TEST).
+      - name: Supply-chain check tests
+        run: npm run test:supply-chain
       - name: TypeScript toolchain check
         run: npm run lint:toolchain
       - name: GCI header version map
@@ -267,6 +271,8 @@ jobs:
       # unaffected. Harmless on the macOS and Windows hosts, which don't use
       # glibc.
       GLIBC_TUNABLES: glibc.rtld.execstack=2
+      # lintSupplyChain.test.ts runs once in the lint job, not per leg.
+      JASPER_SKIP_SUPPLY_CHAIN_TEST: '1'
       # Queue only: a failing client test gets one retry, so a flake doesn't
       # eject the PR. PR and main runs don't retry, so they show every flake.
       # The retry-report steps test this, not the event, so they follow it.

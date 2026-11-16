@@ -63,6 +63,7 @@ export class ActiveSession {
   // owns, where they crash the process instead: see `handleUnlessAWorkerOwnsIt`.
   private hasUncollectedNonBlockingCall = false;
   private workerCallsInProgress = 0;
+  private freedListeners = new Set<() => void>();
 
   constructor(
     public id: number,
@@ -161,7 +162,7 @@ export class ActiveSession {
    */
   isBusy(): boolean {
     this.handle();
-    return this.hasUncollectedNonBlockingCall || this.workerCallsInProgress > 0;
+    return this.hasCallOutstanding();
   }
 
   /**
@@ -173,7 +174,27 @@ export class ActiveSession {
    */
   forgetUncollectedCall(): void {
     this.handle();
-    this.hasUncollectedNonBlockingCall = false;
+    this.noticeIfFreed(() => {
+      this.hasUncollectedNonBlockingCall = false;
+    });
+  }
+
+  /**
+   * Calls `listener` each time this session stops being busy: a non-blocking
+   * call's result is read or forgotten, or the last call on a worker thread
+   * settles. It is called synchronously, in the middle of the
+   * GCI call that freed the session, so it must not make GCI calls itself;
+   * one that throws is logged and does not fail that call. A logout does not
+   * count as the session becoming free, not even when a worker call still
+   * settling at the logout settles afterwards.
+   *
+   * @returns A function that stops calling `listener`.
+   * @throws {GciLibraryError} If the session is logged out.
+   */
+  onFreed(listener: () => void): () => void {
+    this.handle();
+    this.freedListeners.add(listener);
+    return () => this.freedListeners.delete(listener);
   }
 
   // Each method below is a pass-through to the GciLibrary method of the same
@@ -400,7 +421,11 @@ export class ActiveSession {
     // Any other answer, a Smalltalk error included, means the call is over.
     // Only defensive: reading before the result is ready blocks until it is,
     // rather than answering GCI_ERR_OP_IN_PROGRESS (seen on 3.6.2).
-    if (collected.err.number !== GCI_ERR_OP_IN_PROGRESS) this.hasUncollectedNonBlockingCall = false;
+    if (collected.err.number !== GCI_ERR_OP_IN_PROGRESS) {
+      this.noticeIfFreed(() => {
+        this.hasUncollectedNonBlockingCall = false;
+      });
+    }
     return collected;
   }
 
@@ -550,7 +575,27 @@ export class ActiveSession {
     try {
       return await call(handle);
     } finally {
-      this.workerCallsInProgress--;
+      this.noticeIfFreed(() => {
+        this.workerCallsInProgress--;
+      });
+    }
+  }
+
+  private hasCallOutstanding(): boolean {
+    return this.hasUncollectedNonBlockingCall || this.workerCallsInProgress > 0;
+  }
+
+  /** Applies `change` to the busy bookkeeping, telling the `onFreed` listeners if it freed the session. */
+  private noticeIfFreed(change: () => void): void {
+    const wasBusy = this.hasCallOutstanding();
+    change();
+    if (!wasBusy || this.hasCallOutstanding() || this.isLoggedOut()) return;
+    for (const listener of this.freedListeners) {
+      try {
+        listener();
+      } catch (e) {
+        console.error(`A listener for session ${this.id} becoming free failed:`, e);
+      }
     }
   }
 

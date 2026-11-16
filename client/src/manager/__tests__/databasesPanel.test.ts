@@ -191,6 +191,7 @@ beforeEach(() => {
       ldiName: 'demoLdi',
       baseExtent: 'extent0.dbf',
     },
+    keyMissing: false,
   }));
 });
 
@@ -483,6 +484,32 @@ describe('creating a database that the form asked for', () => {
 
     expect(deps.saveLogin).toHaveBeenCalledTimes(1);
     expect(deps.refreshAdminViews).toHaveBeenCalled();
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Database "db-1" created.');
+  });
+
+  it("doesn't follow the no-key warning with a success message, but still adds the login", async () => {
+    createDatabaseDirect.mockResolvedValueOnce({
+      dirName: 'db-1',
+      path: '/root/db-1',
+      config: {
+        version: '3.7.6',
+        stoneName: 'demoStone',
+        ldiName: 'demoLdi',
+        baseExtent: 'extent0.dbf',
+      },
+      keyMissing: true,
+    });
+    const deps = makeDeps() as unknown as { saveLogin: ReturnType<typeof vi.fn> };
+    DatabasesPanel.show(deps as never);
+    await sendMessage({ command: 'ready' });
+    vi.mocked(vscode.window.showInformationMessage).mockClear();
+
+    await sendMessage(FORM);
+
+    expect(vscode.window.showInformationMessage).not.toHaveBeenCalledWith(
+      expect.stringContaining('created'),
+    );
+    expect(deps.saveLogin).toHaveBeenCalledTimes(1);
   });
 
   it('carries the NFS override through when the form set it', async () => {

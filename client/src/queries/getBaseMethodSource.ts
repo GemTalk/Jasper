@@ -1,4 +1,4 @@
-import { QueryExecutor } from './types';
+import { NbQueryExecutor } from './types';
 import { escapeString, receiver } from './util';
 
 // Source of the PERSISTENT (base) method that a session override shadows on the
@@ -6,14 +6,14 @@ import { escapeString, receiver } from './util';
 // session view (compiledMethodAt:, which would return the override itself).
 // Returns a placeholder when there is no persistent implementation (i.e. the
 // selector is a session-only extension, not an override).
-export function getBaseMethodSource(
-  execute: QueryExecutor,
+export function baseMethodSource(
+  execute: NbQueryExecutor,
   className: string,
   isMeta: boolean,
   selector: string,
   environmentId: number = 0,
   dict?: number | string,
-): string {
+): Promise<string> {
   const recv = receiver(className, isMeta, dict);
   const sel = escapeString(selector);
   // Single expression, ASCII-only literal: on 3.6.x the compiler miscomputes

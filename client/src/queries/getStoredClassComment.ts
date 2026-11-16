@@ -1,4 +1,4 @@
-import { QueryExecutor } from './types';
+import { NbQueryExecutor, QueryExecutor } from './types';
 import { classLookupExpr } from './util';
 
 /**
@@ -25,11 +25,28 @@ export function getStoredClassComment(
   className: string,
   dict?: number | string,
 ): string {
-  const code = `| cls c |
+  return execute(storedClassCommentCode(className, dict));
+}
+
+/**
+ * The comment a class actually stores, or `''` when it has none, read without
+ * blocking the extension host. Never GemStone's synthesised placeholder for an
+ * uncommented class: an editable comment document opened on that text would
+ * save the boilerplate back as a real comment.
+ */
+export function storedClassComment(
+  execute: NbQueryExecutor,
+  className: string,
+  dict?: number | string,
+): Promise<string> {
+  return execute(storedClassCommentCode(className, dict));
+}
+
+function storedClassCommentCode(className: string, dict: number | string | undefined): string {
+  return `| cls c |
 cls := ${classLookupExpr(className, dict)}.
 cls ifNil: [^ ''].
 c := [cls _extraDictAt: #comment] on: Error do: [:e | nil].
 c ifNil: [^ ''].
 c`;
-  return execute(code);
 }

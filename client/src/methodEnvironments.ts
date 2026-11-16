@@ -28,3 +28,21 @@ export function sweepEnvironments<T>(query: (environmentId: number) => T[]): T[]
   }
   return found;
 }
+
+/**
+ * {@link sweepEnvironments} for a non-blocking query: one environment at a time, since the
+ * session runs one call at a time. Once `token` is cancelled no further environment is asked,
+ * and what was found so far is returned.
+ */
+export async function sweepEnvironmentsAsync<T>(
+  query: (environmentId: number) => Promise<T[]>,
+  token?: vscode.CancellationToken,
+): Promise<T[]> {
+  const maxEnv = maxEnvironment();
+  const found: T[] = [];
+  for (let environmentId = 0; environmentId <= maxEnv; environmentId++) {
+    if (token?.isCancellationRequested) break;
+    found.push(...(await query(environmentId)));
+  }
+  return found;
+}

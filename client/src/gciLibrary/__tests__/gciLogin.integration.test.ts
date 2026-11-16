@@ -4,6 +4,7 @@ import { GciLibrary } from '../../gciLibrary';
 import { COMMIT_GUARD_REASON, useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { requireParsedStoneNrs, resolveTestConnection } from '../../__tests__/testConnection';
 import { gemNrsFor, stoneNrsFor } from '../../loginTypes';
+import { explainLoginFailure, LOGIN_ERRORS } from '../../loginFailureMessage';
 import { requireGciCapability } from './requireGciCapability';
 import {
   deniedByStone,
@@ -15,7 +16,8 @@ import { LOGIN_SERIAL_CODE } from '../../__tests__/sessionGateLedger';
 
 /**
  * The raw GCI login entry points (GciTsLogin, GciTsLogin_, GciTsNbLogin,
- * GciTsNbLogin_) and GciTsEncrypt.
+ * GciTsNbLogin_) and GciTsEncrypt. The failed logins also check that
+ * `explainLoginFailure` still recognises what this GemStone version reports.
  *
  * This is the one file where a raw login is the test subject rather than
  * plumbing. Each entry point is called from one wrapper below, which carries
@@ -25,10 +27,7 @@ import { LOGIN_SERIAL_CODE } from '../../__tests__/sessionGateLedger';
  * GEMSTONE_GLOBAL_DIR handling -- the harness's own session is never used.
  */
 describe('GCI login (integration)', () => {
-  // gcierr.ht -- same values in every vendored release from 3.6.2 through 3.7.6.
-  const GS_ERR_LOGIN_DENIAL = 4051;
-  const NET_ERR_NO_SUCH_STN = 4065;
-  const ERR_IN_LOGIN = 4147;
+  const { GS_ERR_LOGIN_DENIAL, NET_ERR_NO_SUCH_STN, ERR_IN_LOGIN } = LOGIN_ERRORS;
 
   let gci: GciLibrary;
 
@@ -216,6 +215,7 @@ describe('GCI login (integration)', () => {
 
       expect(session).toBeNull();
       expect(err.number, err.message).toBe(NET_ERR_NO_SUCH_STN);
+      expect(explainLoginFailure(err)).toMatch(/stone name in this login/);
     });
 
     it('GciTsLogin rejects a wrong password', () => {
@@ -223,6 +223,7 @@ describe('GCI login (integration)', () => {
 
       expect(session).toBeNull();
       expect(err.number, err.message).toBe(GS_ERR_LOGIN_DENIAL);
+      expect(explainLoginFailure(err)).toMatch(/user name or password is wrong/);
     });
 
     it('GciTsLogin rejects an unknown NetLDI in the gem NRS', () => {
@@ -235,6 +236,7 @@ describe('GCI login (integration)', () => {
       expect(session).toBeNull();
       expect(err.number, err.message).toBe(ERR_IN_LOGIN);
       expect(err.message).toContain("NetLDI service 'jasperNoSuchNetldi'");
+      expect(explainLoginFailure(err)).toMatch(/No NetLDI named "jasperNoSuchNetldi" is running/);
     });
 
     it('GciTsNbLogin reports a wrong password when polled', async (ctx) => {
@@ -250,6 +252,7 @@ describe('GCI login (integration)', () => {
       expect(session).not.toBeNull();
       expect(result).toBe(-1);
       expect(err.number, err.message).toBe(GS_ERR_LOGIN_DENIAL);
+      expect(explainLoginFailure(err)).toMatch(/user name or password is wrong/);
     });
   });
 

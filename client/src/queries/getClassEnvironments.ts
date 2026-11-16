@@ -1,4 +1,4 @@
-import { QueryExecutor } from './types';
+import { NbQueryExecutor, QueryExecutor } from './types';
 import { escapeString } from './util';
 
 export interface EnvCategoryLine {
@@ -24,6 +24,19 @@ export function getClassEnvironments(
   className: string,
   maxEnv: number,
 ): EnvCategoryLine[] {
+  return parseClassEnvironments(execute(classEnvironmentsCode(dictIndex, className, maxEnv)));
+}
+
+export async function getClassEnvironmentsAsync(
+  execute: NbQueryExecutor,
+  dictIndex: number,
+  className: string,
+  maxEnv: number,
+): Promise<EnvCategoryLine[]> {
+  return parseClassEnvironments(await execute(classEnvironmentsCode(dictIndex, className, maxEnv)));
+}
+
+function classEnvironmentsCode(dictIndex: number, className: string, maxEnv: number): string {
   // Each emitted selector token is prefixed with a fixed 2-digit flag byte
   // (00..15) so the indicators ride along on the existing method-list round
   // trip: bit 1 = overrides super (▲), bit 2 = overridden in a subclass (▼),
@@ -82,8 +95,10 @@ stream := WriteStream on: Unicode7 new.
 ].
 stream contents`;
 
-  const raw = execute(code);
+  return code;
+}
 
+function parseClassEnvironments(raw: string): EnvCategoryLine[] {
   const results: EnvCategoryLine[] = [];
   for (const line of raw.split('\n')) {
     if (line.length === 0) continue;

@@ -1,4 +1,4 @@
-import { QueryExecutor } from './types';
+import { NbQueryExecutor, QueryExecutor } from './types';
 import { splitLines, dictLookupExpr } from './util';
 
 // className → number of instance variables DEFINED in that class (not inherited),
@@ -10,8 +10,19 @@ export function getDefinedInstVarCounts(
   execute: QueryExecutor,
   dict: number | string,
 ): Map<string, number> {
+  return parseDefinedInstVarCounts(execute(definedInstVarCountsCode(dict)));
+}
+
+export async function getDefinedInstVarCountsAsync(
+  execute: NbQueryExecutor,
+  dict: number | string,
+): Promise<Map<string, number>> {
+  return parseDefinedInstVarCounts(await execute(definedInstVarCountsCode(dict)));
+}
+
+function definedInstVarCountsCode(dict: number | string): string {
   const dictExpr = dictLookupExpr(dict);
-  const code = `| ws dict |
+  return `| ws dict |
 dict := ${dictExpr}.
 dict ifNil: [^ ''].
 ws := WriteStream on: String new.
@@ -21,8 +32,11 @@ dict keysAndValuesDo: [:k :v |
     n := [v instVarNames size] on: Error do: [:e | 0].
     ws nextPutAll: k; tab; print: n; lf]].
 ws contents`;
+}
+
+function parseDefinedInstVarCounts(raw: string): Map<string, number> {
   const map = new Map<string, number>();
-  for (const line of splitLines(execute(code))) {
+  for (const line of splitLines(raw)) {
     const tab = line.indexOf('\t');
     if (tab < 0) continue;
     map.set(line.slice(0, tab), parseInt(line.slice(tab + 1), 10) || 0);

@@ -5,13 +5,15 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../browserQueries', () => ({
   implementorsOf: vi.fn(() => []),
   getAllClassNames: vi.fn(() => []),
+  quietly: vi.fn((query: () => unknown) => query()),
 }));
 
 import { Position, Range, Location, Uri, __setConfig, __resetConfig } from '../__mocks__/vscode';
 import type * as vscode from 'vscode';
-import { GemStoneDefinitionProvider, SelectorResolver } from '../gemstoneDefinitionProvider';
+import { GemStoneDefinitionProvider } from '../gemstoneDefinitionProvider';
+import { SelectorResolver } from '../selectorProviders';
 import { SessionManager } from '../sessionManager';
-import { implementorsOf, getAllClassNames } from '../browserQueries';
+import { implementorsOf, getAllClassNames, quietly } from '../browserQueries';
 import { fakeActiveSession } from './fakeActiveSession';
 
 // Cast mock Position to vscode.Position to satisfy type checker
@@ -20,19 +22,16 @@ const pos = (line: number, char: number) => new Position(line, char) as unknown 
 const mockImplementorsOf = vi.mocked(implementorsOf);
 const mockGetAllClassNames = vi.mocked(getAllClassNames);
 
-function makeSessionManager(hasSession: boolean) {
+const fakeSession = (id: number) =>
+  fakeActiveSession({ id, gci: {}, handle: {}, login: { label: 'Test' }, stoneVersion: '3.7.2' });
+
+// Session 1 is selected; `others` are logged in alongside it.
+function makeSessionManager(hasSession: boolean, others: number[] = []) {
+  const selected = hasSession ? fakeSession(1) : undefined;
+  const sessions = [...(selected ? [selected] : []), ...others.map(fakeSession)];
   return {
-    getSelectedSession: vi.fn(() =>
-      hasSession
-        ? fakeActiveSession({
-            id: 1,
-            gci: {},
-            handle: {},
-            login: { label: 'Test' },
-            stoneVersion: '3.7.2',
-          })
-        : undefined,
-    ),
+    getSelectedSession: vi.fn(() => selected),
+    getSessions: vi.fn(() => sessions),
     onDidChangeSelection: vi.fn(() => ({ dispose: () => {} })),
   } as unknown as SessionManager;
 }
@@ -63,6 +62,7 @@ describe('GemStoneDefinitionProvider', () => {
     __resetConfig();
     mockImplementorsOf.mockReset();
     mockGetAllClassNames.mockReset();
+    vi.mocked(quietly).mockClear();
     mockImplementorsOf.mockReturnValue([]);
     mockGetAllClassNames.mockReturnValue([]);
   });
@@ -73,6 +73,37 @@ describe('GemStoneDefinitionProvider', () => {
       const doc = makeDocument('self size');
       const results = await provider.provideDefinition(doc, pos(0, 5));
       expect(results).toEqual([]);
+    });
+  });
+
+  describe('which session answers', () => {
+    const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
+
+    it('asks the session a stone method was opened from, not the selected one', async () => {
+      const provider = new GemStoneDefinitionProvider(makeSessionManager(true, [2]), resolver);
+      const doc = makeDocument('self size', 'gemstone://2/Globals/Array/instance/accessing/size');
+
+      await provider.provideDefinition(doc, pos(0, 5));
+
+      expect(mockImplementorsOf).toHaveBeenCalled();
+      expect(mockImplementorsOf.mock.calls.every(([s]) => s.id === 2)).toBe(true);
+    });
+
+    it('answers nothing for a stone method whose session has logged out', async () => {
+      const provider = new GemStoneDefinitionProvider(makeSessionManager(true), resolver);
+      const doc = makeDocument('self size', 'gemstone://2/Globals/Array/instance/accessing/size');
+
+      expect(await provider.provideDefinition(doc, pos(0, 5))).toEqual([]);
+      expect(mockImplementorsOf).not.toHaveBeenCalled();
+    });
+
+    it('asks the selected session from a file on disk', async () => {
+      const provider = new GemStoneDefinitionProvider(makeSessionManager(true, [2]), resolver);
+      const doc = makeDocument('self size', 'file:///project/kernel.gs');
+
+      await provider.provideDefinition(doc, pos(0, 5));
+
+      expect(mockImplementorsOf.mock.calls.every(([s]) => s.id === 1)).toBe(true);
     });
   });
 
@@ -228,6 +259,50 @@ describe('GemStoneDefinitionProvider', () => {
       const results = await provider.provideDefinition(doc, pos(0, 5));
 
       expect(results).toEqual([]);
+    });
+  });
+
+  describe('while a background search holds the session', () => {
+    const busy = () => {
+      throw new Error('session busy');
+    };
+
+    it('keeps the implementors other environments found, and asks quietly', async () => {
+      __setConfig('gemstone', 'maxEnvironment', 1);
+      mockImplementorsOf.mockImplementation((_session, _selector, env) =>
+        env === 1
+          ? busy()
+          : [
+              {
+                dictName: 'Globals',
+                className: 'Array',
+                isMeta: false,
+                selector: 'size',
+                category: 'accessing',
+                environmentId: 0,
+              },
+            ],
+      );
+      const provider = new GemStoneDefinitionProvider(makeSessionManager(true), {
+        getSelector: vi.fn(async () => 'size'),
+      });
+
+      const results = await provider.provideDefinition(makeDocument('self size'), pos(0, 5));
+
+      expect(results).toHaveLength(1);
+      expect(quietly).toHaveBeenCalledTimes(2);
+    });
+
+    it('answers no class, quietly, instead of failing', async () => {
+      mockGetAllClassNames.mockImplementation(busy);
+      const provider = new GemStoneDefinitionProvider(makeSessionManager(true), {
+        getSelector: vi.fn(async () => null),
+      });
+
+      await expect(
+        provider.provideDefinition(makeDocument('Array new'), pos(0, 0)),
+      ).resolves.toEqual([]);
+      expect(quietly).toHaveBeenCalledTimes(1);
     });
   });
 

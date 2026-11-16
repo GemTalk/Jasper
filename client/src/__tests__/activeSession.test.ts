@@ -118,8 +118,11 @@ const libraryLevelMembers = [
   'isAvailable',
   'isLoggedOut',
 ];
+// Private helpers that only read or change the busy counts, for callers that
+// have already checked the session.
+const busyBookkeeping = ['hasCallOutstanding', 'noticeIfFreed'];
 const membersThatNeedTheSession = Object.getOwnPropertyNames(ActiveSession.prototype).filter(
-  (name) => !libraryLevelMembers.includes(name),
+  (name) => !libraryLevelMembers.includes(name) && !busyBookkeeping.includes(name),
 );
 
 describe('logging a session out', () => {
@@ -268,5 +271,25 @@ describe('logging a session out', () => {
     const transient = session.transientLogin(login);
 
     expect(transient.session).toBeDefined();
+  });
+});
+
+describe('telling listeners the session is free', () => {
+  it('stays quiet when a worker call settles after the logout got through', async () => {
+    let settle: (value: unknown) => void = () => undefined;
+    const gci = {
+      GciTsPerformAsync: () => new Promise((resolve) => (settle = resolve)),
+      logout: () => ({ sessionFreed: true }),
+    };
+    const session = fakeActiveSession({ gci, handle: {} });
+    const listener = vi.fn();
+    session.onFreed(listener);
+    const call = session.GciTsPerformAsync(1n, 1n, 'wait', [], 0, 0);
+    session.logout();
+
+    settle({ result: 1n, err: { number: 0, message: '' } });
+    await call;
+
+    expect(listener).not.toHaveBeenCalled();
   });
 });

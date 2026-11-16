@@ -1,0 +1,372 @@
+<meta name="dash-one-writer">
+<style>
+  .ci { display: flex; flex-direction: column; gap: var(--cds-gap-xl); font-family: var(--font-anthropic-sans); color: var(--color-fg); min-width: 0; }
+  .ci h1 { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: var(--cds-font-size-title); margin: 0 0 var(--cds-gap-xs); }
+  .ci h2 { font-size: var(--cds-font-size-heading); font-weight: var(--cds-font-weight-medium); margin: 0 0 var(--cds-gap-xs); }
+  .ci p { margin: 0; line-height: 1.5; max-width: 68ch; }
+  .ci .muted { color: var(--color-fg-muted); font-size: var(--cds-font-size-caption); }
+  .ci-head { display: flex; flex-wrap: wrap; gap: var(--cds-gap-lg); align-items: stretch; }
+  .ci-head > div { min-width: 0; }
+  .ci-lead { flex: 1 1 280px; display: flex; flex-direction: column; gap: var(--cds-gap-sm); }
+  .ci-tile { flex: 0 1 260px; background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: var(--cds-pad-lg); display: flex; flex-direction: column; gap: var(--cds-gap-xs); }
+  .ci-big { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: 44px; line-height: 1.05; font-variant-numeric: tabular-nums; }
+  .ci-delta { font-size: var(--cds-font-size-body); font-variant-numeric: tabular-nums; color: var(--color-bad); }
+  .ci-chart { position: relative; min-height: 120px; min-width: 0; }
+  .ci-chart svg { display: block; width: 100%; height: auto; }
+  .ci-chart .ax text { fill: var(--cds-text-secondary); font-size: var(--cds-font-size-caption); font-family: var(--font-anthropic-sans); }
+  .ci-chart .ax line, .ci-chart .ax path { stroke: var(--cds-chart-axis); }
+  .ci-chart .grid line { stroke: var(--cds-chart-grid); }
+  .ci-chart .ttl { fill: var(--color-fg); font-size: var(--cds-font-size-caption); font-weight: 500; }
+  .ci-chart .mk text { fill: var(--cds-text-secondary); font-size: 10px; }
+  .ci-key { display: flex; flex-wrap: wrap; gap: var(--cds-gap-xs) var(--cds-gap-lg); margin-top: var(--cds-gap-xs); font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+  .ci-key span { display: inline-flex; align-items: center; gap: 6px; }
+  .ci-key i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  .ci-tip { position: absolute; pointer-events: none; z-index: 5; background: var(--cds-surface-popover); border: 1px solid var(--cds-border); box-shadow: var(--cds-shadow-popover); color: var(--cds-text-secondary); border-radius: var(--cds-radius); padding: 6px 8px; font-size: var(--cds-font-size-caption); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .ci-tip b { color: var(--color-fg); font-weight: 500; }
+  .ci-scroll { overflow-x: auto; max-width: 100%; }
+  .ci-table { border-collapse: collapse; width: 100%; font-size: var(--cds-font-size-caption); font-variant-numeric: tabular-nums; }
+  .ci-table th, .ci-table td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--color-border-line); }
+  .ci-table th:first-child, .ci-table td:first-child { text-align: left; }
+  .ci-table td.txt, .ci-table th.txt { text-align: left; }
+  .ci-table th { color: var(--color-fg-muted); font-weight: var(--cds-font-weight-medium); }
+  .ci-table td.top { color: var(--color-fg); font-weight: 600; }
+  .ci details { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+  .ci summary { cursor: pointer; }
+  .ci details p { margin-top: var(--cds-gap-xs); }
+</style>
+
+<div class="ci">
+  <div class="ci-head">
+    <div class="ci-lead">
+      <h1 id="top">CI time trends</h1>
+      <p id="takeaway">A green pull-request run now takes about <b data-draw="s_recent" data-source="headline" data-field="recent" data-row="0">—</b>, up from <b data-draw="s_first" data-source="headline" data-field="first" data-row="0">—</b> in the first week of data. Windows is the slowest platform, so it sets the run time.</p>
+      <p class="muted">Health Check workflow, GemTalk/Jasper. Green first-attempt runs only, experiment branches left out.</p>
+    </div>
+    <div class="ci-tile">
+      <span class="muted">Run time, last 7 days with data</span>
+      <span class="ci-big" data-draw="big" data-source="headline" data-field="recent" data-row="0">—</span>
+      <span class="ci-delta" data-draw="delta" data-source="headline" data-field="change" data-row="0">—</span>
+      <span class="muted">median of daily medians, start to last job finished, compared with the first 7 days</span>
+    </div>
+  </div>
+
+  <section id="trend">
+    <h2>Leg time by platform</h2>
+    <p class="muted">Daily median of one test job, solid line. Dashed line is the 90th percentile.</p>
+    <div class="ci-chart" data-draw="legchart" data-source="legs changes">—</div>
+  </section>
+
+  <section id="breakdown">
+    <h2>Where a leg spends its time</h2>
+    <p class="muted">Daily median per platform, split into setup, the first test run and the second test run. Same scale on every panel.</p>
+    <div class="ci-chart" data-draw="stepchart" data-source="legs">—</div>
+  </section>
+
+  <section id="by-file">
+    <h2>Where the test time goes, by file</h2>
+    <p class="muted">One passing leg per platform per week (GemStone 3.6.2), both test runs added. The 8 files that cost the most overall are shown, the rest of the files over 1 second are grouped. Same scale on every panel.</p>
+    <div class="ci-chart" data-draw="filechart" data-source="files">—</div>
+  </section>
+
+  <section id="platform-diff">
+    <h2>Files that run differently by platform</h2>
+    <p class="muted">Seconds in the latest sampled week, both test runs added. A 0 means the file did not run, or took under a second. Only files of 10 seconds or more, with a gap above 20%.</p>
+    <div class="ci-scroll">
+      <table class="ci-table" data-source="platdiff" data-row-key="file">
+        <thead><tr><th data-field="file">File</th><th data-field="ubuntu_s">Ubuntu</th><th data-field="windows_s">Windows</th><th data-field="macos_s">macOS</th></tr></thead>
+        <tbody data-draw="platdiff"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="slowest">
+    <h2>The ten slowest single tests</h2>
+    <p class="muted">Seconds per test run in the latest sampled week. Vitest lists only tests over 1 second.</p>
+    <div class="ci-scroll">
+      <table class="ci-table" data-source="slowest" data-row-key="rank">
+        <thead><tr><th data-field="rank">#</th><th data-field="file">File</th><th data-field="test">Test</th><th data-field="ubuntu_s">Ubuntu</th><th data-field="windows_s">Windows</th><th data-field="macos_s">macOS</th></tr></thead>
+        <tbody data-draw="slowest"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <details>
+    <summary>What is counted</summary>
+    <p>Each point is a day with at least 3 passing test legs on a first attempt, on branches other than <code>wip/*</code> and <code>throwaway/*</code>. A leg is one operating system and GemStone version. Ubuntu and Windows legs include every GemStone version in the matrix that day. The run time is measured from the run start to the finish of its last job, for pull-request runs that passed. Merge-queue runs are left out because the queue can skip the tests. Weekends have no points. Data covers Sep 10 to Nov 12 2026.</p>
+    <p>The file and test sections come from one passing GemStone 3.6.2 leg per platform per week (30 legs), read from the test logs. One leg per week is a small sample, so single weeks can be off. Vitest prints only files and tests of about 1 second or more. The latest macOS sample for the supply-chain file shows 0 because it was taken after that file moved out of the legs.</p>
+  </details>
+</div>
+
+<script>
+  const parse = d3.utcParse('%Y-%m-%d');
+  const fmtDay = d3.utcFormat('%b %-d');
+  const min1 = (v) => d3.format('.1f')(v) + ' min';
+  const PLAT = [['ubuntu', 'Ubuntu'], ['windows', 'Windows'], ['macos', 'macOS']];
+  const ready = (...ids) => ids.every((i) => dash.data(i).status === 'ok');
+  const rows = (id) => dash.data(id).data.map((r) => ({ ...r, t: parse(r.day) }));
+
+  dash.calc('headline', {
+    title: 'Run time now against the first week',
+    description: 'Median of the daily median run times for the last 7 days with data, against the first 7 days.',
+    inputs: ['wall'],
+    fn: (wall) => {
+      if (wall.length < 8) return [];
+      const med = (a) => { const s = a.map((r) => +r.median_min).sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
+      const first = med(wall.slice(0, 7));
+      const recent = med(wall.slice(-7));
+      return [{ first, recent, change: (recent - first) / first }];
+    },
+  });
+
+  const text = (name, f) => dash.draw(name, (el) => {
+    const g = dash.data('headline');
+    el.textContent = g.status === 'ok' && g.data.length ? f(g.data[0]) : '—';
+  });
+  text('s_recent', (r) => min1(r.recent));
+  text('s_first', (r) => min1(r.first));
+  text('big', (r) => min1(r.recent));
+  text('delta', (r) => (r.change >= 0 ? '+' : '') + d3.format('.0%')(r.change));
+
+  function tooltip(el, svg, x, left, right, days, html) {
+    const tip = document.createElement('div');
+    tip.className = 'ci-tip';
+    tip.hidden = true;
+    el.appendChild(tip);
+    svg.on('mousemove', (ev) => {
+      const [px] = d3.pointer(ev, svg.node());
+      const t = x.invert(px);
+      let best = days[0];
+      for (const d of days) if (Math.abs(d - t) < Math.abs(best - t)) best = d;
+      tip.innerHTML = html(best);
+      tip.hidden = false;
+      const box = el.getBoundingClientRect();
+      const sx = svg.node().getBoundingClientRect().width / svg.node().viewBox.baseVal.width;
+      const w = tip.offsetWidth;
+      let lx = x(best) * sx + 12;
+      if (lx + w > box.width) lx = x(best) * sx - w - 12;
+      tip.style.left = Math.max(0, lx) + 'px';
+      tip.style.top = Math.max(0, ev.clientY - box.top - 44) + 'px';
+    }).on('mouseleave', () => { tip.hidden = true; });
+  }
+
+  dash.draw('legchart', (el) => {
+    if (!ready('legs', 'changes')) { el.textContent = '—'; return; }
+    const data = rows('legs');
+    const marks = rows('changes');
+    const W = Math.max(300, el.clientWidth);
+    const H = 300;
+    const m = { t: 36, r: 14, b: 28, l: 40 };
+    const days = [...new Set(data.map((r) => +r.t))].sort((a, b) => a - b).map((v) => new Date(v));
+    const x = d3.scaleUtc().domain(d3.extent(days)).range([m.l, W - m.r]);
+    const y = d3.scaleLinear().domain([0, d3.max(data, (r) => r.p90_min) * 1.08]).nice().range([H - m.b, m.t]);
+    const svg = d3.create('svg').attr('viewBox', `0 0 ${W} ${H}`).attr('role', 'img')
+      .attr('aria-label', 'Daily median and 90th percentile leg time in minutes for Ubuntu, Windows and macOS');
+    svg.append('g').attr('class', 'grid').selectAll('line').data(y.ticks(5)).join('line')
+      .attr('x1', m.l).attr('x2', W - m.r).attr('y1', y).attr('y2', y);
+    svg.append('g').attr('class', 'ax').attr('transform', `translate(0,${H - m.b})`)
+      .call(d3.axisBottom(x).ticks(Math.max(3, Math.floor(W / 90))).tickFormat(fmtDay).tickSizeOuter(0));
+    svg.append('g').attr('class', 'ax').attr('transform', `translate(${m.l},0)`)
+      .call(d3.axisLeft(y).ticks(5).tickSize(0).tickPadding(6));
+    const mk = svg.append('g').attr('class', 'mk');
+    marks.forEach((r, i) => {
+      mk.append('line').attr('x1', x(r.t)).attr('x2', x(r.t)).attr('y1', m.t - 4).attr('y2', H - m.b)
+        .style('stroke', 'var(--cds-chart-reference)').attr('stroke-dasharray', '2 3');
+      mk.append('text').attr('x', x(r.t)).attr('y', 10 + (i % 3) * 11).attr('text-anchor', 'middle').text('#' + r.pr);
+    });
+    PLAT.forEach(([id], i) => {
+      const pts = data.filter((r) => r.platform === id).sort((a, b) => a.t - b.t);
+      const c = dash.colors[i % dash.colors.length];
+      svg.append('path').datum(pts).attr('fill', 'none').style('stroke', c).attr('stroke-width', 1).attr('stroke-dasharray', '4 3').attr('opacity', 0.55)
+        .attr('d', d3.line().x((r) => x(r.t)).y((r) => y(r.p90_min)));
+      svg.append('path').datum(pts).attr('fill', 'none').style('stroke', c).attr('stroke-width', 2.2).attr('stroke-linejoin', 'round')
+        .attr('d', d3.line().x((r) => x(r.t)).y((r) => y(r.median_min)));
+      const last = pts[pts.length - 1];
+      if (last) svg.append('circle').attr('cx', x(last.t)).attr('cy', y(last.median_min)).attr('r', 3.5).style('fill', c);
+    });
+    svg.append('rect').attr('x', m.l).attr('y', m.t).attr('width', W - m.l - m.r).attr('height', H - m.t - m.b).attr('fill', 'transparent');
+    el.replaceChildren(svg.node());
+    tooltip(el, svg, x, m.l, W - m.r, days, (d) => {
+      const lines = PLAT.map(([id, name]) => {
+        const r = data.find((q) => q.platform === id && +q.t === +d);
+        return r ? `${name}: <b>${min1(r.median_min)}</b> (p90 ${min1(r.p90_min)}, ${r.n} legs)` : null;
+      }).filter(Boolean);
+      return `<b>${fmtDay(d)}</b><br>${lines.join('<br>')}`;
+    });
+    const key = document.createElement('div');
+    key.className = 'ci-key';
+    PLAT.forEach(([, name], i) => {
+      const s = document.createElement('span');
+      const sw = document.createElement('i');
+      sw.style.background = dash.colors[i % dash.colors.length];
+      s.append(sw, name);
+      key.append(s);
+    });
+    marks.forEach((r) => {
+      const s = document.createElement('span');
+      s.textContent = `#${r.pr} ${r.label.replace(/ \(#\d+\)/, '')}, ${fmtDay(r.t)}`;
+      key.append(s);
+    });
+    el.appendChild(key);
+  });
+
+  dash.draw('stepchart', (el) => {
+    if (!ready('legs')) { el.textContent = '—'; return; }
+    const data = rows('legs');
+    const W = Math.max(300, el.clientWidth);
+    const H = 170;
+    const m = { t: 22, r: 14, b: 24, l: 40 };
+    const all = [...new Set(data.map((r) => +r.t))].sort((a, b) => a - b).map((v) => new Date(v));
+    const dayMs = 86400000;
+    const x = d3.scaleUtc().domain([all[0], new Date(+all[all.length - 1] + dayMs)]).range([m.l, W - m.r]);
+    const total = (r) => r.setup_and_other_min + r.tests_without_plugin_min + r.tests_with_plugin_min;
+    const y = d3.scaleLinear().domain([0, d3.max(data, total) * 1.05]).nice().range([H - m.b, m.t]);
+    const parts = [['setup_and_other_min', 'Setup and other'], ['tests_without_plugin_min', 'Tests without server plugin'], ['tests_with_plugin_min', 'Tests with server plugin']];
+    const wrap = document.createElement('div');
+    const svgs = [];
+    PLAT.forEach(([id, name]) => {
+      const pts = data.filter((r) => r.platform === id);
+      const svg = d3.create('svg').attr('viewBox', `0 0 ${W} ${H}`).attr('role', 'img')
+        .attr('aria-label', `${name}: daily median minutes per leg split into setup, tests without plugin and tests with plugin`);
+      svg.append('g').attr('class', 'grid').selectAll('line').data(y.ticks(4)).join('line')
+        .attr('x1', m.l).attr('x2', W - m.r).attr('y1', y).attr('y2', y);
+      svg.append('g').attr('class', 'ax').attr('transform', `translate(0,${H - m.b})`)
+        .call(d3.axisBottom(x).ticks(Math.max(3, Math.floor(W / 90))).tickFormat(fmtDay).tickSizeOuter(0));
+      svg.append('g').attr('class', 'ax').attr('transform', `translate(${m.l},0)`).call(d3.axisLeft(y).ticks(4).tickSize(0).tickPadding(6));
+      svg.append('text').attr('class', 'ttl').attr('x', m.l).attr('y', 12).text(name);
+      const bw = Math.max(1, (x(new Date(+all[0] + dayMs)) - x(all[0])) * 0.78);
+      pts.forEach((r) => {
+        let acc = 0;
+        parts.forEach(([k], i) => {
+          const v = r[k];
+          svg.append('rect').attr('x', x(r.t) - bw / 2 + 0).attr('width', bw)
+            .attr('y', y(acc + v)).attr('height', Math.max(0, y(acc) - y(acc + v)))
+            .style('fill', dash.colors[i % dash.colors.length]);
+          acc += v;
+        });
+      });
+      svg.append('rect').attr('x', m.l).attr('y', m.t).attr('width', W - m.l - m.r).attr('height', H - m.t - m.b).attr('fill', 'transparent');
+      const holder = document.createElement('div');
+      holder.style.position = 'relative';
+      holder.appendChild(svg.node());
+      wrap.appendChild(holder);
+      svgs.push([holder, svg, pts, name]);
+    });
+    el.replaceChildren(wrap);
+    svgs.forEach(([holder, svg, pts, name]) => {
+      const days = pts.map((r) => r.t);
+      tooltip(holder, svg, x, m.l, W - m.r, days, (d) => {
+        const r = pts.find((q) => +q.t === +d);
+        return r ? `<b>${name}, ${fmtDay(d)}</b><br>Setup and other: ${min1(r.setup_and_other_min)}<br>Tests without plugin: ${min1(r.tests_without_plugin_min)}<br>Tests with plugin: ${min1(r.tests_with_plugin_min)}<br>${r.n} legs` : '';
+      });
+    });
+    const key = document.createElement('div');
+    key.className = 'ci-key';
+    parts.forEach(([, label], i) => {
+      const s = document.createElement('span');
+      const sw = document.createElement('i');
+      sw.style.background = dash.colors[i % dash.colors.length];
+      s.append(sw, label);
+      key.append(s);
+    });
+    el.appendChild(key);
+  });
+
+  dash.draw('filechart', (el) => {
+    if (!ready('files')) { el.textContent = '—'; return; }
+    const data = dash.data('files').data.map((r) => ({ ...r, t: parse(r.week) }));
+    const W = Math.max(300, el.clientWidth);
+    const H = 190;
+    const m = { t: 22, r: 14, b: 24, l: 40 };
+    const weekMs = 7 * 86400000;
+    const starts = [...new Set(data.map((r) => +r.t))].sort((a, b) => a - b).map((v) => new Date(v));
+    const centers = starts.map((d) => new Date(+d + weekMs / 2));
+    const names = [...new Set(data.map((r) => r.file))];
+    const pal = [...dash.colors, ...d3.schemeTableau10];
+    const color = (f) => (f === 'Other files' ? 'var(--cds-chart-muted)' : pal[names.indexOf(f) % pal.length]);
+    const x = d3.scaleUtc().domain([starts[0], new Date(+starts[starts.length - 1] + weekMs)]).range([m.l, W - m.r]);
+    const totals = d3.rollup(data, (v) => d3.sum(v, (r) => r.seconds), (r) => r.platform + r.week);
+    const y = d3.scaleLinear().domain([0, d3.max(totals.values()) * 1.05]).nice().range([H - m.b, m.t]);
+    const bw = Math.max(2, (x(new Date(+starts[0] + weekMs)) - x(starts[0])) * 0.7);
+    const wrap = document.createElement('div');
+    const panels = [];
+    PLAT.forEach(([id, label]) => {
+      const svg = d3.create('svg').attr('viewBox', `0 0 ${W} ${H}`).attr('role', 'img')
+        .attr('aria-label', `${label}: seconds of test time per week, split by test file`);
+      svg.append('g').attr('class', 'grid').selectAll('line').data(y.ticks(4)).join('line')
+        .attr('x1', m.l).attr('x2', W - m.r).attr('y1', y).attr('y2', y);
+      svg.append('g').attr('class', 'ax').attr('transform', `translate(0,${H - m.b})`)
+        .call(d3.axisBottom(x).tickValues(W < 520 ? centers.filter((_, i) => i % 2 === 0) : centers)
+          .tickFormat((d) => fmtDay(starts[centers.findIndex((c) => +c === +d)])).tickSizeOuter(0));
+      svg.append('g').attr('class', 'ax').attr('transform', `translate(${m.l},0)`).call(d3.axisLeft(y).ticks(4).tickSize(0).tickPadding(6));
+      svg.append('text').attr('class', 'ttl').attr('x', m.l).attr('y', 12).text(label + ', seconds per leg');
+      starts.forEach((s, i) => {
+        let acc = 0;
+        names.forEach((f) => {
+          const r = data.find((q) => q.platform === id && +q.t === +s && q.file === f);
+          if (!r || !r.seconds) return;
+          svg.append('rect').attr('x', x(centers[i]) - bw / 2).attr('width', bw)
+            .attr('y', y(acc + r.seconds)).attr('height', Math.max(0, y(acc) - y(acc + r.seconds)))
+            .style('fill', color(f));
+          acc += r.seconds;
+        });
+      });
+      svg.append('rect').attr('x', m.l).attr('y', m.t).attr('width', W - m.l - m.r).attr('height', H - m.t - m.b).attr('fill', 'transparent');
+      const holder = document.createElement('div');
+      holder.style.position = 'relative';
+      holder.appendChild(svg.node());
+      wrap.appendChild(holder);
+      panels.push([holder, svg, id, label]);
+    });
+    el.replaceChildren(wrap);
+    panels.forEach(([holder, svg, id, label]) => {
+      tooltip(holder, svg, x, m.l, W - m.r, centers, (d) => {
+        const i = centers.findIndex((c) => +c === +d);
+        const parts = data.filter((r) => r.platform === id && +r.t === +starts[i] && r.seconds > 0).sort((a, b) => b.seconds - a.seconds);
+        const sum = d3.sum(parts, (r) => r.seconds);
+        return `<b>${label}, week of ${fmtDay(starts[i])}</b><br>Total listed: ${d3.format('.0f')(sum)} s<br>` + parts.map((r) => `${r.file}: ${d3.format('.0f')(r.seconds)} s`).join('<br>');
+      });
+    });
+    const key = document.createElement('div');
+    key.className = 'ci-key';
+    names.forEach((f) => {
+      const s = document.createElement('span');
+      const sw = document.createElement('i');
+      sw.style.background = color(f);
+      s.append(sw, f);
+      key.append(s);
+    });
+    el.appendChild(key);
+  });
+
+  dash.draw('platdiff', (tb) => {
+    const g = dash.data('platdiff');
+    if (g.status !== 'ok') { tb.replaceChildren(); return; }
+    tb.replaceChildren(...g.data.map((r) => {
+      const tr = document.createElement('tr');
+      const vals = [r.file, r.ubuntu_s, r.windows_s, r.macos_s];
+      const top = Math.max(r.ubuntu_s, r.windows_s, r.macos_s);
+      vals.forEach((v, i) => {
+        const td = document.createElement('td');
+        td.textContent = v;
+        if (i > 0 && v === top) td.className = 'top';
+        tr.append(td);
+      });
+      return tr;
+    }));
+  });
+
+  dash.draw('slowest', (tb) => {
+    const g = dash.data('slowest');
+    if (g.status !== 'ok') { tb.replaceChildren(); return; }
+    tb.replaceChildren(...g.data.map((r) => {
+      const tr = document.createElement('tr');
+      [r.rank, r.file, r.test, r.ubuntu_s || '', r.windows_s || '', r.macos_s || ''].forEach((v, i) => {
+        const td = document.createElement('td');
+        td.textContent = v;
+        if (i === 1 || i === 2) td.className = 'txt';
+        tr.append(td);
+      });
+      return tr;
+    }));
+  });
+</script>

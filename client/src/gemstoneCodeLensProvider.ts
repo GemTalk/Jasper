@@ -32,6 +32,15 @@ export const CODE_LENS_SELECTORS: vscode.DocumentFilter[] = [
   { scheme: 'file', language: 'gemstone-tonel' },
 ];
 
+/**
+ * How long a session that refused a lookup must stay free before its lenses
+ * are counted again. A run made of many calls frees the session between them
+ * for microseconds: a Transcript-streaming Execute It resumes once per write,
+ * and a conditional breakpoint once per hit. Recounting at each of those gaps
+ * would redraw every lens and have each lookup refused (and logged) again.
+ */
+const RECOUNT_AFTER_FREE_MS = 200;
+
 interface CodeLensData {
   selector: string;
   className?: string;
@@ -114,13 +123,20 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
 
   /**
    * Counts whose last lookup a busy session refused, keyed like
-   * {@link countCache}. A refusal isn't cached as a count (that would show
-   * `0 senders` until the next refresh). The next resolve shows
-   * the lens without a number and forgets the key; the resolve after that looks
-   * up again. Retrying straight away would loop while the session stays busy:
-   * the change fired after a lookup is itself what makes VS Code re-resolve.
+   * {@link countCache}, each mapped to the id of the session that refused it.
+   * A refusal isn't cached as a count (that would show `0 senders` until the
+   * next refresh). The next resolve shows the lens without a number and forgets
+   * the key; the resolve after that looks up again. Retrying straight away
+   * would loop while the session stays busy: the change fired after a lookup is
+   * itself what makes VS Code re-resolve.
+   *
+   * A session that stays free a moment also has its keys forgotten, and the
+   * lenses redrawn so they look up again. Forgetting matters: the session may
+   * free up before VS Code makes the resolve the refusal's own change asks for,
+   * and that resolve would otherwise show the lens without a number and never
+   * fire again. Only the refused keys go; the counts that succeeded stay.
    */
-  private uncounted = new Set<string>();
+  private uncounted = new Map<string, number>();
 
   /**
    * Counts currently being computed (keyed like {@link countCache}). The
@@ -133,11 +149,63 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
    */
   private pending = new Set<string>();
 
-  constructor(private sessionManager: SessionManager) {}
+  /**
+   * The ids of the sessions that refused a lookup not yet recounted.
+   * Explorer queries free a session on every click and expand, so without it
+   * each one would redraw every open file's lenses for nothing, and a session
+   * freeing up would recount lenses another, still busy, session refused.
+   */
+  private refusedBy = new Set<number>();
+  private freedSubscription: vscode.Disposable;
+
+  /** Per session id, the wait for that session to stay free (see {@link RECOUNT_AFTER_FREE_MS}). */
+  private recountTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
+  constructor(private sessionManager: SessionManager) {
+    this.freedSubscription = sessionManager.onDidFreeSession((id) => this.recountOnceStillFree(id));
+  }
+
+  /**
+   * Waits for session `id` to stay free a moment, then recounts what it
+   * refused. A session busy again by then waits for its next free-up; one that
+   * logged out meanwhile has nothing left to recount.
+   */
+  private recountOnceStillFree(id: number): void {
+    if (!this.refusedBy.has(id)) return;
+    clearTimeout(this.recountTimers.get(id));
+    this.recountTimers.set(
+      id,
+      setTimeout(() => {
+        this.recountTimers.delete(id);
+        const session = this.sessionManager.getSession(id);
+        if (!session || session.isLoggedOut()) {
+          this.forgetRefusals(id);
+          return;
+        }
+        if (session.isBusy()) return;
+        this.forgetRefusals(id);
+        this._onDidChangeCodeLenses.fire();
+      }, RECOUNT_AFTER_FREE_MS),
+    );
+  }
+
+  private forgetRefusals(id: number): void {
+    this.refusedBy.delete(id);
+    for (const [key, refusingId] of this.uncounted) {
+      if (refusingId === id) this.uncounted.delete(key);
+    }
+  }
+
+  private clearRecountTimers(): void {
+    for (const timer of this.recountTimers.values()) clearTimeout(timer);
+    this.recountTimers.clear();
+  }
 
   refresh(): void {
     this.countCache.clear();
     this.uncounted.clear();
+    this.refusedBy.clear();
+    this.clearRecountTimers();
     this.pending.clear();
     this._onDidChangeCodeLenses.fire();
   }
@@ -303,8 +371,12 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
           if (queries.isBusyRefusal(e)) refused = true;
         }
       }
-      if (refused) this.uncounted.add(cacheKey);
-      else this.countCache.set(cacheKey, count);
+      if (refused) {
+        this.uncounted.set(cacheKey, session.id);
+        this.refusedBy.add(session.id);
+      } else {
+        this.countCache.set(cacheKey, count);
+      }
       this.pending.delete(cacheKey);
       this._onDidChangeCodeLenses.fire();
     }, 0);
@@ -318,6 +390,9 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
     this.countTimers.clear();
     this.uncounted.clear();
     this.pending.clear();
+    this.refusedBy.clear();
+    this.clearRecountTimers();
+    this.freedSubscription.dispose();
     this._onDidChangeCodeLenses.dispose();
   }
 }

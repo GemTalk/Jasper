@@ -16,6 +16,45 @@ export function stillOnStone(admin: ActiveSession, serial: string): boolean {
   return admin.executeAndFetchString(stillOnStoneCode(serial)) === 'true';
 }
 
+// A gem that takes longer than this to leave is reported even when it makes the deadline, so a
+// near miss shows up in the CI log of a passing run too.
+const SLOW_LEAVE_MS = 2_000;
+
+/**
+ * Polls from `admin` until the login with serial number `serial` is off the stone; past `ms` it
+ * throws with the stone's own description of that login, read after the last check so it may differ from it.
+ * A login that leaves after more than 2 s is logged with how long it took, measured from this call.
+ */
+export async function waitUntilOffTheStone(
+  admin: ActiveSession,
+  serial: string,
+  ms: number,
+): Promise<void> {
+  const startedAt = Date.now();
+  const deadline = startedAt + ms;
+  while (stillOnStone(admin, serial)) {
+    if (Date.now() >= deadline) {
+      let description: string;
+      try {
+        description = admin.executeAndFetchString(
+          `(System descriptionOfSessionSerialNum: ${serial}) printString`,
+        );
+      } catch (error) {
+        // The timeout is the signal; a failed read of the description must not replace it.
+        description = `unavailable (${error instanceof Error ? error.message : String(error)})`;
+      }
+      throw new Error(
+        `Login ${serial} had not left the stone after ${ms} ms; it now reads: ${description}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  const tookMs = Date.now() - startedAt;
+  if (tookMs > SLOW_LEAVE_MS) {
+    console.warn(`Login ${serial} took ${tookMs} ms to leave the stone.`);
+  }
+}
+
 /** End `own`'s gem when the test finishes, if it is still on the stone, from `admin`. `own` must have been reported to the session gate. */
 export function endGemAfterTest(admin: () => ActiveSession, own: ActiveSession): void {
   const serial = reportedSerialOf(own);

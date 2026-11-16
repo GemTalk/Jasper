@@ -7,6 +7,7 @@ vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 import { useIntegrationTest } from '../useIntegrationTest';
 import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
+import { isRunning } from '../../nbRunner';
 import type { ActiveSession } from '../../sessionManager';
 import { testActiveSession } from '../testActiveSession';
 
@@ -125,6 +126,22 @@ describe('explorer queries (integration)', () => {
         ivarsCanMoveDown: true,
       });
       expect(child).toEqual({ instVarNames: [], classVarNames: [], ivarsCanMoveDown: false });
+    });
+
+    it('waits for a document read that is still running', async () => {
+      defineParentAndChild();
+      const dict = userIndex();
+      const declared = q.getDefinedInstVarNames(session(), WIDGET, dict);
+      const documentRead = q.queuedNbQueryExecutorUsing(session())(
+        `(Delay forMilliseconds: 200) wait. 'document'`,
+      );
+      await vi.waitFor(() => expect(isRunning(session())).toBe(true));
+
+      const row = q.classRowContents(session(), WIDGET, dict);
+
+      const [document, contents] = await Promise.all([documentRead, row]);
+      expect(document).toBe('document');
+      expect(contents.instVarNames).toEqual(declared);
     });
 
     it('answers no subclasses for a class that declares no instance variables', async () => {
@@ -337,15 +354,15 @@ describe('explorer queries (integration)', () => {
     });
   });
 
-  describe('getClassCategory', () => {
-    it('returns the class category the definition editor shows on its own line', () => {
+  describe('classCategory', () => {
+    it('returns the class category the definition editor shows on its own line', async () => {
       defineClass(WIDGET, 'JasperIt-Shown');
 
-      expect(q.getClassCategory(session(), WIDGET, userIndex())).toBe('JasperIt-Shown');
+      expect(await q.classCategory(session(), WIDGET, userIndex())).toBe('JasperIt-Shown');
     });
 
-    it('returns empty for a class that cannot be found', () => {
-      expect(q.getClassCategory(session(), 'JasperItNoSuchClass', userIndex())).toBe('');
+    it('returns empty for a class that cannot be found', async () => {
+      expect(await q.classCategory(session(), 'JasperItNoSuchClass', userIndex())).toBe('');
     });
   });
 

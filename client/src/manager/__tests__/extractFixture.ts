@@ -20,6 +20,10 @@ export function which(cmd: string): string | undefined {
   }
 }
 
+export function productDirName(platformSuffix: string): string {
+  return `GemStone64Bit${VERSION}${platformSuffix}`;
+}
+
 export interface ExtractFixture {
   tmpDir: string;
   rootPath: string;
@@ -39,7 +43,7 @@ export function makeFixture(platformSuffix: string, ext: 'zip' | 'dmg'): Extract
   fs.mkdirSync(rootPath);
   fs.mkdirSync(binDir);
   __setConfig('gemstone', 'rootPath', rootPath);
-  const productDir = path.join(rootPath, `GemStone64Bit${VERSION}${platformSuffix}`);
+  const productDir = path.join(rootPath, productDirName(platformSuffix));
   const archivePath = `${productDir}.${ext}`;
   const savedPath = process.env.PATH;
   process.env.PATH = `${binDir}:${savedPath}`;
@@ -63,11 +67,11 @@ export function makeFixture(platformSuffix: string, ext: 'zip' | 'dmg'): Extract
   };
 }
 
-/** A few files shaped like a product tree: an executable, a read-only file and directory, a space. */
-function buildTree(f: ExtractFixture): string {
-  const src = path.join(f.tmpDir, 'src');
+/** A few files shaped like a product tree: an executable, a read-only file, a space. */
+function buildTree(workDir: string, productName: string): string {
+  const src = path.join(workDir, 'src');
   fs.rmSync(src, { recursive: true, force: true });
-  const top = path.join(src, path.basename(f.productDir));
+  const top = path.join(src, productName);
   fs.mkdirSync(path.join(top, 'bin'), { recursive: true });
   fs.mkdirSync(path.join(top, 'doc'));
   fs.writeFileSync(path.join(top, 'bin', 'gem'), '#!/bin/sh\n');
@@ -79,7 +83,7 @@ function buildTree(f: ExtractFixture): string {
 
 /** `comment` goes after the zip's end record, which is where the entry count is read from. */
 export function buildZip(f: ExtractFixture, python: string, comment = ''): void {
-  const src = buildTree(f);
+  const src = buildTree(f.tmpDir, path.basename(f.productDir));
   execFileSync(
     python,
     [
@@ -98,11 +102,29 @@ export function buildZip(f: ExtractFixture, python: string, comment = ''): void 
   );
 }
 
-export function buildDmg(f: ExtractFixture, volume: string): void {
-  const src = buildTree(f);
-  execFileSync('hdiutil', ['create', '-srcfolder', src, '-volname', volume, '-ov', f.archivePath], {
-    stdio: 'ignore',
-  });
+/** Writes `<productName>.dmg` in `workDir` and returns its path. */
+export function buildDmg(workDir: string, productName: string, volume: string): string {
+  const image = path.join(workDir, `${productName}.dmg`);
+  const src = buildTree(workDir, productName);
+  // -ov, so the retry can write over what a failed attempt left.
+  const args = ['create', '-ov', '-srcfolder', src, '-volname', volume, image];
+  // Piped so a failure's message carries hdiutil's own words.
+  const create = () => execFileSync('hdiutil', args, { stdio: 'pipe' });
+  // Retried once: it has failed on a macOS CI runner and passed on a re-run (#925).
+  // The pause gives whatever failed it, such as a busy volume, time to clear.
+  try {
+    create();
+  } catch (first) {
+    execFileSync('sleep', ['1']);
+    try {
+      create();
+    } catch (second) {
+      throw new Error(`hdiutil create failed twice:\n${String(first)}\n${String(second)}`, {
+        cause: second,
+      });
+    }
+  }
+  return image;
 }
 
 /**

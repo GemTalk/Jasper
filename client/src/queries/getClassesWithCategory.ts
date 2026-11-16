@@ -1,4 +1,4 @@
-import { QueryExecutor } from './types';
+import { NbQueryExecutor, QueryExecutor } from './types';
 import { splitLines, dictLookupExpr } from './util';
 import { hasRealCommentExpr } from './classCommentPresence';
 
@@ -28,8 +28,19 @@ export function getClassesWithCategory(
   execute: QueryExecutor,
   dict: number | string,
 ): ClassCategoryEntry[] {
+  return parseClassesWithCategory(execute(classesWithCategoryCode(dict)));
+}
+
+export async function getClassesWithCategoryAsync(
+  execute: NbQueryExecutor,
+  dict: number | string,
+): Promise<ClassCategoryEntry[]> {
+  return parseClassesWithCategory(await execute(classesWithCategoryCode(dict)));
+}
+
+function classesWithCategoryCode(dict: number | string): string {
   const dictExpr = dictLookupExpr(dict);
-  const code = `| ws dict |
+  return `| ws dict |
 dict := ${dictExpr}.
 dict ifNil: [^ ''].
 ws := WriteStream on: String new.
@@ -43,11 +54,14 @@ dict keysAndValuesDo: [:k :v |
        nextPutAll: (cmt ifTrue: ['1'] ifFalse: ['0']); tab;
        nextPutAll: k; lf]].
 ws contents`;
+}
+
+function parseClassesWithCategory(raw: string): ClassCategoryEntry[] {
   // Parsed from the RIGHT. A class name cannot contain a tab, but a class category
   // is free text and conceivably could, so anchoring on the first two tabs would let
   // one category shift the flag and the name a field over. The last tab always ends
   // the flag, the one before it always ends the category.
-  return splitLines(execute(code)).map((line) => {
+  return splitLines(raw).map((line) => {
     const nameTab = line.lastIndexOf('\t');
     const flagTab = line.lastIndexOf('\t', nameTab - 1);
     return {
