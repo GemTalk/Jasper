@@ -2,9 +2,15 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
-import { executeFetchStringNb, loadRowanProjectNb, BrowserQueryError } from '../browserQueries';
+import {
+  executeFetchStringNb,
+  loadRowanProjectNb,
+  BrowserQueryError,
+  StoppedByBreakError,
+} from '../browserQueries';
 import type { ActiveSession } from '../sessionManager';
 import { NbSessionBusyError } from '../nbRunner';
+import { SOFT_BREAK_ERROR } from '../gciConstants';
 import { fakeActiveSession, startNonBlockingCall } from './fakeActiveSession';
 
 // A fake session whose gci implements just the non-blocking execute path:
@@ -68,6 +74,43 @@ describe('executeFetchStringNb', () => {
     });
 
     await expect(executeFetchStringNb(session, 'test', 'code')).rejects.toThrow(BrowserQueryError);
+  });
+
+  it("marks a Break that answers the caller's own stop as the stop", async () => {
+    let stopped = false;
+    const session = fakeSession({
+      GciTsNbPoll: vi.fn(() => ({ result: stopped ? 1 : 0, err: { number: 0 } })),
+      GciTsBreak: vi.fn(() => {
+        stopped = true;
+        return { result: 0, err: { number: 0 } };
+      }),
+      GciTsNbResult: vi.fn(() => ({
+        result: 0n,
+        err: { number: SOFT_BREAK_ERROR, message: 'a Break occurred', context: 0x4242n },
+      })),
+      GciTsClearStackAsync: vi.fn(async () => ({ success: true, err: { number: 0 } })),
+      GciTsReleaseObjs: vi.fn(() => ({ success: true, err: { number: 0 } })),
+    });
+
+    const run = executeFetchStringNb(session, 'test', 'code', undefined, true, (cancel) =>
+      cancel(),
+    );
+
+    await expect(run).rejects.toBeInstanceOf(StoppedByBreakError);
+  });
+
+  it('leaves a Break nobody asked for as an ordinary error', async () => {
+    const session = fakeSession({
+      GciTsNbResult: vi.fn(() => ({
+        result: 0n,
+        err: { number: SOFT_BREAK_ERROR, message: 'a Break occurred', context: 0x4242n },
+      })),
+    });
+
+    const run = executeFetchStringNb(session, 'test', 'code');
+
+    await expect(run).rejects.toThrow(BrowserQueryError);
+    await expect(run).rejects.not.toBeInstanceOf(StoppedByBreakError);
   });
 });
 

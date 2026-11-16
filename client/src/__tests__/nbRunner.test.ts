@@ -30,6 +30,7 @@ import {
   whenSessionFree,
   forgetSession,
   stopCallsOn,
+  stoppedRunCleared,
 } from '../nbRunner';
 import { OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
 import { fakeActiveSession } from './fakeActiveSession';
@@ -1593,6 +1594,33 @@ describe('a clean-up started while something else holds the session', () => {
     await clearing;
     expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(expect.anything(), 0x4242n);
     expect(stoppedRunHolds(session)).toBe(false);
+  });
+});
+
+describe('stoppedRunCleared', () => {
+  it('settles at once when nothing is being cleared', async () => {
+    const { session } = makeSession([]);
+
+    await expect(stoppedRunCleared(session)).resolves.toBeUndefined();
+  });
+
+  it('settles only once the clean-up has let go of the session', async () => {
+    const { session, gci } = makeSession([]);
+    let finish: (v: unknown) => void = () => {};
+    gci.GciTsClearStackAsync.mockReturnValueOnce(
+      new Promise((resolve) => (finish = resolve)) as never,
+    );
+    void clearInBackground(session, 0x4242n);
+    let cleared = false;
+    void stoppedRunCleared(session).then(() => (cleared = true));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(cleared).toBe(false);
+    expect(clearHolds(session)).toBe(true);
+    finish({ success: true, err: noErr });
+    await stoppedRunCleared(session);
+    expect(cleared).toBe(true);
+    expect(clearHolds(session)).toBe(false);
   });
 });
 

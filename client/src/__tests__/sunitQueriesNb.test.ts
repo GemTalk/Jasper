@@ -10,13 +10,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
-vi.mock('../browserQueries', () => ({
-  BrowserQueryError: class BrowserQueryError extends Error {},
-  defaultQueryExecutorUsing: vi.fn(() => vi.fn()),
-  executeFetchStringNb: vi.fn(),
+vi.mock('../browserQueries', () => {
+  class BrowserQueryError extends Error {}
+  return {
+    BrowserQueryError,
+    StoppedByBreakError: class StoppedByBreakError extends BrowserQueryError {},
+    defaultQueryExecutorUsing: vi.fn(() => vi.fn()),
+    executeFetchStringNb: vi.fn(),
+  };
+});
+vi.mock('../nbRunner', async (orig) => ({
+  ...(await orig()),
+  stoppedRunCleared: vi.fn(() => Promise.resolve()),
 }));
 
-import { executeFetchStringNb } from '../browserQueries';
+import { BrowserQueryError, executeFetchStringNb, StoppedByBreakError } from '../browserQueries';
+import { NbCancelledError, stoppedRunCleared } from '../nbRunner';
 import { runTestClassNb, runTestMethodNb } from '../sunitQueries';
 import { runTestClassCode, parseTestClassResults } from '../queries/runTestClass';
 import { runTestMethodCode, parseTestMethodResult } from '../queries/runTestMethod';
@@ -27,6 +36,7 @@ const nb = vi.mocked(executeFetchStringNb);
 
 beforeEach(() => {
   nb.mockClear();
+  vi.mocked(stoppedRunCleared).mockClear();
 });
 
 describe('runTestMethodNb', () => {
@@ -61,6 +71,29 @@ describe('runTestMethodNb', () => {
     await runTestMethodNb(session, 'MyTestCase', 'testAdd');
 
     expect(nb.mock.calls[0][3]).toContain('MyTestCase>>testAdd');
+  });
+
+  it('answers a raw Break from its own stop as a stopped test, once the session is clear', async () => {
+    let cleared = false;
+    vi.mocked(stoppedRunCleared).mockImplementationOnce(async () => {
+      cleared = true;
+    });
+    nb.mockRejectedValueOnce(new StoppedByBreakError('a Break occurred'));
+
+    const result = await runTestMethodNb(session, 'MyTestCase', 'testAdd');
+
+    expect(cleared).toBe(true);
+    expect(result).toMatchObject({ status: 'error', message: 'Break: a Break occurred' });
+  });
+
+  it('passes any other failure through unchanged', async () => {
+    const cancelled = new NbCancelledError();
+    const failed = new BrowserQueryError('busy');
+    nb.mockRejectedValueOnce(cancelled).mockRejectedValueOnce(failed);
+
+    await expect(runTestMethodNb(session, 'MyTestCase', 'testAdd')).rejects.toBe(cancelled);
+    await expect(runTestMethodNb(session, 'MyTestCase', 'testAdd')).rejects.toBe(failed);
+    expect(stoppedRunCleared).not.toHaveBeenCalled();
   });
 });
 

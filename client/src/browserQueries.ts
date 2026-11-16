@@ -363,9 +363,9 @@ export class BrowserQueryError extends Error {
 }
 
 /**
- * A run the user stopped that the gem answered with a raw Break: the soft break
- * was serviced before the run's own handlers could catch it, as when the gem
- * picks the call up late. The stopped process is already being cleared.
+ * The user's own Stop, arriving as a raw Break error. A gem that starts the
+ * call late takes the break before the run's code can catch it.
+ * Its process is already being cleared.
  */
 export class StoppedByBreakError extends BrowserQueryError {}
 
