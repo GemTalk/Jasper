@@ -329,7 +329,7 @@ describe('stopping a run while the gem is slow to answer (integration)', () => {
               if (stoppedRunHolds(session()))
                 throw new Error('the stopped run still holds the session');
             },
-            { timeout: 30_000 },
+            { timeout: 10_000 },
           );
           continue;
         }

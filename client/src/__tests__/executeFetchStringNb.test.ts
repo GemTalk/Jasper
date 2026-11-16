@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../gciLog', async (orig) => ({
@@ -40,6 +40,11 @@ function fakeSession(overrides: Record<string, unknown> = {}): ActiveSession {
 }
 
 describe('executeFetchStringNb', () => {
+  beforeEach(() => {
+    vi.mocked(logError).mockClear();
+    vi.mocked(logInfo).mockClear();
+  });
+
   it('starts the code non-blocking and returns the result string verbatim', async () => {
     const nbExecute = vi.fn((_session: unknown, _code: string) => ({
       success: true,
@@ -83,8 +88,6 @@ describe('executeFetchStringNb', () => {
   });
 
   it("marks a Break that answers the caller's own stop as the stop", async () => {
-    vi.mocked(logError).mockClear();
-    vi.mocked(logInfo).mockClear();
     let stopped = false;
     const session = fakeSession({
       GciTsNbPoll: vi.fn(() => ({ result: stopped ? 1 : 0, err: { number: 0 } })),
@@ -122,6 +125,8 @@ describe('executeFetchStringNb', () => {
 
     await expect(run).rejects.toThrow(BrowserQueryError);
     await expect(run).rejects.not.toBeInstanceOf(StoppedByBreakError);
+    expect(logError).toHaveBeenCalled();
+    expect(logInfo).not.toHaveBeenCalled();
   });
 });
 
