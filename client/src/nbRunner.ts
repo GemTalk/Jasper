@@ -782,7 +782,12 @@ function runHook(session: ActiveSession, hook: (() => void) | undefined): void {
 }
 
 /** Sessions a {@link clearInBackground} is still clearing a process on, by its own token. */
-const clearing = new Map<number, symbol>();
+const clearing = new Map<number, { done?: Promise<void> }>();
+
+/** Settles once the stopped run's clean-up holding the session, if any, is done. */
+export function stoppedRunCleared(session: ActiveSession): Promise<void> {
+  return clearing.get(session.id)?.done ?? Promise.resolve();
+}
 
 /** Whether the session is held by a stopped run's clean-up rather than by a run. */
 export function clearHolds(session: ActiveSession): boolean {
@@ -850,7 +855,7 @@ export function clearInBackground(
   const gsProcess = BigInt(context);
   const failed = (why: string): void =>
     logInfo(`[Session ${session.id}] Could not clear a stopped run's process: ${why}`);
-  const mine = Symbol('clear');
+  const mine: { done?: Promise<void> } = {};
   clearing.set(session.id, mine);
   // A call still in progress goes first: a drain still collecting a stopped
   // call, or a worker not back yet. The clear's hold takes over from theirs at
@@ -872,6 +877,7 @@ export function clearInBackground(
       if (clearing.get(session.id) === mine) clearing.delete(session.id);
     }
   })();
+  mine.done = cleared;
   return awaitAbandonedRead(session, cleared, then);
 }
 

@@ -18,6 +18,7 @@ import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
 import type { ActiveSession } from '../../sessionManager';
 import { NbCancelledError } from '../../nbRunner';
+import { SOFT_BREAK_ERROR } from '../../gciConstants';
 import { runTestClassNb, runTestMethodNb } from '../../sunitQueries';
 import { discoverTestClasses } from '../discoverTestClasses';
 import { discoverTestMethods } from '../discoverTestMethods';
@@ -210,6 +211,65 @@ describe('SUnit non-blocking runs (integration)', () => {
       message: expect.stringMatching(/^Break: /),
     });
   }, 120_000);
+
+  // Needs the gem on this host to pause it, which the Windows legs (gem in WSL) don't have.
+  it.skipIf(process.platform === 'win32')(
+    'answers a stop the gem takes before the test starts as a stop, with the session already free',
+    async () => {
+      // A gem that picks the run up ~2s late takes the pending break on the run
+      // code's first line, outside every handler, and answers a raw Break. Pausing
+      // the gem from the start until 2.1s in does that on demand; the rate is
+      // high but not certain, so it retries until the gem has answered a raw
+      // Break at least once.
+      installSlowTest();
+      const gemPid = Number(exec('System gemProcessId printString'));
+      const answered: number[] = [];
+      const realResult = gci.GciTsNbResult.bind(gci);
+      const results = vi.spyOn(gci, 'GciTsNbResult').mockImplementation((h) => {
+        const collected = realResult(h);
+        answered.push(collected.err.number);
+        return collected;
+      });
+      let paused = false;
+      try {
+        for (let attempt = 0; attempt < 3 && !answered.includes(SOFT_BREAK_ERROR); attempt++) {
+          let cancel: (() => void) | undefined;
+          const run = runTestMethodNb(
+            session(),
+            SUNIT_PROBE_TEST_CLASS,
+            SLOW_SELECTOR,
+            undefined,
+            (c) => {
+              process.kill(gemPid, 'SIGSTOP');
+              paused = true;
+              cancel = c;
+            },
+          );
+          run.catch(() => {});
+          await vi.waitFor(() => expect(cancel).toBeDefined());
+          await new Promise((r) => setTimeout(r, 250));
+          cancel!();
+          await new Promise((r) => setTimeout(r, 2100 - 250));
+          process.kill(gemPid, 'SIGCONT');
+          paused = false;
+
+          await expect(run).resolves.toMatchObject({
+            status: 'error',
+            message: expect.stringMatching(/^Break: /),
+          });
+          // At once, with no wait: the stop's answer comes only once its process is cleared.
+          await expect(
+            runTestMethodNb(session(), SUNIT_PROBE_TEST_CLASS, SUNIT_PROBE_PASSING_SELECTOR),
+          ).resolves.toMatchObject({ status: 'passed' });
+        }
+      } finally {
+        if (paused) process.kill(gemPid, 'SIGCONT');
+        results.mockRestore();
+      }
+      expect(answered).toContain(SOFT_BREAK_ERROR);
+    },
+    120_000,
+  );
 
   it('takes a second press by stopping waiting, with no hard break', async () => {
     // Two presses in a row once sent a hard break on the heels of the soft one,

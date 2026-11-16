@@ -363,6 +363,13 @@ export class BrowserQueryError extends Error {
 }
 
 /**
+ * A run the user stopped that the gem answered with a raw Break: the soft break
+ * was serviced before the run's own handlers could catch it, as when the gem
+ * picks the call up late. The stopped process is already being cleared.
+ */
+export class StoppedByBreakError extends BrowserQueryError {}
+
+/**
  * Whether `e` is a query refused because a call already held the session.
  * Such a refusal says nothing about the answer, so a caller that remembers
  * answers shouldn't remember it; any other failure answers the same next time.
@@ -562,10 +569,12 @@ export async function executeFetchStringNb(
     () => {
       const { result: resultOop, err } = session.GciTsNbResult();
       if (err.number !== 0) {
-        discardStoppedProcess(session, err);
+        const stopped = discardStoppedProcess(session, err);
         const msg = err.message || `GCI error ${err.number}`;
         logError(session.id, msg);
-        throw new BrowserQueryError(msg, err.number);
+        throw stopped
+          ? new StoppedByBreakError(msg, err.number)
+          : new BrowserQueryError(msg, err.number);
       }
       const fetched = session.GciTsFetchChars(resultOop, 1n, MAX_RESULT);
       if (fetched.err.number !== 0) {
