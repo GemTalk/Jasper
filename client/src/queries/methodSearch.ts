@@ -306,6 +306,18 @@ export function sendersOf(
   selector: string | readonly string[],
   environmentId: number = 0,
 ): MethodSearchResult[] {
+  return parseMethodSearchResults(execute(sendersOfCode(selector, environmentId)));
+}
+
+export async function sendersOfAsync(
+  execute: NbQueryExecutor,
+  selector: string | readonly string[],
+  environmentId: number = 0,
+): Promise<MethodSearchResult[]> {
+  return parseMethodSearchResults(await execute(sendersOfCode(selector, environmentId)));
+}
+
+function sendersOfCode(selector: string | readonly string[], environmentId: number): string {
   const selectors = typeof selector === 'string' ? [selector] : selector;
   const symbols = selectors.map((s) => `#'${escapeString(s)}'`);
   const collect =
@@ -316,11 +328,9 @@ export function sendersOf(
 methods := IdentitySet new.
 #(${symbols.join(' ')}) do: [:each | methods addAll: ((organizer sendersOf: each) at: 1)].
 methods := methods asArray.`;
-  const code = `| organizer methods stream limit classDict sl |
+  return `| organizer methods stream limit classDict sl |
 ${collect}
 ${methodSerialization(environmentId)}`;
-
-  return parseMethodSearchResults(execute(code));
 }
 
 export function implementorsOf(

@@ -2,11 +2,14 @@ import * as vscode from 'vscode';
 import { SessionManager } from './sessionManager';
 import { buildMethodUri } from './gemstoneFileSystemProvider';
 import { dedupeMethodResults } from './queries/methodSearch';
-import { sweepEnvironments } from './methodEnvironments';
+import { sweepEnvironmentsAsync } from './methodEnvironments';
 import { SelectorResolver, sessionForDocument } from './gemstoneDefinitionProvider';
 import * as queries from './browserQueries';
 
-/** Find All References on a selector: the stone's senders of it, one location per method. */
+/**
+ * VS Code's Find All References on a selector: the stone's senders of it, one location per method.
+ * GemStone Search's references are separate (`resolveReferencesUsing`) and still block.
+ */
 export class GemStoneReferenceProvider implements vscode.ReferenceProvider {
   constructor(
     private sessionManager: SessionManager,
@@ -16,6 +19,8 @@ export class GemStoneReferenceProvider implements vscode.ReferenceProvider {
   async provideReferences(
     document: vscode.TextDocument,
     position: vscode.Position,
+    _context?: vscode.ReferenceContext,
+    token?: vscode.CancellationToken,
   ): Promise<vscode.Location[]> {
     const session = sessionForDocument(this.sessionManager, document);
     if (!session) return [];
@@ -29,7 +34,11 @@ export class GemStoneReferenceProvider implements vscode.ReferenceProvider {
     if (!selector) return [];
 
     const sel = selector;
-    const all = sweepEnvironments((env) => queries.sendersOf(session, sel, env));
+    const all = await sweepEnvironmentsAsync(
+      (env) => queries.sendersOfAsync(session, sel, env),
+      token,
+    );
+    if (token?.isCancellationRequested) return [];
     return dedupeMethodResults(all).map(
       (r) =>
         new vscode.Location(

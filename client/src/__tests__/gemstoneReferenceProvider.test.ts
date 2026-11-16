@@ -4,6 +4,7 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 vi.mock('../browserQueries', () => ({
   sendersOf: vi.fn(() => []),
+  sendersOfAsync: vi.fn(async () => []),
 }));
 
 import { Position, Location, Uri, __setConfig, __resetConfig } from '../__mocks__/vscode';
@@ -11,11 +12,11 @@ import type * as vscode from 'vscode';
 import { GemStoneReferenceProvider } from '../gemstoneReferenceProvider';
 import { SelectorResolver } from '../gemstoneDefinitionProvider';
 import { SessionManager } from '../sessionManager';
-import { sendersOf } from '../browserQueries';
+import { sendersOf, sendersOfAsync } from '../browserQueries';
 import { fakeActiveSession } from './fakeActiveSession';
 
 const pos = (line: number, char: number) => new Position(line, char) as unknown as vscode.Position;
-const mockSendersOf = vi.mocked(sendersOf);
+const mockSendersOf = vi.mocked(sendersOfAsync);
 
 const fakeSession = (id: number) =>
   fakeActiveSession({ id, gci: {}, handle: {}, login: { label: 'Test' }, stoneVersion: '3.7.2' });
@@ -49,11 +50,11 @@ describe('GemStoneReferenceProvider', () => {
   beforeEach(() => {
     __resetConfig();
     mockSendersOf.mockReset();
-    mockSendersOf.mockReturnValue([]);
+    mockSendersOf.mockResolvedValue([]);
   });
 
   it('lists the stone’s senders of the selector, one location per method', async () => {
-    mockSendersOf.mockReturnValue([sender('Object'), sender('Array')]);
+    mockSendersOf.mockResolvedValue([sender('Object'), sender('Array')]);
     const provider = new GemStoneReferenceProvider(
       makeSessionManager(true),
       resolving('recursiveSize'),
@@ -71,11 +72,12 @@ describe('GemStoneReferenceProvider', () => {
       expect.stringMatching(/^gemstone:\/\/1\/Globals\/Array\/instance\/Accessing\//),
     ]);
     expect(results[0]).toBeInstanceOf(Location);
+    expect(sendersOf).not.toHaveBeenCalled();
   });
 
   it('lists a method found again in another environment once per environment', async () => {
     __setConfig('gemstone', 'maxEnvironment', 1);
-    mockSendersOf.mockImplementation((_s, _sel, env) => [sender('Object', env)]);
+    mockSendersOf.mockImplementation(async (_s, _sel, env) => [sender('Object', env)]);
     const provider = new GemStoneReferenceProvider(makeSessionManager(true), resolving('size'));
 
     const results = await provider.provideReferences(document(), pos(2, 12));
@@ -108,6 +110,26 @@ describe('GemStoneReferenceProvider', () => {
     await provider.provideReferences(document('file:///project/kernel.gs'), pos(2, 12));
 
     expect(mockSendersOf.mock.calls.every(([s]) => s.id === 1)).toBe(true);
+  });
+
+  it('answers nothing, and asks no further environment, once VS Code cancels the request', async () => {
+    __setConfig('gemstone', 'maxEnvironment', 3);
+    const token = { isCancellationRequested: false };
+    mockSendersOf.mockImplementation(async (_s, _sel, env) => {
+      token.isCancellationRequested = true;
+      return [sender('Object', env)];
+    });
+    const provider = new GemStoneReferenceProvider(makeSessionManager(true), resolving('size'));
+
+    const results = await provider.provideReferences(
+      document(),
+      pos(2, 12),
+      { includeDeclaration: true },
+      token as unknown as vscode.CancellationToken,
+    );
+
+    expect(mockSendersOf).toHaveBeenCalledTimes(1);
+    expect(results).toEqual([]);
   });
 
   it('answers nothing, without asking the stone, when the cursor is on no selector', async () => {
