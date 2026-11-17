@@ -53,7 +53,7 @@ For that, the gate has to know which sessions on the stone are whose, so **every
 - a second session: `reportedTransientLogin(session)`, never `session.transientLogin(...)`, which lint rejects in tests;
 - a `SessionManager` the test builds: wrap it in `reportingLoginsOf(...)`, which also reports the logins it makes for itself, such as the one that ends a stopped run's gem;
 - any other login: `reportLogin(own)`, which also reports its logout, or `reportRefusedLogin(startedAt)` for a login that is meant to fail, but only when the stone itself refused it (`deniedByStone(err)`: a wrong user or password). That uses up a login serial when the login begins, and the refusal can take seconds to come back, so pass `Date.now()` from just before the login; a login that never reached the stone, to an unknown stone or NetLDI, uses none.
-- a gem the test forks: report its login serial with `reportSession(serial)` and book it, as `forkGem.integration.test.ts` does.
+- a gem the test forks: report its login serial with `reportSession(serial)` and book it, as `forkGem.integration.test.ts` does. Lint holds that file to its reporting `fork()` helper; every other test file is barred from forking at all.
 
 A reported session's serial is kept: `reportedSerialOf(own)` answers it without asking the stone again.
 
