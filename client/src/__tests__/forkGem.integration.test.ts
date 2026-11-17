@@ -50,13 +50,23 @@ describe('forking a gem (integration)', () => {
   // itself is what protects users on those stones.
   const supported = (): boolean => canForkGem(execute);
 
-  const serialOf = (id: string): string =>
-    execute(`((System descriptionOfSession: ${id}) at: 9) printString`).trim();
+  // GemStone answers zeros, serial included, for a session that no longer
+  // exists. Reporting serial 0 would make the gate blame every serial below its
+  // first look, so fail here with what the stone said instead.
+  const serialOf = (id: string, forkedAt: number): string => {
+    const [serial, description] = execute(
+      `| d | d := System descriptionOfSession: ${id}. (d at: 9) printString, '|', d printString`,
+    ).split(/\|(.*)/s);
+    if (Number(serial) > 0) return serial.trim();
+    throw new Error(
+      `forked gem ${id} ended before its login serial could be read, ${Date.now() - forkedAt} ms after forking, on GemStone ${session().stoneVersion}. The stone described the session as: ${description}`,
+    );
+  };
 
   // Its serial is read while the fork is still on the stone, before its sleep ends.
   const fork = (): string => {
     const id = forkGemRunning(execute, 'System sleep: 1', gemNrs()).trim();
-    reportSession(serialOf(id));
+    reportSession(serialOf(id, Date.now()));
     return id;
   };
 
