@@ -159,6 +159,7 @@ const h = vi.hoisted(() => {
     },
     contentPrepares: () => state.contentPrepares,
     fetchedClasses: () => state.fetchedClasses,
+    makeExecutor,
     boundLimitExecutor: vi.fn(() => makeExecutor()),
   };
 });
@@ -1212,6 +1213,38 @@ describe('ExportManager (incremental sync)', () => {
       expect(text(session, '1-UserGlobals', 'MyClass.gs')).toBe('! fileout of MyClass saved\n');
     });
 
+    const failNextSyncOn = (step: string) => () => {
+      h.boundLimitExecutor.mockImplementationOnce(() => {
+        const exec = h.makeExecutor();
+        return (label: string, code: string, max: number) => {
+          if (label.startsWith(step)) throw new Error('GCI error');
+          return exec(label, code, max);
+        };
+      });
+    };
+
+    it.each([
+      ['whose manifest fetch fails', failNextSyncOn('manifest')],
+      ['whose class fetch fails', failNextSyncOn('content')],
+      ['that the server leaves the class out of', () => h.dropClass('MyClass')],
+    ])('a save covered by a sync %s is still written', async (_, failSync) => {
+      const session = createMockSession();
+      await manager.exportSession(session, true);
+      hold = holdFirstWriteOf('OtherClass.gs');
+      h.setClassSource(1, 'OtherClass', '! fileout of OtherClass saved\n');
+      const busy = manager.syncClass(session, 'UserGlobals', 'OtherClass');
+      await hold.reached;
+
+      const failing = manager.refreshSession(session);
+      h.setClassSource(1, 'MyClass', '! fileout of MyClass saved\n');
+      const saved = manager.syncClass(session, 'UserGlobals', 'MyClass');
+      failSync();
+      hold.release();
+
+      await Promise.all([busy, failing, saved]);
+      expect(text(session, '1-UserGlobals', 'MyClass.gs')).toBe('! fileout of MyClass saved\n');
+    });
+
     it('a cancelled sync drops the syncs asked for during it, but still writes saves', async () => {
       const progress = countOpenProgress();
       const session = createMockSession();
@@ -1296,6 +1329,27 @@ describe('ExportManager (incremental sync)', () => {
       const changed = manager.mirrorFolderChanged([session]);
       hold.release();
       await sync.catch(() => undefined);
+      await changed;
+
+      const r = path.join(moved, 'localhost', 'gs64stone', 'DataCurator');
+      expect(fs.readFileSync(path.join(r, '1-UserGlobals', 'MyClass.gs'), 'utf-8')).toBe(
+        '! fileout of MyClass\n',
+      );
+    });
+
+    it("fills a new mirror folder even when the old folder's sync is cancelled", async () => {
+      const progress = countOpenProgress();
+      const session = createMockSession();
+      hold = holdFirstWriteOf('MyClass.gs');
+      const sync = manager.exportSession(session, true);
+      await hold.reached;
+
+      const moved = path.join(tmpDir, 'moved');
+      setConfig('mirrorFolder', moved);
+      const changed = manager.mirrorFolderChanged([session]);
+      progress.tokens[0].isCancellationRequested = true;
+      hold.release();
+      await sync;
       await changed;
 
       const r = path.join(moved, 'localhost', 'gs64stone', 'DataCurator');

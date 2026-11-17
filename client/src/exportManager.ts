@@ -67,9 +67,12 @@ export interface ExportManagerOptions {
 type Waiter = Pick<PromiseWithResolvers<void>, 'resolve' | 'reject'>;
 
 // Mirror work for one session, waiting for the job that is running to end.
+type SyncOutcome = 'done' | 'cancelled' | 'failed';
+
 interface SessionWork {
   // A full sync, run once for everyone who asked. Silent only if every request was.
-  full?: { silent: boolean; waiters: Waiter[] };
+  // keepOnCancel: cancelling the sync running when it was asked for doesn't drop it.
+  full?: { silent: boolean; keepOnCancel: boolean; waiters: Waiter[] };
   // Single-class writes and deletes, by class; a later request replaces an earlier one.
   classes: Map<string, { run: () => Promise<void>; waiters: Waiter[] }>;
 }
@@ -241,7 +244,8 @@ export class ExportManager {
     for (const id of [...this.assignedRoots.keys()]) this.dropClaim(id);
     this.unwritableReported.clear();
     for (const session of liveSessions) {
-      if (shouldSyncClasses(session.login)) await this.exportSession(session, true);
+      // Cancelling the old folder's sync must not also drop the one that fills the new folder.
+      if (shouldSyncClasses(session.login)) await this.requestFullSync(session, true, true);
     }
   }
 
@@ -335,16 +339,26 @@ export class ExportManager {
    * Asked for while other mirror work runs on the session, it runs afterwards, once
    * however many asked, since the running job may have read the classes before the
    * change that prompted the request. A cancelled sync drops the syncs asked for during
-   * it. The promise settles with the run that served this caller.
+   * it, except the one that fills a newly chosen mirror folder. The promise settles with
+   * the run that served this caller.
    *
    * @param silent when true, skip the completion toast (used for the automatic
    *   syncs on login / commit / abort). An unwritable mirror is reported regardless.
    */
   exportSession(session: ActiveSession, silent = false): Promise<void> {
+    return this.requestFullSync(session, silent, false);
+  }
+
+  private requestFullSync(
+    session: ActiveSession,
+    silent: boolean,
+    keepOnCancel: boolean,
+  ): Promise<void> {
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     this.enqueue(session, (work) => {
-      work.full ??= { silent: true, waiters: [] };
+      work.full ??= { silent: true, keepOnCancel: false, waiters: [] };
       work.full.silent &&= silent;
+      work.full.keepOnCancel ||= keepOnCancel;
       work.full.waiters.push({ resolve, reject });
     });
     return promise;
@@ -385,9 +399,10 @@ export class ExportManager {
           // unless it fails or is cancelled first.
           const covered = new Map(work.classes);
           work.classes.clear();
-          let outcome: 'done' | 'cancelled' | 'failed';
+          let outcome: SyncOutcome;
           try {
-            outcome = (await this.syncOnce(session, full.silent)) ? 'cancelled' : 'done';
+            // A failure syncOnce reports itself still resolves its callers.
+            outcome = await this.syncOnce(session, full.silent);
             for (const w of full.waiters) w.resolve();
           } catch (e) {
             outcome = 'failed';
@@ -406,7 +421,7 @@ export class ExportManager {
           }
           // Requests made while the sync ran set this; TypeScript can't see that.
           const askedDuringRun = work.full as SessionWork['full'];
-          if (outcome === 'cancelled' && askedDuringRun) {
+          if (outcome === 'cancelled' && askedDuringRun && !askedDuringRun.keepOnCancel) {
             for (const w of askedDuringRun.waiters) w.resolve();
             work.full = undefined;
           }
@@ -428,19 +443,24 @@ export class ExportManager {
     }
   }
 
-  /** Runs one full sync; answers whether it was cancelled. */
-  private async syncOnce(session: ActiveSession, silent: boolean): Promise<boolean> {
+  /**
+   * Runs one full sync. A GemStone error, or a class the server didn't send, is
+   * reported here and answers 'failed', so the queue reruns the saves it was to cover.
+   */
+  private async syncOnce(session: ActiveSession, silent: boolean): Promise<SyncOutcome> {
     if (!shouldSyncClasses(session.login)) {
       this.log(
         `Sync skipped for ${session.login.gs_user}@${session.login.stone}: disabled for this login.`,
       );
-      return false;
+      return 'done';
     }
 
     const sessionRoot = this.claimSessionRoot(session);
-    if (!sessionRoot || !this.ensureWritable(session, sessionRoot)) return false;
+    // Saves it covered would hit the same unwritable folder, so there is nothing to rerun.
+    if (!sessionRoot || !this.ensureWritable(session, sessionRoot)) return 'done';
 
     let cancellation: vscode.CancellationToken | undefined;
+    let failed = false;
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
@@ -479,6 +499,7 @@ export class ExportManager {
           );
         } catch (e) {
           this.reportError(e, silent);
+          failed = true;
           return;
         }
         if (token.isCancellationRequested) return;
@@ -553,6 +574,7 @@ export class ExportManager {
               );
             } catch (e) {
               this.reportError(e, silent);
+              failed = true;
               break;
             }
             const parsed = parseContent(payload);
@@ -615,6 +637,7 @@ export class ExportManager {
         // 7. Audit: report (loudly) any requested class we failed to write.
         const auditFailed = !cancelled && (missing.length > 0 || parseErrors.length > 0);
         if (auditFailed) {
+          failed = true;
           this.log(
             `AUDIT FAILED: ${missing.length} requested class(es) not written; ` +
               `${parseErrors.length} batch parse error(s).`,
@@ -642,7 +665,8 @@ export class ExportManager {
     // Not before: at login it would land among the connect, tip and progress
     // messages and be pushed out of view.
     this.showExportPathRetiredNotice();
-    return cancellation?.isCancellationRequested ?? false;
+    if (failed) return 'failed';
+    return cancellation?.isCancellationRequested ? 'cancelled' : 'done';
   }
 
   /** Re-sync after a commit or abort (another session's changes may be visible). */
@@ -719,18 +743,15 @@ export class ExportManager {
     className: string,
   ): void {
     if (!shouldSyncClasses(session.login)) return;
-    if (this.workBySession.has(session.id)) {
-      // Queued, so a sync that read the class earlier can't write it back afterwards.
-      this.enqueueClassJob(session, `${dictName}\t${className}`, async () =>
-        this.deleteOneClass(session, dictIndex, dictName, className),
-      ).catch((e: unknown) =>
-        this.log(
-          `removeClassFile failed for ${dictName}/${className}: ${e instanceof Error ? e.message : String(e)}`,
-        ),
-      );
-      return;
-    }
-    this.deleteOneClass(session, dictIndex, dictName, className);
+    // Queued, so a sync that read the class earlier can't write it back afterwards. With
+    // nothing queued the job starts at once, so the file is gone before this returns.
+    this.enqueueClassJob(session, `${dictName}\t${className}`, async () =>
+      this.deleteOneClass(session, dictIndex, dictName, className),
+    ).catch((e: unknown) =>
+      this.log(
+        `removeClassFile failed for ${dictName}/${className}: ${e instanceof Error ? e.message : String(e)}`,
+      ),
+    );
   }
 
   private deleteOneClass(
