@@ -161,6 +161,9 @@ export class SessionLedger<K> {
 
   /** `key`'s file logged in the session with login serial `serial`. */
   opened(key: K, serial: string): void {
+    // As in `sample`: serial 0 would read as the start of the run's serials,
+    // and is what the stone describes a session that has already gone with.
+    if (!(Number(serial) > 0)) return;
     this.holders.get(key)?.serials.add(serial);
     this.reported.set(serial, this.clock());
   }

@@ -23,8 +23,8 @@ import { reportSession } from './sessionGateClient';
  * `gemNRS:` is what fixes it, and this test is what keeps it fixed.
  *
  * Each forked gem sleeps a second and exits, outliving the test that forked it,
- * though on 3.7.2 one forked just before this file's worker exits can end
- * within milliseconds, too soon for the session gate to see. Either way it is a
+ * though one forked just before this file's session ends can end within
+ * milliseconds, too soon for the session gate to see (#949). Either way it is a
  * session of this file's, so it is reported to the gate as soon as it is forked,
  * and booked: the file's own session and one per test that forks.
  */
