@@ -2,7 +2,11 @@
 // from its sockets and its watcher session so it can be tested without a stone.
 // `K` identifies a file's booking: a socket in the gate, anything in a test.
 
-/** How long after its login a refusal's report can arrive (see loginsNeverSeen). */
+/**
+ * How far outside a refused login's own span, from the call to the refusal, the
+ * watcher can date the serial it used: a look and a report reach the gate in
+ * either order.
+ */
 export const REFUSAL_REPORT_SLACK_MS = 2_000;
 
 /** Smalltalk answering the login serial of the session that runs it. */
@@ -13,8 +17,13 @@ export function testFileName(path: string): string {
   return path.split('/client/')[1] ?? path;
 }
 
-/** A login the stone refused, as reported by the file whose worker made it. */
+/**
+ * A login the stone refused, as reported by the file whose worker made it. Its
+ * serial is used up somewhere between `startedAt` and `at`, and a refusal can
+ * take seconds to come back.
+ */
 export type Refusal = {
+  startedAt: number;
   at: number;
   pid: number | undefined;
   file: string | undefined;
@@ -37,6 +46,11 @@ export type UnseenLogin = {
 
 /** How far either side of an unseen login its report lists refusals. */
 export const UNSEEN_LOGIN_CONTEXT_MS = 10_000;
+
+/** How far apart two spans of time are: 0 when they overlap. */
+function apart([aFrom, aTo]: [number, number], [bFrom, bTo]: [number, number]): number {
+  return Math.max(0, bFrom - aTo, aFrom - bTo);
+}
 
 export type BookingRequest = { file: string; pid: number; n: number };
 
@@ -156,10 +170,14 @@ export class SessionLedger<K> {
     this.holders.get(key)?.closed.add(serial);
   }
 
-  /** `key`'s file had a login refused, using up a login serial with no session to show for it. */
-  refused(key: K): void {
+  /**
+   * `key`'s file had a login refused, `tookMs` after it called the stone, using
+   * up a login serial with no session to show for it.
+   */
+  refused(key: K, tookMs: number): void {
     const h = this.holders.get(key);
-    this.refusals.push({ at: this.clock(), pid: h?.pid, file: h?.file });
+    const at = this.clock();
+    this.refusals.push({ startedAt: at - tookMs, at, pid: h?.pid, file: h?.file });
   }
 
   /** Matches an unmatched refusal by worker `pid` near `at` to `what`, if there is one. */
@@ -168,7 +186,7 @@ export class SessionLedger<K> {
       (x) =>
         x.matchedTo === undefined &&
         x.pid === pid &&
-        Math.abs(x.at - at) <= REFUSAL_REPORT_SLACK_MS,
+        apart([x.startedAt, x.at], [at, at]) <= REFUSAL_REPORT_SLACK_MS,
     );
     if (r) r.matchedTo = what;
     return r !== undefined;
@@ -334,28 +352,25 @@ export class SessionLedger<K> {
         missed.push({ serial, running: [...new Set(running)], after, before, refusalsNearby: [] });
       }
     }
-    // Nearest gap, not the one containing it: a refusal is reported once the
-    // stone answers, which can be after the next login was already seen.
-    const distance = (m: UnseenLogin, at: number) =>
-      at < m.after.at ? m.after.at - at : at > m.before.at ? at - m.before.at : 0;
+    // Nearest gap, not the one containing it: the watcher dates a serial when it
+    // sees or hears of it, after the login that used it.
+    const distance = (m: UnseenLogin, r: Refusal) =>
+      apart([r.startedAt, r.at], [m.after.at, m.before.at]);
     const unexplained = [...missed];
     for (const refusal of this.refusals) {
       if (refusal.matchedTo !== undefined) continue;
       let best = -1;
       for (let i = 0; i < unexplained.length; i++) {
-        if (
-          best < 0 ||
-          distance(unexplained[i], refusal.at) < distance(unexplained[best], refusal.at)
-        )
+        if (best < 0 || distance(unexplained[i], refusal) < distance(unexplained[best], refusal))
           best = i;
       }
-      if (best >= 0 && distance(unexplained[best], refusal.at) <= REFUSAL_REPORT_SLACK_MS) {
+      if (best >= 0 && distance(unexplained[best], refusal) <= REFUSAL_REPORT_SLACK_MS) {
         refusal.matchedTo = `unseen login serial ${unexplained[best].serial}`;
         unexplained.splice(best, 1);
       }
     }
     for (const m of unexplained) {
-      m.refusalsNearby = this.refusals.filter((r) => distance(m, r.at) <= UNSEEN_LOGIN_CONTEXT_MS);
+      m.refusalsNearby = this.refusals.filter((r) => distance(m, r) <= UNSEEN_LOGIN_CONTEXT_MS);
     }
     return unexplained;
   }
