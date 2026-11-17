@@ -81,6 +81,8 @@ const PASSWORD_NAMES = '/^(VITE_GEMSTONE_PASSWORD|gsPassword|GS_PASSWORD)$/';
 const RAW_LOGIN_NAMES = '/^GciTsN?b?Login(_|Finished)?$/';
 const FORKED_GEM =
   'Prefer running the expression on the test context session. A forked gem runs in a session of its own that the harness never armed, and it outlives the test.';
+const UNREPORTED_FORK =
+  "Fork through this file's `fork()` helper. It reports the forked gem's login to the session gate; a gem forked any other way is a login the gate never hears about, and fails the run whenever the gate happens to see it.";
 // Only a raw-wrapper test -- one that exercises the GCI binding layer
 // directly, under client/src/gciLibrary/__tests__/ -- may legitimately skip
 // on a missing symbol. One level up, a missing symbol is a *behavior* (a
@@ -649,6 +651,24 @@ export default tseslint.config(
             },
             TS_EXTENSION_IMPORT,
           ],
+        },
+      ],
+    },
+  },
+  {
+    // The one test file allowed to fork a gem must report every gem it forks
+    // (see UNREPORTED_FORK). Restates the block above's selectors, since flat
+    // config replaces a rule's options per block (see TS_EXTENSION_IMPORT).
+    files: ['client/src/__tests__/forkGem.integration.test.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        ...HARNESS_SESSION_SELECTORS,
+        ...CAPABILITY_CHECK_SELECTORS,
+        {
+          selector:
+            "CallExpression[callee.name='forkGemRunning']:not(VariableDeclarator[id.name='fork'] CallExpression)",
+          message: UNREPORTED_FORK,
         },
       ],
     },
