@@ -64,6 +64,16 @@ export interface ExportManagerOptions {
   memento?: Pick<vscode.Memento, 'get' | 'update'>;
 }
 
+type Waiter = Pick<PromiseWithResolvers<void>, 'resolve' | 'reject'>;
+
+// Mirror work for one session, waiting for the job that is running to end.
+interface SessionWork {
+  // A full sync, run once for everyone who asked. Silent only if every request was.
+  full?: { silent: boolean; waiters: Waiter[] };
+  // Single-class writes and deletes, by class; a later request replaces an earlier one.
+  classes: Map<string, { run: () => Promise<void>; waiters: Waiter[] }>;
+}
+
 // Files written/deleted concurrently during a sync. Overlapping per-file latency
 // keeps a slow or network filesystem from serializing thousands of tiny writes.
 const SYNC_WRITE_CONCURRENCY = 32;
@@ -106,8 +116,14 @@ export function isInsideRoot(root: string, fsPath: string): boolean {
  * while another live session holds the plain folder.
  */
 export class ExportManager {
-  // Suppress file-watcher events while we are writing the mirror.
-  private writing = false;
+  // Suppress file-watcher events while we are writing the mirror. A count, not a flag:
+  // two sessions' syncs overlap, and the first to end must not clear it for the other.
+  private writesInProgress = 0;
+
+  // Only one job (a full sync or a single-class write) touches a session's mirror at a
+  // time; the rest wait here, since a job that read a class earlier would overwrite a newer
+  // copy. Present exactly while a job runs.
+  private workBySession = new Map<number, SessionWork>();
 
   private logChannel: vscode.OutputChannel | undefined;
 
@@ -127,7 +143,7 @@ export class ExportManager {
   constructor(private readonly options: ExportManagerOptions = {}) {}
 
   get isWriting(): boolean {
-    return this.writing;
+    return this.writesInProgress > 0;
   }
 
   /**
@@ -316,20 +332,115 @@ export class ExportManager {
    * persisted state, and re-fetch only what changed. Cancellable; a cancelled
    * run leaves a consistent partial mirror that the next sync completes.
    *
+   * Asked for while other mirror work runs on the session, it runs afterwards, once
+   * however many asked, since the running job may have read the classes before the
+   * change that prompted the request. A cancelled sync drops the syncs asked for during
+   * it. The promise settles with the run that served this caller.
+   *
    * @param silent when true, skip the completion toast (used for the automatic
    *   syncs on login / commit / abort). An unwritable mirror is reported regardless.
    */
-  async exportSession(session: ActiveSession, silent = false): Promise<void> {
+  exportSession(session: ActiveSession, silent = false): Promise<void> {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    this.enqueue(session, (work) => {
+      work.full ??= { silent: true, waiters: [] };
+      work.full.silent &&= silent;
+      work.full.waiters.push({ resolve, reject });
+    });
+    return promise;
+  }
+
+  private enqueueClassJob(session: ActiveSession, key: string, run: () => Promise<void>) {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    this.enqueue(session, (work) => {
+      const queued = work.classes.get(key);
+      if (queued) {
+        queued.run = run;
+        queued.waiters.push({ resolve, reject });
+      } else {
+        work.classes.set(key, { run, waiters: [{ resolve, reject }] });
+      }
+    });
+    return promise;
+  }
+
+  // The work entry is registered before the first job starts, so a request made while
+  // that job is still in its synchronous start waits too.
+  private enqueue(session: ActiveSession, add: (work: SessionWork) => void): void {
+    const running = this.workBySession.get(session.id);
+    const work = running ?? { classes: new Map() };
+    add(work);
+    if (running) return;
+    this.workBySession.set(session.id, work);
+    void this.drain(session, work);
+  }
+
+  private async drain(session: ActiveSession, work: SessionWork): Promise<void> {
+    try {
+      for (;;) {
+        const full = work.full;
+        if (full) {
+          work.full = undefined;
+          // A full sync reads every class after these were asked for, so it covers them,
+          // unless it fails or is cancelled first.
+          const covered = new Map(work.classes);
+          work.classes.clear();
+          let outcome: 'done' | 'cancelled' | 'failed';
+          try {
+            outcome = (await this.syncOnce(session, full.silent)) ? 'cancelled' : 'done';
+            for (const w of full.waiters) w.resolve();
+          } catch (e) {
+            outcome = 'failed';
+            for (const w of full.waiters) w.reject(e);
+          }
+          if (outcome === 'done') {
+            for (const job of covered.values()) for (const w of job.waiters) w.resolve();
+          } else {
+            for (const [key, job] of covered) {
+              const later = work.classes.get(key);
+              work.classes.set(
+                key,
+                later ? { run: later.run, waiters: [...job.waiters, ...later.waiters] } : job,
+              );
+            }
+          }
+          // Requests made while the sync ran set this; TypeScript can't see that.
+          const askedDuringRun = work.full as SessionWork['full'];
+          if (outcome === 'cancelled' && askedDuringRun) {
+            for (const w of askedDuringRun.waiters) w.resolve();
+            work.full = undefined;
+          }
+          continue;
+        }
+        const next = work.classes.entries().next();
+        if (next.done) return;
+        const [key, job] = next.value;
+        work.classes.delete(key);
+        try {
+          await job.run();
+          for (const w of job.waiters) w.resolve();
+        } catch (e) {
+          for (const w of job.waiters) w.reject(e);
+        }
+      }
+    } finally {
+      this.workBySession.delete(session.id);
+    }
+  }
+
+  /** Runs one full sync; answers whether it was cancelled. */
+  private async syncOnce(session: ActiveSession, silent: boolean): Promise<boolean> {
     if (!shouldSyncClasses(session.login)) {
       this.log(
         `Sync skipped for ${session.login.gs_user}@${session.login.stone}: disabled for this login.`,
       );
-      return;
+      return false;
     }
 
     const sessionRoot = this.claimSessionRoot(session);
-    if (!sessionRoot || !this.ensureWritable(session, sessionRoot)) return;
+    if (!sessionRoot || !this.ensureWritable(session, sessionRoot)) return false;
 
+    let cancellation: vscode.CancellationToken | undefined;
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
@@ -337,6 +448,7 @@ export class ExportManager {
         cancellable: true,
       },
       async (progress, token) => {
+        cancellation = token;
         const startMs = Date.now();
         const exec = boundLimitExecutor(session);
         const readOnly = vscode.workspace
@@ -402,7 +514,7 @@ export class ExportManager {
         let writeMs = 0;
         let deleteMs = 0;
 
-        this.writing = true;
+        this.writesInProgress++;
         try {
           // 2. Create all dictionary directories (including empty ones).
           const currentDictDirs = new Set<string>();
@@ -479,7 +591,7 @@ export class ExportManager {
           // 5. Prune dictionary directories that no longer exist.
           this.removeStaleDictDirs(sessionRoot, currentDictDirs);
         } finally {
-          this.writing = false;
+          this.writesInProgress--;
           // 6. Persist state reflecting exactly what's on disk (resumable).
           this.saveState(sessionRoot, newState);
         }
@@ -530,6 +642,7 @@ export class ExportManager {
     // Not before: at login it would land among the connect, tip and progress
     // messages and be pushed out of view.
     this.showExportPathRetiredNotice();
+    return cancellation?.isCancellationRequested ?? false;
   }
 
   /** Re-sync after a commit or abort (another session's changes may be visible). */
@@ -542,10 +655,21 @@ export class ExportManager {
    * the mirror in step with a single mutation — a method save, a deleted/moved
    * method, a recategorize. Resolves the dictionary index by name server-side so
    * the file lands under the same `{index}-{dictName}` dir the manifest uses.
-   * Cheap (one round trip) and silent; failures are logged, not surfaced.
+   * One round trip once it runs, but it waits for other mirror work on the session
+   * (see exportSession). Silent; failures are logged, not surfaced.
    */
   async syncClass(session: ActiveSession, dictName: string, className: string): Promise<void> {
     if (!shouldSyncClasses(session.login)) return;
+    await this.enqueueClassJob(session, `${dictName}\t${className}`, () =>
+      this.writeOneClass(session, dictName, className),
+    );
+  }
+
+  private async writeOneClass(
+    session: ActiveSession,
+    dictName: string,
+    className: string,
+  ): Promise<void> {
     const sessionRoot = this.claimSessionRoot(session);
     if (!sessionRoot) return;
     try {
@@ -565,12 +689,12 @@ export class ExportManager {
         .getConfiguration('gemstone')
         .get<boolean>('classSync.readOnlyMirror', true);
 
-      this.writing = true;
+      this.writesInProgress++;
       try {
         fs.mkdirSync(dir, { recursive: true });
         await this.writeClassFileAsync(path.join(dir, `${className}.gs`), source, readOnly);
       } finally {
-        this.writing = false;
+        this.writesInProgress--;
       }
 
       const state = this.loadState(sessionRoot);
@@ -595,14 +719,34 @@ export class ExportManager {
     className: string,
   ): void {
     if (!shouldSyncClasses(session.login)) return;
+    if (this.workBySession.has(session.id)) {
+      // Queued, so a sync that read the class earlier can't write it back afterwards.
+      this.enqueueClassJob(session, `${dictName}\t${className}`, async () =>
+        this.deleteOneClass(session, dictIndex, dictName, className),
+      ).catch((e: unknown) =>
+        this.log(
+          `removeClassFile failed for ${dictName}/${className}: ${e instanceof Error ? e.message : String(e)}`,
+        ),
+      );
+      return;
+    }
+    this.deleteOneClass(session, dictIndex, dictName, className);
+  }
+
+  private deleteOneClass(
+    session: ActiveSession,
+    dictIndex: number,
+    dictName: string,
+    className: string,
+  ): void {
     const sessionRoot = this.getSessionRoot(session);
     if (!sessionRoot) return;
     const dir = this.getDictPath(session, dictIndex, dictName);
-    this.writing = true;
+    this.writesInProgress++;
     try {
       if (dir) this.deleteClassFile(dir, className);
     } finally {
-      this.writing = false;
+      this.writesInProgress--;
     }
     const state = this.loadState(sessionRoot);
     const key = entryKey(dictIndex, dictName, className);
@@ -638,11 +782,11 @@ export class ExportManager {
     const sessionRoot = this.getSessionRoot(session);
     if (!sessionRoot || !fs.existsSync(sessionRoot)) return;
 
-    this.writing = true;
+    this.writesInProgress++;
     try {
       fs.rmSync(sessionRoot, { recursive: true, force: true });
     } finally {
-      this.writing = false;
+      this.writesInProgress--;
     }
 
     // Remove now-empty ancestor directories up to (and excluding) the mirror folder.

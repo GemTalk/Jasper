@@ -268,6 +268,50 @@ function fakeMemento() {
   };
 }
 
+// Holds the first write of one class file until release(), so a sync stays mid-write while
+// a test asks for more work. `reached` settles once that write has begun.
+function holdFirstWriteOf(fileName: string) {
+  let release!: () => void;
+  let arrived!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const reached = new Promise<void>((resolve) => (arrived = resolve));
+  let holding = true;
+  const realWriteFile = fs.promises.writeFile.bind(fs.promises);
+  const spy = vi
+    .spyOn(fs.promises, 'writeFile')
+    .mockImplementation(async (...args: Parameters<typeof fs.promises.writeFile>) => {
+      if (holding && path.basename(String(args[0])) === fileName) {
+        holding = false;
+        arrived();
+        await held;
+      }
+      return await realWriteFile(...args);
+    });
+  return { release, reached, restore: () => spy.mockRestore() };
+}
+type HeldWrite = ReturnType<typeof holdFirstWriteOf>;
+
+// Counts open "Syncing GemStone classes" notices. Each run gets its own token, so a test
+// can cancel the run it holds.
+function countOpenProgress() {
+  const counts = { open: 0, most: 0, tokens: [] as { isCancellationRequested: boolean }[] };
+  vi.mocked(vscode.window.withProgress).mockImplementation(async (_opts, task) => {
+    const token = { isCancellationRequested: false };
+    counts.tokens.push(token);
+    counts.open++;
+    counts.most = Math.max(counts.most, counts.open);
+    try {
+      return await task({ report: vi.fn() }, token as vscode.CancellationToken);
+    } finally {
+      counts.open--;
+    }
+  });
+  return counts;
+}
+
+// Tests that swap withProgress's behaviour get the shared one back after each test.
+const sharedWithProgress = vi.mocked(vscode.window.withProgress).getMockImplementation()!;
+
 const bootTime = () => Date.now() - os.uptime() * 1000;
 
 describe('ExportManager (incremental sync)', () => {
@@ -289,6 +333,7 @@ describe('ExportManager (incremental sync)', () => {
   });
 
   afterEach(() => {
+    vi.mocked(vscode.window.withProgress).mockReset().mockImplementation(sharedWithProgress);
     manager.dispose();
     (vscode as unknown as { __resetConfig: () => void }).__resetConfig();
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -905,6 +950,387 @@ describe('ExportManager (incremental sync)', () => {
       await manager.refreshSession(session);
       expect(fs.existsSync(path.join(root(session), '2-Globals', 'Array.gs'))).toBe(true);
       expect(h.fetchedClasses()).toEqual(['Array']); // only the previously-missing one
+    });
+  });
+
+  describe('a sync asked for while another runs on the same session', () => {
+    const mirrorText = (s: ActiveSession, dir: string, file: string) =>
+      fs.readFileSync(path.join(root(s), dir, file), 'utf-8');
+
+    let hold: HeldWrite | undefined;
+    afterEach(() => {
+      hold?.restore();
+      hold = undefined;
+    });
+
+    it('waits for the running sync instead of starting alongside it', async () => {
+      const progress = countOpenProgress();
+      hold = holdFirstWriteOf('MyClass.gs');
+      const session = createMockSession();
+
+      const first = manager.exportSession(session, true);
+      await hold.reached;
+      const second = manager.exportSession(session);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(progress.open).toBe(1);
+
+      hold.release();
+      await Promise.all([first, second]);
+      expect(progress.most).toBe(1);
+    });
+
+    it('runs once more afterwards, however many asked meanwhile', async () => {
+      hold = holdFirstWriteOf('MyClass.gs');
+      const session = createMockSession();
+
+      const first = manager.exportSession(session, true);
+      await hold.reached;
+      const more = [
+        manager.refreshSession(session),
+        manager.exportSession(session),
+        manager.refreshSession(session),
+      ];
+      hold.release();
+      await Promise.all([first, ...more]);
+
+      expect(h.boundLimitExecutor).toHaveBeenCalledTimes(2);
+    });
+
+    it('picks up a change made after the running sync read the class', async () => {
+      hold = holdFirstWriteOf('MyClass.gs');
+      const session = createMockSession();
+
+      const first = manager.exportSession(session, true);
+      await hold.reached; // MyClass's old source is already fetched
+      h.setClassSource(1, 'MyClass', '! fileout of MyClass v2\n');
+      const second = manager.refreshSession(session);
+      hold.release();
+      await Promise.all([first, second]);
+
+      expect(mirrorText(session, '1-UserGlobals', 'MyClass.gs')).toBe('! fileout of MyClass v2\n');
+    });
+
+    it('still reports the result to a user who asked during an automatic sync', async () => {
+      hold = holdFirstWriteOf('MyClass.gs');
+      const session = createMockSession();
+
+      const first = manager.exportSession(session, true);
+      await hold.reached;
+      const second = manager.exportSession(session);
+      hold.release();
+      await Promise.all([first, second]);
+
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+        'GemStone classes already up to date.',
+      );
+    });
+
+    it('lets the next sync start once the last one has ended', async () => {
+      hold = holdFirstWriteOf('MyClass.gs');
+      const session = createMockSession();
+      const first = manager.exportSession(session, true);
+      await hold.reached;
+      hold.release();
+      await first;
+
+      h.setClassSource(1, 'MyClass', '! fileout of MyClass v2\n');
+      await manager.refreshSession(session);
+
+      expect(mirrorText(session, '1-UserGlobals', 'MyClass.gs')).toBe('! fileout of MyClass v2\n');
+    });
+  });
+
+  describe('a class saved while a sync runs on the same session', () => {
+    let hold: HeldWrite | undefined;
+    afterEach(() => {
+      hold?.restore();
+      hold = undefined;
+    });
+
+    const myClassText = (s: ActiveSession) =>
+      fs.readFileSync(path.join(root(s), '1-UserGlobals', 'MyClass.gs'), 'utf-8');
+
+    // The sync has fetched MyClass's old source and is about to write it when the save lands.
+    async function saveDuringSync(session: ActiveSession) {
+      const held = holdFirstWriteOf('MyClass.gs');
+      hold = held;
+      const sync = manager.exportSession(session, true);
+      await held.reached;
+      h.setClassSource(1, 'MyClass', '! fileout of MyClass saved\n');
+      const saved = manager.syncClass(session, 'UserGlobals', 'MyClass');
+      return { sync, saved, held };
+    }
+
+    it('ends with the saved source in the mirror, not the source the sync read', async () => {
+      const session = createMockSession();
+      const { sync, saved, held } = await saveDuringSync(session);
+      held.release();
+      await Promise.all([sync, saved]);
+
+      expect(myClassText(session)).toBe('! fileout of MyClass saved\n');
+    });
+
+    it('has the saved source in the mirror by the time the save resolves', async () => {
+      const session = createMockSession();
+      const { sync, saved, held } = await saveDuringSync(session);
+      held.release();
+      await saved;
+
+      expect(myClassText(session)).toBe('! fileout of MyClass saved\n');
+      await sync;
+    });
+
+    it('records the saved source, so the next sync fetches nothing', async () => {
+      const session = createMockSession();
+      const { sync, saved, held } = await saveDuringSync(session);
+      held.release();
+      await Promise.all([sync, saved]);
+
+      h.reset();
+      await manager.refreshSession(session);
+      expect(h.contentPrepares()).toBe(0);
+    });
+
+    it('costs one class fetch after the sync, not another full sync', async () => {
+      const progress = countOpenProgress();
+      const session = createMockSession();
+      const { sync, saved, held } = await saveDuringSync(session);
+      const alsoSaved = [
+        manager.syncClass(session, 'UserGlobals', 'OtherClass'),
+        manager.syncClass(session, 'Globals', 'Array'),
+      ];
+      held.release();
+      await Promise.all([sync, saved, ...alsoSaved]);
+
+      expect(progress.most).toBe(1);
+      expect(vscode.window.withProgress).toHaveBeenCalledTimes(1);
+      // One executor for the sync, then one per saved class.
+      expect(h.boundLimitExecutor).toHaveBeenCalledTimes(4);
+    });
+
+    it('still writes directly when no sync is running', async () => {
+      const session = createMockSession();
+      await manager.exportSession(session, true);
+      hold = holdFirstWriteOf('nothing-held.gs');
+      h.setClassSource(1, 'MyClass', '! fileout of MyClass saved\n');
+
+      await manager.syncClass(session, 'UserGlobals', 'MyClass');
+
+      expect(myClassText(session)).toBe('! fileout of MyClass saved\n');
+      expect(vscode.window.withProgress).toHaveBeenCalledTimes(1); // only the first sync
+    });
+  });
+
+  describe('mirror work on one session runs one job at a time', () => {
+    let hold: HeldWrite | undefined;
+    afterEach(() => {
+      hold?.restore();
+      hold = undefined;
+    });
+
+    const text = (s: ActiveSession, dir: string, file: string) =>
+      fs.readFileSync(path.join(root(s), dir, file), 'utf-8');
+
+    it('a full sync waits for a save that is still writing', async () => {
+      const progress = countOpenProgress();
+      const session = createMockSession();
+      await manager.exportSession(session, true);
+      hold = holdFirstWriteOf('MyClass.gs');
+      h.setClassSource(1, 'MyClass', '! fileout of MyClass saved\n');
+
+      const saved = manager.syncClass(session, 'UserGlobals', 'MyClass');
+      await hold.reached;
+      h.setClassSource(1, 'MyClass', '! fileout of MyClass committed\n');
+      const sync = manager.refreshSession(session);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(progress.tokens).toHaveLength(1); // only the first sync so far
+
+      hold.release();
+      await Promise.all([saved, sync]);
+      expect(progress.tokens).toHaveLength(2);
+      expect(text(session, '1-UserGlobals', 'MyClass.gs')).toBe('! fileout of MyClass committed\n');
+      h.reset();
+      await manager.refreshSession(session);
+      expect(h.contentPrepares()).toBe(0); // the recorded hash matches the file
+    });
+
+    it('a second save of one class waits for the first and ends with the newer source', async () => {
+      const session = createMockSession();
+      await manager.exportSession(session, true);
+      vi.mocked(h.boundLimitExecutor).mockClear();
+      hold = holdFirstWriteOf('MyClass.gs');
+
+      h.setClassSource(1, 'MyClass', '! v2\n');
+      const first = manager.syncClass(session, 'UserGlobals', 'MyClass');
+      await hold.reached;
+      h.setClassSource(1, 'MyClass', '! v3\n');
+      const second = manager.syncClass(session, 'UserGlobals', 'MyClass');
+      expect(h.boundLimitExecutor).toHaveBeenCalledTimes(1);
+
+      hold.release();
+      await Promise.all([first, second]);
+      expect(text(session, '1-UserGlobals', 'MyClass.gs')).toBe('! v3\n');
+    });
+
+    it('a failed sync still runs the sync asked for during it, and fails only its own caller', async () => {
+      const session = createMockSession();
+      hold = holdFirstWriteOf('MyClass.gs');
+      vi.mocked(vscode.window.withProgress).mockImplementationOnce(async (_opts, task) => {
+        await task({ report: vi.fn() }, {
+          isCancellationRequested: false,
+        } as vscode.CancellationToken);
+        throw new Error('sync failed');
+      });
+
+      const failing = manager.exportSession(session, true);
+      await hold.reached;
+      h.setClassSource(1, 'MyClass', '! fileout of MyClass v2\n');
+      const asked = manager.refreshSession(session);
+      hold.release();
+
+      await expect(failing).rejects.toThrow('sync failed');
+      await expect(asked).resolves.toBeUndefined();
+      expect(text(session, '1-UserGlobals', 'MyClass.gs')).toBe('! fileout of MyClass v2\n');
+    });
+
+    it('a save that a failed sync was to cover is still written', async () => {
+      const session = createMockSession();
+      await manager.exportSession(session, true);
+      hold = holdFirstWriteOf('OtherClass.gs');
+      h.setClassSource(1, 'OtherClass', '! fileout of OtherClass saved\n');
+      const busy = manager.syncClass(session, 'UserGlobals', 'OtherClass');
+      await hold.reached;
+
+      vi.mocked(vscode.window.withProgress).mockRejectedValueOnce(new Error('sync failed'));
+      const failing = manager.refreshSession(session);
+      h.setClassSource(1, 'MyClass', '! fileout of MyClass saved\n');
+      const saved = manager.syncClass(session, 'UserGlobals', 'MyClass');
+      hold.release();
+
+      await expect(failing).rejects.toThrow('sync failed');
+      await Promise.all([busy, saved]);
+      expect(text(session, '1-UserGlobals', 'MyClass.gs')).toBe('! fileout of MyClass saved\n');
+    });
+
+    it('a cancelled sync drops the syncs asked for during it, but still writes saves', async () => {
+      const progress = countOpenProgress();
+      const session = createMockSession();
+      hold = holdFirstWriteOf('MyClass.gs');
+
+      const cancelled = manager.exportSession(session, true);
+      await hold.reached;
+      const asked = [manager.refreshSession(session), manager.exportSession(session)];
+      h.setClassSource(1, 'OtherClass', '! fileout of OtherClass saved\n');
+      const saved = manager.syncClass(session, 'UserGlobals', 'OtherClass');
+      progress.tokens[0].isCancellationRequested = true;
+      hold.release();
+      await Promise.all([cancelled, ...asked, saved]);
+
+      expect(progress.tokens).toHaveLength(1);
+      expect(text(session, '1-UserGlobals', 'OtherClass.gs')).toBe(
+        '! fileout of OtherClass saved\n',
+      );
+    });
+
+    it('a class deleted during a sync stays deleted, on disk and in the recorded state', async () => {
+      const session = createMockSession();
+      hold = holdFirstWriteOf('MyClass.gs');
+      const sync = manager.exportSession(session, true);
+      await hold.reached;
+
+      h.removeClass(1, 'OtherClass');
+      const file = path.join(root(session), '1-UserGlobals', 'OtherClass.gs');
+      manager.removeClassFile(session, 1, 'UserGlobals', 'OtherClass');
+      hold.release();
+      await sync;
+      await new Promise((r) => setTimeout(r, 20)); // the queued delete runs after the sync
+
+      expect(fs.existsSync(file)).toBe(false);
+      const state = JSON.parse(
+        fs.readFileSync(path.join(root(session), '.manifest.json'), 'utf-8'),
+      );
+      expect(Object.keys(state.classes).some((k) => k.includes('OtherClass'))).toBe(false);
+    });
+
+    it('a sync asked for from inside the start of another still waits for it', async () => {
+      const progress = countOpenProgress();
+      const counting = vi.mocked(vscode.window.withProgress).getMockImplementation()!;
+      const session = createMockSession();
+      let fromInside: Promise<void> | undefined;
+      vi.mocked(vscode.window.withProgress).mockImplementationOnce((opts, task) => {
+        // VS Code runs the task at once, before the first sync's own code has awaited anything.
+        fromInside = manager.refreshSession(session);
+        return counting(opts, task);
+      });
+
+      await manager.exportSession(session, true);
+      await fromInside;
+
+      expect(progress.tokens).toHaveLength(2);
+      expect(progress.most).toBe(1);
+    });
+
+    it('the last request for a class wins: a class deleted then created again is kept', async () => {
+      const session = createMockSession();
+      hold = holdFirstWriteOf('MyClass.gs');
+      const sync = manager.exportSession(session, true);
+      await hold.reached;
+
+      manager.removeClassFile(session, 1, 'UserGlobals', 'MyClass');
+      h.setClassSource(1, 'MyClass', '! fileout of MyClass again\n');
+      const saved = manager.syncClass(session, 'UserGlobals', 'MyClass');
+      hold.release();
+      await Promise.all([sync, saved]);
+
+      expect(text(session, '1-UserGlobals', 'MyClass.gs')).toBe('! fileout of MyClass again\n');
+    });
+
+    it('fills a new mirror folder chosen while a sync was running', async () => {
+      const session = createMockSession();
+      hold = holdFirstWriteOf('MyClass.gs');
+      const sync = manager.exportSession(session, true);
+      await hold.reached;
+
+      const moved = path.join(tmpDir, 'moved');
+      setConfig('mirrorFolder', moved);
+      const changed = manager.mirrorFolderChanged([session]);
+      hold.release();
+      await sync.catch(() => undefined);
+      await changed;
+
+      const r = path.join(moved, 'localhost', 'gs64stone', 'DataCurator');
+      expect(fs.readFileSync(path.join(r, '1-UserGlobals', 'MyClass.gs'), 'utf-8')).toBe(
+        '! fileout of MyClass\n',
+      );
+    });
+  });
+
+  describe('file events from the mirror', () => {
+    let hold: HeldWrite | undefined;
+    afterEach(() => {
+      hold?.restore();
+      hold = undefined;
+    });
+
+    it('are ignored until every write in progress has finished, across sessions', async () => {
+      hold = holdFirstWriteOf('MyClass.gs');
+      const one = createMockSession();
+      const two = fakeActiveSession({
+        id: 2,
+        gci: {},
+        handle: {},
+        login: { ...one.login, gs_user: 'SystemUser' },
+        stoneVersion: '3.7.2',
+      });
+
+      const slow = manager.exportSession(one, true);
+      await hold.reached;
+      await manager.exportSession(two, true); // runs alongside, and finishes first
+      expect(manager.isWriting).toBe(true);
+
+      hold.release();
+      await slow;
+      expect(manager.isWriting).toBe(false);
     });
   });
 
