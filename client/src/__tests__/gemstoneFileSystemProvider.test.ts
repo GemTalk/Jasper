@@ -76,6 +76,7 @@ import { logInfo } from '../gciLog';
 import {
   GemStoneFileSystemProvider,
   buildMethodUri,
+  buildNewClassUri,
   buildNewMethodUri,
   buildClassDefinitionUri,
   buildClassCommentUri,
@@ -622,6 +623,12 @@ describe('GemStoneFileSystemProvider', () => {
       const uri = Uri.parse('gemstone://1/UserGlobals/new-class?category=50%25%20off');
       const content = new TextDecoder().decode(await provider.readFile(uri));
       expect(content).toContain("category: '50% off'\n  options: #()");
+    });
+
+    it('new-class template pre-fills a selected category containing "&"', async () => {
+      const uri = buildNewClassUri(1, 'UserGlobals', 'Logical & Bits');
+      const content = new TextDecoder().decode(await provider.readFile(uri));
+      expect(content).toContain("category: 'Logical & Bits'\n  options: #()");
     });
 
     it('returns new-method template', async () => {
@@ -2570,17 +2577,29 @@ describe('parseUri', () => {
 
   // The query arrives already decoded, like the path. Decoding it again threw
   // ("URI malformed") on a category holding a lone '%', and turned a literal
-  // '%41' into 'A'. A class category is free text, so both are legal names.
-  it.each(['50% off', '%41', '%', 'Kernel-Numbers', 'Logical/Bits', 'a=b', 'a+b'])(
-    'reads the new-class category %j as written',
-    (category) => {
-      const uri = Uri.parse(
-        `gemstone://1/UserGlobals/new-class?category=${encodeURIComponent(category)}`,
-      );
+  // '%41' into 'A'. A literal '&' read as a parameter separator, cutting the
+  // category short. The builder's own '%25' / '%26' escapes must not swallow the
+  // same text typed literally, nor a fullwidth '＆'. A class category is free text,
+  // so all of these are legal names.
+  it.each([
+    '50% off',
+    '%41',
+    '%',
+    'Kernel-Numbers',
+    'Logical/Bits',
+    'a=b',
+    'a+b',
+    'a#b',
+    'Logical & Bits',
+    'a&dict=9',
+    '%26',
+    '%25',
+    'ロジック＆ビット',
+  ])('reads back the new-class category %j as written', (category) => {
+    const uri = buildNewClassUri(1, 'UserGlobals', category);
 
-      expect(parseUri(uri)).toMatchObject({ kind: 'new-class', category });
-    },
-  );
+    expect(parseUri(uri)).toMatchObject({ kind: 'new-class', dictName: 'UserGlobals', category });
+  });
 
   it('treats a decorated override-diff selector as a read-only diff view', () => {
     const parsed = parseUri(

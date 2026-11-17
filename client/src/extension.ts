@@ -1384,7 +1384,13 @@ export function activate(context: vscode.ExtensionContext) {
       // and its position, since two dictionaries can share a name.
       const t = classCompiledTarget(e.uri);
       if (t) {
-        explorer.onClassCompiled(t.sessionId, t.className, t.dictName, t.dictIndex);
+        explorer.onClassCompiled(
+          t.sessionId,
+          t.className,
+          t.dictName,
+          t.dictIndex,
+          e.previousUriIsTemplate,
+        );
         // Keep an open GemStone Search current: fold the freshly compiled class into its cache.
         omniSearch?.notifyClassCompiled(t.sessionId, t.className, t.dictName);
       }
