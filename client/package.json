@@ -12,7 +12,7 @@
     "@vitest/coverage-v8": "^5.1.0",
     "@vscode/extension-telemetry": "^1.5.2",
     "css.escape": "^1.5.1",
-    "dotenv": "^18.0.9",
+    "dotenv": "^18.0.10",
     "jsdom": "^29.1.1",
     "vitest": "^5.1.0",
     "vscode-uri": "^3.2.0"
