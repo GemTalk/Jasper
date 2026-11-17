@@ -3,7 +3,9 @@ import {
   BrowserQueryError,
   defaultQueryExecutorUsing,
   executeFetchStringNb,
+  StoppedByBreakError,
 } from './browserQueries';
+import { sayStillRunningUnlessItEnds, stoppedRunCleared } from './nbRunner';
 
 import { discoverTestClasses as sharedDiscoverTestClasses } from './queries/discoverTestClasses';
 import { discoverTestMethods as sharedDiscoverTestMethods } from './queries/discoverTestMethods';
@@ -58,6 +60,16 @@ export function runTestClass(session: ActiveSession, className: string, dictName
  * run. These poll instead, so the UI stays live and `onStart`'s canceller can
  * stop the gem (see NbRunOptions.onStart).
  */
+/**
+ * Wait out a stop's own clean-up, which runs the stopped test's tearDown, so the
+ * next run finds the session free. A clean-up that runs long, a slow tearDown,
+ * gets the "still cleaning up" notice with Force Stop, rather than a silent wait.
+ */
+function stoppedRunClearedSaying(session: ActiveSession): Promise<void> {
+  sayStillRunningUnlessItEnds(session);
+  return stoppedRunCleared(session);
+}
+
 export function runTestClassNb(
   session: ActiveSession,
   className: string,
@@ -71,7 +83,14 @@ export function runTestClassNb(
     `GemStone: running ${className} tests…`,
     false,
     onStart,
-  ).then((data) => parseTestClassResults(data, className));
+  ).then(
+    (data) => parseTestClassResults(data, className),
+    // SUnit's suite run doesn't catch a Break, so every stop of a class ends here.
+    async (e: unknown) => {
+      if (e instanceof StoppedByBreakError) await stoppedRunClearedSaying(session);
+      throw e;
+    },
+  );
 }
 
 export function runTestMethodNb(
@@ -88,7 +107,22 @@ export function runTestMethodNb(
     `GemStone: running ${className}>>${selector}…`,
     false,
     onStart,
-  ).then((data) => parseTestMethodResult(data, className, selector));
+  ).then(
+    (data) => parseTestMethodResult(data, className, selector),
+    // The same answer as a break the test's handlers caught, once the session is
+    // free again, so a stop always leaves the session usable straight afterwards.
+    async (e: unknown) => {
+      if (!(e instanceof StoppedByBreakError)) throw e;
+      await stoppedRunClearedSaying(session);
+      return {
+        className,
+        selector,
+        status: 'error' as const,
+        message: `Break: ${e.message}`,
+        durationMs: 0,
+      };
+    },
+  );
 }
 
 export function runFailingTests(

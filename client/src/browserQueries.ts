@@ -1,7 +1,7 @@
 import { ActiveSession } from './sessionManager';
 import { GCI_ERR_OP_IN_PROGRESS, OOP_ILLEGAL, OOP_NIL } from './gciConstants';
 import { explainGciError, GciLibraryError, SESSION_BUSY_MESSAGE } from './gciLibraryError';
-import { logError } from './gciLog';
+import { logError, logInfo } from './gciLog';
 import {
   abandonedRunHolds,
   discardStoppedProcess,
@@ -387,6 +387,13 @@ export class BrowserQueryError extends Error {
 }
 
 /**
+ * The user's own Stop, arriving as a raw Break error: the run's code has no
+ * handler for it, or the gem took it before the handler was set up (a gem that
+ * starts the call late). Its process is already being cleared.
+ */
+export class StoppedByBreakError extends BrowserQueryError {}
+
+/**
  * Whether `e` is a query refused because a call already held the session.
  * Such a refusal says nothing about the answer, so a caller that remembers
  * answers shouldn't remember it; any other failure answers the same next time.
@@ -632,10 +639,13 @@ export async function executeFetchStringNb(
     () => {
       const { result: resultOop, err } = session.GciTsNbResult();
       if (err.number !== 0) {
-        discardStoppedProcess(session, err);
+        const stopped = discardStoppedProcess(session, err);
         const msg = err.message || `GCI error ${err.number}`;
-        logError(session.id, msg);
-        throw new BrowserQueryError(msg, err.number);
+        if (stopped) logInfo(`[Session ${session.id}] Stopped: ${msg}`);
+        else logError(session.id, msg);
+        throw stopped
+          ? new StoppedByBreakError(msg, err.number)
+          : new BrowserQueryError(msg, err.number);
       }
       const fetched = session.GciTsFetchChars(resultOop, 1n, MAX_RESULT);
       if (fetched.err.number !== 0) {

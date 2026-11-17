@@ -784,6 +784,14 @@ function runHook(session: ActiveSession, hook: (() => void) | undefined): void {
 /** Sessions a {@link clearInBackground} is still clearing a process on, by its own token. */
 const clearing = new Map<number, symbol>();
 
+/**
+ * Settles once the stopped run's clean-up holding the session, if any, lets go of
+ * it: when the clear ends, or after ABANDONED_READ_WAIT_MS, as the hold itself does.
+ */
+export function stoppedRunCleared(session: ActiveSession): Promise<void> {
+  return (clearHolds(session) && draining.get(session.id)) || Promise.resolve();
+}
+
 /** Whether the session is held by a stopped run's clean-up rather than by a run. */
 export function clearHolds(session: ActiveSession): boolean {
   return clearing.has(session.id);
