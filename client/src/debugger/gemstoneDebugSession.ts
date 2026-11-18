@@ -115,7 +115,7 @@ export class GemStoneDebugSession extends DebugSession {
     _args: DebugProtocol.DisconnectArguments,
   ): void {
     if (this.session && this.gsProcess !== 0n) {
-      void debug.clearStack(this.session, this.gsProcess);
+      void debug.clearStack(this.session, this.gsProcess, undefined, { waitForRun: true });
       this.gsProcess = 0n;
     }
     this.sendResponse(response);
@@ -126,7 +126,7 @@ export class GemStoneDebugSession extends DebugSession {
     _args: DebugProtocol.TerminateArguments,
   ): void {
     if (this.session && this.gsProcess !== 0n) {
-      void debug.clearStack(this.session, this.gsProcess);
+      void debug.clearStack(this.session, this.gsProcess, undefined, { waitForRun: true });
       this.gsProcess = 0n;
     }
     this.sendResponse(response);

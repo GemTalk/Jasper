@@ -1,6 +1,7 @@
 import { ActiveSession } from '../sessionManager';
 import { drainTranscript, endClientForwarderMode } from '../transcriptSink';
 import { appendTranscriptOutput } from '../transcriptChannel';
+import { ClearOptions } from '../nbRunner';
 import { clearStack } from './debugQueries';
 
 /**
@@ -9,15 +10,28 @@ import { clearStack } from './debugQueries';
  * Transcript while the mode is on stops at that write (measured), and the
  * clear holds the session past the caller's own end anyway.
  */
-export function releaseStoppedProcess(session: ActiveSession, gsProcess: bigint): Promise<void> {
+export function releaseStoppedProcess(
+  session: ActiveSession,
+  gsProcess: bigint,
+  opts?: ClearOptions,
+): Promise<void> {
   appendTranscriptOutput(endClientForwarderMode(session));
-  return clearShowingTranscript(session, gsProcess);
+  return clearShowingTranscript(session, gsProcess, opts);
 }
 
 /**
  * {@link releaseStoppedProcess} for a caller that has already ended clientForwarder
  * mode. What the clean-up wrote is shown once it is done, before the promise settles.
  */
-export function clearShowingTranscript(session: ActiveSession, gsProcess: bigint): Promise<void> {
-  return clearStack(session, gsProcess, () => appendTranscriptOutput(drainTranscript(session)));
+export function clearShowingTranscript(
+  session: ActiveSession,
+  gsProcess: bigint,
+  opts?: ClearOptions,
+): Promise<void> {
+  return clearStack(
+    session,
+    gsProcess,
+    () => appendTranscriptOutput(drainTranscript(session)),
+    opts,
+  );
 }
