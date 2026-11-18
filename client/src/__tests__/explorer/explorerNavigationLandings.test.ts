@@ -825,15 +825,15 @@ describe('the registered entry points carry a dictionary position through', () =
     reveal.mockRestore();
   });
 
-  it('forwards a compiled class definition position to the Explorer', () => {
+  it('forwards a compiled class definition position, and whether it was a new class, to the Explorer', () => {
     const compiled = vi
       .spyOn(ExplorerController.prototype, 'onExternalClassCompiled')
       .mockImplementation(() => {});
     const { handle } = register();
 
-    handle.onClassCompiled(1, 'Shadowed', 'Shared', 3);
+    handle.onClassCompiled(1, 'Shadowed', 'Shared', 3, true);
 
-    expect(compiled).toHaveBeenCalledWith(1, 'Shadowed', 'Shared', 3);
+    expect(compiled).toHaveBeenCalledWith(1, 'Shadowed', 'Shared', 3, true);
     compiled.mockRestore();
   });
 });

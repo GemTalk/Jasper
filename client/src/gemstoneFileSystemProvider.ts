@@ -36,11 +36,23 @@ export function unescapeSelectorSlashes(segment: string): string {
   return segment.split(SELECTOR_SLASH).join('/');
 }
 
+// The New Class template carries the selected class category in its query, which
+// vscode.Uri.parse decodes before parseUri sees it, so a literal '&' in the category
+// would read as a parameter separator: the category is cut short and its tail becomes
+// parameters of its own. The builder escapes '&' as the text '%26', and '%' as '%25' so
+// the escape can't be faked; both survive that decode as text, and parseUri undoes them.
+function escapeCategoryQuery(category: string): string {
+  return category.replace(/[%&]/g, (c) => (c === '%' ? '%25' : '%26'));
+}
+function unescapeCategoryQuery(text: string): string {
+  return text.replace(/%2[56]/g, (escape) => (escape === '%25' ? '%' : '&'));
+}
+
 // ── URI Structure ────────────────────────────────────────────
 // Method:     gemstone://{sessionId}/{dictName}/{className}/{side}/{category}/{selector}
 // Definition: gemstone://{sessionId}/{dictName}/{className}/definition
 // Comment:    gemstone://{sessionId}/{dictName}/{className}/comment
-// New class:  gemstone://{sessionId}/{dictName}/new-class
+// New class:  gemstone://{sessionId}/{dictName}/new-class[?category={category}]
 // New method: gemstone://{sessionId}/{dictName}/{className}/{side}/{category}/new-method
 
 interface ParsedMethodUri {
@@ -122,12 +134,9 @@ export function parseUri(uri: vscode.Uri): ParsedUri {
 
   if (parts.length === 3 && parts[2] === 'new-class') {
     // `uri.query` is already percent-decoded too, for the same reason `uri.path`
-    // is — so the category is read as written, not decoded a second time.
-    // (A category containing '&' is still cut short here, and can inject a
-    // dict=/env= parameter; that needs a sentinel on both sides, see
-    // https://github.com/GemTalk/Jasper/issues/744.)
+    // is — so only the builder's own escapes are undone, not a second full decode.
     const catMatch = uri.query?.match(/category=([^&]+)/);
-    const category = catMatch ? catMatch[1] : undefined;
+    const category = catMatch ? unescapeCategoryQuery(catMatch[1]) : undefined;
     return { kind: 'new-class', sessionId, dictName: parts[1], category };
   }
   // 4-segment `/dict/Class/definition`, or 5-segment `/dict/Class/definition/Class`
@@ -367,6 +376,17 @@ export function isMethodEditorUri(uri: vscode.Uri | undefined): boolean {
  */
 export function isClassCommentUri(uri: vscode.Uri): boolean {
   return uri.scheme === 'gemstone' && parseUri(uri).kind === 'comment';
+}
+
+export function buildNewClassUri(
+  sessionId: number,
+  dictName: string,
+  category?: string,
+): vscode.Uri {
+  const query = category ? `?category=${encodeURIComponent(escapeCategoryQuery(category))}` : '';
+  return vscode.Uri.parse(
+    `gemstone://${sessionId}/${encodeURIComponent(dictName)}/new-class${query}`,
+  );
 }
 
 export function buildNewMethodUri(

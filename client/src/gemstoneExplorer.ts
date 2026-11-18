@@ -37,6 +37,7 @@ import {
   unescapeSelectorSlashes,
   buildClassDefinitionUri,
   buildClassCommentUri,
+  buildNewClassUri,
   buildNewMethodUri,
   buildMethodUri,
   parseUri,
@@ -6728,6 +6729,9 @@ export class ExplorerController {
        *  it; it is threaded through rather than kept on the controller so a sync that
        *  overlaps one cannot read it by accident. */
       keepTreeFocus?: boolean;
+      /** Select the class's own category, overriding the rule below. Only a class just
+       *  created from the New Class template asks for it. */
+      selectOwnCategory?: boolean;
     } = {},
   ): Promise<void> {
     const session = this.session();
@@ -6763,7 +6767,9 @@ export class ExplorerController {
     // Do NOT pin the pane to the revealed class's OWN category. That filters the Classes pane down
     // to that category -- often a single class -- so the rest of the dictionary looks like it
     // vanished. Reported after a class rename: the renamed class was revealed correctly and every
-    // other class in the dictionary disappeared behind its category.
+    // other class in the dictionary disappeared behind its category. The one exception is a class
+    // just created from the New Class template (`selectOwnCategory`): there the user picked the
+    // category themselves, and expects to see the class filed in it.
     //
     // Keep the category the user had ALREADY chosen when the class really is in it, so a deliberate
     // filter is not yanked away underneath them; otherwise clear it, so the class is revealed in the
@@ -6772,7 +6778,11 @@ export class ExplorerController {
       previousDictIndex === dictIndex &&
       previousCategory !== undefined &&
       catEntry?.category === previousCategory;
-    this.state.classCategory = keepCategory ? previousCategory : undefined;
+    if (opts.selectOwnCategory && catEntry?.category) {
+      this.state.classCategory = catEntry.category;
+    } else {
+      this.state.classCategory = keepCategory ? previousCategory : undefined;
+    }
     this.state.className = className;
     this.state.selectedSelector = undefined;
     this.state.selectedIsMeta = undefined;
@@ -7422,7 +7432,7 @@ export class ExplorerController {
     // now hide it.
     await this.revealClass(dictName, dictIndex, className);
 
-    // Then select the category the user just named. `revealClass` deliberately does NOT pin the
+    // Then select the category the user just named. `revealClass` by default does NOT pin the
     // pane to a revealed class's own category -- doing that after a rename made the rest of the
     // dictionary look like it had vanished -- but this is not an incidental reveal: the user
     // chose this category by name, so highlighting it is the answer to what they asked for. The
@@ -7678,11 +7688,7 @@ export class ExplorerController {
       void vscode.window.showWarningMessage('Select a dictionary first.');
       return;
     }
-    const category = this.state.classCategory;
-    const categoryQuery = category ? `?category=${encodeURIComponent(category)}` : '';
-    const uri = vscode.Uri.parse(
-      `gemstone://${session.id}/${encodeURIComponent(this.state.dictName)}/new-class${categoryQuery}`,
-    );
+    const uri = buildNewClassUri(session.id, this.state.dictName, this.state.classCategory);
     void vscode.commands.executeCommand('gemstone.openDocument', uri);
   }
 
@@ -8966,6 +8972,9 @@ export class ExplorerController {
     dictName?: string,
     // The compiled definition's SymbolList position, when its editor tab carried one.
     dictIndex?: number,
+    // Saved from the New Class template: select the class's own category, so the new class
+    // shows up where the user filed it.
+    fromNewClassTemplate = false,
   ): void {
     const session = this.session();
     if (!session || session.id !== sessionId || this.state.dictIndex === undefined) return;
@@ -8976,13 +8985,20 @@ export class ExplorerController {
     // If the compiled class lives in the current dictionary, select it so the
     // freshly-created class is highlighted and its methods load. A class of the same NAME in
     // the current dictionary is not enough when the definition says it was compiled in
-    // another one: two dictionaries can each bind a class of that name (#396).
+    // another one: two dictionaries can each bind a class of that name (#396). A New Class
+    // save carries no position, only the dictionary's name, so that is what it is checked by.
+    const compiledInCurrentDict =
+      dictIndex !== undefined
+        ? dictIndex === this.state.dictIndex
+        : dictName === undefined || dictName === this.state.dictName;
     if (
-      (dictIndex === undefined || dictIndex === this.state.dictIndex) &&
+      compiledInCurrentDict &&
       this.classCategoryEntries.some((e) => e.className === className) &&
       this.state.dictName !== undefined
     ) {
-      void this.revealClass(this.state.dictName, this.state.dictIndex, className);
+      void this.revealClass(this.state.dictName, this.state.dictIndex, className, {
+        selectOwnCategory: fromNewClassTemplate,
+      });
       return;
     }
     // Otherwise the class was created in a dictionary other than the selected one
@@ -8991,7 +9007,9 @@ export class ExplorerController {
     // rather than leaving the panes on a dictionary that doesn't contain it.
     const resolved = this.resolveClassDict(className, dictName, dictIndex);
     if (resolved) {
-      void this.revealClass(resolved.dictName, resolved.dictIndex, className);
+      void this.revealClass(resolved.dictName, resolved.dictIndex, className, {
+        selectOwnCategory: fromNewClassTemplate,
+      });
     } else {
       this.syncTitles();
     }
@@ -9349,6 +9367,7 @@ export interface ExplorerHandle {
     className: string,
     dictName?: string,
     dictIndex?: number,
+    fromNewClassTemplate?: boolean,
   ): void;
   /** A class comment was saved: put the 📖 button on that class's row, or take it
    *  off, without refetching the dictionary's class list. */
@@ -10310,8 +10329,8 @@ export function registerGemStoneExplorer(
   return {
     onMethodCompiled: (sessionId, className, selector) =>
       ctl.onExternalMethodCompiled(sessionId, className, selector),
-    onClassCompiled: (sessionId, className, dictName, dictIndex) =>
-      ctl.onExternalClassCompiled(sessionId, className, dictName, dictIndex),
+    onClassCompiled: (sessionId, className, dictName, dictIndex, fromNewClassTemplate) =>
+      ctl.onExternalClassCompiled(sessionId, className, dictName, dictIndex, fromNewClassTemplate),
     onClassCommentSaved: (sessionId, dictName, className, hasComment) =>
       ctl.onClassCommentSaved(sessionId, dictName, className, hasComment),
     onSessionAborted: (sessionId) => ctl.onSessionAborted(sessionId),
