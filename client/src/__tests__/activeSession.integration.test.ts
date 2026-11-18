@@ -69,9 +69,10 @@ describe('a logged-out session (integration)', () => {
     const loggedInAt = Date.now();
     const id = stopped.executeAndFetchString('System session printString');
     const serial = reportedSerialOf(stopped);
-    // Wait a second before stopping the gem. A gem stopped just after it logs in sometimes
-    // misses the stop and stays on the stone (about 1 time in 650 in CI), failing this test (#852).
-    // In CI runs, a stop sent 250 ms or more after login never got stuck.
+    // A gem stopped just after it logs in sometimes misses the stop and stays on the stone,
+    // failing this test (#852). It looks like a GemStone 3.6.x bug, never seen on 3.7.x, but the wait
+    // applies to every version. Stops sent 250 ms or more after login never got stuck in CI, so stop no sooner
+    // than 1 s after login.
     await new Promise((resolve) => setTimeout(resolve, 1_000 - (Date.now() - loggedInAt)));
     session.executeAndFetchString(`System stopSession: ${id}. 'ok'`);
     // The stone deregisters the stopped gem asynchronously: about half a second on
