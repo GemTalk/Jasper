@@ -66,13 +66,18 @@ describe('a logged-out session (integration)', () => {
 
   it('refuses calls once a gem the stone already stopped is logged out', async () => {
     const stopped = transientSession();
+    const loggedInAt = Date.now();
     const id = stopped.executeAndFetchString('System session printString');
     const serial = reportedSerialOf(stopped);
+    // A gem stopped just after it logs in sometimes misses the stop and stays on the stone,
+    // failing this test (#852). It looks like a GemStone 3.6.x bug, never seen on 3.7.x, but the wait
+    // applies to every version. Stops sent 250 ms or more after login never got stuck in CI, so stop no sooner
+    // than 1 s after login.
+    await new Promise((resolve) => setTimeout(resolve, 1_000 - (Date.now() - loggedInAt)));
     session.executeAndFetchString(`System stopSession: ${id}. 'ok'`);
     // The stone deregisters the stopped gem asynchronously: about half a second on
-    // CI, but a loaded runner has taken past 4s. 15s stays inside the test's own 20s.
-    // 15s stays inside the test's own 20s: past that, vitest's timeout would fire
-    // first and hide the diagnostic the wait throws.
+    // CI, but a loaded runner has taken past 4s. 15s stays inside the test's own 20s:
+    // past that, vitest's timeout would fire first and hide the diagnostic the wait throws.
     await waitUntilOffTheStone(session, serial, 15_000);
     // Succeeds, since it doesn't wait for the gem; the session must still refuse
     // every call afterwards.

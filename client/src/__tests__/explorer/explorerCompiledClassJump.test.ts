@@ -44,7 +44,7 @@ describe('onExternalClassCompiled reveals the compiled class in the right dictio
 
     ctl.onExternalClassCompiled(1, 'Foo');
 
-    expect(reveal).toHaveBeenCalledWith('Globals', 1, 'Foo');
+    expect(reveal).toHaveBeenCalledWith('Globals', 1, 'Foo', { selectOwnCategory: false });
   });
 
   it('jumps to the dictionary the class was created in when it is not in the current one', () => {
@@ -57,7 +57,7 @@ describe('onExternalClassCompiled reveals the compiled class in the right dictio
 
     ctl.onExternalClassCompiled(1, 'Foo', 'OtherDict');
 
-    expect(reveal).toHaveBeenCalledWith('OtherDict', 2, 'Foo');
+    expect(reveal).toHaveBeenCalledWith('OtherDict', 2, 'Foo', { selectOwnCategory: false });
   });
 
   it('does not reveal when the class cannot be resolved in any dictionary', () => {

@@ -24,7 +24,8 @@ import type { SessionManager, ActiveSession } from '../sessionManager';
  * class's category, which then filtered the Classes pane down to a single class.
  *
  * The rule: never IMPOSE a category, but do not yank away one the user chose either. These drive
- * the real `revealClass` and read the resulting `state.classCategory`.
+ * the real `revealClass` and read the resulting `state.classCategory`. The one exception, a class
+ * just saved from the New Class template, is in explorer/explorerNewClassSelectsCategory.test.ts.
  */
 
 const classesInDict = getClassesWithCategory as ReturnType<typeof vi.fn>;

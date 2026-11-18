@@ -196,9 +196,10 @@ jobs:
     # instead of quietly passing under a slower platform's larger budget.
     # The budgets are set by variance as much as by median. Windows has the
     # highest median (WSL provisioning + GCI client download); macOS's median
-    # is closer to Linux's, but its runners are far more variable, so it
-    # shares Windows's budget rather than one scaled to its median — see the
-    # macOS note on the matrix `include` below. Linux is the baseline.
+    # is closer to Linux's, but its runners are far more variable, so it was
+    # given Windows's budget rather than one scaled to its median, and has
+    # since been raised past it (see the macOS paragraph below and the macOS
+    # note on the matrix `include`). Linux is the baseline.
     #
     # The numbers come from measuring 3735 matrix legs across 300 runs
     # (2026-08-26 to 2026-09-08), not from guesswork. Duration of the legs
@@ -232,7 +233,16 @@ jobs:
     # 2.5s before Jasper stops waiting): legs took 307-389s. 9 is ~1.9x main's
     # median, the same ratio as above. Windows (343-550s) and macOS (426-544s)
     # still fit their 12.
-    timeout-minutes: ${{ fromJSON('{"ubuntu-latest":9,"windows-latest":12,"macos-latest":12}')[matrix.platform] }}
+    #
+    # macOS raised from 12 to 15 on 2026-11-17 (#952). Passing macOS legs had
+    # grown to a median of 10:58 (Nov 10-17), and 50 jobs since Oct 21 were
+    # killed at 12:00 with every test passing. The growth is the suite, not
+    # the runners: every platform's median rose 2-3 minutes the week the
+    # stop and Force Stop stone tests landed (Oct 26 - Nov 3). Ten trial runs of one commit
+    # with a 15:00 limit took 8:28-14:09. 15 is only ~1.4x the median, below
+    # the ratio above: #928 should shorten every leg, and the limit can be
+    # revisited then.
+    timeout-minutes: ${{ fromJSON('{"ubuntu-latest":9,"windows-latest":12,"macos-latest":15}')[matrix.platform] }}
     name: ${{ matrix.platform }} ${{ matrix.gemstone-version }}${{ matrix.node-version && format(' (Node {0})', matrix.node-version) || '' }}
     needs: prepare
     if: needs.prepare.outputs.already-tested != 'true'
