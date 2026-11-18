@@ -359,6 +359,12 @@
       return;
     }
     col.el.contentPane.innerHTML = '<div class="placeholder">Loading&#8230;</div>';
+    // A print holds the session until it answers, so a second request would
+    // only be refused as busy; the first one's reply fills the tab.
+    if (tab === 'print') {
+      if (col.printPendingOop === col.oop) return;
+      col.printPendingOop = col.oop;
+    }
     post({
       command: 'fetchTab',
       columnId: col.id,
@@ -1530,12 +1536,12 @@
         Columns.focus(col, true);
         return;
       case 'tabData':
-        col = Columns.get(msg.columnId);
+        col = acceptTabReply(msg);
         if (!col) return;
         applyTabData(col, msg);
         return;
       case 'tabFailed':
-        col = Columns.get(msg.columnId);
+        col = acceptTabReply(msg);
         if (!col || col.activeTab !== msg.tab) return;
         // A later page that failed keeps the rows already read.
         if (col.tabData[msg.tab] !== undefined) renderTab(col);
@@ -1570,6 +1576,18 @@
         if (col.activeTab === 'meta') renderTab(col);
         return;
     }
+  }
+
+  /**
+   * The column a tab reply is for, or null when the column has since moved to
+   * another object: a print runs without blocking, so Back or Dive can land
+   * while it does, and its text must not be kept as the new object's.
+   */
+  function acceptTabReply(msg) {
+    var col = Columns.get(msg.columnId);
+    if (!col) return null;
+    if (msg.tab === 'print' && col.printPendingOop === msg.oop) col.printPendingOop = null;
+    return msg.oop === col.oop ? col : null;
   }
 
   /** Merge a page into the tab's accumulated data, then draw it. */
@@ -1645,6 +1663,8 @@
           loadAllRows: Object.create(null),
           // The cap the Print tab's text stopped at, or 0 when it is whole.
           printCutShortAt: 0,
+          // The object a print was asked for and has not answered yet.
+          printPendingOop: null,
           restoreScrollTop: 0,
           restoreSelectedRow: null,
           editing: null,

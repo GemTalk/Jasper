@@ -46,7 +46,7 @@ vi.mock('../queries/basicInspectorQueries', () => ({
 }));
 
 vi.mock('../../debugger/debugQueries', () => ({
-  fetchFullPrintString: vi.fn(() => Promise.resolve({ text: 'an Account', truncated: false })),
+  fetchFullPrintString: vi.fn(() => Promise.resolve({ text: 'an Account', cutShortAt: 0 })),
   FULL_PRINT_STRING_MAX_CHARS: 1_000_000,
   getObjectPrintString: vi.fn(() => '84'),
   evaluateWithReceiverToOop: vi.fn(() => 777n),
@@ -287,6 +287,7 @@ describe('serving a tab', () => {
     expect(postsOf('tabData').at(-1)).toEqual({
       command: 'tabData',
       columnId: 0,
+      oop: '100',
       tab: 'print',
       from: 1,
       text: 'an Account',
@@ -297,7 +298,7 @@ describe('serving a tab', () => {
   it('tells the tab the cap it stopped at when the print was cut short', async () => {
     vi.mocked(debug.fetchFullPrintString).mockResolvedValueOnce({
       text: '#( 1, 2...',
-      truncated: true,
+      cutShortAt: 1_000_000,
     });
 
     send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'print', from: 1 });
@@ -320,6 +321,7 @@ describe('serving a tab', () => {
     expect(postsOf('tabFailed').at(-1)).toEqual({
       command: 'tabFailed',
       columnId: 0,
+      oop: '100',
       tab: 'print',
       error: 'session busy',
     });
@@ -335,13 +337,14 @@ describe('serving a tab', () => {
     expect(postsOf('tabFailed').at(-1)).toEqual({
       command: 'tabFailed',
       columnId: 0,
+      oop: '100',
       tab: 'slots',
       error: 'session busy',
     });
   });
 
   it('posts nothing when the panel closed while the gem printed', async () => {
-    let finish!: (v: { text: string; truncated: boolean }) => void;
+    let finish!: (v: { text: string; cutShortAt: number }) => void;
     vi.mocked(debug.fetchFullPrintString).mockReturnValueOnce(
       new Promise((resolve) => {
         finish = resolve;
@@ -351,7 +354,7 @@ describe('serving a tab', () => {
     const before = postsOf('tabData').length;
 
     panel.dispose();
-    finish({ text: 'late', truncated: false });
+    finish({ text: 'late', cutShortAt: 0 });
     await settle();
 
     expect(postsOf('tabData')).toHaveLength(before);
@@ -706,7 +709,7 @@ describe('editing a slot', () => {
   });
 
   it('waits for a print still holding the session before releasing the pins', async () => {
-    let finish!: (v: { text: string; truncated: boolean }) => void;
+    let finish!: (v: { text: string; cutShortAt: number }) => void;
     vi.mocked(debug.fetchFullPrintString).mockReturnValueOnce(
       new Promise((resolve) => {
         finish = resolve;
@@ -718,7 +721,7 @@ describe('editing a slot', () => {
     panel.dispose();
     expect(debug.releaseObjs).not.toHaveBeenCalled();
 
-    finish({ text: 'late', truncated: false });
+    finish({ text: 'late', cutShortAt: 0 });
     await new Promise((r) => setTimeout(r, 0));
     expect(debug.releaseObjs).toHaveBeenCalledWith(session, [500n]);
   });

@@ -60,20 +60,20 @@ o asOop printString`,
   it('answers a small print whole', async () => {
     const result = await printOf(oopOf("'abc'"));
 
-    expect(result).toEqual({ text: "'abc'", truncated: false });
+    expect(result).toEqual({ text: "'abc'", cutShortAt: 0 });
   });
 
   it('answers a print of exactly the cap whole', async () => {
     // 'abc' prints as five characters, quotes included.
     const result = await printOf(oopOf("'abc'"), 5);
 
-    expect(result).toEqual({ text: "'abc'", truncated: false });
+    expect(result).toEqual({ text: "'abc'", cutShortAt: 0 });
   });
 
   it('cuts a print one character past the cap short', async () => {
     const result = await printOf(oopOf("'abc'"), 4);
 
-    expect(result.truncated).toBe(true);
+    expect(result.cutShortAt).toBe(4);
     expect(result.text.startsWith("'abc")).toBe(true);
   });
 
@@ -81,7 +81,7 @@ o asOop printString`,
     // 200 is below the ~700 characters at which 3.6.2's collections stop on their own.
     const result = await printOf(oopOf('(1 to: 5000) asArray'), 200);
 
-    expect(result.truncated).toBe(true);
+    expect(result.cutShortAt).toBe(200);
     expect(result.text.startsWith('anArray( 1, 2, 3')).toBe(true);
     // GemStone appends its own ellipsis after the cap.
     expect(result.text.length).toBeGreaterThan(200);
@@ -92,7 +92,7 @@ o asOop printString`,
     const big = FULL_PRINT_STRING_MAX_CHARS + 200_000;
     const result = await printOf(oopOf(`(String new: ${big}) atAllPut: $a; yourself`));
 
-    expect(result.truncated).toBe(true);
+    expect(result.cutShortAt).toBe(FULL_PRINT_STRING_MAX_CHARS);
     expect(result.text.length).toBeGreaterThan(FULL_PRINT_STRING_MAX_CHARS);
     expect(result.text.length).toBeLessThan(FULL_PRINT_STRING_MAX_CHARS + 20);
   }, 30_000);
@@ -104,7 +104,7 @@ o asOop printString`,
       ),
     );
 
-    expect(result).toEqual({ text: "'café☺'", truncated: false });
+    expect(result).toEqual({ text: "'café☺'", cutShortAt: 0 });
   });
 
   it('answers a print that raises as an error, and the session stays usable', async () => {

@@ -242,6 +242,60 @@ describe('enhanced inspector Show all link', () => {
   });
 });
 
+describe('enhanced inspector Show all link on returning to a tab', () => {
+  type Col = {
+    id: number;
+    oop: string;
+    specs: { methodSelector: string; viewName: string }[];
+    cachedViewData: Record<string, string>;
+    showAllOffered: Record<string, boolean>;
+    el: { tabBar: HTMLElement; contentPane: HTMLElement };
+  };
+
+  /** activateTab, drawing a cached tab as its data string and the real Show all bar. */
+  function load() {
+    const dom = new JSDOM('<div id="bar"></div><div id="pane"></div>');
+    const doc = dom.window.document;
+    const vscode = { postMessage: () => undefined };
+    const fns = new Function(
+      'document',
+      'vscode',
+      `function renderMetaTab() {}
+function renderEnhancedInspectorContent(col, pane, spec, data) { pane.textContent = data; }
+${extractFunction(CLIENT_SRC, 'addShowAllBar')}
+${extractFunction(CLIENT_SRC, 'activateTab')}
+return activateTab;`,
+    )(doc, vscode) as (col: Col, methodSelector: string) => void;
+    const col: Col = {
+      id: 4,
+      oop: '1000',
+      specs: [{ methodSelector: 'gtPrintFor:', viewName: 'GtPhlowTextEditorViewSpecification' }],
+      cachedViewData: { 'gtPrintFor:': 'abbreviated print' },
+      showAllOffered: {},
+      el: { tabBar: doc.getElementById('bar')!, contentPane: doc.getElementById('pane')! },
+    };
+    return { activateTab: fns, col };
+  }
+
+  it('offers Show all again on a cut-short print drawn from the cache', () => {
+    const { activateTab, col } = load();
+    col.showAllOffered['gtPrintFor:'] = true;
+
+    activateTab(col, 'gtPrintFor:');
+
+    expect(col.el.contentPane.querySelector('.show-all-bar a')?.textContent).toBe('Show all…');
+  });
+
+  it('offers nothing on a print already shown in full', () => {
+    const { activateTab, col } = load();
+    col.showAllOffered['gtPrintFor:'] = false;
+
+    activateTab(col, 'gtPrintFor:');
+
+    expect(col.el.contentPane.querySelector('.show-all-bar')).toBeNull();
+  });
+});
+
 describe('enhanced inspector run-based-text wire contract', () => {
   it('client cellHtml comparison matches the exact __typeLabel the server emits', () => {
     // Client: the value cellHtml checks to enter the rich-text branch.

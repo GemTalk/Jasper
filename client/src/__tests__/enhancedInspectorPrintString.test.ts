@@ -164,24 +164,24 @@ describe('fullPrintStringCode', () => {
 });
 
 describe('parseFullPrintString', () => {
-  it('reads a leading T as cut short', () => {
+  it('reads a leading T as cut short at the cap', () => {
     expect.assertions(1);
-    expect(parseFullPrintString("T'aaaa...")).toEqual({ text: "'aaaa...", truncated: true });
+    expect(parseFullPrintString("T'aaaa...", 4)).toEqual({ text: "'aaaa...", cutShortAt: 4 });
   });
 
   it('reads a leading F as whole', () => {
     expect.assertions(1);
-    expect(parseFullPrintString('Fan Account')).toEqual({ text: 'an Account', truncated: false });
+    expect(parseFullPrintString('Fan Account', 10)).toEqual({ text: 'an Account', cutShortAt: 0 });
   });
 
   it('keeps a text that itself starts with T or F', () => {
     expect.assertions(1);
-    expect(parseFullPrintString('FTrue story')).toEqual({ text: 'True story', truncated: false });
+    expect(parseFullPrintString('FTrue story', 10)).toEqual({ text: 'True story', cutShortAt: 0 });
   });
 
   it('reads an empty print as whole', () => {
     expect.assertions(1);
-    expect(parseFullPrintString('F')).toEqual({ text: '', truncated: false });
+    expect(parseFullPrintString('F', 10)).toEqual({ text: '', cutShortAt: 0 });
   });
 });
 
@@ -193,19 +193,28 @@ describe('fetchFullPrintString', () => {
     expect.assertions(3);
     fetchMock.mockResolvedValue('Fthis is the full print string');
     const result = await fetchFullPrintString(session, 1000n);
-    expect(result).toEqual({ text: 'this is the full print string', truncated: false });
+    expect(result).toEqual({ text: 'this is the full print string', cutShortAt: 0 });
     expect(fetchMock.mock.lastCall?.[0]).toBe(session);
     expect(fetchMock.mock.lastCall?.[1]).toBe(
       fullPrintStringCode(1000n, FULL_PRINT_STRING_MAX_CHARS),
     );
   });
 
-  it('reports a print the cap cut short', async () => {
+  it('reports a print the default cap cut short, and where', async () => {
     expect.assertions(1);
     fetchMock.mockResolvedValue('T#( 1, 2, 3...');
     expect(await fetchFullPrintString(session, 1000n)).toEqual({
       text: '#( 1, 2, 3...',
-      truncated: true,
+      cutShortAt: FULL_PRINT_STRING_MAX_CHARS,
+    });
+  });
+
+  it('reports the cap it was given, not the default, as where a print was cut', async () => {
+    expect.assertions(1);
+    fetchMock.mockResolvedValue('T#( 1, 2...');
+    expect(await fetchFullPrintString(session, 1000n, 50)).toEqual({
+      text: '#( 1, 2...',
+      cutShortAt: 50,
     });
   });
 

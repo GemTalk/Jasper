@@ -731,10 +731,11 @@ export function fetchPrintString(
 /** The most characters of an object's printString that {@link fetchFullPrintString} fetches. */
 export const FULL_PRINT_STRING_MAX_CHARS = 1_000_000;
 
-/** An object's printString, up to a cap, and whether the cap cut it short. */
+/** An object's printString, up to a cap. */
 export interface FullPrintString {
   text: string;
-  truncated: boolean;
+  /** The cap that cut the text short, or 0 when it is whole. */
+  cutShortAt: number;
 }
 
 /** Why {@link fetchFullPrintString} has no print to show. */
@@ -767,9 +768,9 @@ ws := PrintStream printingOn: String new maxSize: ${maxChars + 1}.
 (ws isFull ifTrue: ['T'] ifFalse: ['F']) , ws _collection`;
 }
 
-/** Split {@link fullPrintStringCode}'s answer into the text and its cut-short flag. */
-export function parseFullPrintString(raw: string): FullPrintString {
-  return { text: raw.slice(1), truncated: raw.startsWith('T') };
+/** Split {@link fullPrintStringCode}'s answer, for the same `maxChars`, into the text and where it was cut. */
+export function parseFullPrintString(raw: string, maxChars: number): FullPrintString {
+  return { text: raw.slice(1), cutShortAt: raw.startsWith('T') ? maxChars : 0 };
 }
 
 /**
@@ -792,7 +793,7 @@ export async function fetchFullPrintString(
       fullPrintStringCode(oop, maxChars),
       'GemStone: Printing the object…',
     );
-    return parseFullPrintString(raw);
+    return parseFullPrintString(raw, maxChars);
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }

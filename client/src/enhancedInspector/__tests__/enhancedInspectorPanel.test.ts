@@ -572,7 +572,7 @@ describe('EnhancedInspector', () => {
       expect.assertions(1);
       vi.mocked(debug.fetchFullPrintString).mockResolvedValue({
         text: 'this is the full text',
-        truncated: false,
+        cutShortAt: 0,
       });
       setup();
       mock.sendMessage({
@@ -596,7 +596,7 @@ describe('EnhancedInspector', () => {
 
     it('fetches the object the column asked for', async () => {
       expect.assertions(1);
-      vi.mocked(debug.fetchFullPrintString).mockResolvedValue({ text: 'x', truncated: false });
+      vi.mocked(debug.fetchFullPrintString).mockResolvedValue({ text: 'x', cutShortAt: 0 });
       setup();
       mock.sendMessage({
         command: 'fetchFullPrintString',
@@ -612,7 +612,7 @@ describe('EnhancedInspector', () => {
       expect.assertions(2);
       vi.mocked(debug.fetchFullPrintString).mockResolvedValue({
         text: '#( 1, 2...',
-        truncated: true,
+        cutShortAt: 1_000_000,
       });
       setup();
       mock.sendMessage({
@@ -632,7 +632,7 @@ describe('EnhancedInspector', () => {
 
     it('posts nothing when the panel closed while the gem printed', async () => {
       expect.assertions(1);
-      let finish!: (v: { text: string; truncated: boolean }) => void;
+      let finish!: (v: { text: string; cutShortAt: number }) => void;
       vi.mocked(debug.fetchFullPrintString).mockReturnValue(
         new Promise((resolve) => {
           finish = resolve;
@@ -646,7 +646,7 @@ describe('EnhancedInspector', () => {
         methodSelector: 'gtPrintFor:',
       });
       mock.close();
-      finish({ text: 'late', truncated: false });
+      finish({ text: 'late', cutShortAt: 0 });
       await settle();
       expect(fullPrintPosts()).toHaveLength(0);
     });

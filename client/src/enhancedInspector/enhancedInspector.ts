@@ -462,7 +462,7 @@ export class EnhancedInspector {
     const data = JSON.stringify({
       string: full.text,
       stylerSpecification: null,
-      cutShortAt: full.truncated ? debug.FULL_PRINT_STRING_MAX_CHARS : 0,
+      cutShortAt: full.cutShortAt,
     });
     this.panel.webview.postMessage({ command: 'fullPrintString', columnId, methodSelector, data });
   }
@@ -716,7 +716,7 @@ export class EnhancedInspector {
       col.label = msg.label || '';
       col.title = msg.title || '';
       col.activeMethodSelector = null;
-      col.cachedViewData = {}; col.loadedRowCounts = {}; col.colWidths = {};
+      col.cachedViewData = {}; col.showAllOffered = {}; col.loadedRowCounts = {}; col.colWidths = {};
       col.rangesMode = {}; col.rangeTotals = {}; col.rangeDataCache = {}; col.methodSourceCache = {};
       col.metaSubTab = 'instanceMethods'; col.openMethodSel = null;
 
@@ -751,6 +751,8 @@ export class EnhancedInspector {
           metaData: null,
           activeMethodSelector: null,
           cachedViewData: {},
+          // Tabs whose text was cut short and not yet shown in full, by selector.
+          showAllOffered: {},
           loadedRowCounts: {},
           colWidths: {},
           rangesMode: {},
@@ -792,6 +794,7 @@ export class EnhancedInspector {
       if (!spec) return;
       if (col.cachedViewData[methodSelector] !== undefined) {
         renderEnhancedInspectorContent(col, contentPane, spec, col.cachedViewData[methodSelector]);
+        if (col.showAllOffered[methodSelector]) addShowAllBar(col, contentPane, methodSelector, null);
       } else {
         contentPane.innerHTML = '<div class="placeholder">Loading…</div>';
         vscode.postMessage({ command: 'fetchEnhancedInspectorViewData', columnId: col.id, oop: col.oop, methodSelector, viewName: spec.viewName });
@@ -1049,6 +1052,7 @@ export class EnhancedInspector {
 
       if (msg.command === 'enhancedInspectorViewData') {
         col.cachedViewData[msg.methodSelector] = msg.data;
+        col.showAllOffered[msg.methodSelector] = msg.truncated === true;
         if (msg.methodSelector === col.activeMethodSelector) {
           const spec = col.specs && col.specs.find(s => s.methodSelector === msg.methodSelector);
           const contentPane = col.el.contentPane;
@@ -1097,6 +1101,7 @@ export class EnhancedInspector {
 
       } else if (msg.command === 'fullPrintString') {
         col.cachedViewData[msg.methodSelector] = msg.data;
+        col.showAllOffered[msg.methodSelector] = false;
         if (msg.methodSelector === col.activeMethodSelector) {
           const spec = col.specs && col.specs.find(s => s.methodSelector === msg.methodSelector);
           if (spec) renderEnhancedInspectorContent(col, col.el.contentPane, spec, msg.data);

@@ -307,7 +307,7 @@ export class BasicInspector {
           } catch (e: unknown) {
             const message = e instanceof Error ? e.message : String(e);
             logError(this.sessionId, message);
-            this.postTabFailed(msg.columnId, msg.tab, message);
+            this.postTabFailed(msg.columnId, BigInt(msg.oop), msg.tab, message);
           }
           return;
         case 'inspectRow':
@@ -416,7 +416,13 @@ export class BasicInspector {
     through = 0,
   ): void {
     const exec = this.makeExecutor();
-    const payload: Record<string, unknown> = { command: 'tabData', columnId, tab, from };
+    const payload: Record<string, unknown> = {
+      command: 'tabData',
+      columnId,
+      oop: oop.toString(),
+      tab,
+      from,
+    };
     const maxPages = loadAllPageLimit();
 
     switch (tab) {
@@ -485,16 +491,17 @@ export class BasicInspector {
     }
     if (this.disposed) return;
     if ('error' in full) {
-      this.postTabFailed(columnId, 'print', full.error);
+      this.postTabFailed(columnId, oop, 'print', full.error);
       return;
     }
     this.panel.webview.postMessage({
       command: 'tabData',
       columnId,
+      oop: oop.toString(),
       tab: 'print',
       from: 1,
       text: full.text,
-      cutShortAt: full.truncated ? debug.FULL_PRINT_STRING_MAX_CHARS : 0,
+      cutShortAt: full.cutShortAt,
     });
   }
 
@@ -503,8 +510,14 @@ export class BasicInspector {
    * holds the session, so it can say so and let a click on the tab try again
    * instead of showing "Loading…" for good.
    */
-  private postTabFailed(columnId: number, tab: TabName, error: string): void {
-    this.panel.webview.postMessage({ command: 'tabFailed', columnId, tab, error });
+  private postTabFailed(columnId: number, oop: bigint, tab: TabName, error: string): void {
+    this.panel.webview.postMessage({
+      command: 'tabFailed',
+      columnId,
+      oop: oop.toString(),
+      tab,
+      error,
+    });
   }
 
   /**
