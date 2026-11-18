@@ -10,7 +10,7 @@ import { endServerSession } from '../forceStop';
 import { testActiveSession } from './testActiveSession';
 import { useIntegrationTest } from './useIntegrationTest';
 import { forceStopSupport } from './forceStopSupport';
-import { endGemAfterTest } from './leftoverGem';
+import { endGemAfterTest, waitUntilOffTheStone } from './leftoverGem';
 import { reportedSerialOf, reportedTransientLogin, reportingLoginsOf } from './sessionGateClient';
 
 describe('Force Stop at logout (integration)', () => {
@@ -28,7 +28,7 @@ describe('Force Stop at logout (integration)', () => {
     setStillRunningHandler(undefined);
   });
 
-  const { armedSession, deps, onStone, stopAndAbandon, settled } = forceStopSupport(() => session);
+  const { armedSession, deps, stopAndAbandon, settled } = forceStopSupport(() => session);
 
   // GemStone gives a gone gem's session number to a later login (in turn, wrapping
   // round at the stone's limit). Here that later login is stood in for by asking
@@ -37,10 +37,7 @@ describe('Force Stop at logout (integration)', () => {
     const own = armedSession();
     const serial = reportedSerialOf(own);
     own.logout();
-    for (let i = 0; i < 40 && onStone(serial); i++) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    expect(onStone(serial)).toBe(false);
+    await waitUntilOffTheStone(session, serial, 4000);
     const { session: other } = reportedTransientLogin(session);
     onTestFinished(() => void other!.logout());
     const othersNumber = other!.executeAndFetchString('System session printString');
@@ -64,14 +61,6 @@ describe('Force Stop at logout (integration)', () => {
       return { own, serial };
     }
 
-    async function offTheStone(serial: string, ms = 5000): Promise<boolean> {
-      const deadline = Date.now() + ms;
-      while (onStone(serial) && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      }
-      return !onStone(serial);
-    }
-
     it('ends the gem of a run that ignores the stop', async () => {
       const manager = reportingLoginsOf(new SessionManager());
       const { own, serial } = await loggedInAndStopped(
@@ -81,7 +70,7 @@ describe('Force Stop at logout (integration)', () => {
 
       await expect(manager.logout(own.id)).resolves.toBe(true);
 
-      expect(await offTheStone(serial)).toBe(true);
+      await waitUntilOffTheStone(session, serial, 5000);
     }, 30_000);
 
     it('ends the gem of a run whose clean-up ignores the stop as well', async () => {
@@ -112,7 +101,7 @@ describe('Force Stop at logout (integration)', () => {
       const startedAt = Date.now();
       await expect(manager.logout(own.id)).resolves.toBe(true);
 
-      expect(await offTheStone(serial)).toBe(true);
+      await waitUntilOffTheStone(session, serial, 5000);
       expect(Date.now() - startedAt).toBeLessThan(15_000);
     }, 60_000);
 
@@ -125,7 +114,7 @@ describe('Force Stop at logout (integration)', () => {
 
       await expect(manager.logout(own.id)).resolves.toBe(true);
 
-      expect(await offTheStone(serial)).toBe(true);
+      await waitUntilOffTheStone(session, serial, 5000);
     }, 30_000);
   });
 });
