@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import { JSDOM } from 'jsdom';
 
 /**
  * Regression for the Phase-5 rename bug.
@@ -107,6 +108,191 @@ describe('enhanced inspector run-based-text rendering', () => {
       attributeRuns: { items: [] },
     });
     expect(html).toBe('a&lt;b&gt;');
+  });
+});
+
+interface FakeTextPane {
+  className: string;
+  style: { cssText: string; whiteSpace?: string; overflow?: string; minHeight?: string };
+  innerHTML: string;
+  insertAdjacentHTML(position: string, html: string): void;
+}
+
+// Rebuild renderStyledText, the renderer for text views and "Show all" prints.
+function loadRenderStyledText(): (el: FakeTextPane, textData: unknown) => void {
+  const parts = [
+    extractConstObject(CLIENT_SRC, 'GT_COLORS'),
+    extractFunction(CLIENT_SRC, 'esc'),
+    extractFunction(CLIENT_SRC, 'cssColor'),
+    extractFunction(CLIENT_SRC, 'attrToCss'),
+    extractFunction(CLIENT_SRC, 'applyRuns'),
+    'function highlightJson(str) { return esc(str); }',
+    extractFunction(CLIENT_SRC, 'renderStyledText'),
+    'return renderStyledText;',
+  ];
+  const factory = new Function(parts.join('\n')) as () => (
+    el: FakeTextPane,
+    textData: unknown,
+  ) => void;
+  return factory();
+}
+
+function fakeTextPane(): FakeTextPane {
+  return {
+    className: '',
+    style: { cssText: '' },
+    innerHTML: '',
+    insertAdjacentHTML(_position, html) {
+      this.innerHTML += html;
+    },
+  };
+}
+
+describe('enhanced inspector full print cut-short note', () => {
+  const renderStyledText = loadRenderStyledText();
+
+  it('notes the cap under a Show all print the host cut short', () => {
+    const el = fakeTextPane();
+    renderStyledText(el, { string: "'aaa...", stylerSpecification: null, cutShortAt: 1_000_000 });
+    expect(el.innerHTML.startsWith("'aaa...<div")).toBe(true);
+    expect(el.innerHTML).toContain('Cut short at about 1,000,000 characters.');
+  });
+
+  it('adds no note to a whole Show all print', () => {
+    const el = fakeTextPane();
+    renderStyledText(el, { string: 'an Account', stylerSpecification: null, cutShortAt: 0 });
+    expect(el.innerHTML).toBe('an Account');
+  });
+
+  it('adds no note to the Print tab text that gtPrint abbreviated', () => {
+    // The Print tab's own payload: 'truncated' only means "offer Show all".
+    const el = fakeTextPane();
+    renderStyledText(el, {
+      string: 'anArray( 1, 2, 3...',
+      stylerSpecification: null,
+      truncated: true,
+    });
+    expect(el.innerHTML).toBe('anArray( 1, 2, 3...');
+  });
+
+  it('notes the cap under a parser-styled print too', () => {
+    const el = fakeTextPane();
+    renderStyledText(el, {
+      string: '{}',
+      stylerSpecification: {
+        __typeLabel: 'remotePhlowTextParserStylerSpecification',
+        parserClassName: 'JSONParser',
+      },
+      cutShortAt: 1_000_000,
+    });
+    expect(el.innerHTML).toContain('Cut short');
+  });
+});
+
+describe('enhanced inspector Show all link', () => {
+  type AddShowAllBar = (
+    col: { id: number; oop: string },
+    contentPane: HTMLElement,
+    methodSelector: string,
+    error: string | null,
+  ) => void;
+
+  function load() {
+    const dom = new JSDOM('<div id="pane">abbreviated print</div>');
+    const posted: unknown[] = [];
+    const vscode = { postMessage: (m: unknown) => posted.push(m) };
+    const addShowAllBar = new Function(
+      'document',
+      'vscode',
+      `${extractFunction(CLIENT_SRC, 'addShowAllBar')}\nreturn addShowAllBar;`,
+    )(dom.window.document, vscode) as AddShowAllBar;
+    const pane = dom.window.document.getElementById('pane') as HTMLElement;
+    return { addShowAllBar, pane, posted };
+  }
+
+  it('asks the host for the whole print and drops the link', () => {
+    const { addShowAllBar, pane, posted } = load();
+    addShowAllBar({ id: 4, oop: '1000' }, pane, 'gtPrintFor:', null);
+
+    (pane.querySelector('.show-all-bar a') as HTMLElement).click();
+
+    expect(posted).toEqual([
+      { command: 'fetchFullPrintString', columnId: 4, oop: '1000', methodSelector: 'gtPrintFor:' },
+    ]);
+    expect(pane.querySelector('.show-all-bar')).toBeNull();
+  });
+
+  it('puts the link back with the reason after a failure, keeping the text shown', () => {
+    const { addShowAllBar, pane } = load();
+    addShowAllBar({ id: 4, oop: '1000' }, pane, 'gtPrintFor:', 'session busy');
+
+    expect(pane.textContent?.startsWith('abbreviated print')).toBe(true);
+    expect(pane.querySelector('.show-all-bar a')?.textContent).toBe('Show all…');
+    expect(pane.querySelector('.show-all-error')?.textContent).toBe(
+      "Couldn't show all: session busy",
+    );
+  });
+
+  it('never shows two links', () => {
+    const { addShowAllBar, pane } = load();
+    addShowAllBar({ id: 4, oop: '1000' }, pane, 'gtPrintFor:', null);
+    addShowAllBar({ id: 4, oop: '1000' }, pane, 'gtPrintFor:', 'session busy');
+
+    expect(pane.querySelectorAll('.show-all-bar')).toHaveLength(1);
+  });
+});
+
+describe('enhanced inspector Show all link on returning to a tab', () => {
+  type Col = {
+    id: number;
+    oop: string;
+    specs: { methodSelector: string; viewName: string }[];
+    cachedViewData: Record<string, string>;
+    showAllOffered: Record<string, boolean>;
+    el: { tabBar: HTMLElement; contentPane: HTMLElement };
+  };
+
+  /** activateTab, drawing a cached tab as its data string and the real Show all bar. */
+  function load() {
+    const dom = new JSDOM('<div id="bar"></div><div id="pane"></div>');
+    const doc = dom.window.document;
+    const vscode = { postMessage: () => undefined };
+    const fns = new Function(
+      'document',
+      'vscode',
+      `function renderMetaTab() {}
+function renderEnhancedInspectorContent(col, pane, spec, data) { pane.textContent = data; }
+${extractFunction(CLIENT_SRC, 'addShowAllBar')}
+${extractFunction(CLIENT_SRC, 'activateTab')}
+return activateTab;`,
+    )(doc, vscode) as (col: Col, methodSelector: string) => void;
+    const col: Col = {
+      id: 4,
+      oop: '1000',
+      specs: [{ methodSelector: 'gtPrintFor:', viewName: 'GtPhlowTextEditorViewSpecification' }],
+      cachedViewData: { 'gtPrintFor:': 'abbreviated print' },
+      showAllOffered: {},
+      el: { tabBar: doc.getElementById('bar')!, contentPane: doc.getElementById('pane')! },
+    };
+    return { activateTab: fns, col };
+  }
+
+  it('offers Show all again on a cut-short print drawn from the cache', () => {
+    const { activateTab, col } = load();
+    col.showAllOffered['gtPrintFor:'] = true;
+
+    activateTab(col, 'gtPrintFor:');
+
+    expect(col.el.contentPane.querySelector('.show-all-bar a')?.textContent).toBe('Show all…');
+  });
+
+  it('offers nothing on a print already shown in full', () => {
+    const { activateTab, col } = load();
+    col.showAllOffered['gtPrintFor:'] = false;
+
+    activateTab(col, 'gtPrintFor:');
+
+    expect(col.el.contentPane.querySelector('.show-all-bar')).toBeNull();
   });
 });
 
