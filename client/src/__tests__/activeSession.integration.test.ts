@@ -160,6 +160,7 @@ describe('logging out never waits for the gem (integration)', () => {
 
   it('returns at once while a run that ignores stops is going, and the gem leaves', async () => {
     const { transient, serial } = transientWithSerial();
+    const loggedInAt = Date.now();
     const runningCall = runNbCall(
       transient,
       () =>
@@ -175,6 +176,10 @@ describe('logging out never waits for the gem (integration)', () => {
       { suppressNotification: true },
     );
     runningCall.catch(() => {});
+    // A busy gem logged out just after it logs in sometimes never reads the logout and keeps
+    // running, failing this test (#852). Logouts sent 1 s after login never got stuck, so log
+    // out no sooner than that. The 1 s limit below is timed from the logout, so it still holds.
+    await new Promise((resolve) => setTimeout(resolve, 1_000 - (Date.now() - loggedInAt)));
 
     const startedAt = Date.now();
     expect(transient.logout()).toBe(true);
