@@ -377,18 +377,27 @@
       pane.innerHTML = '<div class="placeholder">Nothing to show.</div>';
       return;
     }
-    if (tab === 'print') renderText(pane, data);
+    if (tab === 'print') renderPrint(col, pane, data);
     else if (tab === 'meta') renderMeta(col, pane, data);
     else if (tab === 'bytes') renderBytes(col, pane, data);
     else renderRows(col, pane, data);
   }
 
-  function renderText(pane, text) {
+  /** The Print tab, with a note when the host's fetch stopped at its cap. */
+  function renderPrint(col, pane, text) {
     pane.innerHTML = '';
     var div = document.createElement('div');
     div.className = 'detail-value';
     div.textContent = text;
     pane.appendChild(div);
+    if (!col.printCutShortAt) return;
+    var note = document.createElement('div');
+    note.className = 'load-note';
+    note.textContent =
+      'Cut short: Jasper shows at most ' +
+      col.printCutShortAt.toLocaleString('en-US') +
+      ' characters of a print.';
+    pane.appendChild(note);
   }
 
   // ── Row tables (Slots / Items / Entries) ──
@@ -1558,6 +1567,7 @@
     if (msg.loadAllRows) col.loadAllRows[msg.tab] = msg.loadAllRows;
     if (msg.tab === 'print') {
       col.tabData.print = msg.text;
+      col.printCutShortAt = msg.cutShortAt || 0;
     } else if (msg.tab === 'meta') {
       col.tabData.meta = msg.meta;
     } else if (msg.tab === 'bytes') {
@@ -1615,6 +1625,8 @@
           evalVarsRequested: false,
           stoppedAtLimit: Object.create(null),
           loadAllRows: Object.create(null),
+          // The cap the Print tab's text stopped at, or 0 when it is whole.
+          printCutShortAt: 0,
           restoreScrollTop: 0,
           restoreSelectedRow: null,
           editing: null,

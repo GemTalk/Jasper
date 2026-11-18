@@ -18,6 +18,7 @@ import {
   unescapeDumpField,
 } from '../queries/dumpPayload';
 import { homeDictionaryNameExpr } from '../queries/util';
+import { executeFetchStringAsync } from '../browserQueries';
 
 const MAX_RESULT = 256 * 1024;
 
@@ -695,11 +696,6 @@ export function getStepPoint(
 // ── Variables ───────────────────────────────────────────
 
 /**
- * Returns the printString of an object together with a truncation flag.
- * truncated is true when the GCI fetch hit maxBytes exactly, meaning the
- * full printString is longer than what was returned.
- */
-/**
  * Returns the printString of an object limited to maxBytes display characters,
  * together with a truncation flag.
  *
@@ -732,21 +728,65 @@ export function fetchPrintString(
   }
 }
 
+/** The most characters of an object's printString that {@link fetchFullPrintString} fetches. */
+export const FULL_PRINT_STRING_MAX_CHARS = 1_000_000;
+
+/** An object's printString, up to a cap, and whether the cap cut it short. */
+export interface FullPrintString {
+  text: string;
+  truncated: boolean;
+}
+
 /**
- * Returns the full output of printOn: for an object, bypassing GemStone's
- * internal printString size cap.  printString uses a LimitedWriteStream
- * internally; calling printOn: directly with a plain WriteStream has no limit.
+ * Smalltalk that prints the object at `oop` into a `PrintStream` limited to
+ * `maxChars`, answering `T` or `F` (cut short or not) followed by the text.
+ *
+ * `printString` caps far lower: 700 characters for a collection on 3.7.4.1 and
+ * later, 100,000 for anything else. On those versions `printOn:` into a plain
+ * `WriteStream` has no cap at all, so an object of any size would be built in
+ * the gem and fetched. 3.6.2's collections still stop at about 700 characters
+ * here: that limit is inside their `printOn:`, so no stream can get past it.
+ *
+ * The stream is one character larger than the cap because a `PrintStream`
+ * reports `isFull` once it holds `maxSize` characters, on 3.6.2 and 3.7.x alike.
+ * A print of exactly `maxChars` therefore still reads as whole. A full stream's
+ * text ends in GemStone's own ellipsis (`...` on 3.7.x, `. . .` on 3.6.2).
  */
-export function fetchFullPrintString(session: ActiveSession, oop: bigint): string {
+export function fullPrintStringCode(oop: bigint, maxChars: number): string {
+  return `| ws |
+ws := PrintStream printingOn: String new maxSize: ${maxChars + 1}.
+(Object _objectForOop: ${oop}) printOn: ws.
+(ws isFull ifTrue: ['T'] ifFalse: ['F']) , ws _collection`;
+}
+
+/** Split {@link fullPrintStringCode}'s answer into the text and its cut-short flag. */
+export function parseFullPrintString(raw: string): FullPrintString {
+  return { text: raw.slice(1), truncated: raw.startsWith('T') };
+}
+
+/**
+ * An object's printString up to `maxChars`, for an inspector's full-text view,
+ * fetched without blocking the extension host while the gem builds it.
+ * Reading the result back still blocks, which is why it is capped.
+ *
+ * Never rejects: a failure, a busy session or a Cancel answers the reason as
+ * `<error: …>` text, so the inspector shows it in place of the print.
+ */
+export async function fetchFullPrintString(
+  session: ActiveSession,
+  oop: bigint,
+  maxChars: number = FULL_PRINT_STRING_MAX_CHARS,
+): Promise<FullPrintString> {
   try {
-    const code = `| s |
-s := WriteStream on: String new.
-(Object _objectForOop: ${oop}) printOn: s.
-s contents`;
-    return executeAndFetchString(session, code);
+    const raw = await executeFetchStringAsync(
+      session,
+      fullPrintStringCode(oop, maxChars),
+      'GemStone: Printing the object…',
+    );
+    return parseFullPrintString(raw);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return `<error: ${msg}>`;
+    return { text: `<error: ${msg}>`, truncated: false };
   }
 }
 

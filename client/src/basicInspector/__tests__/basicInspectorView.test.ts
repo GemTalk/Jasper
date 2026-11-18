@@ -467,6 +467,63 @@ describe('drawing a table', () => {
   });
 });
 
+describe('the Print tab', () => {
+  function showPrint(cutShortAt?: number) {
+    const col = openRoot({ namedSize: 1 });
+    (col.el.root.querySelector('[data-tab="print"]') as HTMLElement).click();
+    view.handleHostMessage({
+      command: 'tabData',
+      columnId: 0,
+      tab: 'print',
+      from: 1,
+      text: '#( 1, 2...',
+      ...(cutShortAt === undefined ? {} : { cutShortAt }),
+    });
+    return col;
+  }
+
+  it('shows the print', () => {
+    const col = showPrint(0);
+
+    expect(col.el.contentPane.querySelector('.detail-value')?.textContent).toBe('#( 1, 2...');
+  });
+
+  it('says where a print was cut short', () => {
+    const col = showPrint(1_000_000);
+
+    expect(col.el.contentPane.querySelector('.load-note')?.textContent).toBe(
+      'Cut short: Jasper shows at most 1,000,000 characters of a print.',
+    );
+  });
+
+  it('adds no note to a whole print', () => {
+    const col = showPrint(0);
+
+    expect(col.el.contentPane.querySelector('.load-note')).toBeNull();
+  });
+
+  it('adds no note when the host sends no cap', () => {
+    const col = showPrint();
+
+    expect(col.el.contentPane.querySelector('.load-note')).toBeNull();
+  });
+
+  it('drops the note when a later print of the tab is whole', () => {
+    const col = showPrint(1_000_000);
+
+    view.handleHostMessage({
+      command: 'tabData',
+      columnId: 0,
+      tab: 'print',
+      from: 1,
+      text: 'an Account',
+      cutShortAt: 0,
+    });
+
+    expect(col.el.contentPane.querySelector('.load-note')).toBeNull();
+  });
+});
+
 describe('switching tabs', () => {
   it('fetches a tab the first time it is opened', () => {
     const col = openRoot({ namedSize: 1 });

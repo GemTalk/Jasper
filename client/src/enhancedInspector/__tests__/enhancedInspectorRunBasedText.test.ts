@@ -110,6 +110,82 @@ describe('enhanced inspector run-based-text rendering', () => {
   });
 });
 
+interface FakeTextPane {
+  className: string;
+  style: { cssText: string; whiteSpace?: string; overflow?: string; minHeight?: string };
+  innerHTML: string;
+  insertAdjacentHTML(position: string, html: string): void;
+}
+
+// Rebuild renderStyledText, the renderer for text views and "Show all" prints.
+function loadRenderStyledText(maxChars: number): (el: FakeTextPane, textData: unknown) => void {
+  const parts = [
+    `const FULL_PRINT_MAX_CHARS = ${maxChars};`,
+    extractConstObject(CLIENT_SRC, 'GT_COLORS'),
+    extractFunction(CLIENT_SRC, 'esc'),
+    extractFunction(CLIENT_SRC, 'cssColor'),
+    extractFunction(CLIENT_SRC, 'attrToCss'),
+    extractFunction(CLIENT_SRC, 'applyRuns'),
+    'function highlightJson(str) { return esc(str); }',
+    extractFunction(CLIENT_SRC, 'renderStyledText'),
+    'return renderStyledText;',
+  ];
+  const factory = new Function(parts.join('\n')) as () => (
+    el: FakeTextPane,
+    textData: unknown,
+  ) => void;
+  return factory();
+}
+
+function fakeTextPane(): FakeTextPane {
+  return {
+    className: '',
+    style: { cssText: '' },
+    innerHTML: '',
+    insertAdjacentHTML(_position, html) {
+      this.innerHTML += html;
+    },
+  };
+}
+
+describe('enhanced inspector full print cut-short note', () => {
+  const renderStyledText = loadRenderStyledText(1_000_000);
+
+  it('notes the cap under a print the host cut short', () => {
+    const el = fakeTextPane();
+    renderStyledText(el, { string: "'aaa...", stylerSpecification: null, truncated: true });
+    expect(el.innerHTML.startsWith("'aaa...<div")).toBe(true);
+    expect(el.innerHTML).toContain(
+      'Cut short: Jasper shows at most 1,000,000 characters of a print.',
+    );
+  });
+
+  it('adds no note to a whole print', () => {
+    const el = fakeTextPane();
+    renderStyledText(el, { string: 'an Account', stylerSpecification: null, truncated: false });
+    expect(el.innerHTML).toBe('an Account');
+  });
+
+  it('adds no note to a text view that never carries the flag', () => {
+    const el = fakeTextPane();
+    renderStyledText(el, { string: 'plain', stylerSpecification: null });
+    expect(el.innerHTML).toBe('plain');
+  });
+
+  it('notes the cap under a parser-styled print too', () => {
+    const el = fakeTextPane();
+    renderStyledText(el, {
+      string: '{}',
+      stylerSpecification: {
+        __typeLabel: 'remotePhlowTextParserStylerSpecification',
+        parserClassName: 'JSONParser',
+      },
+      truncated: true,
+    });
+    expect(el.innerHTML).toContain('Cut short');
+  });
+});
+
 describe('enhanced inspector run-based-text wire contract', () => {
   it('client cellHtml comparison matches the exact __typeLabel the server emits', () => {
     // Client: the value cellHtml checks to enter the rich-text branch.

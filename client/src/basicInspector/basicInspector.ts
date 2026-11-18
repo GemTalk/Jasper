@@ -165,6 +165,7 @@ export class BasicInspector {
   private readonly panel: vscode.WebviewPanel;
   private readonly sessionId: number;
   private disposables: vscode.Disposable[] = [];
+  private disposed = false;
   // Titles go through this, never `panel.title`, so they keep the session tag.
   private readonly title: SessionPanelTitle;
   /** Monotonic id handed to each miller column; the root column is 0. */
@@ -266,6 +267,7 @@ export class BasicInspector {
   }
 
   private dispose(): void {
+    this.disposed = true;
     this.releasePins();
     BasicInspector.panels.get(this.sessionId)?.delete(this);
     for (const d of this.disposables) d.dispose();
@@ -285,6 +287,10 @@ export class BasicInspector {
           this.postColumn('addRoot', 0, this.rootOop, this.rootLabel);
           return;
         case 'fetchTab':
+          if (msg.tab === 'print') {
+            void this.postPrintTab(msg.columnId, BigInt(msg.oop));
+            return;
+          }
           this.postTabData(
             msg.columnId,
             BigInt(msg.oop),
@@ -449,11 +455,26 @@ export class BasicInspector {
       case 'meta':
         payload.meta = fetchObjectMeta(exec, oop);
         break;
-      case 'print':
-        payload.text = debug.fetchFullPrintString(this.session, oop);
-        break;
     }
     this.panel.webview.postMessage(payload);
+  }
+
+  /**
+   * The Print tab: the object's printString up to the cap, fetched without
+   * blocking, so it has its own path rather than a case in {@link postTabData}.
+   * The panel may have closed while the gem printed.
+   */
+  private async postPrintTab(columnId: number, oop: bigint): Promise<void> {
+    const full = await debug.fetchFullPrintString(this.session, oop);
+    if (this.disposed) return;
+    this.panel.webview.postMessage({
+      command: 'tabData',
+      columnId,
+      tab: 'print',
+      from: 1,
+      text: full.text,
+      cutShortAt: full.truncated ? debug.FULL_PRINT_STRING_MAX_CHARS : 0,
+    });
   }
 
   /**

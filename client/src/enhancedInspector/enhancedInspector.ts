@@ -121,6 +121,7 @@ export class EnhancedInspector {
   /** Monotonic id handed to each miller column; the root column is 0. */
   private readonly rootColumnId = 0;
   private nextColumnId = 1;
+  private disposed = false;
 
   static create(session: ActiveSession, oop: bigint, label: string): EnhancedInspector {
     const panel = vscode.window.createWebviewPanel(
@@ -316,17 +317,9 @@ export class EnhancedInspector {
         break;
       }
 
-      case 'fetchFullPrintString': {
-        const fullText = debug.fetchFullPrintString(this.session, BigInt(msg.oop));
-        const data = JSON.stringify({ string: fullText, stylerSpecification: null });
-        this.panel.webview.postMessage({
-          command: 'fullPrintString',
-          columnId: msg.columnId,
-          methodSelector: msg.methodSelector,
-          data,
-        });
+      case 'fetchFullPrintString':
+        void this.postFullPrintString(msg.columnId, BigInt(msg.oop), msg.methodSelector);
         break;
-      }
 
       case 'browseMethod': {
         const loc = fetchMethodBrowseLocation(
@@ -444,7 +437,27 @@ export class EnhancedInspector {
     return fetchEnhancedInspectorListData(execute, oop, methodSelector, fromIndex, PAGE_SIZE);
   }
 
+  /**
+   * Fetch an object's printString up to the cap without blocking, then post it
+   * to the column that asked. The panel may have closed while the gem printed.
+   */
+  private async postFullPrintString(
+    columnId: number,
+    oop: bigint,
+    methodSelector: string,
+  ): Promise<void> {
+    const full = await debug.fetchFullPrintString(this.session, oop);
+    if (this.disposed) return;
+    const data = JSON.stringify({
+      string: full.text,
+      stylerSpecification: null,
+      truncated: full.truncated,
+    });
+    this.panel.webview.postMessage({ command: 'fullPrintString', columnId, methodSelector, data });
+  }
+
   private dispose(): void {
+    this.disposed = true;
     EnhancedInspector.panels.get(this.sessionId)?.delete(this);
     for (const d of this.disposables) d.dispose();
     this.disposables = [];
@@ -453,6 +466,7 @@ export class EnhancedInspector {
   private getHtml(): string {
     const nonce = crypto.randomBytes(16).toString('hex');
     const pageSize = PAGE_SIZE;
+    const fullPrintMaxChars = debug.FULL_PRINT_STRING_MAX_CHARS;
     const defaultColumnWidth = DEFAULT_COLUMN_WIDTH;
     const minColumnWidth = MIN_COLUMN_WIDTH;
     return `<!DOCTYPE html>
@@ -632,6 +646,7 @@ export class EnhancedInspector {
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const PAGE_SIZE = ${pageSize};
+    const FULL_PRINT_MAX_CHARS = ${fullPrintMaxChars};
     const DEFAULT_COLUMN_WIDTH = ${defaultColumnWidth};
     const MIN_COLUMN_WIDTH = ${minColumnWidth};
 
@@ -1207,10 +1222,16 @@ export class EnhancedInspector {
       el.style.minHeight = '0';
       if (styler && styler.__typeLabel === 'remotePhlowTextParserStylerSpecification') {
         el.innerHTML = styler.parserClassName === 'JSONParser' ? highlightJson(str) : esc(str);
-        return;
+      } else {
+        const runs = (styler && styler.attributeRuns && styler.attributeRuns.items) || [];
+        el.innerHTML = applyRuns(str, runs);
       }
-      const runs = (styler && styler.attributeRuns && styler.attributeRuns.items) || [];
-      el.innerHTML = applyRuns(str, runs);
+      // Set by the host when a "Show all" print stopped at its cap.
+      if (textData.truncated) {
+        el.insertAdjacentHTML('beforeend',
+          '<div class="cut-short-note" style="padding:4px 0;border-top:1px solid var(--vscode-panel-border);margin-top:2px;font-size:0.85em;font-style:italic">' +
+          'Cut short: Jasper shows at most ' + FULL_PRINT_MAX_CHARS.toLocaleString('en-US') + ' characters of a print.</div>');
+      }
     }
 
     // A3: Cell HTML — preserves styling in gtPhlowRunBasedText cells.
