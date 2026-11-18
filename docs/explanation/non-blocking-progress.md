@@ -26,7 +26,7 @@ work on `main`.
 | ------------------------------------------------------------------------ | -------- | ---- |
 | VS Code's Find All References on a selector in a Smalltalk editor        | E        | #940 |
 | The **Class Hierarchy** command, once a class is picked                  | E        | #940 |
-| An Inspector's **Print** tab, and the Enhanced Inspector's **Show all…** | D        | #333 |
+| An Inspector's **Print** tab, and the Enhanced Inspector's **Show all…** | D        | #957 |
 
 ## Still blocking, though it looks done
 
