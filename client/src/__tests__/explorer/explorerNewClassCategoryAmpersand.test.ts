@@ -26,6 +26,7 @@ function newClassUriFor(category: string): vscode.Uri {
   const call = vi
     .mocked(vscode.commands.executeCommand)
     .mock.calls.find(([command]) => command === 'gemstone.openDocument');
+  expect(call).toBeDefined();
   return call![1] as vscode.Uri;
 }
 

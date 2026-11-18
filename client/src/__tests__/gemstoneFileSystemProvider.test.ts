@@ -129,6 +129,9 @@ beforeEach(() => {
   vi.mocked(queries.recategorizeClass).mockReset();
   vi.mocked(queries.compileMethod).mockReset();
   vi.mocked(queries.compileMethod).mockReturnValue('Compiled: Array >> at:');
+  // A new-class test whose save never reaches the overwrite check leaves its "already exists"
+  // answer queued for the next test's check.
+  vi.mocked(queries.classExistsInDictionary).mockReset().mockReturnValue(false);
 });
 
 const COMMIT_OK = { success: true, err: { number: 0, message: '' } };
@@ -1138,6 +1141,24 @@ describe('GemStoneFileSystemProvider', () => {
           expect.objectContaining({ message: expect.stringContaining('already exists') }),
         ]),
       );
+    });
+
+    it('refuses the overwrite when the new class is named with a symbol', async () => {
+      const uri = Uri.parse('gemstone://1/UserGlobals/new-class');
+      vi.mocked(queries.classExistsInDictionary).mockReturnValueOnce(true);
+
+      provider.writeFile(uri, encode('Object subclass: #Existing\n  inDictionary: UserGlobals'), {
+        create: true,
+        overwrite: true,
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(queries.classExistsInDictionary).toHaveBeenCalledWith(
+        expect.anything(),
+        'Existing',
+        'UserGlobals',
+      );
+      expect(queries.compileClassDefinition).not.toHaveBeenCalled();
     });
 
     it('shows a success message with the class name when an existing class definition is saved', () => {
@@ -2977,6 +2998,24 @@ describe('recording a class definition save for revert (#434)', () => {
     expect(entry).toMatchObject({ kind: 'classEdit', label: 'Add class Fresh' });
     // Nothing was bound, so nothing was stashed — a key resolving to nil would be a lie.
     expect(entry?.kind === 'classEdit' && entry.stashKeys).toEqual([null]);
+  });
+
+  it('records an Add for a new class named with a symbol', () => {
+    vi.mocked(captureClassSlots)
+      .mockReturnValueOnce([unboundState])
+      .mockReturnValueOnce([boundState('2')]);
+    vi.mocked(queries.classExistsInDictionary).mockReturnValue(false);
+    vi.mocked(queries.compileClassDefinition).mockReturnValue('Fresh');
+
+    write(
+      Uri.parse('gemstone://1/UserGlobals/new-class'),
+      "Object subclass: #Fresh\n  inDictionary: UserGlobals\n  category: 'demo'",
+    );
+
+    expect(peekUndoEntry(session.id)).toMatchObject({
+      kind: 'classEdit',
+      label: 'Add class Fresh',
+    });
   });
 
   it('records an Add when a definition save renames the class into a new one', () => {
