@@ -193,7 +193,7 @@ describe('clearing a stopped run in the background (integration)', () => {
         { suppressNotification: true },
       );
 
-      const clearing = clearInBackground(own, process);
+      const clearing = clearInBackground(own, process, undefined, [], { waitForRun: true });
       await run;
       await clearing;
 

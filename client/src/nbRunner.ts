@@ -666,7 +666,7 @@ function whenRunEnds(sessionId: number, listener: () => void): void {
   runEndListeners.set(sessionId, [...(runEndListeners.get(sessionId) ?? []), listener]);
 }
 
-function endRun(sessionId: number, run?: unknown): void {
+function endRun(sessionId: number, run?: TrackedRun): void {
   if (run !== undefined && live.get(sessionId) !== run) return;
   live.delete(sessionId);
   const listeners = runEndListeners.get(sessionId) ?? [];
@@ -857,16 +857,18 @@ function isProcess(context: unknown): context is bigint | number {
  * unexport it for the debugger too. Not before the clear is back either: the
  * main thread can't call into the session while the worker has it.
  *
- * While a run the user hasn't stopped holds the session, such as an Execute It
- * when a debugger is closed, GemStone would refuse the clear, so it waits for
- * that run to end. It doesn't hold the session meanwhile, and gives up at logout,
- * which ends the process anyway.
+ * GemStone refuses a clear while a run holds the session, such as an Execute It
+ * in another editor when a debugger is closed. With `waitForRun`, the clear waits
+ * for that run to end. It doesn't hold the session meanwhile, and gives up at
+ * logout, which ends the process anyway. Only for a caller outside any run: one
+ * clearing its own run's process would wait on itself.
  */
 export function clearInBackground(
   session: ActiveSession,
   context: unknown,
   then?: () => void,
   release: readonly unknown[] = [],
+  opts: ClearOptions = {},
 ): Promise<void> {
   if (!isProcess(context)) {
     releaseExports(session, release);
@@ -874,11 +876,8 @@ export function clearInBackground(
     return Promise.resolve();
   }
   const gsProcess = BigInt(context);
-  const run = live.get(session.id);
-  // Busy only while the run's call is out: a run reading its own result has
-  // collected it, and clears its own process at once.
-  if (run && !run.stopRequested() && stillBusy(session)) {
-    return clearOnceRunEnds(session, gsProcess, then, release);
+  if (opts.waitForRun && live.has(session.id)) {
+    return clearOnceRunEnds(session, gsProcess, then, release, opts);
   }
   const failed = (why: string): void =>
     logInfo(`[Session ${session.id}] Could not clear a stopped run's process: ${why}`);
@@ -907,9 +906,17 @@ export function clearInBackground(
   return awaitAbandonedRead(session, cleared, then);
 }
 
+/** How {@link clearInBackground} treats a run holding the session. */
+export interface ClearOptions {
+  /** Wait for it to end: the caller is the user throwing a paused run away, outside any run. */
+  waitForRun?: boolean;
+}
+
 /**
- * How long a clear waiting for a run lets the run's caller go first once it ends:
- * an Execute It commits, and shows its result, straight after.
+ * How long a clear waiting for a run lets the run's caller go on once it ends.
+ * An Execute It's commit needs no wait: it runs before any timer does. This is a
+ * margin for a caller whose next call follows other awaited work, which a clear
+ * started by then would refuse.
  */
 const CLEAR_AFTER_RUN_MS = 200;
 
@@ -918,6 +925,7 @@ function clearOnceRunEnds(
   gsProcess: bigint,
   then: (() => void) | undefined,
   release: readonly unknown[],
+  opts: ClearOptions,
 ): Promise<void> {
   logInfo(
     `[Session ${session.id}] Will clear a stopped run's process once the run in progress ends`,
@@ -927,7 +935,7 @@ function clearOnceRunEnds(
     whenRunEnds(session.id, () =>
       setTimeout(() => {
         if (logoutsOf(session.id) === loggedOutBefore) {
-          resolve(clearInBackground(session, gsProcess, then, release));
+          resolve(clearInBackground(session, gsProcess, then, release, opts));
         } else {
           runHook(session, then);
           resolve();
