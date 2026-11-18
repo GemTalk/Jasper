@@ -141,21 +141,36 @@ export async function startGate(
           ledger.opened(socket, String(msg.serial));
         } else if (msg.op === 'closed') {
           ledger.closed(socket, String(msg.serial));
-        } else if (msg.op === 'refused') {
-          ledger.refused(socket, Number(msg.tookMs) || 0);
+        } else if (msg.op === 'loginFailed') {
+          ledger.loginFailed(
+            socket,
+            {
+              startedAt: Number(msg.startedAt),
+              failedAt: Number(msg.failedAt),
+              number: typeof msg.number === 'number' ? msg.number : undefined,
+              message: String(msg.message ?? ''),
+            },
+            msg.denied === true,
+          );
         } else if (msg.op === 'check') {
           // A login made just before the check only shows in the next sample.
-          afterNextSample.push(() =>
-            reply(
-              socket,
-              watcherFailure
-                ? { error: watcherFailure }
-                : {
-                    unreported: ledger.unreportedFrom(socket),
-                    overBudget: ledger.overBudgetOf(socket),
-                  },
-            ),
-          );
+          afterNextSample.push(() => {
+            if (watcherFailure) {
+              reply(socket, { error: watcherFailure });
+              return;
+            }
+            const unreported = ledger.unreportedFrom(socket);
+            reply(socket, {
+              unreported,
+              loginsAround: unreported.length
+                ? ledger.loginsAround(
+                    socket,
+                    unreported.map((u) => u.serial),
+                  )
+                : [],
+              overBudget: ledger.overBudgetOf(socket),
+            });
+          });
         }
       }
     });
@@ -246,7 +261,7 @@ function describeUnseen(ledger: SessionLedger<Socket>, m: UnseenLogin): string {
     ? m.refusalsNearby
         .map(
           (r) =>
-            `${ledger.secondsIn(r.startedAt)} to ${ledger.secondsIn(r.at)} by worker ${r.pid ?? '?'}${r.file ? ` (${testFileName(r.file)})` : ''}, ${r.matchedTo ? `matched to ${r.matchedTo}` : 'unmatched'}`,
+            `${ledger.secondsIn(r.failure.startedAt)} to ${ledger.secondsIn(r.failure.failedAt)} (reported ${ledger.secondsIn(r.at)}) by worker ${r.pid ?? '?'}${r.file ? ` (${testFileName(r.file)})` : ''}, ${r.matchedTo ? `matched to ${r.matchedTo}` : 'unmatched'}`,
         )
         .join('; ')
     : 'none';

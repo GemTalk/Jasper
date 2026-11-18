@@ -66,15 +66,26 @@ export function reportSessionClosed(serial: string | bigint, socket = held.at(-1
 }
 
 /**
- * Tells the gate a login begun at `startedAt` (`Date.now()`) was refused. A
- * login the stone refuses, such as one with a wrong password, still uses up a
- * login serial, which the gate would otherwise read as a login it never saw.
- * The serial is used when the login begins, and the refusal can take seconds
- * to come back, so the gate needs both ends. Report only those: see
- * {@link deniedByStone}.
+ * Tells the gate a login begun at `startedAt` (`Date.now()`) failed with
+ * `error`. A login the stone refuses (see {@link deniedByStone}), such as one
+ * with a wrong password, still uses up a login serial, which the gate would
+ * otherwise read as a login it never saw. The serial is used when the login
+ * begins, and the refusal can take seconds to come back, so the gate needs both
+ * ends. Any other failure uses no serial; the gate only lists it if it blames
+ * this file.
  */
-export function reportRefusedLogin(startedAt: number, socket = held.at(-1)): void {
-  socket?.write(JSON.stringify({ op: 'refused', tookMs: Date.now() - startedAt }) + '\n');
+export function reportFailedLogin(startedAt: number, error: unknown, socket = held.at(-1)): void {
+  const { number, message } = (error ?? {}) as { number?: unknown; message?: unknown };
+  socket?.write(
+    JSON.stringify({
+      op: 'loginFailed',
+      denied: deniedByStone(error),
+      startedAt,
+      failedAt: Date.now(),
+      number: typeof number === 'number' ? number : undefined,
+      message: typeof message === 'string' ? message : String(error),
+    }) + '\n',
+  );
 }
 
 const { GS_ERR_LOGIN_DENIAL } = LOGIN_ERRORS;
@@ -89,13 +100,13 @@ export function deniedByStone(error: unknown): boolean {
   return (error as { number?: unknown } | undefined)?.number === GS_ERR_LOGIN_DENIAL;
 }
 
-/** Runs `login`, telling the gate when the stone refuses it, and rethrows. */
+/** Runs `login`, telling the gate when it fails, and rethrows. */
 export function reportingRefusal<T>(login: () => T, socket = held.at(-1)): T {
   const startedAt = Date.now();
   try {
     return login();
   } catch (error) {
-    if (deniedByStone(error)) reportRefusedLogin(startedAt, socket);
+    reportFailedLogin(startedAt, error, socket);
     throw error;
   }
 }
@@ -148,6 +159,8 @@ function testRunningAt(time: number): string {
 type GateVerdict = {
   error?: string;
   unreported: { serial: string; firstSeen: number }[];
+  /** What the gate knew of this file's logins, when it blames it for any. */
+  loginsAround?: string[];
   overBudget?: { booked: number; seen: number };
 };
 
@@ -170,7 +183,10 @@ export async function assertBookingKept(socket: Socket | undefined): Promise<voi
       `this file logged in ${answer.unreported.length} session(s) it never reported: ${where}. ` +
         `The gate can't count a session it doesn't know is yours, so it may give that slot to another file, ` +
         `whose login the stone then refuses. Report each login with reportLogin (sessionGateClient.ts). ` +
-        `If app code the test calls logs in for itself, the test has to report that login too.`,
+        `If app code the test calls logs in for itself, the test has to report that login too.` +
+        (answer.loginsAround?.length
+          ? `\nWhat the gate knew of the logins from this test worker (seconds into the run):\n${answer.loginsAround.map((l) => `  ${l}`).join('\n')}\n`
+          : ''),
     );
   }
   if (answer.overBudget) {
@@ -195,7 +211,7 @@ export function reportedTransientLogin(
   // eslint-disable-next-line no-restricted-syntax -- the one place a test's transientLogin is allowed: it reports the session
   const result = from.transientLogin(login);
   if (result.session) reportLogin(result.session);
-  else if (deniedByStone(result.err)) reportRefusedLogin(startedAt);
+  else reportFailedLogin(startedAt, result.err);
   return result;
 }
 
@@ -203,8 +219,9 @@ export function reportedTransientLogin(
  * Has every login `manager` makes reported to the gate, including the ones it
  * makes for itself, such as the short login that ends a stopped run's gem at
  * logout. A test's own SessionManager goes through here. SessionManager
- * rethrows a refused login without its error number, so a refusal through it
- * goes unreported, and the gate's end-of-run check would name its serial.
+ * rethrows a refused login without its error number, so the gate can't tell a
+ * refusal through it from any other failure, and its end-of-run check would
+ * name the serial the refusal used.
  */
 export function reportingLoginsOf(manager: SessionManager): SessionManager {
   const { login, loginAsync, loginTransient } = manager;
@@ -214,7 +231,7 @@ export function reportingLoginsOf(manager: SessionManager): SessionManager {
     try {
       return reportLogin(await loginAsync.apply(manager, args));
     } catch (error) {
-      if (deniedByStone(error)) reportRefusedLogin(startedAt);
+      reportFailedLogin(startedAt, error);
       throw error;
     }
   };
