@@ -32,7 +32,7 @@ import {
 } from '../transcriptSink';
 import { runNbCall, NbCancelledError, pollNbResultReady, stopCallsOn } from '../nbRunner';
 import { expectEventLoopToRemainResponsiveDuring } from './support/timers';
-import { stillOnStoneCode } from './leftoverGem';
+import { waitUntilOffTheStone } from './leftoverGem';
 import {
   OOP_CLASS_STRING,
   OOP_CLASS_UTF8,
@@ -395,15 +395,8 @@ tmps := SessionTemps current.
       expect(retry).toBe(true);
       await expect(run).rejects.toBeInstanceOf(NbCancelledError);
       // The stone deregisters a gem shortly after its logout returns. The bound
-      // only has to tell "left" from "kept running", so it is generous, and a
-      // slow exit is reported. By login serial: see leftoverGem.ts.
-      const loggedOutAt = Date.now();
-      await vi.waitFor(() => expect(exec(stillOnStoneCode(gemLogin))).toBe('false'), {
-        timeout: 10_000,
-        interval: 100,
-      });
-      const leftAfter = Date.now() - loggedOutAt;
-      if (leftAfter > 2000) console.warn(`The gem took ${leftAfter}ms to leave after its logout.`);
+      // only has to tell "left" from "kept running", so it is generous.
+      await waitUntilOffTheStone(session(), gemLogin, 10_000);
     } finally {
       // Whatever failed above, the gem must not outlive the test.
       await stopCallsOn(busy);

@@ -19,7 +19,7 @@ import { isThisMachine } from '../../thisMachine';
 import { needsWsl, refreshWslNetworkInfo, wslExec, wslExecSync } from '../../wslBridge';
 import { testActiveSession } from '../../__tests__/testActiveSession';
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
-import { endGemAfterTest, stillOnStone } from '../../__tests__/leftoverGem';
+import { endGemAfterTest, stillOnStone, waitUntilOffTheStone } from '../../__tests__/leftoverGem';
 import { reportedSerialOf, reportedTransientLogin } from '../../__tests__/sessionGateClient';
 
 describe('Stone sessions (integration)', () => {
@@ -168,10 +168,7 @@ describe('Stone sessions (integration)', () => {
     const row = rowFor(listStoneSessions(loginAs()), serial)!;
     own.logout();
     // The stone lets the gem go a moment after the logout returns.
-    const deadline = Date.now() + 5000;
-    while (stillOnStone(session, String(serial)) && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitUntilOffTheStone(session, String(serial), 5000);
 
     await expect(stopStoneSession(row, loginAs())).resolves.toBe('gone');
   }, 30_000);
@@ -222,10 +219,7 @@ describe('Stone sessions (integration)', () => {
       const { own, serial } = otherSession();
       const row = rowFor(listStoneSessions(loginAs()), serial)!;
       own.logout();
-      const deadline = Date.now() + 5000;
-      while (stillOnStone(session, String(serial)) && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
+      await waitUntilOffTheStone(session, String(serial), 5000);
       const commands: string[] = [];
 
       await expect(

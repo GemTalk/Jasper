@@ -69,6 +69,7 @@ describe('a logged-out session (integration)', () => {
     const loggedInAt = Date.now();
     const id = stopped.executeAndFetchString('System session printString');
     const serial = reportedSerialOf(stopped);
+    endGemAfterTest(() => session, stopped);
     // A gem stopped just after it logs in sometimes misses the stop and stays on the stone,
     // failing this test (#852). It looks like a GemStone 3.6.x bug, never seen on 3.7.x, but the wait
     // applies to every version. Stops sent 250 ms or more after login never got stuck in CI, so stop no sooner

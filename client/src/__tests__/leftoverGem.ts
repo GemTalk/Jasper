@@ -7,7 +7,7 @@ import { reportedSerialOf, reportSessionClosed } from './sessionGateClient';
 // has gone: a test that goes by number can check, or end, another test's session.
 
 /** Smalltalk answering whether the login with serial number `serial` is still on the stone ('true' or 'false'); needs SessionAccess. */
-export function stillOnStoneCode(serial: string): string {
+function stillOnStoneCode(serial: string): string {
   return `(((System descriptionOfSessionSerialNum: ${serial}) at: 10) > 0) printString`;
 }
 
