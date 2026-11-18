@@ -46,7 +46,8 @@ vi.mock('../queries/basicInspectorQueries', () => ({
 }));
 
 vi.mock('../../debugger/debugQueries', () => ({
-  fetchFullPrintString: vi.fn(() => 'an Account'),
+  fetchFullPrintString: vi.fn(() => Promise.resolve({ text: 'an Account', cutShortAt: 0 })),
+  FULL_PRINT_STRING_MAX_CHARS: 1_000_000,
   getObjectPrintString: vi.fn(() => '84'),
   evaluateWithReceiverToOop: vi.fn(() => 777n),
   isSpecialOop: vi.fn(() => false),
@@ -275,11 +276,88 @@ describe('serving a tab', () => {
     expect(queries.fetchItems).toHaveBeenCalledWith(expect.any(Function), 100n, 101, 100);
   });
 
-  it('prints an object in full, past the printString cap', () => {
+  // The print is awaited inside the message handler; one macrotask lets it settle.
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+
+  it('prints the object the tab asked for', async () => {
     send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'print', from: 1 });
+    await settle();
 
     expect(debug.fetchFullPrintString).toHaveBeenCalledWith(session, 100n);
-    expect(postsOf('tabData').at(-1)).toMatchObject({ tab: 'print', text: 'an Account' });
+    expect(postsOf('tabData').at(-1)).toEqual({
+      command: 'tabData',
+      columnId: 0,
+      oop: '100',
+      tab: 'print',
+      from: 1,
+      text: 'an Account',
+      cutShortAt: 0,
+    });
+  });
+
+  it('tells the tab the cap it stopped at when the print was cut short', async () => {
+    vi.mocked(debug.fetchFullPrintString).mockResolvedValueOnce({
+      text: '#( 1, 2...',
+      cutShortAt: 1_000_000,
+    });
+
+    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'print', from: 1 });
+    await settle();
+
+    expect(postsOf('tabData').at(-1)).toMatchObject({
+      tab: 'print',
+      text: '#( 1, 2...',
+      cutShortAt: 1_000_000,
+    });
+  });
+
+  it('tells the tab a failed print failed, rather than showing the error as the print', async () => {
+    vi.mocked(debug.fetchFullPrintString).mockResolvedValueOnce({ error: 'session busy' });
+
+    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'print', from: 1 });
+    await settle();
+
+    expect(postsOf('tabData').filter((m) => m.tab === 'print')).toHaveLength(0);
+    expect(postsOf('tabFailed').at(-1)).toEqual({
+      command: 'tabFailed',
+      columnId: 0,
+      oop: '100',
+      tab: 'print',
+      error: 'session busy',
+    });
+  });
+
+  it('tells the tab a refused read failed, so it does not wait for good', () => {
+    vi.mocked(queries.fetchSlots).mockImplementationOnce(() => {
+      throw new Error('session busy');
+    });
+
+    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'slots', from: 1 });
+
+    expect(postsOf('tabFailed').at(-1)).toEqual({
+      command: 'tabFailed',
+      columnId: 0,
+      oop: '100',
+      tab: 'slots',
+      error: 'session busy',
+    });
+  });
+
+  it('posts nothing when the panel closed while the gem printed', async () => {
+    let finish!: (v: { text: string; cutShortAt: number }) => void;
+    vi.mocked(debug.fetchFullPrintString).mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'print', from: 1 });
+    const before = postsOf('tabData').length;
+
+    panel.dispose();
+    finish({ text: 'late', cutShortAt: 0 });
+    await settle();
+
+    expect(postsOf('tabData')).toHaveLength(before);
   });
 
   /** A reader that answers full pages until `total` rows are gone. */
@@ -627,6 +705,24 @@ describe('editing a slot', () => {
 
     panel.dispose();
 
+    expect(debug.releaseObjs).toHaveBeenCalledWith(session, [500n]);
+  });
+
+  it('waits for a print still holding the session before releasing the pins', async () => {
+    let finish!: (v: { text: string; cutShortAt: number }) => void;
+    vi.mocked(debug.fetchFullPrintString).mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    send(EDIT);
+    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'print', from: 1 });
+
+    panel.dispose();
+    expect(debug.releaseObjs).not.toHaveBeenCalled();
+
+    finish({ text: 'late', cutShortAt: 0 });
+    await new Promise((r) => setTimeout(r, 0));
     expect(debug.releaseObjs).toHaveBeenCalledWith(session, [500n]);
   });
 });

@@ -246,6 +246,18 @@ describe('fetchEnhancedInspectorPrintTabData', () => {
     expect(code).toContain('99999');
     expect(code).toContain('gtPrintTabFor:');
   });
+
+  it('checks for more text with a stream one past the shown text, never an unlimited one', () => {
+    expect.assertions(3);
+    const execute = vi.fn(() => '{}');
+    fetchEnhancedInspectorPrintTabData(execute, 1n, 'gtPrintFor:');
+    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(code).toContain(
+      "PrintStream printingOn: String new maxSize: (textData at: 'string') size + 1",
+    );
+    expect(code).toContain("textData at: 'truncated' put: s isFull");
+    expect(code).not.toContain('WriteStream');
+  });
 });
 
 describe('fetchEnhancedInspectorForwardListData', () => {
