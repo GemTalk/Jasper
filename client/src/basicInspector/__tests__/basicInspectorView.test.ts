@@ -158,16 +158,24 @@ function openRoot(over: Partial<Header> = {}, label = 'anAccount'): Column {
   return view.columns.get(0)!;
 }
 
+/**
+ * A tab reply from the host, for the object the column now shows unless the
+ * message names another, as the host echoes the oop the fetch asked for.
+ */
+function tabReply(msg: Record<string, unknown> & { columnId: number }) {
+  view.handleHostMessage({ oop: view.columns.get(msg.columnId)?.oop, ...msg });
+}
+
 function sendRows(columnId: number, tab: string, rows: Row[], from = 1) {
-  view.handleHostMessage({ command: 'tabData', columnId, tab, from, rows });
+  tabReply({ command: 'tabData', columnId, tab, from, rows });
 }
 
 function sendBytes(columnId: number, bytes: number[], from = 1) {
-  view.handleHostMessage({ command: 'tabData', columnId, tab: 'bytes', from, bytes });
+  tabReply({ command: 'tabData', columnId, tab: 'bytes', from, bytes });
 }
 
 function sendMeta(columnId: number, over: Record<string, unknown> = {}) {
-  view.handleHostMessage({
+  tabReply({
     command: 'tabData',
     columnId,
     tab: 'meta',
@@ -467,6 +475,206 @@ describe('drawing a table', () => {
   });
 });
 
+describe('the Print tab', () => {
+  function showPrint(cutShortAt?: number) {
+    const col = openRoot({ namedSize: 1 });
+    (col.el.root.querySelector('[data-tab="print"]') as HTMLElement).click();
+    tabReply({
+      command: 'tabData',
+      columnId: 0,
+      tab: 'print',
+      from: 1,
+      text: '#( 1, 2...',
+      ...(cutShortAt === undefined ? {} : { cutShortAt }),
+    });
+    return col;
+  }
+
+  it('shows the print', () => {
+    const col = showPrint(0);
+
+    expect(col.el.contentPane.querySelector('.detail-value')?.textContent).toBe('#( 1, 2...');
+  });
+
+  it('says where a print was cut short', () => {
+    const col = showPrint(1_000_000);
+
+    expect(col.el.contentPane.querySelector('.load-note')?.textContent).toBe(
+      'Cut short at about 1,000,000 characters.',
+    );
+  });
+
+  it('adds no note to a whole print', () => {
+    const col = showPrint(0);
+
+    expect(col.el.contentPane.querySelector('.load-note')).toBeNull();
+  });
+
+  it('adds no note when the host sends no cap', () => {
+    const col = showPrint();
+
+    expect(col.el.contentPane.querySelector('.load-note')).toBeNull();
+  });
+
+  it('drops the note when a later print of the tab is whole', () => {
+    const col = showPrint(1_000_000);
+
+    tabReply({
+      command: 'tabData',
+      columnId: 0,
+      tab: 'print',
+      from: 1,
+      text: 'an Account',
+      cutShortAt: 0,
+    });
+
+    expect(col.el.contentPane.querySelector('.load-note')).toBeNull();
+  });
+});
+
+describe('a tab whose read failed', () => {
+  function clickTab(col: Column, tab: string) {
+    (col.el.root.querySelector(`[data-tab="${tab}"]`) as HTMLElement).click();
+  }
+
+  it('says so instead of showing Loading for good', () => {
+    const col = openRoot({ namedSize: 1 });
+    clickTab(col, 'print');
+
+    tabReply({
+      command: 'tabFailed',
+      columnId: 0,
+      tab: 'print',
+      error: 'session busy',
+    });
+
+    expect(col.el.contentPane.querySelector('.tab-failed')?.textContent).toBe(
+      "Couldn't load this tab (click it to try again): session busy",
+    );
+  });
+
+  it('fetches again when the tab is clicked again', () => {
+    const col = openRoot({ namedSize: 1 });
+    clickTab(col, 'print');
+    tabReply({
+      command: 'tabFailed',
+      columnId: 0,
+      tab: 'print',
+      error: 'session busy',
+    });
+    const before = posted.filter((m) => m.command === 'fetchTab' && m.tab === 'print').length;
+
+    clickTab(col, 'print');
+
+    expect(posted.filter((m) => m.command === 'fetchTab' && m.tab === 'print')).toHaveLength(
+      before + 1,
+    );
+  });
+
+  it('leaves another tab the user has moved to alone', () => {
+    const col = openRoot({ namedSize: 1 });
+    clickTab(col, 'print');
+    clickTab(col, 'meta');
+    const shown = col.el.contentPane.innerHTML;
+
+    tabReply({
+      command: 'tabFailed',
+      columnId: 0,
+      tab: 'print',
+      error: 'session busy',
+    });
+
+    expect(col.el.contentPane.innerHTML).toBe(shown);
+  });
+});
+
+describe('a print that answers after the column moved on', () => {
+  function clickTab(col: Column, tab: string) {
+    (col.el.root.querySelector(`[data-tab="${tab}"]`) as HTMLElement).click();
+  }
+
+  /** Ask for the root's print, then move the column to another object before it answers. */
+  function printThenMove(): Column {
+    const col = openRoot({ namedSize: 1 });
+    clickTab(col, 'print');
+    view.handleHostMessage({
+      command: 'replaceColumn',
+      columnId: col.id,
+      oop: '200',
+      label: 'balance',
+      remember: true,
+      header: header({ namedSize: 1 }),
+    });
+    return col;
+  }
+
+  const printsAsked = () => sent('fetchTab').filter((m) => m.tab === 'print');
+
+  it('is not kept as the print of the object the column now shows', () => {
+    const col = printThenMove();
+
+    tabReply({
+      command: 'tabData',
+      columnId: col.id,
+      oop: '100',
+      tab: 'print',
+      from: 1,
+      text: 'old',
+    });
+    clickTab(col, 'print');
+
+    expect(printsAsked().at(-1)).toMatchObject({ oop: '200' });
+    expect(col.el.contentPane.textContent).not.toContain('old');
+  });
+
+  it('does not report its failure against the object the column now shows', () => {
+    const col = printThenMove();
+    clickTab(col, 'print');
+
+    tabReply({ command: 'tabFailed', columnId: col.id, oop: '100', tab: 'print', error: 'busy' });
+
+    expect(col.el.contentPane.querySelector('.tab-failed')).toBeNull();
+  });
+});
+
+describe('a print still running', () => {
+  function clickTab(col: Column, tab: string) {
+    (col.el.root.querySelector(`[data-tab="${tab}"]`) as HTMLElement).click();
+  }
+
+  const printsAsked = () => sent('fetchTab').filter((m) => m.tab === 'print');
+
+  it('is not asked for again when the tab is clicked again', () => {
+    const col = openRoot({ namedSize: 1 });
+    clickTab(col, 'print');
+
+    clickTab(col, 'print');
+
+    expect(printsAsked()).toHaveLength(1);
+    expect(col.el.contentPane.textContent).toContain('Loading');
+  });
+
+  it('is not asked for again after a visit to another tab', () => {
+    const col = openRoot({ namedSize: 1 });
+    clickTab(col, 'print');
+    clickTab(col, 'meta');
+
+    clickTab(col, 'print');
+
+    expect(printsAsked()).toHaveLength(1);
+  });
+
+  it('fills the tab when it answers', () => {
+    const col = openRoot({ namedSize: 1 });
+    clickTab(col, 'print');
+    clickTab(col, 'print');
+
+    tabReply({ command: 'tabData', columnId: col.id, tab: 'print', from: 1, text: 'an Account' });
+
+    expect(col.el.contentPane.querySelector('.detail-value')?.textContent).toBe('an Account');
+  });
+});
+
 describe('switching tabs', () => {
   it('fetches a tab the first time it is opened', () => {
     const col = openRoot({ namedSize: 1 });
@@ -480,7 +688,7 @@ describe('switching tabs', () => {
     const col = openRoot({ namedSize: 1 });
     sendRows(0, 'slots', [row()]);
     (col.el.root.querySelector('[data-tab="print"]') as HTMLElement).click();
-    view.handleHostMessage({
+    tabReply({
       command: 'tabData',
       columnId: 0,
       tab: 'print',
@@ -1398,7 +1606,7 @@ describe('loading the rest of a tab', () => {
   it('says so when a Load all stopped at the ceiling rather than at the end', () => {
     const col = openRoot({ itemCount: 50000 });
 
-    view.handleHostMessage({
+    tabReply({
       command: 'tabData',
       columnId: 0,
       tab: 'items',
@@ -1416,7 +1624,7 @@ describe('loading the rest of a tab', () => {
   it('says nothing about a ceiling a read never reached', () => {
     const col = openRoot({ itemCount: 50000 });
 
-    view.handleHostMessage({
+    tabReply({
       command: 'tabData',
       columnId: 0,
       tab: 'items',
@@ -1431,7 +1639,7 @@ describe('loading the rest of a tab', () => {
 
   it('drops the notice once a later click reaches the end', () => {
     const col = openRoot({ itemCount: 50000 });
-    view.handleHostMessage({
+    tabReply({
       command: 'tabData',
       columnId: 0,
       tab: 'items',
@@ -1441,7 +1649,7 @@ describe('loading the rest of a tab', () => {
       loadAllRows: 5000,
     });
 
-    view.handleHostMessage({
+    tabReply({
       command: 'tabData',
       columnId: 0,
       tab: 'items',
@@ -1460,7 +1668,7 @@ describe('loading the rest of a tab', () => {
     // 20000 overwrote the 5000 one Items click is worth — so switching back to
     // Items showed the Bytes tab's numbers, or none at all.
     const col = openRoot({ itemCount: 50000, isBytes: true, byteSize: 400 });
-    view.handleHostMessage({
+    tabReply({
       command: 'tabData',
       columnId: 0,
       tab: 'items',
@@ -1471,7 +1679,7 @@ describe('loading the rest of a tab', () => {
     });
 
     openTab(col, 'bytes');
-    view.handleHostMessage({
+    tabReply({
       command: 'tabData',
       columnId: 0,
       tab: 'bytes',
@@ -1494,7 +1702,7 @@ describe('loading the rest of a tab', () => {
 
   it('offers the setting it names as a link, and asks the host to open it', () => {
     const col = openRoot({ itemCount: 50000 });
-    view.handleHostMessage({
+    tabReply({
       command: 'tabData',
       columnId: 0,
       tab: 'items',
@@ -1519,7 +1727,7 @@ describe('loading the rest of a tab', () => {
 
   it('does not dive into the selected row when Enter activates that link', () => {
     const col = openRoot({ itemCount: 50000 });
-    view.handleHostMessage({
+    tabReply({
       command: 'tabData',
       columnId: 0,
       tab: 'items',
@@ -1542,7 +1750,7 @@ describe('loading the rest of a tab', () => {
 
   it('tells the Load all button how much one click is worth', () => {
     const col = openRoot({ itemCount: 50000 });
-    view.handleHostMessage({
+    tabReply({
       command: 'tabData',
       columnId: 0,
       tab: 'items',
