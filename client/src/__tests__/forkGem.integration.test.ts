@@ -10,6 +10,7 @@ import type { ActiveSession } from '../sessionManager';
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports -- forking is this file's subject, so it is the one integration test allowed to spawn a gem the harness never armed; the forked gems here only sleep, and write nothing
 import { canForkGem, forkGemRunning } from '../queries/forkGem';
 import { testActiveSession } from './testActiveSession';
+import { reportSession } from './sessionGateClient';
 
 /**
  * Forking a gem, against a live stone.
@@ -21,16 +22,22 @@ import { testActiveSession } from './testActiveSession';
  * is named anything else (which is most of them, including this one). Setting
  * `gemNRS:` is what fixes it, and this test is what keeps it fixed.
  *
- * The forked gem runs a one-second sleep and exits on its own, so nothing is
- * left behind holding a session.
+ * Each forked gem sleeps a second and exits, outliving the test that forked it,
+ * though one forked just before this file's session ends can end within
+ * milliseconds, too soon for the session gate to see (#949). Either way it is a
+ * session of this file's, so it is reported to the gate as soon as it is forked,
+ * and booked: the file's own session and one per test that forks.
  */
 describe('forking a gem (integration)', () => {
   let gci: GciLibrary;
   let handle: unknown;
-  useIntegrationTest((testContext) => {
-    gci = testContext.gciLibrary;
-    handle = testContext.session;
-  });
+  useIntegrationTest(
+    (testContext) => {
+      gci = testContext.gciLibrary;
+      handle = testContext.session;
+    },
+    { sessions: 4 },
+  );
 
   const session = (): ActiveSession => testActiveSession(gci, handle);
   const execute = (code: string): string => browserQueries.executeFetchString(session(), code);
@@ -43,12 +50,32 @@ describe('forking a gem (integration)', () => {
   // itself is what protects users on those stones.
   const supported = (): boolean => canForkGem(execute);
 
+  // GemStone answers zeros, serial included, for a session that no longer
+  // exists. Reporting serial 0 would make the gate blame every serial below its
+  // first look, so fail here with what the stone said instead.
+  const serialOf = (id: string, forkedAt: number): string => {
+    const [serial, description] = execute(
+      `| d | d := System descriptionOfSession: ${id}. (d at: 9) printString, '|', d printString`,
+    ).split(/\|(.*)/s);
+    if (Number(serial) > 0) return serial.trim();
+    throw new Error(
+      `forked gem ${id} ended before its login serial could be read, ${Date.now() - forkedAt} ms after forking, on GemStone ${session().stoneVersion}. The stone described the session as: ${description}`,
+    );
+  };
+
+  // Its serial is read while the fork is still on the stone, before its sleep ends.
+  const fork = (): string => {
+    const id = forkGemRunning(execute, 'System sleep: 1', gemNrs()).trim();
+    reportSession(serialOf(id, Date.now()));
+    return id;
+  };
+
   it('runs an expression in a gem of its own and answers its session id', (ctx) => {
     if (!supported()) return ctx.skip();
 
-    const id = forkGemRunning(execute, 'System sleep: 1', gemNrs());
+    const id = fork();
 
-    expect(id.trim()).toMatch(/^\d+$/);
+    expect(id).toMatch(/^\d+$/);
   });
 
   it('gives the new gem a session distinct from this one', (ctx) => {
@@ -64,9 +91,9 @@ describe('forking a gem (integration)', () => {
     // sessions can never occupy the same slot, so this comparison is now exact.
     const mySession = execute('System session printString');
 
-    const id = forkGemRunning(execute, 'System sleep: 1', gemNrs());
+    const id = fork();
 
-    expect(id.trim()).not.toBe(mySession.trim());
+    expect(id).not.toBe(mySession.trim());
   });
 
   it('runs the gem as the user who asked, never SystemUser', (ctx) => {
@@ -78,6 +105,6 @@ describe('forking a gem (integration)', () => {
     // successful fork is itself the evidence — minting for anyone else would
     // need privileges this session does not have.
     expect(me).not.toBe('SystemUser');
-    expect(forkGemRunning(execute, 'System sleep: 1', gemNrs()).trim()).toMatch(/^\d+$/);
+    expect(fork()).toMatch(/^\d+$/);
   });
 });
