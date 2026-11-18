@@ -169,5 +169,37 @@ describe('clearing a stopped run in the background (integration)', () => {
       });
       expect(answer).toBe('7');
     }, 30_000);
+
+    // Closing a debugger while an Execute It in another editor is still running.
+    it('waits for a run still going on the session, then clears', async () => {
+      const own = armedSession();
+      own.executeAndFetchString(`UserGlobals at: #ClearAfterRun put: 'not'. 'ok'`);
+      onTestFinished(() => {
+        own.executeAndFetchString(`UserGlobals removeKey: #ClearAfterRun ifAbsent: []. 'ok'`);
+      });
+      const process = pausedWithCleanUp(own, `UserGlobals at: #ClearAfterRun put: 'cleared'`);
+      const run = runNbCall(
+        own,
+        () =>
+          own.GciTsNbExecute(
+            `(Delay milliseconds: 1500) wait. 'done'`,
+            OOP_CLASS_UTF8,
+            OOP_ILLEGAL,
+            OOP_NIL,
+            0,
+            0,
+          ),
+        () => own.GciTsNbResult(),
+        { suppressNotification: true },
+      );
+
+      const clearing = clearInBackground(own, process);
+      await run;
+      await clearing;
+
+      expect(own.executeAndFetchString('(UserGlobals at: #ClearAfterRun) printString')).toBe(
+        "'cleared'",
+      );
+    }, 30_000);
   });
 });
