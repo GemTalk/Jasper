@@ -310,6 +310,36 @@ describe('serving a tab', () => {
     });
   });
 
+  it('tells the tab a failed print failed, rather than showing the error as the print', async () => {
+    vi.mocked(debug.fetchFullPrintString).mockResolvedValueOnce({ error: 'session busy' });
+
+    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'print', from: 1 });
+    await settle();
+
+    expect(postsOf('tabData').filter((m) => m.tab === 'print')).toHaveLength(0);
+    expect(postsOf('tabFailed').at(-1)).toEqual({
+      command: 'tabFailed',
+      columnId: 0,
+      tab: 'print',
+      error: 'session busy',
+    });
+  });
+
+  it('tells the tab a refused read failed, so it does not wait for good', () => {
+    vi.mocked(queries.fetchSlots).mockImplementationOnce(() => {
+      throw new Error('session busy');
+    });
+
+    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'slots', from: 1 });
+
+    expect(postsOf('tabFailed').at(-1)).toEqual({
+      command: 'tabFailed',
+      columnId: 0,
+      tab: 'slots',
+      error: 'session busy',
+    });
+  });
+
   it('posts nothing when the panel closed while the gem printed', async () => {
     let finish!: (v: { text: string; truncated: boolean }) => void;
     vi.mocked(debug.fetchFullPrintString).mockReturnValueOnce(
@@ -672,6 +702,24 @@ describe('editing a slot', () => {
 
     panel.dispose();
 
+    expect(debug.releaseObjs).toHaveBeenCalledWith(session, [500n]);
+  });
+
+  it('waits for a print still holding the session before releasing the pins', async () => {
+    let finish!: (v: { text: string; truncated: boolean }) => void;
+    vi.mocked(debug.fetchFullPrintString).mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    send(EDIT);
+    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'print', from: 1 });
+
+    panel.dispose();
+    expect(debug.releaseObjs).not.toHaveBeenCalled();
+
+    finish({ text: 'late', truncated: false });
+    await new Promise((r) => setTimeout(r, 0));
     expect(debug.releaseObjs).toHaveBeenCalledWith(session, [500n]);
   });
 });

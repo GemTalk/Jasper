@@ -492,7 +492,7 @@ describe('the Print tab', () => {
     const col = showPrint(1_000_000);
 
     expect(col.el.contentPane.querySelector('.load-note')?.textContent).toBe(
-      'Cut short: Jasper shows at most 1,000,000 characters of a print.',
+      'Cut short at about 1,000,000 characters.',
     );
   });
 
@@ -521,6 +521,62 @@ describe('the Print tab', () => {
     });
 
     expect(col.el.contentPane.querySelector('.load-note')).toBeNull();
+  });
+});
+
+describe('a tab whose read failed', () => {
+  function clickTab(col: Column, tab: string) {
+    (col.el.root.querySelector(`[data-tab="${tab}"]`) as HTMLElement).click();
+  }
+
+  it('says so instead of showing Loading for good', () => {
+    const col = openRoot({ namedSize: 1 });
+    clickTab(col, 'print');
+
+    view.handleHostMessage({
+      command: 'tabFailed',
+      columnId: 0,
+      tab: 'print',
+      error: 'session busy',
+    });
+
+    expect(col.el.contentPane.querySelector('.tab-failed')?.textContent).toBe(
+      "Couldn't load this tab (click it to try again): session busy",
+    );
+  });
+
+  it('fetches again when the tab is clicked again', () => {
+    const col = openRoot({ namedSize: 1 });
+    clickTab(col, 'print');
+    view.handleHostMessage({
+      command: 'tabFailed',
+      columnId: 0,
+      tab: 'print',
+      error: 'session busy',
+    });
+    const before = posted.filter((m) => m.command === 'fetchTab' && m.tab === 'print').length;
+
+    clickTab(col, 'print');
+
+    expect(posted.filter((m) => m.command === 'fetchTab' && m.tab === 'print')).toHaveLength(
+      before + 1,
+    );
+  });
+
+  it('leaves another tab the user has moved to alone', () => {
+    const col = openRoot({ namedSize: 1 });
+    clickTab(col, 'print');
+    clickTab(col, 'meta');
+    const shown = col.el.contentPane.innerHTML;
+
+    view.handleHostMessage({
+      command: 'tabFailed',
+      columnId: 0,
+      tab: 'print',
+      error: 'session busy',
+    });
+
+    expect(col.el.contentPane.innerHTML).toBe(shown);
   });
 });
 

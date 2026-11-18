@@ -440,6 +440,8 @@ export class EnhancedInspector {
   /**
    * Fetch an object's printString up to the cap without blocking, then post it
    * to the column that asked. The panel may have closed while the gem printed.
+   * A failure is posted on its own, so the webview keeps the abbreviated print
+   * it was showing rather than caching the error in its place.
    */
   private async postFullPrintString(
     columnId: number,
@@ -448,10 +450,19 @@ export class EnhancedInspector {
   ): Promise<void> {
     const full = await debug.fetchFullPrintString(this.session, oop);
     if (this.disposed) return;
+    if ('error' in full) {
+      this.panel.webview.postMessage({
+        command: 'fullPrintStringFailed',
+        columnId,
+        methodSelector,
+        error: full.error,
+      });
+      return;
+    }
     const data = JSON.stringify({
       string: full.text,
       stylerSpecification: null,
-      truncated: full.truncated,
+      cutShortAt: full.truncated ? debug.FULL_PRINT_STRING_MAX_CHARS : 0,
     });
     this.panel.webview.postMessage({ command: 'fullPrintString', columnId, methodSelector, data });
   }
@@ -466,7 +477,6 @@ export class EnhancedInspector {
   private getHtml(): string {
     const nonce = crypto.randomBytes(16).toString('hex');
     const pageSize = PAGE_SIZE;
-    const fullPrintMaxChars = debug.FULL_PRINT_STRING_MAX_CHARS;
     const defaultColumnWidth = DEFAULT_COLUMN_WIDTH;
     const minColumnWidth = MIN_COLUMN_WIDTH;
     return `<!DOCTYPE html>
@@ -646,7 +656,6 @@ export class EnhancedInspector {
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const PAGE_SIZE = ${pageSize};
-    const FULL_PRINT_MAX_CHARS = ${fullPrintMaxChars};
     const DEFAULT_COLUMN_WIDTH = ${defaultColumnWidth};
     const MIN_COLUMN_WIDTH = ${minColumnWidth};
 
@@ -1002,6 +1011,32 @@ export class EnhancedInspector {
       resizingCol = null;
     });
 
+    // The link under a Print tab whose text gtPrint abbreviated. A failed fetch
+    // puts it back with the reason, beside the abbreviated text still showing.
+    function addShowAllBar(col, contentPane, methodSelector, error) {
+      const old = contentPane.querySelector('.show-all-bar');
+      if (old) old.remove();
+      const bar = document.createElement('div');
+      bar.className = 'show-all-bar';
+      bar.style.cssText = 'padding:4px 0;border-top:1px solid var(--vscode-panel-border);margin-top:2px';
+      const link = document.createElement('a');
+      link.textContent = 'Show all…';
+      link.style.cssText = 'cursor:pointer;color:var(--vscode-textLink-foreground);font-size:0.85em';
+      link.addEventListener('click', function() {
+        bar.remove();
+        vscode.postMessage({ command: 'fetchFullPrintString', columnId: col.id, oop: col.oop, methodSelector: methodSelector });
+      });
+      bar.appendChild(link);
+      if (error) {
+        const why = document.createElement('span');
+        why.className = 'show-all-error';
+        why.style.cssText = 'margin-left:8px;font-size:0.85em;color:var(--vscode-errorForeground)';
+        why.textContent = "Couldn't show all: " + error;
+        bar.appendChild(why);
+      }
+      contentPane.appendChild(bar);
+    }
+
     // ── Message handler ───────────────────────
 
     window.addEventListener('message', ev => {
@@ -1019,20 +1054,7 @@ export class EnhancedInspector {
           const contentPane = col.el.contentPane;
           if (spec) {
             renderEnhancedInspectorContent(col, contentPane, spec, msg.data);
-            if (msg.truncated) {
-              const bar = document.createElement('div');
-              bar.style.cssText = 'padding:4px 0;border-top:1px solid var(--vscode-panel-border);margin-top:2px';
-              const link = document.createElement('a');
-              link.textContent = 'Show all…';
-              link.style.cssText = 'cursor:pointer;color:var(--vscode-textLink-foreground);font-size:0.85em';
-              const capturedSelector = msg.methodSelector;
-              link.addEventListener('click', function() {
-                bar.remove();
-                vscode.postMessage({ command: 'fetchFullPrintString', columnId: col.id, oop: col.oop, methodSelector: capturedSelector });
-              });
-              bar.appendChild(link);
-              contentPane.appendChild(bar);
-            }
+            if (msg.truncated) addShowAllBar(col, contentPane, msg.methodSelector, null);
           }
         }
 
@@ -1067,6 +1089,11 @@ export class EnhancedInspector {
         newRows.forEach(row => { table.insertAdjacentHTML('beforeend', makeRowHtml(row, cols, isTree, 0, [row.nodeId])); });
         col.loadedRowCounts[msg.methodSelector] = (col.loadedRowCounts[msg.methodSelector] || 0) + newRows.length;
         if (newRows.length >= PAGE_SIZE) table.insertAdjacentHTML('beforeend', makeLoadMoreHtml());
+
+      } else if (msg.command === 'fullPrintStringFailed') {
+        if (msg.methodSelector === col.activeMethodSelector) {
+          addShowAllBar(col, col.el.contentPane, msg.methodSelector, msg.error);
+        }
 
       } else if (msg.command === 'fullPrintString') {
         col.cachedViewData[msg.methodSelector] = msg.data;
@@ -1226,11 +1253,12 @@ export class EnhancedInspector {
         const runs = (styler && styler.attributeRuns && styler.attributeRuns.items) || [];
         el.innerHTML = applyRuns(str, runs);
       }
-      // Set by the host when a "Show all" print stopped at its cap.
-      if (textData.truncated) {
+      // Only a "Show all" print carries cutShortAt. gtPrint's own text carries
+      // 'truncated' instead, which means "offer Show all", not "hit the cap".
+      if (textData.cutShortAt) {
         el.insertAdjacentHTML('beforeend',
           '<div class="cut-short-note" style="padding:4px 0;border-top:1px solid var(--vscode-panel-border);margin-top:2px;font-size:0.85em;font-style:italic">' +
-          'Cut short: Jasper shows at most ' + FULL_PRINT_MAX_CHARS.toLocaleString('en-US') + ' characters of a print.</div>');
+          'Cut short at about ' + Number(textData.cutShortAt).toLocaleString('en-US') + ' characters.</div>');
       }
     }
 

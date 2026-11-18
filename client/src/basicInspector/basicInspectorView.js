@@ -394,10 +394,21 @@
     var note = document.createElement('div');
     note.className = 'load-note';
     note.textContent =
-      'Cut short: Jasper shows at most ' +
-      col.printCutShortAt.toLocaleString('en-US') +
-      ' characters of a print.';
+      'Cut short at about ' + col.printCutShortAt.toLocaleString('en-US') + ' characters.';
     pane.appendChild(note);
+  }
+
+  /**
+   * A tab whose first read failed. Its data stays unset, so clicking the tab
+   * again fetches it afresh.
+   */
+  function renderTabFailed(col, error) {
+    var pane = col.el.contentPane;
+    pane.innerHTML = '';
+    var div = document.createElement('div');
+    div.className = 'placeholder tab-failed';
+    div.textContent = "Couldn't load this tab (click it to try again): " + error;
+    pane.appendChild(div);
   }
 
   // ── Row tables (Slots / Items / Entries) ──
@@ -1522,6 +1533,13 @@
         col = Columns.get(msg.columnId);
         if (!col) return;
         applyTabData(col, msg);
+        return;
+      case 'tabFailed':
+        col = Columns.get(msg.columnId);
+        if (!col || col.activeTab !== msg.tab) return;
+        // A later page that failed keeps the rows already read.
+        if (col.tabData[msg.tab] !== undefined) renderTab(col);
+        else renderTabFailed(col, msg.error);
         return;
       case 'evalResult':
         col = Columns.get(msg.columnId);

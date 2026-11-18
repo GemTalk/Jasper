@@ -57,14 +57,11 @@ import { fakeActiveSession } from '../../__tests__/fakeActiveSession';
 function makeMockPanel() {
   const postMessage = vi.fn();
   let title = '';
-  let html = '';
   let messageHandler: ((msg: unknown) => void) | undefined;
 
   const panel = {
     webview: {
-      set html(v: string) {
-        html = v;
-      },
+      set html(_: string) {},
       postMessage,
       onDidReceiveMessage(cb: (msg: unknown) => void) {
         messageHandler = cb;
@@ -88,9 +85,6 @@ function makeMockPanel() {
     },
     get title() {
       return title;
-    },
-    get html() {
-      return html;
     },
     sendMessage(msg: unknown) {
       messageHandler!(msg);
@@ -595,7 +589,7 @@ describe('EnhancedInspector', () => {
         data: JSON.stringify({
           string: 'this is the full text',
           stylerSpecification: null,
-          truncated: false,
+          cutShortAt: 0,
         }),
       });
     });
@@ -614,7 +608,7 @@ describe('EnhancedInspector', () => {
       expect(debug.fetchFullPrintString).toHaveBeenCalledWith(session, 4242n);
     });
 
-    it('tells the webview when the cap cut the print short', async () => {
+    it('tells the webview the cap it stopped at when the print was cut short', async () => {
       expect.assertions(2);
       vi.mocked(debug.fetchFullPrintString).mockResolvedValue({
         text: '#( 1, 2...',
@@ -630,7 +624,10 @@ describe('EnhancedInspector', () => {
       await settle();
       expect(fullPrintPosts()).toHaveLength(1);
       const posted = fullPrintPosts()[0] as unknown as { data: string };
-      expect(JSON.parse(posted.data)).toMatchObject({ string: '#( 1, 2...', truncated: true });
+      expect(JSON.parse(posted.data)).toMatchObject({
+        string: '#( 1, 2...',
+        cutShortAt: 1_000_000,
+      });
     });
 
     it('posts nothing when the panel closed while the gem printed', async () => {
@@ -654,10 +651,24 @@ describe('EnhancedInspector', () => {
       expect(fullPrintPosts()).toHaveLength(0);
     });
 
-    it('hands the webview the cap its cut-short note names', () => {
-      expect.assertions(1);
+    it('posts a failure on its own, so the webview keeps the text it was showing', async () => {
+      expect.assertions(2);
+      vi.mocked(debug.fetchFullPrintString).mockResolvedValue({ error: 'session busy' });
       setup();
-      expect(mock.html).toContain('const FULL_PRINT_MAX_CHARS = 1000000;');
+      mock.sendMessage({
+        command: 'fetchFullPrintString',
+        columnId: 2,
+        oop: '1000',
+        methodSelector: 'gtPrintFor:',
+      });
+      await settle();
+      expect(fullPrintPosts()).toHaveLength(0);
+      expect(mock.postMessage).toHaveBeenCalledWith({
+        command: 'fullPrintStringFailed',
+        columnId: 2,
+        methodSelector: 'gtPrintFor:',
+        error: 'session busy',
+      });
     });
   });
 

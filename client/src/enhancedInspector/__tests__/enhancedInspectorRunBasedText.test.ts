@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import { JSDOM } from 'jsdom';
 
 /**
  * Regression for the Phase-5 rename bug.
@@ -118,9 +119,8 @@ interface FakeTextPane {
 }
 
 // Rebuild renderStyledText, the renderer for text views and "Show all" prints.
-function loadRenderStyledText(maxChars: number): (el: FakeTextPane, textData: unknown) => void {
+function loadRenderStyledText(): (el: FakeTextPane, textData: unknown) => void {
   const parts = [
-    `const FULL_PRINT_MAX_CHARS = ${maxChars};`,
     extractConstObject(CLIENT_SRC, 'GT_COLORS'),
     extractFunction(CLIENT_SRC, 'esc'),
     extractFunction(CLIENT_SRC, 'cssColor'),
@@ -149,27 +149,30 @@ function fakeTextPane(): FakeTextPane {
 }
 
 describe('enhanced inspector full print cut-short note', () => {
-  const renderStyledText = loadRenderStyledText(1_000_000);
+  const renderStyledText = loadRenderStyledText();
 
-  it('notes the cap under a print the host cut short', () => {
+  it('notes the cap under a Show all print the host cut short', () => {
     const el = fakeTextPane();
-    renderStyledText(el, { string: "'aaa...", stylerSpecification: null, truncated: true });
+    renderStyledText(el, { string: "'aaa...", stylerSpecification: null, cutShortAt: 1_000_000 });
     expect(el.innerHTML.startsWith("'aaa...<div")).toBe(true);
-    expect(el.innerHTML).toContain(
-      'Cut short: Jasper shows at most 1,000,000 characters of a print.',
-    );
+    expect(el.innerHTML).toContain('Cut short at about 1,000,000 characters.');
   });
 
-  it('adds no note to a whole print', () => {
+  it('adds no note to a whole Show all print', () => {
     const el = fakeTextPane();
-    renderStyledText(el, { string: 'an Account', stylerSpecification: null, truncated: false });
+    renderStyledText(el, { string: 'an Account', stylerSpecification: null, cutShortAt: 0 });
     expect(el.innerHTML).toBe('an Account');
   });
 
-  it('adds no note to a text view that never carries the flag', () => {
+  it('adds no note to the Print tab text that gtPrint abbreviated', () => {
+    // The Print tab's own payload: 'truncated' only means "offer Show all".
     const el = fakeTextPane();
-    renderStyledText(el, { string: 'plain', stylerSpecification: null });
-    expect(el.innerHTML).toBe('plain');
+    renderStyledText(el, {
+      string: 'anArray( 1, 2, 3...',
+      stylerSpecification: null,
+      truncated: true,
+    });
+    expect(el.innerHTML).toBe('anArray( 1, 2, 3...');
   });
 
   it('notes the cap under a parser-styled print too', () => {
@@ -180,9 +183,62 @@ describe('enhanced inspector full print cut-short note', () => {
         __typeLabel: 'remotePhlowTextParserStylerSpecification',
         parserClassName: 'JSONParser',
       },
-      truncated: true,
+      cutShortAt: 1_000_000,
     });
     expect(el.innerHTML).toContain('Cut short');
+  });
+});
+
+describe('enhanced inspector Show all link', () => {
+  type AddShowAllBar = (
+    col: { id: number; oop: string },
+    contentPane: HTMLElement,
+    methodSelector: string,
+    error: string | null,
+  ) => void;
+
+  function load() {
+    const dom = new JSDOM('<div id="pane">abbreviated print</div>');
+    const posted: unknown[] = [];
+    const vscode = { postMessage: (m: unknown) => posted.push(m) };
+    const addShowAllBar = new Function(
+      'document',
+      'vscode',
+      `${extractFunction(CLIENT_SRC, 'addShowAllBar')}\nreturn addShowAllBar;`,
+    )(dom.window.document, vscode) as AddShowAllBar;
+    const pane = dom.window.document.getElementById('pane') as HTMLElement;
+    return { addShowAllBar, pane, posted };
+  }
+
+  it('asks the host for the whole print and drops the link', () => {
+    const { addShowAllBar, pane, posted } = load();
+    addShowAllBar({ id: 4, oop: '1000' }, pane, 'gtPrintFor:', null);
+
+    (pane.querySelector('.show-all-bar a') as HTMLElement).click();
+
+    expect(posted).toEqual([
+      { command: 'fetchFullPrintString', columnId: 4, oop: '1000', methodSelector: 'gtPrintFor:' },
+    ]);
+    expect(pane.querySelector('.show-all-bar')).toBeNull();
+  });
+
+  it('puts the link back with the reason after a failure, keeping the text shown', () => {
+    const { addShowAllBar, pane } = load();
+    addShowAllBar({ id: 4, oop: '1000' }, pane, 'gtPrintFor:', 'session busy');
+
+    expect(pane.textContent?.startsWith('abbreviated print')).toBe(true);
+    expect(pane.querySelector('.show-all-bar a')?.textContent).toBe('Show all…');
+    expect(pane.querySelector('.show-all-error')?.textContent).toBe(
+      "Couldn't show all: session busy",
+    );
+  });
+
+  it('never shows two links', () => {
+    const { addShowAllBar, pane } = load();
+    addShowAllBar({ id: 4, oop: '1000' }, pane, 'gtPrintFor:', null);
+    addShowAllBar({ id: 4, oop: '1000' }, pane, 'gtPrintFor:', 'session busy');
+
+    expect(pane.querySelectorAll('.show-all-bar')).toHaveLength(1);
   });
 });
 

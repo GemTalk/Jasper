@@ -737,6 +737,11 @@ export interface FullPrintString {
   truncated: boolean;
 }
 
+/** Why {@link fetchFullPrintString} has no print to show. */
+export interface FullPrintStringFailure {
+  error: string;
+}
+
 /**
  * Smalltalk that prints the object at `oop` into a `PrintStream` limited to
  * `maxChars`, answering `T` or `F` (cut short or not) followed by the text.
@@ -750,7 +755,10 @@ export interface FullPrintString {
  * The stream is one character larger than the cap because a `PrintStream`
  * reports `isFull` once it holds `maxSize` characters, on 3.6.2 and 3.7.x alike.
  * A print of exactly `maxChars` therefore still reads as whole. A full stream's
- * text ends in GemStone's own ellipsis (`...` on 3.7.x, `. . .` on 3.6.2).
+ * text ends in GemStone's own ellipsis (`...` on 3.7.x, `. . .` on 3.6.2), and a
+ * collection can overshoot by the few characters of the element it was writing.
+ * Once full, the stream also stops the print itself: on 3.7.5 a 32 MB collection
+ * print took 2.3 s uncapped and 92 ms at a 1,000,000 cap.
  */
 export function fullPrintStringCode(oop: bigint, maxChars: number): string {
   return `| ws |
@@ -769,14 +777,15 @@ export function parseFullPrintString(raw: string): FullPrintString {
  * fetched without blocking the extension host while the gem builds it.
  * Reading the result back still blocks, which is why it is capped.
  *
- * Never rejects: a failure, a busy session or a Cancel answers the reason as
- * `<error: …>` text, so the inspector shows it in place of the print.
+ * Never rejects: a failure, a busy session or a Cancel answers the reason as a
+ * {@link FullPrintStringFailure}, kept apart from a print so an inspector can
+ * keep what it was showing and let the user try again.
  */
 export async function fetchFullPrintString(
   session: ActiveSession,
   oop: bigint,
   maxChars: number = FULL_PRINT_STRING_MAX_CHARS,
-): Promise<FullPrintString> {
+): Promise<FullPrintString | FullPrintStringFailure> {
   try {
     const raw = await executeFetchStringAsync(
       session,
@@ -785,8 +794,7 @@ export async function fetchFullPrintString(
     );
     return parseFullPrintString(raw);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return { text: `<error: ${msg}>`, truncated: false };
+    return { error: e instanceof Error ? e.message : String(e) };
   }
 }
 

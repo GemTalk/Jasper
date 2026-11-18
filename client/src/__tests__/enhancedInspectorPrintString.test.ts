@@ -216,29 +216,27 @@ describe('fetchFullPrintString', () => {
     expect(fetchMock.mock.lastCall?.[1]).toBe(fullPrintStringCode(7n, 50));
   });
 
-  it('answers a failed print as error text instead of rejecting', async () => {
+  it('answers a failed print as an error instead of rejecting', async () => {
     expect.assertions(1);
     fetchMock.mockImplementation(() =>
       Promise.reject(new Error('a MessageNotUnderstood occurred')),
     );
     expect(await fetchFullPrintString(session, 1000n)).toEqual({
-      text: '<error: a MessageNotUnderstood occurred>',
-      truncated: false,
+      error: 'a MessageNotUnderstood occurred',
     });
   });
 
-  it('answers a Cancel as error text instead of rejecting', async () => {
+  it('answers a Cancel as an error instead of rejecting', async () => {
     expect.assertions(1);
     fetchMock.mockImplementation(() => Promise.reject(new NbCancelledError()));
     expect(await fetchFullPrintString(session, 1000n)).toEqual({
-      text: '<error: GemStone operation cancelled>',
-      truncated: false,
+      error: 'GemStone operation cancelled',
     });
   });
 
-  it('answers a non-Error rejection as error text', async () => {
+  it('answers a non-Error rejection as an error', async () => {
     expect.assertions(1);
     fetchMock.mockImplementation(() => Promise.reject('session busy'));
-    expect((await fetchFullPrintString(session, 1000n)).text).toBe('<error: session busy>');
+    expect(await fetchFullPrintString(session, 1000n)).toEqual({ error: 'session busy' });
   });
 });
