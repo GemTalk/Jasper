@@ -10,7 +10,13 @@ import {
 import type { GciError } from '../gciLibrary';
 import { logInfo, logError } from '../gciLog';
 import { explainGciError } from '../gciLibraryError';
-import { clearInBackground, discardStoppedProcess, runNbCall, NbRunOptions } from '../nbRunner';
+import {
+  ClearOptions,
+  clearInBackground,
+  discardStoppedProcess,
+  runNbCall,
+  NbRunOptions,
+} from '../nbRunner';
 import {
   DUMP_PAYLOAD_TEMPS,
   dumpPayloadPrelude,
@@ -1322,15 +1328,16 @@ export function continueExecution(session: ActiveSession, gsProcess: bigint): St
 
 /**
  * Clears the stack of a suspended process (aborts it), in the background: see
- * {@link clearInBackground}, which `then` is handed to.
+ * {@link clearInBackground}, which `then` and `opts` are handed to.
  */
 export function clearStack(
   session: ActiveSession,
   gsProcess: bigint,
   then?: () => void,
+  opts?: ClearOptions,
 ): Promise<void> {
   logInfo(`[Session ${session.id}] Debug: clearStack`);
-  return clearInBackground(session, gsProcess, then);
+  return clearInBackground(session, gsProcess, then, [], opts);
 }
 
 /**

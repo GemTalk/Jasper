@@ -33,6 +33,7 @@ vi.mock('../nbRunner', async (orig) => {
     ...actual,
     pollNbToCompletion: vi.fn(actual.pollNbToCompletion),
     whenSessionFree: vi.fn(actual.whenSessionFree),
+    clearInBackground: vi.fn(actual.clearInBackground),
     sayRunInProgress: vi.fn(),
   };
 });
@@ -49,6 +50,7 @@ import { CodeExecutor } from '../codeExecutor';
 import {
   pollNbToCompletion,
   whenSessionFree,
+  clearInBackground,
   forgetSession,
   NbSessionBusyError,
   sayRunInProgress,
@@ -1728,6 +1730,10 @@ describe('CodeExecutor', () => {
       expect(revealedView()).toBe(false);
       // The stalled GsProcess must be released so it does not linger.
       expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(sameObject(handle), 0x123n);
+      // Once any run holding the session ends: GemStone would refuse the clear.
+      expect(clearInBackground).toHaveBeenCalledWith(session, 0x123n, expect.any(Function), [], {
+        waitForRun: true,
+      });
     });
 
     it('ends Transcript forwarding before clearing the dismissed run, and shows what its clean-up wrote', async () => {

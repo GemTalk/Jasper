@@ -659,6 +659,21 @@ export interface TrackedRun {
   disposableProcess?: boolean;
 }
 
+/** Called once each, when the session's run leaves {@link live} or the session logs out. */
+const runEndListeners = new Map<number, Array<() => void>>();
+
+function whenRunEnds(sessionId: number, listener: () => void): void {
+  runEndListeners.set(sessionId, [...(runEndListeners.get(sessionId) ?? []), listener]);
+}
+
+function endRun(sessionId: number, run?: TrackedRun): void {
+  if (run !== undefined && live.get(sessionId) !== run) return;
+  live.delete(sessionId);
+  const listeners = runEndListeners.get(sessionId) ?? [];
+  runEndListeners.delete(sessionId);
+  for (const listener of listeners) listener();
+}
+
 /**
  * Count a run the runner is not polling (one resumed on a worker thread) as the
  * session's run, so other calls are refused with a way to stop it. Answers the
@@ -668,9 +683,7 @@ export interface TrackedRun {
 export function trackRun(session: ActiveSession, run: TrackedRun): (() => void) | undefined {
   if (live.has(session.id)) return undefined;
   live.set(session.id, run);
-  return () => {
-    if (live.get(session.id) === run) live.delete(session.id);
-  };
+  return () => endRun(session.id, run);
 }
 
 /**
@@ -694,9 +707,9 @@ export function holdSessionUntilSettled(
 export function forgetSession(sessionId: number): void {
   uncollected.get(sessionId)?.forget();
   draining.delete(sessionId);
-  live.delete(sessionId);
   clearing.delete(sessionId);
   logouts.set(sessionId, logoutsOf(sessionId) + 1);
+  endRun(sessionId);
 }
 
 /**
@@ -843,12 +856,19 @@ function isProcess(context: unknown): context is bigint | number {
  * doesn't count exports, so releasing a process the debugger still shows would
  * unexport it for the debugger too. Not before the clear is back either: the
  * main thread can't call into the session while the worker has it.
+ *
+ * GemStone refuses a clear while a run holds the session, such as an Execute It
+ * in another editor when a debugger is closed. With `waitForRun`, the clear waits
+ * for that run to end. It doesn't hold the session meanwhile, and gives up at
+ * logout, which ends the process anyway. Only for a caller outside any run: one
+ * clearing its own run's process would wait on itself.
  */
 export function clearInBackground(
   session: ActiveSession,
   context: unknown,
   then?: () => void,
   release: readonly unknown[] = [],
+  opts: ClearOptions = {},
 ): Promise<void> {
   if (!isProcess(context)) {
     releaseExports(session, release);
@@ -856,6 +876,9 @@ export function clearInBackground(
     return Promise.resolve();
   }
   const gsProcess = BigInt(context);
+  if (opts.waitForRun && live.has(session.id)) {
+    return clearOnceRunEnds(session, gsProcess, then, release, opts);
+  }
   const failed = (why: string): void =>
     logInfo(`[Session ${session.id}] Could not clear a stopped run's process: ${why}`);
   const mine = Symbol('clear');
@@ -881,6 +904,45 @@ export function clearInBackground(
     }
   })();
   return awaitAbandonedRead(session, cleared, then);
+}
+
+/** How {@link clearInBackground} treats a run holding the session. */
+export interface ClearOptions {
+  /** Wait for it to end: the caller is the user throwing a paused run away, outside any run. */
+  waitForRun?: boolean;
+}
+
+/**
+ * How long a clear waiting for a run lets the run's caller go on once it ends.
+ * An Execute It's commit needs no wait: it runs before any timer does. This is a
+ * margin for a caller whose next call follows other awaited work, which a clear
+ * started by then would refuse.
+ */
+const CLEAR_AFTER_RUN_MS = 200;
+
+function clearOnceRunEnds(
+  session: ActiveSession,
+  gsProcess: bigint,
+  then: (() => void) | undefined,
+  release: readonly unknown[],
+  opts: ClearOptions,
+): Promise<void> {
+  logInfo(
+    `[Session ${session.id}] Will clear a stopped run's process once the run in progress ends`,
+  );
+  const loggedOutBefore = logoutsOf(session.id);
+  return new Promise<void>((resolve) => {
+    whenRunEnds(session.id, () =>
+      setTimeout(() => {
+        if (logoutsOf(session.id) === loggedOutBefore) {
+          resolve(clearInBackground(session, gsProcess, then, release, opts));
+        } else {
+          runHook(session, then);
+          resolve();
+        }
+      }, CLEAR_AFTER_RUN_MS),
+    );
+  });
 }
 
 /** Unexport what a stopped run left behind. Best-effort: a failure is logged, never thrown. */
@@ -999,7 +1061,7 @@ export function pollNbToCompletion<T>(
       if (settled) return;
       settled = true;
       stoppingDone?.();
-      if (live.get(session.id) === liveEntry) live.delete(session.id);
+      endRun(session.id, liveEntry);
       if (stopped) fn = () => reject(new NbCancelledError());
       if (progressTimer) {
         clearTimeout(progressTimer);

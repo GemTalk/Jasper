@@ -3090,7 +3090,10 @@ describe('DebuggerPanel', () => {
 
     expect(debug.clearStack).not.toHaveBeenCalled();
     closePanel(panel);
-    expect(debug.clearStack).toHaveBeenCalledWith(session, GS_PROCESS);
+    // Waiting out any run that holds the session: GemStone would refuse the clear.
+    expect(debug.clearStack).toHaveBeenCalledWith(session, GS_PROCESS, undefined, {
+      waitForRun: true,
+    });
   });
 
   describe('variables / eval / toolbar', () => {

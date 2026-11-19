@@ -618,7 +618,9 @@ describe('GemStoneDebugSession', () => {
       const response = makeResponse('disconnect');
       callRequest(session, 'disconnectRequest', response, {});
 
-      expect(debugQueries.clearStack).toHaveBeenCalledWith(expect.anything(), 12345n);
+      expect(debugQueries.clearStack).toHaveBeenCalledWith(expect.anything(), 12345n, undefined, {
+        waitForRun: true,
+      });
     });
 
     it('does not clear stack if already cleared', () => {
@@ -645,7 +647,9 @@ describe('GemStoneDebugSession', () => {
       const response = makeResponse('terminate');
       callRequest(session, 'terminateRequest', response, {});
 
-      expect(debugQueries.clearStack).toHaveBeenCalled();
+      expect(debugQueries.clearStack).toHaveBeenCalledWith(expect.anything(), 12345n, undefined, {
+        waitForRun: true,
+      });
       expect(sent).toContainEqual(expect.objectContaining({ type: 'event', event: 'terminated' }));
     });
   });
