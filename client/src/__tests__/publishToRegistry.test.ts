@@ -222,7 +222,7 @@ onSupportedPosixDescribe('publish-to-registry.sh', () => {
 
     expect(status).toBe(0);
     expect(stdout.trim()).toBe('result: published');
-    expect(stderr).toContain('::warning');
+    expect(stderr).toContain('::error title=Marketplace Trusted Publishing failed::');
     expect(retryArgv).toEqual([
       '--no-install',
       '@vscode/vsce',
@@ -231,6 +231,20 @@ onSupportedPosixDescribe('publish-to-registry.sh', () => {
       expect.stringContaining('gemstone-ide-1.9.0.vsix'),
       '--skip-duplicate',
     ]);
+  });
+
+  it('does not blame Trusted Publishing when the first attempt failed for another reason', () => {
+    const { status, stderr } = run({
+      registry: 'marketplace',
+      stderr: 'ERROR  Failed Request: Gateway Timeout (504)',
+      status: 1,
+      retry: { status: 0 },
+      vscePat: 'a-token',
+    });
+
+    expect(status).toBe(0);
+    expect(stderr).toContain('::error title=Marketplace publish failed::');
+    expect(stderr).not.toContain('Trusted Publishing failed');
   });
 
   it('counts the version as up when the token retry finds it already there', () => {
@@ -296,7 +310,7 @@ onSupportedPosixDescribe('publish-to-registry.sh', () => {
   });
 
   // The CLI's output is the only evidence of whether an upload went out, and the publish
-  // steps run under `timeout-minutes: 5` — so a CLI that hangs is killed by the runner
+  // steps run under a step timeout — so a CLI that hangs is killed by the runner
   // mid-run. Capturing the output in a plain `$(...)` would leave the log with nothing at
   // all in exactly that case; teeing it keeps the log live. This case kills the script
   // while the stub is still running and asserts the line survived.

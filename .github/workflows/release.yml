@@ -329,6 +329,9 @@ jobs:
     environment: release-vsce
     permissions:
       contents: read
+      # Lets any step in this job, npm ci included, sign in as the whole
+      # gemtalksystems publisher, so the allowScripts list in package.json now
+      # guards a publish credential too.
       id-token: write
     env:
       VERSION: ${{ inputs.version }}
@@ -361,7 +364,8 @@ jobs:
       - name: Download the .vsix from the Release
         run: gh release download "v${VERSION}" --pattern '*.vsix' --dir .
       - name: Publish
-        timeout-minutes: 5
+        # Room for the token retry after a failed first attempt.
+        timeout-minutes: 10
         env:
           # Used only by the script's retry when Trusted Publishing fails;
           # remove the two together (GemTalk/Jasper#939).
