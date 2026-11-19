@@ -137,6 +137,7 @@ import {
 import { noticeDifferentServerSupport, runShowServerSupportStatus } from './serverSupportStatus';
 import { refreshEnhancedInspectorAvailable } from './enhancedInspector/enhancedInspectorAvailability';
 import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAvailability';
+import { refreshRegexSupportAvailable } from './regex/regexAvailability';
 import { refreshUndoUi } from './undo/undoUi';
 import { undoLastCommand } from './undo/undoLastCommand';
 import { FS_CHANGED_COMMAND, SEARCH_RESYNC_COMMAND } from './undo/afterUndo';
@@ -1634,14 +1635,16 @@ export function activate(context: vscode.ExtensionContext) {
       !!selected && selected.rbSupportAvailable === true,
     );
     // Drives the "Uninstall Server Support" menu visibility: it appears only when
-    // at least one optional support (either feature) is actually installed on the
+    // at least one optional support (any feature) is actually installed on the
     // selected stone. The install/uninstall commands refresh this via
     // `optionalSupportOffer` after they change the latches.
     vscode.commands.executeCommand(
       'setContext',
       'gemstone.serverSupportInstalled',
       !!selected &&
-        (selected.rbSupportAvailable === true || selected.enhancedInspectorAvailable === true),
+        (selected.rbSupportAvailable === true ||
+          selected.enhancedInspectorAvailable === true ||
+          selected.regexSupportAvailable === true),
     );
   }
   context.subscriptions.push(
@@ -2296,6 +2299,7 @@ export function activate(context: vscode.ExtensionContext) {
   function afterConnected(login: GemStoneLogin, session: ActiveSession): void {
     refreshEnhancedInspectorAvailable(session);
     refreshRefactoringSupportAvailable(session);
+    refreshRegexSupportAvailable(session);
     updateRefactoringSupportContext();
     refreshUndoUi(session);
     treeProvider.refresh();

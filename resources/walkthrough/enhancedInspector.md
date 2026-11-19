@@ -27,5 +27,5 @@ database.
 
 <!-- The link above pre-fills the Command Palette with a search string that must
      match the command's palette label (package.json command title "Install
-     Server Support (Enhanced Inspector + Refactoring)"). If that title is
+     Server Support (Enhanced Inspector, Refactoring, Regex)"). If that title is
      renamed, update this search too. -->

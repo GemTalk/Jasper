@@ -1,7 +1,7 @@
 /**
  * The optional server-side supports Jasper can install into a stone — the
- * Enhanced Inspector and the refactoring engine — offered and installed as ONE
- * bundle (both or none), governed by a single `gemstone.serverSupport.autoInstall`
+ * Enhanced Inspector, the refactoring engine and regex support — offered and
+ * installed as ONE bundle (all or none), governed by a single `gemstone.serverSupport.autoInstall`
  * setting.
  *
  * On connect (`maybeOfferServerSupport`), per that setting:
@@ -17,7 +17,7 @@
  * `noticeDifferentServerSupport` (serverSupportStatus.ts).
  *
  * A feature is *applicable* when the stone's version supports it (the Enhanced
- * Inspector needs 3.7.5+; the refactoring engine loads on any release) and
+ * Inspector needs 3.7.5+; the refactoring engine and regex support load on any release) and
  * *missing* when it is not yet installed (per the cached availability flag on
  * `ActiveSession`). The connect offer targets applicable-and-missing supports;
  * the command targets all applicable ones so it doubles as a reinstall.
@@ -26,8 +26,8 @@
  * time.
  *
  * The actual per-feature install pipelines (transient SystemUser session, file-in,
- * commit, verify, relatch) live in enhancedInspectorCommand.ts and
- * refactoringInstallCommand.ts; this module only orchestrates the bundle and the
+ * commit, verify, relatch) live in enhancedInspectorCommand.ts,
+ * refactoringInstallCommand.ts and regexInstallCommand.ts; this module only orchestrates the bundle and the
  * single setting.
  */
 import * as vscode from 'vscode';
@@ -37,6 +37,8 @@ import { installEnhancedInspectorFeature } from './enhancedInspector/enhancedIns
 import { installRefactoringFeature } from './refactoring/refactoringInstallCommand';
 import { uninstallEnhancedInspectorFeature } from './enhancedInspector/enhancedInspectorUninstallCommand';
 import { uninstallRefactoringFeature } from './refactoring/refactoringUninstallCommand';
+import { installRegexFeature } from './regex/regexInstallCommand';
+import { uninstallRegexFeature } from './regex/regexUninstallCommand';
 
 export type AutoInstallMode = 'ask' | 'always' | 'never';
 
@@ -102,6 +104,15 @@ export const SERVER_SUPPORT_FEATURES: readonly ServerSupportFeature[] = [
     install: installRefactoringFeature,
     uninstall: uninstallRefactoringFeature,
   },
+  {
+    id: 'regex',
+    label: 'Regex support',
+    isApplicable: (b) => pluginFeatures.regex.isApplicable(b.stoneVersion),
+    isMissing: (b) => !pluginFeatures.regex.isAvailable(b),
+    probe: pluginFeatures.regex.probe,
+    install: installRegexFeature,
+    uninstall: uninstallRegexFeature,
+  },
 ];
 
 function missingFeatures(
@@ -119,7 +130,9 @@ function refreshServerSupportInstalledContext(base: ActiveSession): void {
   void vscode.commands.executeCommand(
     'setContext',
     'gemstone.serverSupportInstalled',
-    base.rbSupportAvailable === true || base.enhancedInspectorAvailable === true,
+    base.rbSupportAvailable === true ||
+      base.enhancedInspectorAvailable === true ||
+      base.regexSupportAvailable === true,
   );
 }
 

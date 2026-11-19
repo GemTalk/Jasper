@@ -106,8 +106,8 @@ function differentSupports(base: ActiveSession, extensionPath: string) {
 
 /**
  * After login, tell the user once if the stone's server support is not the one
- * this Jasper ships, and offer to reinstall it. The two features are installed
- * together, so one notice covers both. Never blocks or fails the login: someone
+ * this Jasper ships, and offer to reinstall it. The features are installed
+ * together, so one notice covers them all. Never blocks or fails the login: someone
  * editing that code in the stone must still be able to work, and can decline.
  * Silent for every other state, including a read that failed.
  *

@@ -4,6 +4,10 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Added
+
+- **Server support now includes regex support.** **Install Server Support** installs a third feature beside the refactoring engine and the Enhanced Inspector: a regular-expression library that searches method source on the stone. It works on every supported GemStone release, adds no methods to GemStone's own classes, and leaves any regex library already on the stone alone. Status, reinstall and **Uninstall Server Support** cover it like the other two. Nothing uses it yet; GemStone Search's regex option comes next. The library is a modified version of Vassili Bykov's Regular Expression Matcher, as GLASS ships it, and `THIRD-PARTY.md` carries both licenses. ([#619](https://github.com/GemTalk/Jasper/issues/619))
+
 ### Changed
 
 - **Releases publish to the VS Code Marketplace without a stored token.** Azure DevOps stops accepting the kind of token the release workflow used on 27 January 2027, which would have left later releases off the Marketplace. The workflow now signs in with the Marketplace's Trusted Publishing: GitHub vouches for the release workflow each time it runs, and a policy on the `gemtalksystems` publisher trusts it, so there is no token to expire or rotate. Until that has worked for one release, the workflow falls back to the old token if it fails, with an error annotation on the run. Open VSX still uses its token. [docs/how-to/publishing-a-release.md](docs/how-to/publishing-a-release.md) describes the policy and what breaks it. ([#939](https://github.com/GemTalk/Jasper/issues/939))

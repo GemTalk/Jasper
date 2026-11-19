@@ -743,6 +743,21 @@ export function checkRefactoringSupportAvailable(session: ActiveSession): boolea
   }
 }
 
+/** Whether Jasper's regex support (the server plugin's `regex` feature) is present in the
+ *  session's stone: probes for `GsRegexSourceSearch`, by String name for the same reason
+ *  as `checkRefactoringSupportAvailable` above. */
+export function checkRegexSupportAvailable(session: ActiveSession): boolean {
+  try {
+    const result = executeFetchString(
+      session,
+      "(System myUserProfile symbolList objectNamed: 'GsRegexSourceSearch') notNil printString",
+    );
+    return result.trim() === 'true';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Tri-state probe of whether the session's transaction holds uncommitted changes
  * that an abort or logout would discard: `true` = pending work, `false` = clean,

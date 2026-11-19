@@ -359,6 +359,7 @@ export class SessionManager {
     const session = new ActiveSession(this.nextId++, gci, handle, login, version);
     session.enhancedInspectorAvailable = false;
     session.rbSupportAvailable = false;
+    session.regexSupportAvailable = false;
     session.onFreed(() => setTimeout(() => this._onDidFreeSession.fire(session.id), 0));
 
     this.sessions.set(session.id, session);
@@ -447,6 +448,7 @@ export class SessionManager {
     }
     transient.enhancedInspectorAvailable = false;
     transient.rbSupportAvailable = false;
+    transient.regexSupportAvailable = false;
     return {
       session: transient,
       logout: () => {

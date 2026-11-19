@@ -1027,7 +1027,7 @@
       },
       {
         "command": "gemstone.installServerSupport",
-        "title": "Install Server Support (Enhanced Inspector + Refactoring)",
+        "title": "Install Server Support (Enhanced Inspector, Refactoring, Regex)",
         "category": "GemStone"
       },
       {
@@ -1037,7 +1037,7 @@
       },
       {
         "command": "gemstone.uninstallServerSupport",
-        "title": "Uninstall Server Support (Enhanced Inspector + Refactoring)",
+        "title": "Uninstall Server Support (Enhanced Inspector, Refactoring, Regex)",
         "category": "GemStone"
       },
       {
