@@ -19,7 +19,7 @@ import { isThisMachine } from '../../thisMachine';
 import { needsWsl, refreshWslNetworkInfo, wslExec, wslExecSync } from '../../wslBridge';
 import { testActiveSession } from '../../__tests__/testActiveSession';
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
-import { endGemAfterTest, stillOnStone, waitUntilOffTheStone } from '../../__tests__/leftoverGem';
+import { endGemAfterTest, waitUntilOffTheStone } from '../../__tests__/leftoverGem';
 import { reportedSerialOf, reportedTransientLogin } from '../../__tests__/sessionGateClient';
 
 describe('Stone sessions (integration)', () => {
@@ -143,7 +143,7 @@ describe('Stone sessions (integration)', () => {
     const row = rowFor(listStoneSessions(loginAs()), serial)!;
 
     await expect(stopStoneSession(row, loginAs())).resolves.toBe('ended');
-    expect(stillOnStone(session, String(serial))).toBe(false);
+    await waitUntilOffTheStone(session, String(serial), 0);
   }, 30_000);
 
   it('stops a session busy with a run that ignores breaks', async () => {
@@ -202,7 +202,7 @@ describe('Stone sessions (integration)', () => {
       const row = rowFor(listStoneSessions(loginAs()), serial)!;
 
       await expect(killStoneSession(row, loginAs(), shell)).resolves.toBe('ended');
-      expect(stillOnStone(session, String(serial))).toBe(false);
+      await waitUntilOffTheStone(session, String(serial), 0);
     }, 30_000);
 
     it('ends a gem frozen for good, which only SIGKILL reaches', async () => {
@@ -211,7 +211,7 @@ describe('Stone sessions (integration)', () => {
       wslExecSync(`kill -STOP ${row.gemPid}`);
 
       await expect(killStoneSession(row, loginAs(), shell)).resolves.toBe('ended');
-      expect(stillOnStone(session, String(serial))).toBe(false);
+      await waitUntilOffTheStone(session, String(serial), 0);
       expect(listStoneSessions(loginAs()).kind).toBe('sessions');
     }, 30_000);
 
