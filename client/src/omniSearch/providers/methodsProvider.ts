@@ -13,7 +13,7 @@
  * on the class named, or on the ancestor it inherits it from.
  */
 import { SelectorSearchResult } from '../../queries/searchSelectors';
-import { MethodLookupResult } from '../../queries/lookupMethod';
+import { MethodLookupResult } from '../queries/lookupMethod';
 import { MethodReference, parseMethodReference } from '../../methodReference';
 import {
   CATEGORY_BY_ID,
@@ -91,8 +91,11 @@ export function createMethodsProvider(
   runSearch: SelectorSearchRunner,
   lookup?: MethodLookupRunner,
 ): OmniProvider {
+  // A reference costs one lookup, not a scan, so it runs even with Methods held back from All.
+  const referenceIn = (query: string) => (lookup ? parseMethodReference(query.trim()) : null);
   return {
     category: CATEGORY_BY_ID.methods,
+    runsWhenHeldBack: (query) => referenceIn(query) !== null,
     search(
       query: string,
       cfg: OmniConfig,
@@ -100,7 +103,7 @@ export function createMethodsProvider(
       reportTruncated?: OmniTruncationSink,
     ): OmniResult[] {
       const term = query.trim();
-      const ref = parseMethodReference(term);
+      const ref = referenceIn(term);
       if (ref && lookup) return referenceResults(sessionId, ref, lookup);
       if (term.length < cfg.methodMinQueryLength) return [];
 

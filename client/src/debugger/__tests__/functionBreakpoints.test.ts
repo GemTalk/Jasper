@@ -100,6 +100,14 @@ describe('parseFunctionName', () => {
     });
   });
 
+  it("reads a breakpoint on GsNMethod's own class side", () => {
+    expect(parseFunctionName('GsNMethod class>>new')).toEqual({
+      className: 'GsNMethod',
+      isMeta: true,
+      selector: 'new',
+    });
+  });
+
   it('reads a backslash binary selector, bare or qualified', () => {
     expect(parseFunctionName('Number>>\\\\')).toEqual({
       className: 'Number',

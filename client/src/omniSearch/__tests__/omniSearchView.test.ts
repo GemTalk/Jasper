@@ -1174,6 +1174,12 @@ describe('Enter before the results arrive (paste, then Enter)', () => {
       .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ...over, bubbles: true }));
   }
 
+  function enterKey(key: string) {
+    document
+      .getElementById('query')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+  }
+
   function posted(vscode: { postMessage: ReturnType<typeof vi.fn> }, command: string) {
     return vscode.postMessage.mock.calls
       .map((c) => c[0] as Record<string, unknown>)
@@ -1333,6 +1339,94 @@ describe('Enter before the results arrive (paste, then Enter)', () => {
     (document.getElementById('clear') as HTMLButtonElement).click();
     handle.onMessage({ data: resultsMsg({ rows: [row(0, 'Globals')], shownCount: 1, term: '' }) });
     expect(posted(vscode, 'activate')).toEqual([]);
+  });
+
+  it('a failed action other than the search leaves the waiting Enter in place', () => {
+    const { handle, vscode } = mountWithDebounce(0);
+    type('Object>>printString');
+    enter();
+    handle.onMessage({ data: { command: 'error', message: 'busy', failed: 'references' } });
+    handle.onMessage({ data: { command: 'error', message: '' } }); // a notice being cleared
+    handle.onMessage({
+      data: resultsMsg({
+        rows: [row(0, 'Object>>printString')],
+        shownCount: 1,
+        term: 'Object>>printString',
+      }),
+    });
+    expect(posted(vscode, 'activate')).toEqual([{ command: 'activate', id: 0, side: false }]);
+  });
+
+  it('a failed action other than the search does not make Enter act on stale rows', () => {
+    const { handle, vscode } = mountWithDebounce(0);
+    handle.onMessage({ data: resultsMsg({ rows: [row(7, 'Stale')], shownCount: 1, term: 'Obj' }) });
+    type('Object>>printString'); // out to the stone
+    handle.onMessage({ data: { command: 'error', message: 'busy', failed: 'references' } });
+    enter();
+    expect(posted(vscode, 'activate')).toEqual([]);
+  });
+
+  for (const [gesture, act] of [
+    ['Escape', () => enterKey('Escape')],
+    ['Alt+Enter', () => enter({ altKey: true })],
+    ['Shift+Enter', () => enter({ shiftKey: true })],
+  ] as const) {
+    it(`${gesture} drops the waiting Enter`, () => {
+      const { handle, vscode } = mountWithDebounce(0);
+      type('Object>>printString');
+      enter();
+      act();
+      handle.onMessage({
+        data: resultsMsg({
+          rows: [row(0, 'Object>>printString')],
+          shownCount: 1,
+          term: 'Object>>printString',
+        }),
+      });
+      expect(posted(vscode, 'activate')).toEqual([]);
+    });
+  }
+
+  it('double-clicking a row drops the waiting Enter, so only that row opens', () => {
+    const { handle, vscode } = mountWithDebounce(0);
+    handle.onMessage({ data: resultsMsg({ rows: [row(7, 'Stale')], shownCount: 1, term: 'Obj' }) });
+    type('Object>>printString');
+    enter();
+    document
+      .querySelector('#results li')!
+      .dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    handle.onMessage({
+      data: resultsMsg({
+        rows: [row(0, 'Object>>printString')],
+        shownCount: 1,
+        term: 'Object>>printString',
+      }),
+    });
+    expect(posted(vscode, 'activate')).toEqual([{ command: 'activate', id: 7, side: false }]);
+  });
+
+  it('in a references list, Enter opens the highlighted row without first sending the filter', () => {
+    vi.useFakeTimers();
+    try {
+      const { handle, vscode } = mountWithDebounce(120);
+      handle.onMessage({
+        data: resultsMsg({
+          rows: [row(0, 'A'), row(1, 'B'), row(2, 'C')],
+          shownCount: 3,
+          term: 'at:',
+          pivot: true,
+        }),
+      });
+      document
+        .getElementById('query')!
+        .dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      type('C');
+      enter();
+      expect(posted(vscode, 'query')).toEqual([]);
+      expect(posted(vscode, 'activate')).toEqual([{ command: 'activate', id: 1, side: false }]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('opens at once when the results on screen already answer the term', () => {

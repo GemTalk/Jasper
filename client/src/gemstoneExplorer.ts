@@ -9381,7 +9381,7 @@ export interface ExplorerHandle {
   /** Claim an about-to-happen open so it navigates the panes; see
    *  ExplorerController.markAttributedOpen. */
   markAttributedOpen(uri: vscode.Uri): void;
-  /** Drop a claim whose open never fired an editor-change; see
+  /** Drop a claim no sync spent (the open threw or kept focus); see
    *  ExplorerController.clearAttributedOpen. */
   clearAttributedOpen(uri: vscode.Uri): void;
   /** Cascade the panes to the editor at `uri`, as an editor change does; see

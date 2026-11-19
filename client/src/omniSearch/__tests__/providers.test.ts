@@ -14,7 +14,7 @@ import { createMethodsProvider, SERVER_OVERFETCH } from '../providers/methodsPro
 import { MethodSearchResult } from '../../queries/methodSearch';
 import { ClassNameEntry } from '../../queries/getAllClassNames';
 import { SelectorSearchResult } from '../../queries/searchSelectors';
-import { MethodLookupResult } from '../../queries/lookupMethod';
+import { MethodLookupResult } from '../queries/lookupMethod';
 
 const cfg = (over: Partial<OmniConfig> = {}): OmniConfig => ({ ...OMNI_DEFAULTS, ...over });
 
@@ -423,7 +423,7 @@ describe('methodsProvider', () => {
     });
   });
 
-  // Triage #14: the clamp had no test, and the truncation it causes was invisible to the engine — so
+  // The clamp had no test, and the truncation it causes was invisible to the engine — so
   // the footer reported a cut-off slice as an exact total once "Load all" raised the display cap.
   describe('server scan ceiling (maxServerScan)', () => {
     /** One synthetic row per selector, so a test can ask for any number of matches. */
@@ -617,6 +617,22 @@ describe('methodsProvider — a pasted method reference', () => {
     className: 'Collection',
     inheritedBy: 'OrderedCollection',
   };
+
+  it('asks to run even when Methods is held back from All, but only for a reference it can look up', () => {
+    const withLookup = createMethodsProvider(
+      3,
+      vi.fn(() => []),
+      vi.fn(() => []),
+    );
+    expect(withLookup.runsWhenHeldBack?.(' Object>>printString ')).toBe(true);
+    expect(withLookup.runsWhenHeldBack?.('printString')).toBe(false);
+    expect(
+      createMethodsProvider(
+        3,
+        vi.fn(() => []),
+      ).runsWhenHeldBack?.('Object>>printString'),
+    ).toBe(false);
+  });
 
   it('looks the method up directly instead of scanning selectors', () => {
     const runSearch = vi.fn(() => []);

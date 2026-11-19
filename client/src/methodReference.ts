@@ -19,7 +19,7 @@ const QUALIFIED = new RegExp(
 // What the debugger's Copy Stack and Copy Frame add around a frame label: `[3] ` before it, and the
 // step point and line after it (`  @2 line 12`).
 const COPIED_FRAME_NUMBER = /^\[\d+\]\s+/;
-const COPIED_FRAME_POSITION = /\s+@\d+(?:\s+line\s+\d+)?$/;
+const COPIED_FRAME_POSITION = /\s+(?:@\d+(?:\s+line\s+\d+)?|line\s+\d+)$/;
 
 /**
  * Read a qualified method name as Smalltalk writes it, including the forms people paste: a
@@ -30,11 +30,13 @@ const COPIED_FRAME_POSITION = /\s+@\d+(?:\s+line\s+\d+)?$/;
  * (`[] in <nil>>><anonymous>`), or a selector that isn't legal Smalltalk.
  */
 export function parseMethodReference(raw: string): MethodReference | null {
-  let text = raw
-    .trim()
-    .replace(COPIED_FRAME_NUMBER, '')
-    .replace(COPIED_FRAME_POSITION, '')
-    .replace(/^GsNMethod\s+/, '');
+  const text = raw.trim().replace(COPIED_FRAME_NUMBER, '').replace(COPIED_FRAME_POSITION, '');
+  // Read as written first: in `GsNMethod class>>new` the word names the class, not a print prefix.
+  return parseFrameLabel(text) ?? parseFrameLabel(text.replace(/^GsNMethod\s+/, ''));
+}
+
+function parseFrameLabel(label: string): MethodReference | null {
+  let text = label;
   const block = /^\[\]\s+in\s+/.exec(text);
   if (block) text = text.slice(block[0].length);
 

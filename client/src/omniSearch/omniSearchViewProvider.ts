@@ -435,7 +435,7 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
       this.deps?.onError?.(message);
-      this.post({ command: 'error', message });
+      this.post({ command: 'error', message, failed: m.command });
     }
   }
 }

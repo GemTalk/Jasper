@@ -244,7 +244,7 @@
             "default": 2,
             "minimum": 1,
             "maximum": 10,
-            "description": "Minimum characters before the Methods category queries the stone (method search hits the stone per keystroke). Raise it if per-keystroke method search feels slow on a large stone; lower it (to 1) to search selectors from the first character."
+            "description": "Minimum characters before the Methods category queries the stone (method search hits the stone per keystroke). Raise it if per-keystroke method search feels slow on a large stone; lower it (to 1) to search selectors from the first character. A pasted method name such as Object>>printString is one lookup, not a scan, and is searched whatever its length."
           },
           "gemstone.omniSearch.maxServerScan": {
             "type": "number",

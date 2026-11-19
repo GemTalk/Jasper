@@ -123,8 +123,9 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
      `methodMinQueryLength`: `lookupMethod` asks the stone for that class's method, exact case,
      walking up the superclass chain, so `OrderedCollection>>printString` answers the ancestor that
      defines it ([#677](https://github.com/GemTalk/Jasper/issues/677)). The row is `exact`, so it
-     leads the list, and Methods runs for such a term even when it is held back from "All": the
-     hold-back guards against a scan on every keystroke, and this is one cheap lookup.
+     leads the list, and Methods runs for such a term even when it is held back from "All" (its
+     provider's `runsWhenHeldBack` says so): the hold-back guards against a scan on every keystroke,
+     and this is one cheap lookup.
    - **Explicit-only** categories (`OmniCategory.explicitOnly`) are **excluded from the all-scope
      fan-out** — they run only when the user scopes to them, so heavyweight work never fires on a plain
      search:
@@ -312,7 +313,8 @@ New shared query (if needed) lives under `client/src/queries/` per repo conventi
   **server-side scan** hands back. A different bound from `maxResultsPerCategory`; see
   "Two different limits bound a result set" below.
 - `debounceMs`: number (default `120`).
-- `methodMinQueryLength`: number (default `2`) — min chars before the Methods provider queries the stone.
+- `methodMinQueryLength`: number (default `2`) — min chars before the Methods provider scans the stone.
+  A pasted method reference is one lookup and skips it.
 - `referencesInPreview`: boolean (default `true`) — references as a sticky preview list vs a full-list pivot.
 
 ## The webview UIs
@@ -441,10 +443,12 @@ that persisted itself would pay a stone round-trip for a cosmetic change.
   lets the user put an ordinary category — in practice **Methods**, which queries the stone on every
   keystroke — into that same state. Scoping directly to a category always runs it, so an exclusion
   never makes a scope unreachable. That is precisely what distinguishes it from
-  `gemstone.omniSearch.categories`, which removes the provider AND the tab; conflating the two is
-  the defect #41 reports. The engine owns the set (`setExcludedFromAll` re-runs the term and resets
-  the page cap, as `setScope` does) and echoes it on every results message, so the menu can never
-  drift from what the search actually did.
+  `gemstone.omniSearch.categories`, which removes the provider AND the tab; conflating the two was
+  the original defect. The engine owns the set (`setExcludedFromAll` re-runs the term and resets
+  the page cap, as `setScope` does) and echoes it on every results message, so the menu always shows
+  the user's setting. A provider can still ask to run for a particular term while held back
+  (`OmniProvider.runsWhenHeldBack`): Methods does for a pasted method reference, which is one lookup
+  rather than the scan the hold-back exists to avoid.
 
 - **Match algorithm (the `Fuzzy`/`Substring`/`Prefix` chip, `gemstone.omniSearch.matchMode`).** The
   algorithm was settings-only, so comparing two of them meant leaving the search, editing

@@ -218,6 +218,9 @@ export interface OmniProvider {
    *  the corpus actually changed (a new or removed name), so the caller can decide whether to
    *  re-render. Only providers with a granular local signal (classes) implement it. */
   applyChange?(change: OmniCorpusChange, token: OmniCancel): Promise<boolean> | boolean;
+  /** True when `query` costs this provider so little that leaving its category out of "All" should
+   *  not hide it: the hold-back guards against stone work on every keystroke. Absent means never. */
+  runsWhenHeldBack?(query: string): boolean;
   /** Ranked, already-limited results for `query` (the raw, trimmed search term). A provider whose
    *  server fetch is bounded calls `reportTruncated` to say whether that bound cut the results off. */
   search(

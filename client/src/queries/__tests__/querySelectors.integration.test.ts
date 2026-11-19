@@ -170,14 +170,15 @@ const claims: SelectorClaim[] = [
     selector: 'theNonMetaClass',
   },
   {
-    label: "SymbolList understands detect:ifNone: (finding the defining class's dictionary)",
-    className: 'SymbolList',
-    selector: 'detect:ifNone:',
-  },
-  {
     label: 'Behavior understands categoryOfSelector:environmentId:',
     className: 'Behavior',
     selector: 'categoryOfSelector:environmentId:',
+  },
+  {
+    label: 'Symbol class understands _existingWithAll: (a lookup that never interns a symbol)',
+    className: 'Symbol',
+    meta: true,
+    selector: '_existingWithAll:',
   },
 ];
 

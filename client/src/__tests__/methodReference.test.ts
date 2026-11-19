@@ -121,6 +121,28 @@ describe('parseMethodReference', () => {
     expect(parseMethodReference('Account>>#balance  @2')?.selector).toBe('balance');
   });
 
+  it("reads a position that has only a line, when the step point couldn't be read", () => {
+    expect(parseMethodReference('Account>>#balance  line 12')?.selector).toBe('balance');
+  });
+
+  it("reads a reference to GsNMethod's own methods, not mistaking the class for the prefix", () => {
+    expect(parseMethodReference('GsNMethod class>>new')).toEqual({
+      className: 'GsNMethod',
+      isMeta: true,
+      selector: 'new',
+      inBlock: false,
+    });
+    expect(parseMethodReference('GsNMethod >> sourceString')).toMatchObject({
+      className: 'GsNMethod',
+      isMeta: false,
+      selector: 'sourceString',
+    });
+    expect(parseMethodReference('GsNMethod GsNMethod>>sourceString')).toMatchObject({
+      className: 'GsNMethod',
+      selector: 'sourceString',
+    });
+  });
+
   it('reads a backslash binary selector', () => {
     expect(parseMethodReference('Number>>\\\\')?.selector).toBe('\\\\');
     expect(parseMethodReference('Number>>\\')?.selector).toBe('\\');

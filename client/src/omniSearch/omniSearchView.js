@@ -164,7 +164,9 @@
 
     /** Plain or Ctrl/Cmd+Enter: open the active row once the rows answer what is in the field. */
     function activateWhenAnswered(side) {
-      flushPendingQuery();
+      // Not in a references list: the host would filter it before the activate arrived, so the
+      // highlighted row's id would point into a different list.
+      if (!inPivot) flushPendingQuery();
       if (queryOut && !answersField(shownTerm)) {
         pendingEnter = { side: side };
         return;
@@ -406,6 +408,7 @@
         setActive(idx);
       });
       li.addEventListener('dblclick', function () {
+        pendingEnter = null;
         post('activate', { id: row.id, side: false });
       });
       rows.push(li);
@@ -712,8 +715,13 @@
         case 'error':
           setError(msg.message || '');
           setBusy(false);
-          pendingEnter = null;
-          queryOut = false;
+          // Only a failure that means no results are coming ends the wait: not a notice being cleared
+          // (empty message), and not another action failing (`failed` names it) while the search
+          // is still out.
+          if (msg.message && (!msg.failed || msg.failed === 'query')) {
+            pendingEnter = null;
+            queryOut = false;
+          }
           break;
         case 'focusInput':
           inputEl.focus();
@@ -1138,6 +1146,7 @@
           toggleExpand(refId);
         });
         header.addEventListener('dblclick', function () {
+          pendingEnter = null;
           post('openReference', { refId: refId });
         });
       })(row.id);
@@ -1478,6 +1487,10 @@
     // to the input would then go silent while the mouse-driven buttons kept working. At the document
     // level the shortcuts fire whenever the panel has focus, wherever it sits.
     doc.addEventListener('keydown', function (ev) {
+      // Any other way of leaving or acting replaces an Enter still waiting for its results.
+      if (ev.key === 'Escape' || (ev.key === 'Enter' && (ev.altKey || ev.shiftKey))) {
+        pendingEnter = null;
+      }
       // An open scope menu takes Escape first: closing the menu must not also close the panel (or,
       // in the docked host, throw focus back to the editor) — one Escape, one dismissal.
       if (ev.key === 'Escape' && scopeMenuOpen()) {

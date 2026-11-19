@@ -6,7 +6,7 @@
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
-vi.mock('../../queries/lookupMethod', () => ({
+vi.mock('../queries/lookupMethod', () => ({
   lookupMethod: vi.fn(() => [
     {
       dictName: 'Globals',
@@ -22,7 +22,7 @@ vi.mock('../../queries/searchSelectors', () => ({ searchSelectors: vi.fn(() => [
 import { OMNI_DEFAULTS } from '../omniConfig';
 import { NEVER_CANCELLED } from '../omniTypes';
 import { buildProviders } from '../omniSearchCommand';
-import { lookupMethod } from '../../queries/lookupMethod';
+import { lookupMethod } from '../queries/lookupMethod';
 import { searchSelectors } from '../../queries/searchSelectors';
 import type { ActiveSession } from '../../sessionManager';
 

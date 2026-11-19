@@ -1,11 +1,19 @@
 import { describe, it, expect, vi } from 'vitest';
 import { buildMethodLookupCode, lookupMethod, parseMethodLookupResults } from '../lookupMethod';
+import { homeDictionaryNameExpr } from '../../../queries/util';
 
 describe('buildMethodLookupCode', () => {
-  it('names the class and selector as symbol literals, never as code', () => {
+  it('looks the class and selector up as existing symbols, so a lookup never creates one', () => {
     const code = buildMethodLookupCode('Dictionary', false, 'at:put:');
-    expect(code).toContain("dict at: #'Dictionary' ifAbsent: [nil]");
-    expect(code).toContain("#'at:put:'");
+    expect(code).toContain("Symbol _existingWithAll: 'Dictionary'");
+    expect(code).toContain("Symbol _existingWithAll: 'at:put:'");
+    expect(code).not.toContain("#'");
+  });
+
+  it("names the defining class's dictionary through the shared home-dictionary helper", () => {
+    expect(buildMethodLookupCode('Object', false, 'printString')).toContain(
+      homeDictionaryNameExpr('home'),
+    );
   });
 
   it('starts the walk from the metaclass for a class-side reference', () => {
@@ -47,6 +55,10 @@ describe('parseMethodLookupResults', () => {
         inheritedBy: 'OrderedCollection',
       },
     ]);
+  });
+
+  it('skips a line too short to be a row', () => {
+    expect(parseMethodLookupResults('Globals\tObject\t0\n')).toEqual([]);
   });
 
   it('reads the class side', () => {

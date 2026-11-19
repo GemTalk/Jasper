@@ -8,6 +8,7 @@ export interface OpenDocumentExplorer {
   syncToEditor(uri: vscode.Uri): Promise<void>;
 }
 
+/** What `gemstone.openDocument` takes besides the URI; GemStone Search's opens pass these through. */
 export interface OpenDocumentOptions {
   viewColumn?: vscode.ViewColumn;
   preserveFocus?: boolean;

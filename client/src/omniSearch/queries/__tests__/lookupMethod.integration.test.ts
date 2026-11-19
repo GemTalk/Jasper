@@ -5,13 +5,13 @@
 // printString comes from Collection on 3.7.5), so the inherited case asserts that the class named
 // really defines the selector rather than pinning the class.
 import { describe, it, expect, vi } from 'vitest';
-vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
+vi.mock('vscode', () => import('../../../__mocks__/vscode.js'));
 
-import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
-import { GciLibrary } from '../../gciLibrary';
-import { defaultQueryExecutorUsing } from '../../browserQueries';
+import { useIntegrationTest } from '../../../__tests__/useIntegrationTest';
+import { GciLibrary } from '../../../gciLibrary';
+import { defaultQueryExecutorUsing } from '../../../browserQueries';
 import { lookupMethod } from '../lookupMethod';
-import { testActiveSession } from '../../__tests__/testActiveSession';
+import { testActiveSession } from '../../../__tests__/testActiveSession';
 
 describe('lookupMethod (integration)', () => {
   let gci: GciLibrary;
@@ -107,6 +107,16 @@ describe('lookupMethod (integration)', () => {
     const rows = lookupMethod(exec, 'Jasper677Lookup', false, 'printString');
     expect(rows).toHaveLength(1);
     expect(rows[0].className).not.toBe('Jasper677Lookup');
+  });
+
+  it('creates no symbol for a class or selector the stone has never seen', () => {
+    // Fresh names each run: a symbol, once made, outlives the transaction the harness aborts.
+    const unseen = `jasper677Unseen${Date.now()}`;
+    const unseenClass = `Jasper677Unseen${Date.now()}`;
+    expect(lookupMethod(exec, 'Object', false, unseen)).toEqual([]);
+    expect(lookupMethod(exec, unseenClass, false, 'printString')).toEqual([]);
+    expect(exec(`(Symbol _existingWithAll: '${unseen}') printString`)).toBe('nil');
+    expect(exec(`(Symbol _existingWithAll: '${unseenClass}') printString`)).toBe('nil');
   });
 
   it('finds nothing for a selector no class in the chain defines', () => {

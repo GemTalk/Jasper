@@ -1,5 +1,5 @@
 /**
- * #428 item #41 — scopes the user holds back from the "All" fan-out.
+ * Scopes the user holds back from the "All" fan-out.
  *
  * The defect is that one switch (`gemstone.omniSearch.categories`) conflates two different wishes:
  * "don't spend a stone round-trip on Methods while I type" and "don't offer Methods at all". The
@@ -47,7 +47,7 @@ function fakeSettings(values: Record<string, unknown>) {
   };
 }
 
-describe('providersInScope — the All fan-out (#41)', () => {
+describe('providersInScope — the All fan-out', () => {
   const classes = spyProvider('classes', ['Array']);
   const methods = spyProvider('methods', ['Foo>>bar']);
   const source = spyProvider('source', ['Foo>>baz']);
@@ -69,12 +69,26 @@ describe('providersInScope — the All fan-out (#41)', () => {
     expect(inScope.map((p) => p.category.id)).toEqual(['methods']);
   });
 
+  it('runs an excluded category for a term its provider says is cheap enough to run anyway', () => {
+    const lookup = {
+      ...spyProvider('methods', ['Foo>>bar']),
+      runsWhenHeldBack: (t: string) => t === 'Foo>>bar',
+    };
+    const held = new Set<OmniCategoryId>(['methods']);
+    expect(
+      providersInScope([classes, lookup], null, held, 'Foo>>bar').map((p) => p.category.id),
+    ).toEqual(['classes', 'methods']);
+    expect(
+      providersInScope([classes, lookup], null, held, 'Foo').map((p) => p.category.id),
+    ).toEqual(['classes']);
+  });
+
   it('defaults to excluding nothing when no set is passed (existing callers unchanged)', () => {
     expect(providersInScope(all, null).map((p) => p.category.id)).toEqual(['classes', 'methods']);
   });
 });
 
-describe('engine.setExcludedFromAll (#41)', () => {
+describe('engine.setExcludedFromAll', () => {
   function engineWith(excluded: OmniCategoryId[] = []) {
     const classes = spyProvider('classes', ['Array']);
     const methods = spyProvider('methods', ['Foo>>bar']);
@@ -145,7 +159,7 @@ describe('engine.setExcludedFromAll (#41)', () => {
   });
 });
 
-describe('readOmniConfig — excludeFromAll (#41)', () => {
+describe('readOmniConfig — excludeFromAll', () => {
   it('defaults to excluding nothing', () => {
     expect(readOmniConfig(fakeSettings({})).excludedFromAll).toEqual([]);
   });
@@ -172,7 +186,7 @@ describe('readOmniConfig — excludeFromAll (#41)', () => {
     expect(c.excludedFromAll).toEqual([]);
   });
 
-  it('reads previewPane, defaulting to shown (#40)', () => {
+  it('reads previewPane, defaulting to shown', () => {
     expect(readOmniConfig(fakeSettings({})).previewPane).toBe(true);
     expect(readOmniConfig(fakeSettings({ previewPane: false })).previewPane).toBe(false);
   });

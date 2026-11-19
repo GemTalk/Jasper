@@ -1,6 +1,11 @@
-import { QueryExecutor } from './types';
-import { escapeString, isValidSelector, splitLines } from './util';
-import { SelectorSearchResult } from './searchSelectors';
+import { QueryExecutor } from '../../queries/types';
+import {
+  escapeString,
+  homeDictionaryNameExpr,
+  isValidSelector,
+  splitLines,
+} from '../../queries/util';
+import { SelectorSearchResult, parseSelectorSearchResults } from '../../queries/searchSelectors';
 
 /**
  * Find the one method a `Class>>selector` reference names — on that class, or on the ancestor it
@@ -14,7 +19,8 @@ import { SelectorSearchResult } from './searchSelectors';
  * Row: `dictName<TAB>className<TAB>isMeta(0|1)<TAB>selector<TAB>category<TAB>inheritedBy`, where the
  * class and dictionary are the DEFINING class's and `inheritedBy` is empty when the named class
  * defines the method itself. A class-side reference can resolve to an instance-side method: the
- * metaclass chain ends in `Class`, so `Foo class>>new` may be `Behavior>>new`.
+ * metaclass chain ends in `Class`, so `Foo class>>new` may be `Behavior>>new`. A defining class no
+ * dictionary binds gives no row, since there would be nothing to open it in.
  */
 export interface MethodLookupResult extends SelectorSearchResult {
   /** The class the reference named (`Foo` or `Foo class`), when it inherits the method. */
@@ -28,14 +34,18 @@ export function buildMethodLookupCode(
   isMeta: boolean,
   selector: string,
 ): string {
-  return `| ws sl sel seen definers |
+  // Existing symbols only: interning the name of each half-typed selector would add it to the
+  // stone for good, and a name with no symbol can't name a class or a method anyway.
+  return `| ws symbols sel name seen definers |
+sel := Symbol _existingWithAll: '${escapeString(selector)}'.
+name := Symbol _existingWithAll: '${escapeString(className)}'.
+(sel == nil or: [name == nil]) ifTrue: [^ ''].
 ws := WriteStream on: String new.
-sl := System myUserProfile symbolList.
-sel := #'${escapeString(selector)}'.
+symbols := System myUserProfile symbolList.
 seen := IdentitySet new.
 definers := IdentitySet new.
-sl do: [:dict | | v cls definer home homeDict |
-  v := dict at: #'${escapeString(className)}' ifAbsent: [nil].
+symbols do: [:dict | | v cls definer home homeName |
+  v := dict at: name ifAbsent: [nil].
   (v ~~ nil and: [v isBehavior and: [(seen includes: v) not]]) ifTrue: [
     seen add: v.
     cls := ${isMeta ? 'v class' : 'v'}.
@@ -43,30 +53,24 @@ sl do: [:dict | | v cls definer home homeDict |
     (definer ~~ nil and: [(definers includes: definer) not]) ifTrue: [
       definers add: definer.
       home := definer theNonMetaClass.
-      homeDict := sl detect: [:d | (d at: home name ifAbsent: [nil]) == home] ifNone: [dict].
-      ws nextPutAll: homeDict name; tab;
-         nextPutAll: home name; tab;
-         nextPutAll: (definer isMeta ifTrue: ['1'] ifFalse: ['0']); tab;
-         nextPutAll: sel; tab;
-         nextPutAll: ((definer categoryOfSelector: sel environmentId: 0) ifNil: ['']); tab.
-      definer == cls ifFalse: [ws nextPutAll: v name. ${isMeta ? "ws nextPutAll: ' class'" : ''}].
-      ws lf]]].
+      homeName := ${homeDictionaryNameExpr('home')}.
+      homeName isEmpty ifFalse: [
+        ws nextPutAll: homeName; tab;
+           nextPutAll: home name; tab;
+           nextPutAll: (definer isMeta ifTrue: ['1'] ifFalse: ['0']); tab;
+           nextPutAll: sel; tab;
+           nextPutAll: ((definer categoryOfSelector: sel environmentId: 0) ifNil: ['']); tab.
+        definer == cls ifFalse: [ws nextPutAll: v name. ${isMeta ? "ws nextPutAll: ' class'" : ''}].
+        ws lf]]]].
 ws contents`;
 }
 
 export function parseMethodLookupResults(raw: string): MethodLookupResult[] {
   return splitLines(raw).flatMap((line) => {
-    const [dictName, className, meta, selector, category, inheritedBy] = line.split('\t');
-    if (selector === undefined) return [];
-    const row: MethodLookupResult = {
-      dictName,
-      className,
-      isMeta: meta === '1',
-      selector,
-      category: category ?? '',
-    };
-    if (inheritedBy) row.inheritedBy = inheritedBy;
-    return [row];
+    const [row] = parseSelectorSearchResults(line);
+    if (!row) return [];
+    const inheritedBy = line.split('\t')[5];
+    return [inheritedBy ? { ...row, inheritedBy } : row];
   });
 }
 

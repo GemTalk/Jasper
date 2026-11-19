@@ -29,7 +29,6 @@ import {
 import { match, compareMatches, MatchMode } from './omniMatch';
 import { compareMethodRows } from './rank';
 import { referenceRequestFor } from './references';
-import { parseMethodReference } from '../methodReference';
 
 /** A provider's truncation report plus the human scope name, so the webview can say WHICH scope was
  *  capped and at what number without carrying a category table of its own. */
@@ -173,9 +172,14 @@ export function providersInScope(
   providers: readonly OmniProvider[],
   scopeId: OmniCategoryId | null,
   excludedFromAll: ReadonlySet<OmniCategoryId> = new Set(),
+  term = '',
 ): OmniProvider[] {
   if (scopeId === null)
-    return providers.filter((p) => !p.category.explicitOnly && !excludedFromAll.has(p.category.id));
+    return providers.filter(
+      (p) =>
+        !p.category.explicitOnly &&
+        (!excludedFromAll.has(p.category.id) || p.runsWhenHeldBack?.(term) === true),
+    );
   return providers.filter((p) => p.category.id === scopeId);
 }
 
@@ -390,13 +394,6 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
   // otherwise land in `referenceRows` after a newer row's — see the guard in `referencesFor`.
   let referenceGeneration = 0;
 
-  /** A pasted method reference is unambiguous and costs one lookup, so holding Methods back from
-   *  "All" — a guard against a scan on every keystroke — does not hide it. */
-  const heldBackFor = (term: string): ReadonlySet<OmniCategoryId> => {
-    if (!excludedFromAll.has('methods') || !parseMethodReference(term)) return excludedFromAll;
-    return new Set([...excludedFromAll].filter((id) => id !== 'methods'));
-  };
-
   const effectiveConfig = (): OmniConfig => ({
     ...config,
     caseSensitive,
@@ -494,7 +491,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
         return gen !== generation;
       },
     };
-    const inScope = providersInScope(providers, scopeId, heldBackFor(term));
+    const inScope = providersInScope(providers, scopeId, excludedFromAll, term);
     // Collected from any provider whose own server fetch ceiling bounded its results (today: methods).
     // A non-empty list means the run can never be an exact total, however high the display cap goes.
     const truncations: OmniViewTruncation[] = [];
