@@ -34,6 +34,7 @@ const OVSX_INACTIVE =
   "gemtalksystems.gemstone-ide 1.9.0 is already published, but currently isn't active and therefore not visible.";
 const OVSX_ALREADY = 'gemtalksystems.gemstone-ide 1.9.0 is already published.';
 const VSCE_ALREADY = 'Error: gemstone-ide v1.9.0 already exists on the Marketplace.';
+const OIDC_REJECTED = 'ERROR  Marketplace OIDC token exchange failed with 401 Unauthorized.';
 
 interface Stub {
   // What the fake CLI writes, and the status it exits with.
@@ -46,6 +47,10 @@ interface Stub {
 
 interface RunOptions extends Stub {
   registry?: string;
+  // How the CLI answers a second call, for the Marketplace's retry with a token.
+  retry?: Stub;
+  // The Marketplace token the retry needs; omit to run with none.
+  vscePat?: string;
   // Omit to have the case run against a .vsix that exists.
   vsix?: string;
   // Milliseconds after which to kill the script, for the hang case.
@@ -59,6 +64,8 @@ function run({
   stderr = '',
   status = 0,
   sleepSeconds = 0,
+  retry = {},
+  vscePat = '',
   timeout,
 }: RunOptions) {
   return withTemporaryFolderDo((dir) => {
@@ -66,13 +73,18 @@ function run({
     fs.mkdirSync(binDir);
 
     // `npx` is resolved off PATH by the script, so a stub here is enough to stand in for
-    // both CLIs. It records its own arguments so a case can assert which one was invoked.
-    const argvFile = path.join(dir, 'argv');
+    // both CLIs. It records the arguments of each call (argv-1, argv-2) so a case can
+    // assert which CLI was invoked, and answers a second call from the RETRY_ variables.
+    const argvFile = (call: number) => path.join(dir, `argv-${call}`);
     fs.writeFileSync(
       path.join(binDir, 'npx'),
       [
         '#!/usr/bin/env bash',
-        `printf '%s\\n' "$@" > ${JSON.stringify(argvFile)}`,
+        `call=$(( $(ls ${JSON.stringify(dir)} | grep -c '^argv-') + 1 ))`,
+        `printf '%s\\n' "$@" > ${JSON.stringify(dir)}/argv-$call`,
+        'if [ "$call" -gt 1 ]; then',
+        '  STUB_STDOUT=$RETRY_STDOUT STUB_STDERR=$RETRY_STDERR STUB_STATUS=$RETRY_STATUS STUB_SLEEP=0',
+        'fi',
         'if [ -n "${STUB_STDOUT:-}" ]; then printf \'%s\\n\' "$STUB_STDOUT"; fi',
         'if [ -n "${STUB_STDERR:-}" ]; then printf \'%s\\n\' "$STUB_STDERR" >&2; fi',
         'if [ "${STUB_SLEEP:-0}" != "0" ]; then sleep "$STUB_SLEEP"; fi',
@@ -96,6 +108,10 @@ function run({
         STUB_STDERR: stderr,
         STUB_STATUS: String(status),
         STUB_SLEEP: String(sleepSeconds),
+        RETRY_STDOUT: retry.stdout ?? '',
+        RETRY_STDERR: retry.stderr ?? '',
+        RETRY_STATUS: String(retry.status ?? 0),
+        VSCE_PAT: vscePat,
       },
     });
 
@@ -103,9 +119,14 @@ function run({
       status: result.status,
       stdout: result.stdout,
       stderr: result.stderr,
-      argv: fs.existsSync(argvFile) ? fs.readFileSync(argvFile, 'utf8').trimEnd().split('\n') : [],
+      argv: argvOf(argvFile(1)),
+      retryArgv: argvOf(argvFile(2)),
     };
   });
+}
+
+function argvOf(file: string): string[] {
+  return fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trimEnd().split('\n') : [];
 }
 
 onSupportedPosixDescribe('publish-to-registry.sh', () => {
@@ -188,6 +209,90 @@ onSupportedPosixDescribe('publish-to-registry.sh', () => {
       expect.stringContaining('gemstone-ide-1.9.0.vsix'),
       '--skip-duplicate',
     ]);
+  });
+
+  it('retries the Marketplace with the token when Trusted Publishing fails', () => {
+    const { status, stdout, stderr, retryArgv } = run({
+      registry: 'marketplace',
+      stderr: OIDC_REJECTED,
+      status: 1,
+      retry: { status: 0 },
+      vscePat: 'a-token',
+    });
+
+    expect(status).toBe(0);
+    expect(stdout.trim()).toBe('result: published');
+    expect(stderr).toContain('::warning');
+    expect(retryArgv).toEqual([
+      '--no-install',
+      '@vscode/vsce',
+      'publish',
+      '--packagePath',
+      expect.stringContaining('gemstone-ide-1.9.0.vsix'),
+      '--skip-duplicate',
+    ]);
+  });
+
+  it('counts the version as up when the token retry finds it already there', () => {
+    const { status, stdout } = run({
+      registry: 'marketplace',
+      stderr: OIDC_REJECTED,
+      status: 1,
+      retry: { stderr: VSCE_ALREADY, status: 1 },
+      vscePat: 'a-token',
+    });
+
+    expect(status).toBe(0);
+    expect(stdout.trim()).toBe('result: already-published');
+  });
+
+  it('fails with the retry status when the token is refused too', () => {
+    const { status, stdout, stderr } = run({
+      registry: 'marketplace',
+      stderr: OIDC_REJECTED,
+      status: 1,
+      retry: { stderr: 'ERROR  Failed Request: Unauthorized (401)', status: 3 },
+      vscePat: 'a-token',
+    });
+
+    expect(status).toBe(3);
+    expect(stdout).not.toContain('result:');
+    expect(stderr).toContain('the version is not up');
+  });
+
+  it('does not retry the Marketplace when no token is stored', () => {
+    const { status, retryArgv } = run({
+      registry: 'marketplace',
+      stderr: OIDC_REJECTED,
+      status: 1,
+    });
+
+    expect(status).toBe(1);
+    expect(retryArgv).toEqual([]);
+  });
+
+  it('does not retry once Trusted Publishing finds the version already there', () => {
+    const { status, retryArgv } = run({
+      registry: 'marketplace',
+      stderr: VSCE_ALREADY,
+      status: 1,
+      vscePat: 'a-token',
+    });
+
+    expect(status).toBe(0);
+    expect(retryArgv).toEqual([]);
+  });
+
+  it('never retries Open VSX with the Marketplace token', () => {
+    const { status, retryArgv } = run({
+      registry: 'openvsx',
+      stderr: 'ERROR  Unauthorized',
+      status: 1,
+      vscePat: 'a-token',
+    });
+
+    expect(status).toBe(1);
+    expect(retryArgv).toEqual([]);
   });
 
   // The CLI's output is the only evidence of whether an upload went out, and the publish

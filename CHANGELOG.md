@@ -6,7 +6,7 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ### Changed
 
-- **Releases publish to the VS Code Marketplace without a stored token.** Azure DevOps stops accepting the kind of token the release workflow used on 27 January 2027, which would have left later releases off the Marketplace. The workflow now signs in with the Marketplace's Trusted Publishing: GitHub vouches for the release workflow each time it runs, and a policy on the `gemtalksystems` publisher trusts it, so there is no token to expire or rotate. Open VSX still uses its token. [docs/how-to/publishing-a-release.md](docs/how-to/publishing-a-release.md) describes the policy and what breaks it. ([#939](https://github.com/GemTalk/Jasper/issues/939))
+- **Releases publish to the VS Code Marketplace without a stored token.** Azure DevOps stops accepting the kind of token the release workflow used on 27 January 2027, which would have left later releases off the Marketplace. The workflow now signs in with the Marketplace's Trusted Publishing: GitHub vouches for the release workflow each time it runs, and a policy on the `gemtalksystems` publisher trusts it, so there is no token to expire or rotate. Until that has worked for one release, the workflow falls back to the old token if it fails, with a warning on the run. Open VSX still uses its token. [docs/how-to/publishing-a-release.md](docs/how-to/publishing-a-release.md) describes the policy and what breaks it. ([#939](https://github.com/GemTalk/Jasper/issues/939))
 
 ### Fixed
 

@@ -164,7 +164,7 @@ Where it is unclear which happened, re-running a publish settles it safely: `vsc
 
 The two registries sign in differently.
 
-**The VS Code Marketplace uses Trusted Publishing, and there is no token.** When the `publish-vsce` job runs, GitHub gives it a short-lived signed statement that it is `GemTalk/Jasper`'s `release.yml`, running in the `release-vsce` environment. `vsce publish --oidc` trades that for a Marketplace credential, which works because a Trusted Publishing policy on the `gemtalksystems` publisher says to trust exactly that combination. Nothing is stored, so nothing expires or needs rotating.
+**The VS Code Marketplace uses Trusted Publishing.** When the `publish-vsce` job runs, GitHub gives it a short-lived signed statement that it is `GemTalk/Jasper`'s `release.yml`, running in the `release-vsce` environment. `vsce publish --oidc` trades that for a Marketplace credential, which works because a Trusted Publishing policy on the `gemtalksystems` publisher says to trust exactly that combination. Nothing is stored, so nothing expires or needs rotating.
 
 The policy lives on the publisher's **Trusted Publishing** tab at <https://marketplace.visualstudio.com/manage/publishers/gemtalksystems>, and managing it needs a member of the publisher; the page 404s for anyone else. Its fields are case-sensitive and must match the workflow exactly:
 
@@ -175,7 +175,9 @@ The policy lives on the publisher's **Trusted Publishing** tab at <https://marke
 | Workflow | `release.yml` (the file name only) |
 | Environment | `release-vsce` |
 
-Renaming the workflow file or the environment, or moving the repository, breaks publishing until the policy is changed to match. `--oidc` never falls back to a token, so a mismatch fails the Publish step outright; the sign-in happens before the upload, so nothing is sent and the version number is untouched. There is no way to check the policy without a real release: `vsce verify-pat` checks tokens only.
+Renaming the workflow file or the environment, or moving the repository, breaks Trusted Publishing until the policy is changed to match. The sign-in happens before the upload, so a rejected sign-in sends nothing. There is no way to check the policy without a real release: `vsce verify-pat` checks tokens only.
+
+**Until Trusted Publishing has published one release, the old token is a fallback.** If the Trusted Publishing attempt fails, `scripts/publish-to-registry.sh` retries once with `VSCE_PAT` from the `release-vsce` environment and puts a warning on the run, so the release still reaches the Marketplace. After a release, the warning, or the policy's **Last used** date on the publisher page, shows which one published. Once Trusted Publishing has worked, the retry, the `VSCE_PAT` line in `release.yml` and the secret are removed together ([#939](https://github.com/GemTalk/Jasper/issues/939)); they must go by 27 January 2027 in any case, when the token stops working.
 
 The flip side is that the Marketplace cannot be published from a laptop. Until Azure DevOps retires global personal access tokens on **27 January 2027**, `npm run publish:vsce` still works with a token created at `dev.azure.com` → User settings → Personal Access Tokens, with **Organization: All accessible organizations** (a single-organization token fails with a 401 that reads like a bad token) and **Scopes: Marketplace → Manage**. After that date the Marketplace accepts no such token. Uploading the `.vsix` by hand on the publisher's management page may still work as an emergency fallback, but it has not been tried.
 
@@ -204,7 +206,7 @@ One-time repository setup. **The workflow is not safe until step 2 is done** —
 
 1. Create three **environments** (Settings → Environments), so no environment holds more privilege than the job attached to it needs:
    - `release-approval` — the gate. **No secrets.**
-   - `release-vsce` — **no secrets.** The Marketplace's Trusted Publishing policy names this environment, which is what lets the job publish.
+   - `release-vsce` — holds `VSCE_PAT` only, and only while the fallback above remains. The Marketplace's Trusted Publishing policy names this environment, which is what lets the job publish.
    - `release-ovsx` — holds `OVSX_PAT` only.
 2. On `release-approval`, add **required reviewers** and enable **prevent self-review**. This is the approval gate and the audit trail of who released what.
 3. On all three, add a **deployment branch policy** restricting them to `main`. This is the backstop that does not depend on the workflow's own checks being right.

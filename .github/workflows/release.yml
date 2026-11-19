@@ -363,6 +363,9 @@ jobs:
       - name: Publish
         timeout-minutes: 5
         env:
+          # Used only by the script's retry when Trusted Publishing fails;
+          # remove the two together (GemTalk/Jasper#939).
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
           VSIX_FILE: ${{ needs.package.outputs.vsix-file }}
         run: bash scripts/publish-to-registry.sh marketplace "$VSIX_FILE"
 
