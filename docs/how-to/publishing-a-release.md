@@ -1,6 +1,6 @@
 # Publishing a release
 
-Releasing Jasper to the marketplaces is a maintainer task: it needs a personal access token for the `gemtalksystems` publisher on each of the two registries. Outside contributors need none of it — [CONTRIBUTING.md](../../CONTRIBUTING.md) covers the ordinary build-and-test loop.
+Releasing Jasper to the marketplaces is a maintainer task: it takes write access to this GitHub repository to start the `Release` workflow, and approval from a required reviewer on its `release-approval` environment. The workflow brings its own credentials for both registries, so the person releasing needs no account on either; one is needed only to publish by hand or to manage the registry settings in [Credentials](#credentials). Outside contributors need none of it — [CONTRIBUTING.md](../../CONTRIBUTING.md) covers the ordinary build-and-test loop.
 
 A release comes in two halves, and the split is deliberate:
 
@@ -141,7 +141,7 @@ The one state with no way back is a publish that was **accepted** and then rejec
 
 ## Releasing by hand
 
-The pipeline is the normal path, not the only one. If it is unavailable, the same steps run locally, from a merged release commit, with credentials stored as below:
+The pipeline is the normal path, not the only one. If it is unavailable, the same steps run locally, from a merged release commit, with credentials stored as below. Until **27 January 2027** that covers both registries; after it, the Marketplace half needs a way to sign in without a token, and none has been tried yet (see [Credentials](#credentials)).
 
 ```sh
 npm run lint && npm run format:check && npm run compile && npm test
@@ -162,47 +162,57 @@ Where it is unclear which happened, re-running a publish settles it safely: `vsc
 
 ## Credentials
 
-Each registry takes a personal access token, tied to your own account rather than to the publisher.
+The two registries sign in differently.
 
-The **VS Code Marketplace** token comes from Azure DevOps (`dev.azure.com` → User settings → Personal Access Tokens). Two settings matter, and both are easy to get wrong:
+**The VS Code Marketplace uses Trusted Publishing.** When the `publish-vsce` job runs, GitHub gives it a short-lived signed statement that it is `GemTalk/Jasper`'s `release.yml`, running in the `release-vsce` environment. `vsce publish --oidc` trades that for a Marketplace credential, which works because a Trusted Publishing policy on the `gemtalksystems` publisher says to trust exactly that combination. Nothing is stored, so nothing expires or needs rotating.
 
-- **Organization: All accessible organizations** — a token scoped to a single organization fails with a 401 that reads like a bad token.
-- **Scopes: Marketplace → Manage** (under "Show all scopes").
+The policy lives on the publisher's **Trusted Publishing** tab at <https://marketplace.visualstudio.com/manage/publishers/gemtalksystems>, and managing it needs a member of the publisher; the page 404s for anyone else. Its fields are case-sensitive and must match the workflow exactly:
 
-Your account must also be a member of the `gemtalksystems` publisher; <https://marketplace.visualstudio.com/manage/publishers/gemtalksystems> loads if it is and 404s if it isn't. Azure DevOps shows a PAT once, at creation, and stores it hashed — a lost token is replaced, never recovered.
+| Field | Value |
+| --- | --- |
+| Repository owner | `GemTalk` |
+| Repository | `Jasper` |
+| Workflow | `release.yml` (the file name only) |
+| Environment | `release-vsce` |
 
-The **Open VSX** token comes from <https://open-vsx.org> (sign in with GitHub → user settings → Access Tokens), and your account must belong to the `gemtalksystems` namespace. The namespace itself already exists; `npx ovsx create-namespace gemtalksystems -p <token>` is a one-time step that does not need repeating.
+Renaming the workflow file or the environment, or moving the repository, breaks Trusted Publishing until the policy is changed to match. The sign-in happens before the upload, so a rejected sign-in sends nothing. There is no way to check the policy without a real release: `vsce verify-pat` checks tokens only.
 
-Check either token without publishing anything:
+**Until Trusted Publishing has published one release, the old token is a fallback.** If the Trusted Publishing attempt fails, `scripts/publish-to-registry.sh` retries once with `VSCE_PAT` from the `release-vsce` environment, so the release still reaches the Marketplace, and puts a red error annotation on the run while the job stays green. The annotation is titled **Marketplace Trusted Publishing failed** when the sign-in was refused, and **Marketplace publish failed** when the first attempt failed for another reason, such as a timeout. After a release, either annotation, or the policy's **Last used** date on the publisher page, shows which one published. Once Trusted Publishing has worked, the retry, the `VSCE_PAT` line in `release.yml` and the secret are removed together ([#939](https://github.com/GemTalk/Jasper/issues/939)); they must go by 27 January 2027 in any case, when the token stops working.
+
+Trusted Publishing works only inside the release workflow, so publishing the Marketplace from a laptop needs something else. Until Azure DevOps retires global personal access tokens on **27 January 2027**, `npm run publish:vsce` still works with a token created at `dev.azure.com` → User settings → Personal Access Tokens, with **Organization: All accessible organizations** (a single-organization token fails with a 401 that reads like a bad token) and **Scopes: Marketplace → Manage**. After that date the Marketplace accepts no such token. Two emergency fallbacks should still work, but neither has been tried against our publisher: `vsce publish --azure-credential` after `az login`, which signs in with a Microsoft Entra ID account that belongs to the `gemtalksystems` publisher instead of a token, and uploading the `.vsix` by hand on the publisher's management page.
+
+**Open VSX takes a personal access token**, tied to your own account rather than to the publisher. It comes from <https://open-vsx.org> (sign in with GitHub → user settings → Access Tokens), and your account must belong to the `gemtalksystems` namespace. The namespace itself already exists; `npx ovsx create-namespace gemtalksystems -p <token>` is a one-time step that does not need repeating.
+
+Check the token without publishing anything:
 
 ```sh
-npx @vscode/vsce verify-pat gemtalksystems
 npx ovsx verify-pat gemtalksystems
 ```
 
 ### Storing them locally
 
-For releasing by hand, store both once and neither publish step needs anything in the environment:
+For releasing by hand, store each once and neither publish step needs anything in the environment:
 
 ```sh
-npx @vscode/vsce login gemtalksystems   # VS Code Marketplace
+npx @vscode/vsce login gemtalksystems   # VS Code Marketplace, until 27 January 2027
 npx ovsx login gemtalksystems           # Open VSX
 ```
 
 `vsce` reads `VSCE_PAT` from the environment or its stored login; `ovsx` reads `OVSX_PAT` or its stored token. `npx @vscode/vsce ls-publishers` shows what is stored locally — an empty list means no credentials **on this machine**, not that the publisher is unregistered.
 
-### Storing them for the workflow
+### Setting them up for the workflow
 
 One-time repository setup. **The workflow is not safe until step 2 is done** — GitHub creates a referenced environment implicitly, with no protection rules, so without required reviewers the `gate` job approves itself and anyone who can dispatch a workflow can publish.
 
 1. Create three **environments** (Settings → Environments), so no environment holds more privilege than the job attached to it needs:
    - `release-approval` — the gate. **No secrets.**
-   - `release-vsce` — holds `VSCE_PAT` only.
+   - `release-vsce` — holds `VSCE_PAT` only, and only while the fallback above remains. The Marketplace's Trusted Publishing policy names this environment, which is what lets the job publish.
    - `release-ovsx` — holds `OVSX_PAT` only.
 2. On `release-approval`, add **required reviewers** and enable **prevent self-review**. This is the approval gate and the audit trail of who released what.
 3. On all three, add a **deployment branch policy** restricting them to `main`. This is the backstop that does not depend on the workflow's own checks being right.
-4. Add each token as an **environment** secret, not a repository secret, so no other workflow can reach it.
+4. Add the Open VSX token as an **environment** secret, not a repository secret, so no other workflow can reach it.
+5. Create the Marketplace's Trusted Publishing policy, as in the table above.
 
-Note for whoever does this: these are the repository's first third-party secrets — it holds only the automatic `GITHUB_TOKEN` today — so it is a governance change as much as a configuration one, and both tokens are one person's identity acting for the organisation.
+Note for whoever does this: the Open VSX token is one person's identity acting for the organisation, so adding it is a governance change as much as a configuration one.
 
-Because these are personal tokens, they expire — Azure DevOps allows at most a year, and retires global PATs entirely on **1 December 2026**, after which Marketplace PAT publishing stops working and the workflow will need `vsce publish --oidc` / `ovsx publish --trusted-publishing` (each needs `id-token: write` and a policy registered on the registry) — and they expire silently, surfacing only at the next release. The workflow verifies both before it builds anything, so an expired token fails the run in seconds rather than halfway through; but whoever owns the tokens should still expect to rotate them.
+The Open VSX token expires, and silently: nothing shows until the next release. The `publish-ovsx` job checks it before it downloads or uploads anything, but that is after the GitHub Release already exists, so an expired token leaves the release on the Marketplace and missing from Open VSX until it is replaced and the failed job re-run. Whoever owns the token should expect to rotate it.

@@ -33,7 +33,9 @@
 # not up.
 #
 # Usage: scripts/publish-to-registry.sh <marketplace|openvsx> <path-to-vsix>
-# Env:   VSCE_PAT (marketplace) or OVSX_PAT (openvsx)
+# Auth:  marketplace signs in with OIDC (Trusted Publishing), so it runs only in
+#        a GitHub Actions job with `id-token: write`; if that fails and
+#        VSCE_PAT is set, it retries once with the token. openvsx reads OVSX_PAT.
 
 set -euo pipefail
 
@@ -51,7 +53,7 @@ if [ ! -f "$vsix" ]; then
 fi
 
 case "$registry" in
-    marketplace) set -- npx --no-install @vscode/vsce publish --packagePath "$vsix" --skip-duplicate ;;
+    marketplace) set -- npx --no-install @vscode/vsce publish --oidc --packagePath "$vsix" --skip-duplicate ;;
     openvsx) set -- npx --no-install ovsx publish --packagePath "$vsix" --skip-duplicate ;;
     *)
         echo "error: unknown registry '$registry' (expected marketplace or openvsx)." >&2
@@ -63,14 +65,14 @@ echo "Publishing $(basename "$vsix") to $registry..." >&2
 
 # The message has to be captured to be classified, but capturing it alone
 # would lose it exactly when it matters most: the publish steps run under
-# `timeout-minutes: 5`, and a hung CLI is killed by the runner, so a plain
+# a step `timeout-minutes`, and a hung CLI is killed by the runner, so a plain
 # `output=$("$@" 2>&1)` would leave the log with the line above and nothing
 # else — no CLI output at all — in the one case where the CLI's own words are
 # the only evidence of whether the upload went out. So tee it: the log stays
 # live and the text is still there to classify afterwards.
 #
-# Teeing to a file rather than to `/dev/stderr`, and running the pipeline here
-# rather than inside a `$(...)`, are both deliberate:
+# Teeing to a file rather than to `/dev/stderr`, and running the pipeline in
+# this shell rather than inside a `$(...)`, are both deliberate:
 #
 #   - `tee /dev/stderr` OPENS /dev/stderr, which fails with ENXIO ("No such
 #     device or address") whenever fd 2 is a socket rather than a pipe — which
@@ -83,31 +85,59 @@ echo "Publishing $(basename "$vsix") to $registry..." >&2
 log=$(mktemp)
 trap 'rm -f "$log"' EXIT
 
-set +e
-"$@" 2>&1 | tee "$log" >&2
-status=${PIPESTATUS[0]}
-set -e
+attempt() {
+    set +e
+    "$@" 2>&1 | tee "$log" >&2
+    status=${PIPESTATUS[0]}
+    set -e
+    output=$(cat "$log")
+}
 
-output=$(cat "$log")
+# Prints the outcome and succeeds when the version is up.
+version_is_up() {
+    if [ "$status" -eq 0 ]; then
+        echo "result: published"
+        return 0
+    fi
 
-if [ "$status" -eq 0 ]; then
-    echo "result: published"
+    # Order matters: the inactive message also contains "is already published",
+    # so the more specific case is tested first.
+    if printf '%s' "$output" | grep -qiF "isn't active and therefore not visible"; then
+        echo "result: awaiting-activation"
+        echo "This version was already uploaded and is waiting for the registry to activate it." >&2
+        echo "That is not a failure and re-publishing cannot fix it — the version is taken." >&2
+        return 0
+    fi
+
+    if printf '%s' "$output" | grep -qiE "is already published|already exists"; then
+        echo "result: already-published"
+        echo "This version is already on $registry; nothing to do." >&2
+        return 0
+    fi
+
+    return 1
+}
+
+attempt "$@"
+if version_is_up; then
     exit 0
 fi
 
-# Order matters: the inactive message also contains "is already published",
-# so the more specific case is tested first.
-if printf '%s' "$output" | grep -qiF "isn't active and therefore not visible"; then
-    echo "result: awaiting-activation"
-    echo "This version was already uploaded and is waiting for the registry to activate it." >&2
-    echo "That is not a failure and re-publishing cannot fix it — the version is taken." >&2
-    exit 0
-fi
-
-if printf '%s' "$output" | grep -qiE "is already published|already exists"; then
-    echo "result: already-published"
-    echo "This version is already on $registry; nothing to do." >&2
-    exit 0
+# Temporary, until Trusted Publishing has published a release (GemTalk/Jasper#939).
+# The retry cannot publish twice: versions are immutable, and an upload the
+# first attempt landed comes back as "already exists", which counts as up.
+if [ "$registry" = marketplace ] && [ -n "${VSCE_PAT:-}" ]; then
+    # Every Trusted Publishing error vsce raises mentions OIDC, so anything
+    # else (an upload timeout, say) must not blame the policy.
+    if printf '%s' "$output" | grep -qF OIDC; then
+        echo "::error title=Marketplace Trusted Publishing failed::Retrying with VSCE_PAT. Fix the Trusted Publishing policy on the gemtalksystems publisher before the token stops working on 27 January 2027." >&2
+    else
+        echo "::error title=Marketplace publish failed::It failed for a reason other than Trusted Publishing (see the first attempt above). Retrying with VSCE_PAT." >&2
+    fi
+    attempt npx --no-install @vscode/vsce publish --packagePath "$vsix" --skip-duplicate
+    if version_is_up; then
+        exit 0
+    fi
 fi
 
 echo >&2
