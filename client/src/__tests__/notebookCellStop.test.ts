@@ -6,7 +6,9 @@ vi.mock('../transcriptSink', () => ({ drainTranscript: vi.fn(() => '') }));
 
 import { notebooks } from '../__mocks__/vscode';
 import { GemStoneNotebookKernel, NotebookKernelSpec } from '../gemstoneNotebookKernel';
-import { NbCancelledError } from '../nbRunner';
+import { NbCancelledError, NbSessionBusyError } from '../nbRunner';
+import { GciLibraryError } from '../gciLibraryError';
+import { GCI_ERR_OP_IN_PROGRESS } from '../gciConstants';
 import type { SessionManager } from '../sessionManager';
 
 const SESSION = { id: 1, login: { gs_user: 'DataCurator', stone: 'gs64stone' } };
@@ -166,5 +168,53 @@ describe("a notebook cell's stop button", () => {
     await controller.executeHandler([cell('1/0')]);
 
     expect(execution(controller).end).toHaveBeenCalledWith(false, expect.any(Number));
+  });
+});
+
+describe('a cell the session refuses as busy', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const refusals: [string, () => Error][] = [
+    [
+      'a run Jasper knows holds the session',
+      () => new NbSessionBusyError('Another run is still in progress on this session.'),
+    ],
+    [
+      'GemStone itself refuses the start',
+      () =>
+        GciLibraryError.fromGciError({
+          number: GCI_ERR_OP_IN_PROGRESS,
+          message: 'session has a GciTsNb operation in progress',
+        }),
+    ],
+  ];
+
+  it.each(refusals)(
+    'fails the cell and runs none of the cells queued after it, when %s',
+    async (_why, refusal) => {
+      const evaluate = vi.fn(async () => {
+        throw refusal();
+      });
+      const controller = kernel(evaluate);
+
+      await controller.executeHandler([cell('3 + 4'), cell('5 + 6'), cell('7 + 8')]);
+
+      expect(evaluate).toHaveBeenCalledTimes(1);
+      expect(controller.createNotebookCellExecution).toHaveBeenCalledTimes(1);
+      expect(execution(controller).end).toHaveBeenCalledWith(false, expect.any(Number));
+      expect(JSON.parse(outputText(execution(controller))).message).toBe(refusal().message);
+    },
+  );
+
+  it('still runs the next cell after a cell that failed for any other reason', async () => {
+    const evaluate = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('the connection dropped'))
+      .mockResolvedValueOnce('11');
+    const controller = kernel(evaluate);
+
+    await controller.executeHandler([cell('3 + 4'), cell('5 + 6')]);
+
+    expect(evaluate).toHaveBeenCalledTimes(2);
   });
 });

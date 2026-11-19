@@ -3,6 +3,7 @@ import { ActiveSession } from './sessionManager';
 import { GciError } from './gciLibrary';
 import { pollReadable } from './socketPoll';
 import { logInfo } from './gciLog';
+import { GciLibraryError } from './gciLibraryError';
 import { OOP_ILLEGAL, OOP_NIL, SOFT_BREAK_ERROR } from './gciConstants';
 
 /**
@@ -1252,7 +1253,8 @@ export function pollNbToCompletion<T>(
  * Start a non-blocking GemStone call and poll it to completion.
  *
  * @param start issues the `GciTsNb…` call; returns `{ success, err }`. A failed
- *              start rejects without polling.
+ *              start rejects without polling, with a {@link GciLibraryError}
+ *              that carries GemStone's error number.
  * @param onReady see {@link pollNbToCompletion}.
  */
 export async function runNbCall<T>(
@@ -1279,7 +1281,13 @@ function beginNbCall<T>(
 ): Promise<T> {
   const { success, err } = start();
   if (!success) {
-    return Promise.reject(new Error(err.message || `GemStone error ${err.number}`));
+    // Carries the number, so a caller can tell GemStone's busy refusal from a failure.
+    return Promise.reject(
+      GciLibraryError.fromGciError({
+        number: err.number,
+        message: err.message || `GemStone error ${err.number}`,
+      }),
+    );
   }
   return pollNbToCompletion(session, onReady, opts);
 }

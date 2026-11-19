@@ -33,7 +33,8 @@ import {
   stoppedRunCleared,
   sayStillRunningUnlessItEnds,
 } from '../nbRunner';
-import { OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
+import { GCI_ERR_OP_IN_PROGRESS, OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
+import { GciLibraryError, SESSION_BUSY_MESSAGE } from '../gciLibraryError';
 import { fakeActiveSession } from './fakeActiveSession';
 import { sameObject } from './support/sameObject';
 
@@ -87,6 +88,24 @@ describe('runNbCall', () => {
       ),
     ).rejects.toThrow('boom');
     expect(onReady).not.toHaveBeenCalled();
+  });
+
+  it('rejects a start GemStone refuses as busy with an error that says so and keeps its number', async () => {
+    const { session } = makeSession([{ result: 1 }]);
+    const refused = runNbCall(
+      session,
+      () => ({
+        success: false,
+        err: { number: GCI_ERR_OP_IN_PROGRESS, message: 'operation in progress' } as never,
+      }),
+      vi.fn(),
+    );
+
+    await expect(refused).rejects.toBeInstanceOf(GciLibraryError);
+    await expect(refused).rejects.toMatchObject({
+      number: GCI_ERR_OP_IN_PROGRESS,
+      message: SESSION_BUSY_MESSAGE,
+    });
   });
 
   it('calls onReady and resolves with its value once the poll reports ready', async () => {

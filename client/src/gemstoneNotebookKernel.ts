@@ -4,7 +4,9 @@ import { logError } from './gciLog';
 import { drainTranscript } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
 import { describeSession, onDidChangeActiveSession } from './activeSessionDisplay';
-import { NbCancelledError, NbRunOptions } from './nbRunner';
+import { NbCancelledError, NbRunOptions, NbSessionBusyError } from './nbRunner';
+import { GciLibraryError } from './gciLibraryError';
+import { GCI_ERR_OP_IN_PROGRESS } from './gciConstants';
 
 // Shared base for GemStone-backed notebook kernels. VS Code's built-in ipynb
 // support owns the `jupyter-notebook` notebook type (Microsoft's Jupyter
@@ -17,6 +19,19 @@ import { NbCancelledError, NbRunOptions } from './nbRunner';
 // source is evaluated.
 
 export const GEMSTONE_NOTEBOOK_TYPE = 'jupyter-notebook';
+
+type CellOutcome = 'ran' | 'stopped' | 'refused';
+
+/**
+ * Whether the cell's call was refused because the session was busy: by the
+ * runner, which knows what holds it, or by GemStone, for a call Jasper doesn't track.
+ */
+function isBusyRefusal(e: unknown): boolean {
+  return (
+    e instanceof NbSessionBusyError ||
+    (e instanceof GciLibraryError && e.number === GCI_ERR_OP_IN_PROGRESS)
+  );
+}
 
 export interface NotebookKernelSpec {
   id: string;
@@ -195,15 +210,20 @@ export class GemStoneNotebookKernel {
   }
 
   // Cells run one after another: they share one session, which runs one call at
-  // a time. A stopped cell stops the cells queued after it too, as in Jupyter.
+  // a time. A stopped cell stops the cells queued after it too, as in Jupyter, and
+  // so does a cell the busy session refused: the cells after it would be refused
+  // as well.
   private async executeCells(cells: vscode.NotebookCell[]): Promise<void> {
     for (const cell of cells) {
-      if ((await this.executeCell(cell)) === 'stopped') return;
+      if ((await this.executeCell(cell)) !== 'ran') return;
     }
   }
 
-  /** Answers 'stopped' when the user stopped the cell. */
-  private async executeCell(cell: vscode.NotebookCell): Promise<'ran' | 'stopped'> {
+  /**
+   * Answers 'stopped' when the user stopped the cell, and 'refused' when the
+   * session was busy with another call.
+   */
+  private async executeCell(cell: vscode.NotebookCell): Promise<CellOutcome> {
     const execution = this.controller.createNotebookCellExecution(cell);
     execution.executionOrder = ++this.executionOrder;
     execution.start(Date.now());
@@ -226,7 +246,7 @@ export class GemStoneNotebookKernel {
   private async runCell(
     cell: vscode.NotebookCell,
     execution: vscode.NotebookCellExecution,
-  ): Promise<'ran' | 'stopped'> {
+  ): Promise<CellOutcome> {
     const { token } = execution;
     if (token.isCancellationRequested) return 'stopped';
 
@@ -269,7 +289,7 @@ export class GemStoneNotebookKernel {
       const msg = e instanceof Error ? e.message : String(e);
       logError(session.id, `Notebook cell failed: ${msg}`);
       await this.endWithError(execution, msg);
-      return 'ran';
+      return isBusyRefusal(e) ? 'refused' : 'ran';
     } finally {
       onStop.dispose();
       // Show Transcript output the cell buffered server-side: Grail Python

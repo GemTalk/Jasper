@@ -9,7 +9,13 @@ import {
   settleNbResult,
 } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
-import { NbCancelledError, NbRunOptions, runNbCall, whenSessionFree } from './nbRunner';
+import {
+  NbCancelledError,
+  NbRunOptions,
+  ensureSessionFree,
+  runNbCall,
+  whenSessionFree,
+} from './nbRunner';
 import { failCell, fetchCellResult } from './notebookCellResult';
 import { autoCommitAfterWrite } from './autoCommit/autoCommitRunner';
 import {
@@ -23,7 +29,6 @@ import {
 } from './gciConstants';
 import { SMALLTALK_LANGUAGE } from './languageIds';
 import { sessionKernelId } from './sessionKernels';
-import { SESSION_BUSY_MESSAGE } from './gciLibraryError';
 import {
   BREAKPOINT_ERROR,
   CONTINUE_FLAGS,
@@ -148,9 +153,9 @@ async function runCell(
   source: string,
   onStart: NbRunOptions['onStart'],
 ): Promise<string | CellStop> {
-  if (session.isBusy()) {
-    throw new Error(SESSION_BUSY_MESSAGE);
-  }
+  // Before the clientForwarder start, which GemStone would refuse too. Unlike a
+  // bare busy check, this raises the notice that lets the user stop what holds it.
+  ensureSessionFree(session);
 
   const code = wrapCellCode(source);
   // Before clearing a process too: a clean-up that writes to the Transcript
