@@ -66,6 +66,7 @@ describe('a logged-out session (integration)', () => {
 
   it('refuses calls once a gem the stone already stopped is logged out', async () => {
     const stopped = transientSession();
+    endGemAfterTest(() => session, stopped);
     const loggedInAt = Date.now();
     const id = stopped.executeAndFetchString('System session printString');
     const serial = reportedSerialOf(stopped);

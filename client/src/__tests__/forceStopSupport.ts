@@ -3,14 +3,11 @@ import type { ActiveSession } from '../activeSession';
 import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
 import { armForceStop } from '../forceStop';
 import { NbCancelledError, runNbCall, stoppedRunHolds } from '../nbRunner';
-import { endGemAfterTest, stillOnStone } from './leftoverGem';
+import { endGemAfterTest } from './leftoverGem';
 import { reportedTransientLogin } from './sessionGateClient';
 
 /** What the Force Stop stone tests share, for the session `getSession` answers. */
 export function forceStopSupport(getSession: () => ActiveSession) {
-  /** Whether the login with serial number `serial` is still on the stone (see leftoverGem.ts). */
-  const onStone = (serial: string) => stillOnStone(getSession(), serial);
-
   /** A session of its own, armed as a login arms it; its gem is ended whatever the test does. */
   function armedSession(): ActiveSession {
     const { session: own, err } = reportedTransientLogin(getSession());
@@ -56,5 +53,5 @@ export function forceStopSupport(getSession: () => ActiveSession) {
   const armed = (own: ActiveSession) =>
     own.executeAndFetchString('System signaledGemStoneSessionErrorStatus printString');
 
-  return { onStone, armedSession, deps, stopAndAbandon, settled, armed };
+  return { armedSession, deps, stopAndAbandon, settled, armed };
 }

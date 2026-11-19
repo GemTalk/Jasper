@@ -8,7 +8,7 @@ import { GCI_ERR_OP_IN_PROGRESS, OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '..
 import { SessionManager } from '../sessionManager';
 import { testActiveSession } from './testActiveSession';
 import { useIntegrationTest } from './useIntegrationTest';
-import { endGemAfterTest, stillOnStone } from './leftoverGem';
+import { endGemAfterTest, waitUntilOffTheStone } from './leftoverGem';
 import {
   isVersionKnownBroken,
   knownGemStoneBugs,
@@ -84,10 +84,7 @@ describe('a logout while a call runs on a worker thread (integration)', () => {
   }
 
   async function leavesTheStone(serial: string): Promise<void> {
-    await vi.waitFor(() => expect(stillOnStone(session, serial)).toBe(false), {
-      timeout: 20_000,
-      interval: 100,
-    });
+    await waitUntilOffTheStone(session, serial, 20_000);
   }
 
   it('is refused while the call runs, whether or not GemStone says why, and goes through once it returns', async () => {
