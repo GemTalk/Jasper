@@ -361,7 +361,6 @@ re-testing when its feature goes async:
 - Explorer clicks: #860, #905, #906, #907.
 - CodeLens: #910, #911.
 - Executors and conversions: #824 (Omni Search and MCP method-source search), #831, #832.
-- Concurrency outside GCI: #934 (two class syncs on one session at once).
 
 ## Long-term direction
 

@@ -49,9 +49,12 @@ describe('GCI login (integration)', () => {
   // Either failure logs out first, so it doesn't leave the session open until
   // the worker exits. It also reports the session to the session gate, or a
   // refusal when the stone itself refused the login.
-  function armIfLive<T extends { session: unknown; err: unknown }>(result: T): T {
+  function armIfLive<T extends { session: unknown; err: unknown }>(
+    result: T,
+    startedAt: number,
+  ): T {
     if (result.session === null) {
-      if (deniedByStone(result.err)) reportRefusedLogin();
+      if (deniedByStone(result.err)) reportRefusedLogin(startedAt);
       return result;
     }
     let armedNewly: boolean;
@@ -101,12 +104,12 @@ describe('GCI login (integration)', () => {
   }
 
   // A non-blocking session is live only once polling reports success.
-  async function finishNbLogin(session: unknown, signal: AbortSignal) {
+  async function finishNbLogin(session: unknown, signal: AbortSignal, startedAt: number) {
     const finished = await pollNbLoginFinished(session, signal);
     if (finished.result === 1) {
-      armIfLive({ session, err: undefined });
+      armIfLive({ session, err: undefined }, startedAt);
     } else if (deniedByStone(finished.err)) {
-      reportRefusedLogin();
+      reportRefusedLogin(startedAt);
     }
     return { session, ...finished };
   }
@@ -116,12 +119,14 @@ describe('GCI login (integration)', () => {
   // finishNbLogin): that is the guarantee lint gave before the calls moved in
   // here, and lint can't check it now.
   function gciTsLogin({ stone = stoneNrs, gem = gemNrs, password = gsPassword } = {}) {
+    const startedAt = Date.now();
     // eslint-disable-next-line no-restricted-syntax -- this file's subject; the one GciTsLogin call site, armed by armIfLive
     const result = gci.GciTsLogin(stone, null, null, false, gem, gsUser, password, 0, 0);
-    return armIfLive(result);
+    return armIfLive(result, startedAt);
   }
 
   function gciTsLogin_() {
+    const startedAt = Date.now();
     // eslint-disable-next-line no-restricted-syntax -- this file's subject; the one GciTsLogin_ call site, armed by armIfLive
     const result = gci.GciTsLogin_(
       stoneNrs,
@@ -135,10 +140,11 @@ describe('GCI login (integration)', () => {
       0,
       0,
     );
-    return armIfLive(result);
+    return armIfLive(result, startedAt);
   }
 
   async function gciTsNbLogin(signal: AbortSignal, { password = gsPassword } = {}) {
+    const startedAt = Date.now();
     // eslint-disable-next-line no-restricted-syntax -- this file's subject; the one GciTsNbLogin call site, armed by finishNbLogin
     const { session } = gci.GciTsNbLogin(
       stoneNrs,
@@ -151,10 +157,11 @@ describe('GCI login (integration)', () => {
       0,
       0,
     );
-    return await finishNbLogin(session, signal);
+    return await finishNbLogin(session, signal, startedAt);
   }
 
   async function gciTsNbLogin_(signal: AbortSignal) {
+    const startedAt = Date.now();
     // eslint-disable-next-line no-restricted-syntax -- this file's subject; the one GciTsNbLogin_ call site, armed by finishNbLogin
     const { session } = gci.GciTsNbLogin_(
       stoneNrs,
@@ -168,7 +175,7 @@ describe('GCI login (integration)', () => {
       0,
       0,
     );
-    return await finishNbLogin(session, signal);
+    return await finishNbLogin(session, signal, startedAt);
   }
 
   describe('successful login', () => {

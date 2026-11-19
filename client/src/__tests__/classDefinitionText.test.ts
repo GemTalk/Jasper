@@ -82,6 +82,12 @@ describe('classNameFromDefinition', () => {
     );
   });
 
+  it('reads a class name written as a symbol', () => {
+    expect(classNameFromDefinition('Object subclass: #Boo\n  inDictionary: MyDict')).toBe('Boo');
+    expect(classNameFromDefinition("Object subclass: #'Odd Name'\n …")).toBe('Odd Name');
+    expect(classNameFromDefinition("Object subclass: #'It''s'\n …")).toBe("It's");
+  });
+
   it('returns undefined when there is no subclass clause', () => {
     expect(classNameFromDefinition('42 + 1')).toBeUndefined();
   });

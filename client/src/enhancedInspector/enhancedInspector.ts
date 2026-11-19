@@ -121,6 +121,7 @@ export class EnhancedInspector {
   /** Monotonic id handed to each miller column; the root column is 0. */
   private readonly rootColumnId = 0;
   private nextColumnId = 1;
+  private disposed = false;
 
   static create(session: ActiveSession, oop: bigint, label: string): EnhancedInspector {
     const panel = vscode.window.createWebviewPanel(
@@ -316,17 +317,9 @@ export class EnhancedInspector {
         break;
       }
 
-      case 'fetchFullPrintString': {
-        const fullText = debug.fetchFullPrintString(this.session, BigInt(msg.oop));
-        const data = JSON.stringify({ string: fullText, stylerSpecification: null });
-        this.panel.webview.postMessage({
-          command: 'fullPrintString',
-          columnId: msg.columnId,
-          methodSelector: msg.methodSelector,
-          data,
-        });
+      case 'fetchFullPrintString':
+        void this.postFullPrintString(msg.columnId, BigInt(msg.oop), msg.methodSelector);
         break;
-      }
 
       case 'browseMethod': {
         const loc = fetchMethodBrowseLocation(
@@ -444,7 +437,38 @@ export class EnhancedInspector {
     return fetchEnhancedInspectorListData(execute, oop, methodSelector, fromIndex, PAGE_SIZE);
   }
 
+  /**
+   * Fetch an object's printString up to the cap without blocking, then post it
+   * to the column that asked. The panel may have closed while the gem printed.
+   * A failure is posted on its own, so the webview keeps the abbreviated print
+   * it was showing rather than caching the error in its place.
+   */
+  private async postFullPrintString(
+    columnId: number,
+    oop: bigint,
+    methodSelector: string,
+  ): Promise<void> {
+    const full = await debug.fetchFullPrintString(this.session, oop);
+    if (this.disposed) return;
+    if ('error' in full) {
+      this.panel.webview.postMessage({
+        command: 'fullPrintStringFailed',
+        columnId,
+        methodSelector,
+        error: full.error,
+      });
+      return;
+    }
+    const data = JSON.stringify({
+      string: full.text,
+      stylerSpecification: null,
+      cutShortAt: full.cutShortAt,
+    });
+    this.panel.webview.postMessage({ command: 'fullPrintString', columnId, methodSelector, data });
+  }
+
   private dispose(): void {
+    this.disposed = true;
     EnhancedInspector.panels.get(this.sessionId)?.delete(this);
     for (const d of this.disposables) d.dispose();
     this.disposables = [];
@@ -692,7 +716,7 @@ export class EnhancedInspector {
       col.label = msg.label || '';
       col.title = msg.title || '';
       col.activeMethodSelector = null;
-      col.cachedViewData = {}; col.loadedRowCounts = {}; col.colWidths = {};
+      col.cachedViewData = {}; col.showAllOffered = {}; col.loadedRowCounts = {}; col.colWidths = {};
       col.rangesMode = {}; col.rangeTotals = {}; col.rangeDataCache = {}; col.methodSourceCache = {};
       col.metaSubTab = 'instanceMethods'; col.openMethodSel = null;
 
@@ -727,6 +751,8 @@ export class EnhancedInspector {
           metaData: null,
           activeMethodSelector: null,
           cachedViewData: {},
+          // Tabs whose text was cut short and not yet shown in full, by selector.
+          showAllOffered: {},
           loadedRowCounts: {},
           colWidths: {},
           rangesMode: {},
@@ -768,6 +794,7 @@ export class EnhancedInspector {
       if (!spec) return;
       if (col.cachedViewData[methodSelector] !== undefined) {
         renderEnhancedInspectorContent(col, contentPane, spec, col.cachedViewData[methodSelector]);
+        if (col.showAllOffered[methodSelector]) addShowAllBar(col, contentPane, methodSelector, null);
       } else {
         contentPane.innerHTML = '<div class="placeholder">Loading…</div>';
         vscode.postMessage({ command: 'fetchEnhancedInspectorViewData', columnId: col.id, oop: col.oop, methodSelector, viewName: spec.viewName });
@@ -987,6 +1014,32 @@ export class EnhancedInspector {
       resizingCol = null;
     });
 
+    // The link under a Print tab whose text gtPrint abbreviated. A failed fetch
+    // puts it back with the reason, beside the abbreviated text still showing.
+    function addShowAllBar(col, contentPane, methodSelector, error) {
+      const old = contentPane.querySelector('.show-all-bar');
+      if (old) old.remove();
+      const bar = document.createElement('div');
+      bar.className = 'show-all-bar';
+      bar.style.cssText = 'padding:4px 0;border-top:1px solid var(--vscode-panel-border);margin-top:2px';
+      const link = document.createElement('a');
+      link.textContent = 'Show all…';
+      link.style.cssText = 'cursor:pointer;color:var(--vscode-textLink-foreground);font-size:0.85em';
+      link.addEventListener('click', function() {
+        bar.remove();
+        vscode.postMessage({ command: 'fetchFullPrintString', columnId: col.id, oop: col.oop, methodSelector: methodSelector });
+      });
+      bar.appendChild(link);
+      if (error) {
+        const why = document.createElement('span');
+        why.className = 'show-all-error';
+        why.style.cssText = 'margin-left:8px;font-size:0.85em;color:var(--vscode-errorForeground)';
+        why.textContent = "Couldn't show all: " + error;
+        bar.appendChild(why);
+      }
+      contentPane.appendChild(bar);
+    }
+
     // ── Message handler ───────────────────────
 
     window.addEventListener('message', ev => {
@@ -999,25 +1052,13 @@ export class EnhancedInspector {
 
       if (msg.command === 'enhancedInspectorViewData') {
         col.cachedViewData[msg.methodSelector] = msg.data;
+        col.showAllOffered[msg.methodSelector] = msg.truncated === true;
         if (msg.methodSelector === col.activeMethodSelector) {
           const spec = col.specs && col.specs.find(s => s.methodSelector === msg.methodSelector);
           const contentPane = col.el.contentPane;
           if (spec) {
             renderEnhancedInspectorContent(col, contentPane, spec, msg.data);
-            if (msg.truncated) {
-              const bar = document.createElement('div');
-              bar.style.cssText = 'padding:4px 0;border-top:1px solid var(--vscode-panel-border);margin-top:2px';
-              const link = document.createElement('a');
-              link.textContent = 'Show all…';
-              link.style.cssText = 'cursor:pointer;color:var(--vscode-textLink-foreground);font-size:0.85em';
-              const capturedSelector = msg.methodSelector;
-              link.addEventListener('click', function() {
-                bar.remove();
-                vscode.postMessage({ command: 'fetchFullPrintString', columnId: col.id, oop: col.oop, methodSelector: capturedSelector });
-              });
-              bar.appendChild(link);
-              contentPane.appendChild(bar);
-            }
+            if (msg.truncated) addShowAllBar(col, contentPane, msg.methodSelector, null);
           }
         }
 
@@ -1053,8 +1094,14 @@ export class EnhancedInspector {
         col.loadedRowCounts[msg.methodSelector] = (col.loadedRowCounts[msg.methodSelector] || 0) + newRows.length;
         if (newRows.length >= PAGE_SIZE) table.insertAdjacentHTML('beforeend', makeLoadMoreHtml());
 
+      } else if (msg.command === 'fullPrintStringFailed') {
+        if (msg.methodSelector === col.activeMethodSelector) {
+          addShowAllBar(col, col.el.contentPane, msg.methodSelector, msg.error);
+        }
+
       } else if (msg.command === 'fullPrintString') {
         col.cachedViewData[msg.methodSelector] = msg.data;
+        col.showAllOffered[msg.methodSelector] = false;
         if (msg.methodSelector === col.activeMethodSelector) {
           const spec = col.specs && col.specs.find(s => s.methodSelector === msg.methodSelector);
           if (spec) renderEnhancedInspectorContent(col, col.el.contentPane, spec, msg.data);
@@ -1207,10 +1254,17 @@ export class EnhancedInspector {
       el.style.minHeight = '0';
       if (styler && styler.__typeLabel === 'remotePhlowTextParserStylerSpecification') {
         el.innerHTML = styler.parserClassName === 'JSONParser' ? highlightJson(str) : esc(str);
-        return;
+      } else {
+        const runs = (styler && styler.attributeRuns && styler.attributeRuns.items) || [];
+        el.innerHTML = applyRuns(str, runs);
       }
-      const runs = (styler && styler.attributeRuns && styler.attributeRuns.items) || [];
-      el.innerHTML = applyRuns(str, runs);
+      // Only a "Show all" print carries cutShortAt. gtPrint's own text carries
+      // 'truncated' instead, which means "offer Show all", not "hit the cap".
+      if (textData.cutShortAt) {
+        el.insertAdjacentHTML('beforeend',
+          '<div class="cut-short-note" style="padding:4px 0;border-top:1px solid var(--vscode-panel-border);margin-top:2px;font-size:0.85em;font-style:italic">' +
+          'Cut short at about ' + Number(textData.cutShortAt).toLocaleString('en-US') + ' characters.</div>');
+      }
     }
 
     // A3: Cell HTML — preserves styling in gtPhlowRunBasedText cells.

@@ -359,6 +359,12 @@
       return;
     }
     col.el.contentPane.innerHTML = '<div class="placeholder">Loading&#8230;</div>';
+    // A print holds the session until it answers, so a second request would
+    // only be refused as busy; the first one's reply fills the tab.
+    if (tab === 'print') {
+      if (col.printPendingOop === col.oop) return;
+      col.printPendingOop = col.oop;
+    }
     post({
       command: 'fetchTab',
       columnId: col.id,
@@ -377,17 +383,37 @@
       pane.innerHTML = '<div class="placeholder">Nothing to show.</div>';
       return;
     }
-    if (tab === 'print') renderText(pane, data);
+    if (tab === 'print') renderPrint(col, pane, data);
     else if (tab === 'meta') renderMeta(col, pane, data);
     else if (tab === 'bytes') renderBytes(col, pane, data);
     else renderRows(col, pane, data);
   }
 
-  function renderText(pane, text) {
+  /** The Print tab, with a note when the host's fetch stopped at its cap. */
+  function renderPrint(col, pane, text) {
     pane.innerHTML = '';
     var div = document.createElement('div');
     div.className = 'detail-value';
     div.textContent = text;
+    pane.appendChild(div);
+    if (!col.printCutShortAt) return;
+    var note = document.createElement('div');
+    note.className = 'load-note';
+    note.textContent =
+      'Cut short at about ' + col.printCutShortAt.toLocaleString('en-US') + ' characters.';
+    pane.appendChild(note);
+  }
+
+  /**
+   * A tab whose first read failed. Its data stays unset, so clicking the tab
+   * again fetches it afresh.
+   */
+  function renderTabFailed(col, error) {
+    var pane = col.el.contentPane;
+    pane.innerHTML = '';
+    var div = document.createElement('div');
+    div.className = 'placeholder tab-failed';
+    div.textContent = "Couldn't load this tab (click it to try again): " + error;
     pane.appendChild(div);
   }
 
@@ -1510,9 +1536,16 @@
         Columns.focus(col, true);
         return;
       case 'tabData':
-        col = Columns.get(msg.columnId);
+        col = acceptTabReply(msg);
         if (!col) return;
         applyTabData(col, msg);
+        return;
+      case 'tabFailed':
+        col = acceptTabReply(msg);
+        if (!col || col.activeTab !== msg.tab) return;
+        // A later page that failed keeps the rows already read.
+        if (col.tabData[msg.tab] !== undefined) renderTab(col);
+        else renderTabFailed(col, msg.error);
         return;
       case 'evalResult':
         col = Columns.get(msg.columnId);
@@ -1545,6 +1578,18 @@
     }
   }
 
+  /**
+   * The column a tab reply is for, or null when the column has since moved to
+   * another object: a print runs without blocking, so Back or Dive can land
+   * while it does, and its text must not be kept as the new object's.
+   */
+  function acceptTabReply(msg) {
+    var col = Columns.get(msg.columnId);
+    if (!col) return null;
+    if (msg.tab === 'print' && col.printPendingOop === msg.oop) col.printPendingOop = null;
+    return msg.oop === col.oop ? col : null;
+  }
+
   /** Merge a page into the tab's accumulated data, then draw it. */
   function applyTabData(col, msg) {
     // Whether THIS read stopped at the ceiling, and what one click is worth,
@@ -1558,6 +1603,7 @@
     if (msg.loadAllRows) col.loadAllRows[msg.tab] = msg.loadAllRows;
     if (msg.tab === 'print') {
       col.tabData.print = msg.text;
+      col.printCutShortAt = msg.cutShortAt || 0;
     } else if (msg.tab === 'meta') {
       col.tabData.meta = msg.meta;
     } else if (msg.tab === 'bytes') {
@@ -1615,6 +1661,10 @@
           evalVarsRequested: false,
           stoppedAtLimit: Object.create(null),
           loadAllRows: Object.create(null),
+          // The cap the Print tab's text stopped at, or 0 when it is whole.
+          printCutShortAt: 0,
+          // The object a print was asked for and has not answered yet.
+          printPendingOop: null,
           restoreScrollTop: 0,
           restoreSelectedRow: null,
           editing: null,

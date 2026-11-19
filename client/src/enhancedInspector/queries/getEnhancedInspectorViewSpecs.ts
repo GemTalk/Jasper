@@ -83,6 +83,11 @@ STONJSON toString: (viewed getInspectorSpecificationData at: 'views')`;
   }
 }
 
+/**
+ * The Print tab's text, and whether the whole print runs past it (which offers
+ * "Show all…"). The check prints into a stream one character longer than the
+ * text, so it never builds more of a large object than that.
+ */
 export function fetchEnhancedInspectorPrintTabData(
   execute: QueryExecutor,
   oop: bigint,
@@ -94,9 +99,9 @@ obj := Object _objectForOop: ${oop}.
 viewed := GtRemotePhlowViewedObject new initializeWith: obj.
 ds := (viewed viewSpecificationsBySelector at: #'${escapeString(methodSelector)}') phlowDataSource.
 textData := ds getText.
-s := WriteStream on: String new.
+s := PrintStream printingOn: String new maxSize: (textData at: 'string') size + 1.
 obj printOn: s.
-textData at: 'truncated' put: (s position > (textData at: 'string') size).
+textData at: 'truncated' put: s isFull.
 STONJSON toString: textData`;
   const result = enhancedInspectorExecute(execute, code);
   let truncated = false;

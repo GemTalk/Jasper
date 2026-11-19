@@ -54,11 +54,13 @@ export function withCategoryLine(definition: string, category: string): string {
 }
 
 /** The class name a `<Super> subclass: 'Name' …` definition creates, or undefined
- *  if the source has no recognizable subclass clause. Used to pre-check whether a
- *  new-class save would collide with an existing class. */
+ *  if the source has no recognizable subclass clause. A symbol name (`#Name`,
+ *  `#'Odd Name'`) must be read too: a new-class save that can't name its class skips
+ *  the check that stops it overwriting an existing one. */
 export function classNameFromDefinition(source: string): string | undefined {
-  const m = /\bsubclass:\s*'((?:[^']|'')*)'/.exec(source);
-  return m ? m[1].replace(/''/g, "'") : undefined;
+  const m = /\bsubclass:\s*(?:#?'((?:[^']|'')*)'|#([A-Za-z_]\w*))/.exec(source);
+  if (!m) return undefined;
+  return m[2] ?? m[1].replace(/''/g, "'");
 }
 
 /** The symbol-dictionary name a `… inDictionary: <Name> …` definition targets, or

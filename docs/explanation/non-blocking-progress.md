@@ -22,10 +22,11 @@ work on `main`.
 
 ## Made non-blocking since the hand-off
 
-| Feature                                                           | Category | PR   |
-| ----------------------------------------------------------------- | -------- | ---- |
-| VS Code's Find All References on a selector in a Smalltalk editor | E        | #940 |
-| The **Class Hierarchy** command, once a class is picked           | E        | #940 |
+| Feature                                                                  | Category | PR   |
+| ------------------------------------------------------------------------ | -------- | ---- |
+| VS Code's Find All References on a selector in a Smalltalk editor        | E        | #940 |
+| The **Class Hierarchy** command, once a class is picked                  | E        | #940 |
+| An Inspector's **Print** tab, and the Enhanced Inspector's **Show all…** | D        | #957 |
 
 ## Still blocking, though it looks done
 
@@ -48,3 +49,11 @@ The hand-off's "Remaining work" list, by its own numbers. Items not listed have 
 | Item | Work                                                                   | PR   |
 | ---- | ---------------------------------------------------------------------- | ---- |
 | 2    | More E and D features (VS Code's Find All References, Class Hierarchy) | #940 |
+
+## Open issues fixed since the hand-off
+
+From the hand-off's "Open issues from this work" list.
+
+| Issue | Fix                                                                                          | PR   |
+| ----- | -------------------------------------------------------------------------------------------- | ---- |
+| #933  | Closing a debugger while another run holds the session clears its process once that run ends | #956 |

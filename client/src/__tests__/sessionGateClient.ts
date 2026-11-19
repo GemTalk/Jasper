@@ -66,13 +66,15 @@ export function reportSessionClosed(serial: string | bigint, socket = held.at(-1
 }
 
 /**
- * Tells the gate a login was refused. A login the stone refuses, such as one
- * with a wrong password, still uses up a login serial, which the gate would
- * otherwise read as a login it never saw. Report only those: see
+ * Tells the gate a login begun at `startedAt` (`Date.now()`) was refused. A
+ * login the stone refuses, such as one with a wrong password, still uses up a
+ * login serial, which the gate would otherwise read as a login it never saw.
+ * The serial is used when the login begins, and the refusal can take seconds
+ * to come back, so the gate needs both ends. Report only those: see
  * {@link deniedByStone}.
  */
-export function reportRefusedLogin(socket = held.at(-1)): void {
-  socket?.write(JSON.stringify({ op: 'refused' }) + '\n');
+export function reportRefusedLogin(startedAt: number, socket = held.at(-1)): void {
+  socket?.write(JSON.stringify({ op: 'refused', tookMs: Date.now() - startedAt }) + '\n');
 }
 
 const { GS_ERR_LOGIN_DENIAL } = LOGIN_ERRORS;
@@ -89,10 +91,11 @@ export function deniedByStone(error: unknown): boolean {
 
 /** Runs `login`, telling the gate when the stone refuses it, and rethrows. */
 export function reportingRefusal<T>(login: () => T, socket = held.at(-1)): T {
+  const startedAt = Date.now();
   try {
     return login();
   } catch (error) {
-    if (deniedByStone(error)) reportRefusedLogin(socket);
+    if (deniedByStone(error)) reportRefusedLogin(startedAt, socket);
     throw error;
   }
 }
@@ -188,10 +191,11 @@ export function reportedTransientLogin(
   from: ActiveSession,
   login = from.login,
 ): ReturnType<ActiveSession['transientLogin']> {
+  const startedAt = Date.now();
   // eslint-disable-next-line no-restricted-syntax -- the one place a test's transientLogin is allowed: it reports the session
   const result = from.transientLogin(login);
   if (result.session) reportLogin(result.session);
-  else if (deniedByStone(result.err)) reportRefusedLogin();
+  else if (deniedByStone(result.err)) reportRefusedLogin(startedAt);
   return result;
 }
 
@@ -206,10 +210,11 @@ export function reportingLoginsOf(manager: SessionManager): SessionManager {
   const { login, loginAsync, loginTransient } = manager;
   manager.login = (...args) => reportLogin(reportingRefusal(() => login.apply(manager, args)));
   manager.loginAsync = async (...args) => {
+    const startedAt = Date.now();
     try {
       return reportLogin(await loginAsync.apply(manager, args));
     } catch (error) {
-      if (deniedByStone(error)) reportRefusedLogin();
+      if (deniedByStone(error)) reportRefusedLogin(startedAt);
       throw error;
     }
   };

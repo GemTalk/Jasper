@@ -23,7 +23,6 @@ import { GciLibrary } from '../gciLibrary';
 import { createNativeSocketLibrary } from '../sockets/factory';
 import {
   LOGIN_SERIAL_CODE,
-  REFUSAL_REPORT_SLACK_MS,
   SessionLedger,
   testFileName,
   type UnseenLogin,
@@ -143,7 +142,7 @@ export async function startGate(
         } else if (msg.op === 'closed') {
           ledger.closed(socket, String(msg.serial));
         } else if (msg.op === 'refused') {
-          ledger.refused(socket);
+          ledger.refused(socket, Number(msg.tookMs) || 0);
         } else if (msg.op === 'check') {
           // A login made just before the check only shows in the next sample.
           afterNextSample.push(() =>
@@ -226,7 +225,7 @@ export async function startGate(
     const missed = ledger.loginsNeverSeen(watcher.serial, endSerial);
     if (missed.length > 0) {
       throw new Error(
-        `session gate: ${missed.length} login(s) came and went between two looks at the stone, and no file reported them. A test, or app code it called, logged in without reporting it (see reportLogin in sessionGateClient.ts), or the stone refused a login whose refusal was not reported within ${REFUSAL_REPORT_SLACK_MS / 1000} s of it. A login from outside the run during it shows up here too.\n${missed.map((m) => describeUnseen(ledger, m)).join('\n')}`,
+        `session gate: ${missed.length} login(s) came and went between two looks at the stone, and no file reported them. A test, or app code it called, logged in without reporting it (see reportLogin in sessionGateClient.ts), or the stone refused a login that no file reported as refused. A login from outside the run during it shows up here too.\n${missed.map((m) => describeUnseen(ledger, m)).join('\n')}`,
       );
     }
     // Files catch their own unreported logins in afterAll; this catches the rest,
@@ -247,7 +246,7 @@ function describeUnseen(ledger: SessionLedger<Socket>, m: UnseenLogin): string {
     ? m.refusalsNearby
         .map(
           (r) =>
-            `${ledger.secondsIn(r.at)} by worker ${r.pid ?? '?'}${r.file ? ` (${testFileName(r.file)})` : ''}, ${r.matchedTo ? `matched to ${r.matchedTo}` : 'unmatched'}`,
+            `${ledger.secondsIn(r.startedAt)} to ${ledger.secondsIn(r.at)} by worker ${r.pid ?? '?'}${r.file ? ` (${testFileName(r.file)})` : ''}, ${r.matchedTo ? `matched to ${r.matchedTo}` : 'unmatched'}`,
         )
         .join('; ')
     : 'none';

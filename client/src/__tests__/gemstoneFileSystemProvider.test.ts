@@ -76,6 +76,7 @@ import { logInfo } from '../gciLog';
 import {
   GemStoneFileSystemProvider,
   buildMethodUri,
+  buildNewClassUri,
   buildNewMethodUri,
   buildClassDefinitionUri,
   buildClassCommentUri,
@@ -128,6 +129,9 @@ beforeEach(() => {
   vi.mocked(queries.recategorizeClass).mockReset();
   vi.mocked(queries.compileMethod).mockReset();
   vi.mocked(queries.compileMethod).mockReturnValue('Compiled: Array >> at:');
+  // A new-class test whose save never reaches the overwrite check leaves its "already exists"
+  // answer queued for the next test's check.
+  vi.mocked(queries.classExistsInDictionary).mockReset().mockReturnValue(false);
 });
 
 const COMMIT_OK = { success: true, err: { number: 0, message: '' } };
@@ -622,6 +626,12 @@ describe('GemStoneFileSystemProvider', () => {
       const uri = Uri.parse('gemstone://1/UserGlobals/new-class?category=50%25%20off');
       const content = new TextDecoder().decode(await provider.readFile(uri));
       expect(content).toContain("category: '50% off'\n  options: #()");
+    });
+
+    it('new-class template pre-fills a selected category containing "&"', async () => {
+      const uri = buildNewClassUri(1, 'UserGlobals', 'Logical & Bits');
+      const content = new TextDecoder().decode(await provider.readFile(uri));
+      expect(content).toContain("category: 'Logical & Bits'\n  options: #()");
     });
 
     it('returns new-method template', async () => {
@@ -1131,6 +1141,24 @@ describe('GemStoneFileSystemProvider', () => {
           expect.objectContaining({ message: expect.stringContaining('already exists') }),
         ]),
       );
+    });
+
+    it('refuses the overwrite when the new class is named with a symbol', async () => {
+      const uri = Uri.parse('gemstone://1/UserGlobals/new-class');
+      vi.mocked(queries.classExistsInDictionary).mockReturnValueOnce(true);
+
+      provider.writeFile(uri, encode('Object subclass: #Existing\n  inDictionary: UserGlobals'), {
+        create: true,
+        overwrite: true,
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(queries.classExistsInDictionary).toHaveBeenCalledWith(
+        expect.anything(),
+        'Existing',
+        'UserGlobals',
+      );
+      expect(queries.compileClassDefinition).not.toHaveBeenCalled();
     });
 
     it('shows a success message with the class name when an existing class definition is saved', () => {
@@ -2570,17 +2598,29 @@ describe('parseUri', () => {
 
   // The query arrives already decoded, like the path. Decoding it again threw
   // ("URI malformed") on a category holding a lone '%', and turned a literal
-  // '%41' into 'A'. A class category is free text, so both are legal names.
-  it.each(['50% off', '%41', '%', 'Kernel-Numbers', 'Logical/Bits', 'a=b', 'a+b'])(
-    'reads the new-class category %j as written',
-    (category) => {
-      const uri = Uri.parse(
-        `gemstone://1/UserGlobals/new-class?category=${encodeURIComponent(category)}`,
-      );
+  // '%41' into 'A'. A literal '&' read as a parameter separator, cutting the
+  // category short. The builder's own '%25' / '%26' escapes must not swallow the
+  // same text typed literally, nor a fullwidth '＆'. A class category is free text,
+  // so all of these are legal names.
+  it.each([
+    '50% off',
+    '%41',
+    '%',
+    'Kernel-Numbers',
+    'Logical/Bits',
+    'a=b',
+    'a+b',
+    'a#b',
+    'Logical & Bits',
+    'a&dict=9',
+    '%26',
+    '%25',
+    'ロジック＆ビット',
+  ])('reads back the new-class category %j as written', (category) => {
+    const uri = buildNewClassUri(1, 'UserGlobals', category);
 
-      expect(parseUri(uri)).toMatchObject({ kind: 'new-class', category });
-    },
-  );
+    expect(parseUri(uri)).toMatchObject({ kind: 'new-class', dictName: 'UserGlobals', category });
+  });
 
   it('treats a decorated override-diff selector as a read-only diff view', () => {
     const parsed = parseUri(
@@ -2958,6 +2998,24 @@ describe('recording a class definition save for revert (#434)', () => {
     expect(entry).toMatchObject({ kind: 'classEdit', label: 'Add class Fresh' });
     // Nothing was bound, so nothing was stashed — a key resolving to nil would be a lie.
     expect(entry?.kind === 'classEdit' && entry.stashKeys).toEqual([null]);
+  });
+
+  it('records an Add for a new class named with a symbol', () => {
+    vi.mocked(captureClassSlots)
+      .mockReturnValueOnce([unboundState])
+      .mockReturnValueOnce([boundState('2')]);
+    vi.mocked(queries.classExistsInDictionary).mockReturnValue(false);
+    vi.mocked(queries.compileClassDefinition).mockReturnValue('Fresh');
+
+    write(
+      Uri.parse('gemstone://1/UserGlobals/new-class'),
+      "Object subclass: #Fresh\n  inDictionary: UserGlobals\n  category: 'demo'",
+    );
+
+    expect(peekUndoEntry(session.id)).toMatchObject({
+      kind: 'classEdit',
+      label: 'Add class Fresh',
+    });
   });
 
   it('records an Add when a definition save renames the class into a new one', () => {

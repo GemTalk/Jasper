@@ -10,7 +10,13 @@ import {
 import type { GciError } from '../gciLibrary';
 import { logInfo, logError } from '../gciLog';
 import { explainGciError } from '../gciLibraryError';
-import { clearInBackground, discardStoppedProcess, runNbCall, NbRunOptions } from '../nbRunner';
+import {
+  ClearOptions,
+  clearInBackground,
+  discardStoppedProcess,
+  runNbCall,
+  NbRunOptions,
+} from '../nbRunner';
 import {
   DUMP_PAYLOAD_TEMPS,
   dumpPayloadPrelude,
@@ -18,6 +24,7 @@ import {
   unescapeDumpField,
 } from '../queries/dumpPayload';
 import { homeDictionaryNameExpr } from '../queries/util';
+import { executeFetchStringAsync } from '../browserQueries';
 
 const MAX_RESULT = 256 * 1024;
 
@@ -695,11 +702,6 @@ export function getStepPoint(
 // ── Variables ───────────────────────────────────────────
 
 /**
- * Returns the printString of an object together with a truncation flag.
- * truncated is true when the GCI fetch hit maxBytes exactly, meaning the
- * full printString is longer than what was returned.
- */
-/**
  * Returns the printString of an object limited to maxBytes display characters,
  * together with a truncation flag.
  *
@@ -732,21 +734,74 @@ export function fetchPrintString(
   }
 }
 
+/** The most characters of an object's printString that {@link fetchFullPrintString} fetches. */
+export const FULL_PRINT_STRING_MAX_CHARS = 1_000_000;
+
+/** An object's printString, up to a cap. */
+export interface FullPrintString {
+  text: string;
+  /** The cap that cut the text short, or 0 when it is whole. */
+  cutShortAt: number;
+}
+
+/** Why {@link fetchFullPrintString} has no print to show. */
+export interface FullPrintStringFailure {
+  error: string;
+}
+
 /**
- * Returns the full output of printOn: for an object, bypassing GemStone's
- * internal printString size cap.  printString uses a LimitedWriteStream
- * internally; calling printOn: directly with a plain WriteStream has no limit.
+ * Smalltalk that prints the object at `oop` into a `PrintStream` limited to
+ * `maxChars`, answering `T` or `F` (cut short or not) followed by the text.
+ *
+ * `printString` caps far lower: 700 characters for a collection on 3.7.4.1 and
+ * later, 100,000 for anything else. On those versions `printOn:` into a plain
+ * `WriteStream` has no cap at all, so an object of any size would be built in
+ * the gem and fetched. 3.6.2's collections still stop at about 700 characters
+ * here: that limit is inside their `printOn:`, so no stream can get past it.
+ *
+ * The stream is one character larger than the cap because a `PrintStream`
+ * reports `isFull` once it holds `maxSize` characters, on 3.6.2 and 3.7.x alike.
+ * A print of exactly `maxChars` therefore still reads as whole. A full stream's
+ * text ends in GemStone's own ellipsis (`...` on 3.7.x, `. . .` on 3.6.2), and a
+ * collection can overshoot by the few characters of the element it was writing.
+ * Once full, the stream also stops the print itself: on 3.7.5 a 32 MB collection
+ * print took 2.3 s uncapped and 92 ms at a 1,000,000 cap.
  */
-export function fetchFullPrintString(session: ActiveSession, oop: bigint): string {
+export function fullPrintStringCode(oop: bigint, maxChars: number): string {
+  return `| ws |
+ws := PrintStream printingOn: String new maxSize: ${maxChars + 1}.
+(Object _objectForOop: ${oop}) printOn: ws.
+(ws isFull ifTrue: ['T'] ifFalse: ['F']) , ws _collection`;
+}
+
+/** Split {@link fullPrintStringCode}'s answer, for the same `maxChars`, into the text and where it was cut. */
+export function parseFullPrintString(raw: string, maxChars: number): FullPrintString {
+  return { text: raw.slice(1), cutShortAt: raw.startsWith('T') ? maxChars : 0 };
+}
+
+/**
+ * An object's printString up to `maxChars`, for an inspector's full-text view,
+ * fetched without blocking the extension host while the gem builds it.
+ * Reading the result back still blocks, which is why it is capped.
+ *
+ * Never rejects: a failure, a busy session or a Cancel answers the reason as a
+ * {@link FullPrintStringFailure}, kept apart from a print so an inspector can
+ * keep what it was showing and let the user try again.
+ */
+export async function fetchFullPrintString(
+  session: ActiveSession,
+  oop: bigint,
+  maxChars: number = FULL_PRINT_STRING_MAX_CHARS,
+): Promise<FullPrintString | FullPrintStringFailure> {
   try {
-    const code = `| s |
-s := WriteStream on: String new.
-(Object _objectForOop: ${oop}) printOn: s.
-s contents`;
-    return executeAndFetchString(session, code);
+    const raw = await executeFetchStringAsync(
+      session,
+      fullPrintStringCode(oop, maxChars),
+      'GemStone: Printing the object…',
+    );
+    return parseFullPrintString(raw, maxChars);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return `<error: ${msg}>`;
+    return { error: e instanceof Error ? e.message : String(e) };
   }
 }
 
@@ -1273,15 +1328,16 @@ export function continueExecution(session: ActiveSession, gsProcess: bigint): St
 
 /**
  * Clears the stack of a suspended process (aborts it), in the background: see
- * {@link clearInBackground}, which `then` is handed to.
+ * {@link clearInBackground}, which `then` and `opts` are handed to.
  */
 export function clearStack(
   session: ActiveSession,
   gsProcess: bigint,
   then?: () => void,
+  opts?: ClearOptions,
 ): Promise<void> {
   logInfo(`[Session ${session.id}] Debug: clearStack`);
-  return clearInBackground(session, gsProcess, then);
+  return clearInBackground(session, gsProcess, then, [], opts);
 }
 
 /**
