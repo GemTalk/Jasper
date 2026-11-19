@@ -7,13 +7,25 @@ import { reportedSerialOf, reportSessionClosed } from './sessionGateClient';
 // has gone: a test that goes by number can check, or end, another test's session.
 
 /** Smalltalk answering whether the login with serial number `serial` is still on the stone ('true' or 'false'); needs SessionAccess. */
-export function stillOnStoneCode(serial: string): string {
+function stillOnStoneCode(serial: string): string {
   return `(((System descriptionOfSessionSerialNum: ${serial}) at: 10) > 0) printString`;
 }
 
 /** Whether the login with serial number `serial` is still on the stone, asked from `admin`. */
-export function stillOnStone(admin: ActiveSession, serial: string): boolean {
+function stillOnStone(admin: ActiveSession, serial: string): boolean {
   return admin.executeAndFetchString(stillOnStoneCode(serial)) === 'true';
+}
+
+/** The stone's own description of the login with serial number `serial`, for a failure or warning about it. */
+function describeLogin(admin: ActiveSession, serial: string): string {
+  try {
+    return admin.executeAndFetchString(
+      `(System descriptionOfSessionSerialNum: ${serial}) printString`,
+    );
+  } catch (error) {
+    // The caller's own message is the signal; a failed read of the description must not replace it.
+    return `unavailable (${error instanceof Error ? error.message : String(error)})`;
+  }
 }
 
 // A gem that takes longer than this to leave is reported even when it makes the deadline, so a
@@ -34,17 +46,8 @@ export async function waitUntilOffTheStone(
   const deadline = startedAt + ms;
   while (stillOnStone(admin, serial)) {
     if (Date.now() >= deadline) {
-      let description: string;
-      try {
-        description = admin.executeAndFetchString(
-          `(System descriptionOfSessionSerialNum: ${serial}) printString`,
-        );
-      } catch (error) {
-        // The timeout is the signal; a failed read of the description must not replace it.
-        description = `unavailable (${error instanceof Error ? error.message : String(error)})`;
-      }
       throw new Error(
-        `Login ${serial} had not left the stone after ${ms} ms; it now reads: ${description}`,
+        `Login ${serial} had not left the stone after ${ms} ms; it now reads: ${describeLogin(admin, serial)}`,
       );
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
@@ -53,6 +56,16 @@ export async function waitUntilOffTheStone(
   if (tookMs > SLOW_LEAVE_MS) {
     console.warn(`Login ${serial} took ${tookMs} ms to leave the stone.`);
   }
+}
+
+/**
+ * Waits until `ms` have passed since `loggedInAt`, or not at all if they already have. A gem
+ * stopped or logged out within moments of logging in sometimes misses it and stays on the stone
+ * (#852, #963), so tests that end a gem right after its login wait for this first.
+ */
+export async function waitUntilSinceLogin(loggedInAt: number, ms: number): Promise<void> {
+  const left = loggedInAt + ms - Date.now();
+  if (left > 0) await new Promise((resolve) => setTimeout(resolve, left));
 }
 
 /** End `own`'s gem when the test finishes, if it is still on the stone, from `admin`. `own` must have been reported to the session gate. */
@@ -66,8 +79,15 @@ export function endGemAfterTest(admin: () => ActiveSession, own: ActiveSession):
     reportSessionClosed(serial);
     // Waits for the gem to leave, so the next test starts without it holding a slot.
     const deadline = Date.now() + 10_000;
-    while (stillOnStone(admin(), serial) && Date.now() < deadline) {
+    let onStone = stillOnStone(admin(), serial);
+    while (onStone && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 25));
+      onStone = stillOnStone(admin(), serial);
+    }
+    if (onStone) {
+      console.warn(
+        `Login ${serial} was still on the stone 10000 ms after its test ended it, so it may still hold a session; it reads: ${describeLogin(admin(), serial)}`,
+      );
     }
     // vitest's default hookTimeout (10 s) starts earlier and would end this hook before the deadline above.
   }, 15_000);

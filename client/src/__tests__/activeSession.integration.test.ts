@@ -7,7 +7,7 @@ import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL, GS_ERR_HALT } from '../gciConstan
 import { pollNbResultReady, runNbCall } from '../nbRunner';
 import { testActiveSession } from './testActiveSession';
 import { useIntegrationTest } from './useIntegrationTest';
-import { endGemAfterTest, waitUntilOffTheStone } from './leftoverGem';
+import { endGemAfterTest, waitUntilOffTheStone, waitUntilSinceLogin } from './leftoverGem';
 import { reportedSerialOf, reportedTransientLogin } from './sessionGateClient';
 
 /**
@@ -66,6 +66,7 @@ describe('a logged-out session (integration)', () => {
 
   it('refuses calls once a gem the stone already stopped is logged out', async () => {
     const stopped = transientSession();
+    endGemAfterTest(() => session, stopped);
     const loggedInAt = Date.now();
     const id = stopped.executeAndFetchString('System session printString');
     const serial = reportedSerialOf(stopped);
@@ -73,7 +74,7 @@ describe('a logged-out session (integration)', () => {
     // failing this test (#852). It looks like a GemStone 3.6.x bug, never seen on 3.7.x, but the wait
     // applies to every version. Stops sent 250 ms or more after login never got stuck in CI, so stop no sooner
     // than 1 s after login.
-    await new Promise((resolve) => setTimeout(resolve, 1_000 - (Date.now() - loggedInAt)));
+    await waitUntilSinceLogin(loggedInAt, 1_000);
     session.executeAndFetchString(`System stopSession: ${id}. 'ok'`);
     // The stone deregisters the stopped gem asynchronously: about half a second on
     // CI, but a loaded runner has taken past 4s. 15s stays inside the test's own 20s:
@@ -160,6 +161,7 @@ describe('logging out never waits for the gem (integration)', () => {
 
   it('returns at once while a run that ignores stops is going, and the gem leaves', async () => {
     const { transient, serial } = transientWithSerial();
+    const loggedInAt = Date.now();
     const runningCall = runNbCall(
       transient,
       () =>
@@ -175,6 +177,10 @@ describe('logging out never waits for the gem (integration)', () => {
       { suppressNotification: true },
     );
     runningCall.catch(() => {});
+    // A busy gem logged out just after it logs in sometimes never reads the logout and keeps
+    // running, failing this test (#963). Logouts sent 1 s after login never got stuck, so log
+    // out no sooner than that. The 1 s limit below is timed from the logout, so it still holds.
+    await waitUntilSinceLogin(loggedInAt, 1_000);
 
     const startedAt = Date.now();
     expect(transient.logout()).toBe(true);
