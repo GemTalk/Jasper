@@ -7,8 +7,7 @@ import { gemNrsFor, stoneNrsFor } from '../../loginTypes';
 import { explainLoginFailure, LOGIN_ERRORS } from '../../loginFailureMessage';
 import { requireGciCapability } from './requireGciCapability';
 import {
-  deniedByStone,
-  reportRefusedLogin,
+  reportFailedLogin,
   reportSession,
   reportSessionClosed,
 } from '../../__tests__/sessionGateClient';
@@ -47,14 +46,14 @@ describe('GCI login (integration)', () => {
   // live, unarmed one. As strict as the harness's own `armCommitGuard`: a
   // guard that was already set is not this file's doing, so it fails too.
   // Either failure logs out first, so it doesn't leave the session open until
-  // the worker exits. It also reports the session to the session gate, or a
-  // refusal when the stone itself refused the login.
+  // the worker exits. It also reports the session to the session gate, or the
+  // failure when the login failed.
   function armIfLive<T extends { session: unknown; err: unknown }>(
     result: T,
     startedAt: number,
   ): T {
     if (result.session === null) {
-      if (deniedByStone(result.err)) reportRefusedLogin(startedAt);
+      reportFailedLogin(startedAt, result.err);
       return result;
     }
     let armedNewly: boolean;
@@ -108,8 +107,8 @@ describe('GCI login (integration)', () => {
     const finished = await pollNbLoginFinished(session, signal);
     if (finished.result === 1) {
       armIfLive({ session, err: undefined }, startedAt);
-    } else if (deniedByStone(finished.err)) {
-      reportRefusedLogin(startedAt);
+    } else {
+      reportFailedLogin(startedAt, finished.err);
     }
     return { session, ...finished };
   }

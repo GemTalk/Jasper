@@ -4,10 +4,9 @@
 
 /**
  * How far outside a refused login's own span, from the call to the refusal, the
- * watcher can date the serial it used: a look and a report reach the gate in
- * either order.
+ * watcher can date the serial it used.
  */
-export const REFUSAL_REPORT_SLACK_MS = 2_000;
+export const REFUSAL_SPAN_SLACK_MS = 2_000;
 
 /** Smalltalk answering the login serial of the session that runs it. */
 export const LOGIN_SERIAL_CODE = '(System descriptionOfSession: System session) at: 9';
@@ -17,17 +16,30 @@ export function testFileName(path: string): string {
   return path.split('/client/')[1] ?? path;
 }
 
-/**
- * A login the stone refused, as reported by the file whose worker made it. Its
- * serial is used up somewhere between `startedAt` and `at`, and a refusal can
- * take seconds to come back.
- */
-export type Refusal = {
+/** How many login serials either side of a blamed one {@link SessionLedger.loginsAround} describes. */
+export const LOGINS_AROUND_SPAN = 3;
+
+/** A failed login as the test reported it, by the test worker's own clock. */
+export type FailedLogin = {
   startedAt: number;
+  failedAt: number;
+  number: number | undefined;
+  message: string;
+};
+
+/**
+ * A failed login, as reported by the file whose worker made it. One the stone
+ * refused used up a serial somewhere between the test's `startedAt` and
+ * `failedAt`, and a refusal can take seconds to come back. `at` is when the
+ * report reached the gate, which is no guide to when the serial was used: on
+ * Windows the report can wait over a second in a worker busy in a GCI call.
+ */
+export type ReportedFailure = {
+  failure: FailedLogin;
   at: number;
   pid: number | undefined;
   file: string | undefined;
-  /** What the refusal was matched to, once it was. */
+  /** What a refusal was matched to, once it was. */
   matchedTo?: string;
 };
 
@@ -41,7 +53,7 @@ export type UnseenLogin = {
   after: KnownSerial;
   before: KnownSerial;
   /** Refusals reported within {@link UNSEEN_LOGIN_CONTEXT_MS} of the gap, matched or not. */
-  refusalsNearby: Refusal[];
+  refusalsNearby: ReportedFailure[];
 };
 
 /** How far either side of an unseen login its report lists refusals. */
@@ -50,6 +62,11 @@ export const UNSEEN_LOGIN_CONTEXT_MS = 10_000;
 /** How far apart two spans of time are: 0 when they overlap. */
 function apart([aFrom, aTo]: [number, number], [bFrom, bTo]: [number, number]): number {
   return Math.max(0, bFrom - aTo, aFrom - bTo);
+}
+
+/** When a failed login could have used its serial, by the test's clock: the workers and the gate share one machine's. */
+function spanOf(r: ReportedFailure): [number, number] {
+  return [r.failure.startedAt, r.failure.failedAt];
 }
 
 export type BookingRequest = { file: string; pid: number; n: number };
@@ -78,11 +95,14 @@ export class SessionLedger<K> {
   // may be a reused one matching a gem a killed run left behind.
   private pidsAtFirstLook: Set<number> | undefined;
   private readonly sightings = new Map<string, Sighting>();
-  // Login serial -> when a file reported it.
-  private readonly reported = new Map<string, number>();
+  // Login serial -> when a file reported it, and which file.
+  private readonly reported = new Map<string, { at: number; file: string | undefined }>();
   // Logins files reported the stone refused, each of which used up a serial,
   // and may have been seen on the stone, with no user yet, before it was refused.
-  private readonly refusals: Refusal[] = [];
+  private readonly refusals: ReportedFailure[] = [];
+  // Logins that failed some other way. They use up no serial, so nothing is
+  // matched to them; they are kept for the report on a blamed file.
+  private readonly otherFailures: ReportedFailure[] = [];
   private readonly excused = new Set<string>();
   private readonly blamed = new Set<string>();
   private readonly workerPids = new Set<number>();
@@ -159,13 +179,18 @@ export class SessionLedger<K> {
     this.withdraw(key);
   }
 
-  /** `key`'s file logged in the session with login serial `serial`. */
-  opened(key: K, serial: string): void {
+  /**
+   * `key`'s file logged in the session with login serial `serial`, reported at
+   * `reportedAt` by the test's clock: the report itself can reach the gate late
+   * (see {@link ReportedFailure}).
+   */
+  opened(key: K, serial: string, reportedAt?: number): void {
     // As in `sample`: serial 0 would read as the start of the run's serials,
     // and is what the stone describes a session that has already gone with.
     if (!(Number(serial) > 0)) return;
-    this.holders.get(key)?.serials.add(serial);
-    this.reported.set(serial, this.clock());
+    const h = this.holders.get(key);
+    h?.serials.add(serial);
+    this.reported.set(serial, { at: this.testTime(reportedAt), file: h?.file });
   }
 
   /** `key`'s file logged out the session with login serial `serial`, or ended its gem. */
@@ -174,13 +199,24 @@ export class SessionLedger<K> {
   }
 
   /**
-   * `key`'s file had a login refused, `tookMs` after it called the stone, using
-   * up a login serial with no session to show for it.
+   * `key`'s file had a login fail. One the stone `denied` used up a login serial
+   * with no session to show for it; any other failure is only kept for
+   * {@link loginsAround}.
    */
-  refused(key: K, tookMs: number): void {
+  loginFailed(key: K, failure: FailedLogin, denied: boolean): void {
     const h = this.holders.get(key);
     const at = this.clock();
-    this.refusals.push({ startedAt: at - tookMs, at, pid: h?.pid, file: h?.file });
+    const times = {
+      startedAt: this.testTime(failure.startedAt),
+      failedAt: this.testTime(failure.failedAt),
+    };
+    const reported = { failure: { ...failure, ...times }, at, pid: h?.pid, file: h?.file };
+    (denied ? this.refusals : this.otherFailures).push(reported);
+  }
+
+  /** A time the test sent, or, if it sent none, when its report reached the gate. */
+  private testTime(at: number | undefined): number {
+    return Number.isFinite(at) ? at! : this.clock();
   }
 
   /** Matches an unmatched refusal by worker `pid` near `at` to `what`, if there is one. */
@@ -189,7 +225,7 @@ export class SessionLedger<K> {
       (x) =>
         x.matchedTo === undefined &&
         x.pid === pid &&
-        apart([x.startedAt, x.at], [at, at]) <= REFUSAL_REPORT_SLACK_MS,
+        apart(spanOf(x), [at, at]) <= REFUSAL_SPAN_SLACK_MS,
     );
     if (r) r.matchedTo = what;
     return r !== undefined;
@@ -298,6 +334,64 @@ export class SessionLedger<K> {
   }
 
   /**
+   * What the gate knew of `key`'s logins, for the report on a file blamed for
+   * `blamed`: each login the file reported failed, then each login serial within
+   * {@link LOGINS_AROUND_SPAN} of a blamed one, whoever made it. Times are
+   * seconds into the run.
+   */
+  loginsAround(key: K, blamed: string[]): string[] {
+    const h = this.holders.get(key);
+    if (!h) return [];
+    const its = (r: ReportedFailure) => r.pid === h.pid && r.file === h.file && r.at >= h.grantedAt;
+    const failures = [
+      ...this.refusals.filter(its).map((r) => ({ r, denied: true })),
+      ...this.otherFailures.filter(its).map((r) => ({ r, denied: false })),
+    ].sort((a, b) => a.r.failure.startedAt - b.r.failure.startedAt);
+    const lines = failures.length
+      ? failures.map(({ r, denied }) => this.describeFailure(r, denied))
+      : ['no failed login reported from this test worker'];
+    const serials = new Set<number>();
+    for (const b of blamed) {
+      for (let n = Number(b) - LOGINS_AROUND_SPAN; n <= Number(b) + LOGINS_AROUND_SPAN; n++) {
+        if (n > 0) serials.add(n);
+      }
+    }
+    for (const n of [...serials].sort((a, b) => a - b)) {
+      lines.push(this.describeSerial(String(n), h.pid));
+    }
+    return lines;
+  }
+
+  private describeFailure(r: ReportedFailure, denied: boolean): string {
+    const f = r.failure;
+    const when = `called ${this.secondsIn(f.startedAt)} and failed ${this.secondsIn(f.failedAt)} by the test's clock, reported to the gate ${this.secondsIn(r.at)}`;
+    const error = `error ${f.number ?? 'with no number'}: ${f.message}`;
+    let outcome: string;
+    if (!denied) outcome = 'not refused by the stone, so matched to nothing';
+    // The end of the run can still match it to a login too short for the watcher to see.
+    else outcome = r.matchedTo ? `matched to ${r.matchedTo}` : 'not matched yet';
+    return `failed login: ${when}; ${error}; ${outcome}`;
+  }
+
+  private describeSerial(serial: string, ownPid: number): string {
+    const facts: string[] = [];
+    if (this.before?.has(serial)) facts.push('on the stone before the run');
+    const s = this.sightings.get(serial);
+    if (s) {
+      const whose = s.pid === ownPid ? 'this test worker' : `worker ${s.pid}`;
+      facts.push(`seen ${this.secondsIn(s.firstSeen)} from ${whose}`);
+    }
+    const r = this.reported.get(serial);
+    if (r)
+      facts.push(
+        `reported ${this.secondsIn(r.at)}${r.file ? ` from ${testFileName(r.file)}` : ''}`,
+      );
+    if (this.excused.has(serial)) facts.push('excused as a refused login');
+    if (this.blamed.has(serial)) facts.push('blamed');
+    return `login serial ${serial}: ${facts.join(', ') || 'never seen or reported'}`;
+  }
+
+  /**
    * Logins from test workers no file reported and no file was blamed for, such
    * as one made after its file gave its booking back, or one a worker that had
    * already asked for a booking made before any file booked, still on the stone
@@ -340,7 +434,7 @@ export class SessionLedger<K> {
     if (firstSerial !== undefined) know(firstSerial, this.startedAt, 'run edge');
     know(endSerial, this.clock(), 'run edge');
     for (const [serial, s] of this.sightings) know(Number(serial), s.firstSeen, 'seen');
-    for (const [serial, at] of this.reported) know(Number(serial), at, 'reported');
+    for (const [serial, r] of this.reported) know(Number(serial), r.at, 'reported');
     const known = [...when.keys()].sort((a, b) => a - b);
     const missed: UnseenLogin[] = [];
     for (let i = 1; i < known.length; i++) {
@@ -357,8 +451,8 @@ export class SessionLedger<K> {
     }
     // Nearest gap, not the one containing it: the watcher dates a serial when it
     // sees or hears of it, after the login that used it.
-    const distance = (m: UnseenLogin, r: Refusal) =>
-      apart([r.startedAt, r.at], [m.after.at, m.before.at]);
+    const distance = (m: UnseenLogin, r: ReportedFailure) =>
+      apart(spanOf(r), [m.after.at, m.before.at]);
     const unexplained = [...missed];
     for (const refusal of this.refusals) {
       if (refusal.matchedTo !== undefined) continue;
@@ -367,7 +461,7 @@ export class SessionLedger<K> {
         if (best < 0 || distance(unexplained[i], refusal) < distance(unexplained[best], refusal))
           best = i;
       }
-      if (best >= 0 && distance(unexplained[best], refusal) <= REFUSAL_REPORT_SLACK_MS) {
+      if (best >= 0 && distance(unexplained[best], refusal) <= REFUSAL_SPAN_SLACK_MS) {
         refusal.matchedTo = `unseen login serial ${unexplained[best].serial}`;
         unexplained.splice(best, 1);
       }

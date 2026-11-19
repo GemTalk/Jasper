@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createConnection, type Socket } from 'node:net';
 import {
   gateSocketPath,
@@ -172,6 +172,38 @@ describe('the session gate', () => {
     await expect(ending).rejects.toThrow(
       /login serial 3: between 2 \(seen .* into the run\) and 4 \(run edge .* into the run\), while .* ran\. Refusals reported near it: none\./,
     );
+  });
+
+  it("tells a file it blames what it knew of the file's logins, the failures it reported included", async () => {
+    await start();
+    const file = await booked();
+    const onStone = new Map([['5', process.pid]]);
+    send(file, {
+      op: 'loginFailed',
+      denied: false,
+      startedAt: Date.now(),
+      failedAt: Date.now(),
+      number: 4100,
+      message: 'no NetLDI',
+    });
+    look(onStone);
+    let answer: Record<string, unknown> | undefined;
+    void nextAnswer(file).then((a) => (answer = a));
+
+    send(file, { op: 'check' });
+    // The gate answers a check after its next look, which has to follow the check's arrival.
+    await vi.waitFor(() => {
+      look(onStone);
+      expect(answer).toBeDefined();
+    });
+
+    expect(answer).toMatchObject({
+      unreported: [{ serial: '5' }],
+      loginsAround: expect.arrayContaining([
+        expect.stringContaining('error 4100: no NetLDI; not refused by the stone'),
+        expect.stringMatching(/^login serial 5: seen .* from this test worker, blamed$/),
+      ]),
+    });
   });
 
   describe('when its watcher fails', () => {
