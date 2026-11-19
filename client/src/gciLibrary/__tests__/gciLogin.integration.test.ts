@@ -10,6 +10,7 @@ import {
   reportFailedLogin,
   reportSession,
   reportSessionClosed,
+  waitForRoomToLogIn,
 } from '../../__tests__/sessionGateClient';
 import { LOGIN_SERIAL_CODE } from '../../__tests__/sessionGateLedger';
 
@@ -118,6 +119,7 @@ describe('GCI login (integration)', () => {
   // finishNbLogin): that is the guarantee lint gave before the calls moved in
   // here, and lint can't check it now.
   function gciTsLogin({ stone = stoneNrs, gem = gemNrs, password = gsPassword } = {}) {
+    waitForRoomToLogIn();
     const startedAt = Date.now();
     // eslint-disable-next-line no-restricted-syntax -- this file's subject; the one GciTsLogin call site, armed by armIfLive
     const result = gci.GciTsLogin(stone, null, null, false, gem, gsUser, password, 0, 0);
@@ -125,6 +127,7 @@ describe('GCI login (integration)', () => {
   }
 
   function gciTsLogin_() {
+    waitForRoomToLogIn();
     const startedAt = Date.now();
     // eslint-disable-next-line no-restricted-syntax -- this file's subject; the one GciTsLogin_ call site, armed by armIfLive
     const result = gci.GciTsLogin_(
@@ -143,6 +146,7 @@ describe('GCI login (integration)', () => {
   }
 
   async function gciTsNbLogin(signal: AbortSignal, { password = gsPassword } = {}) {
+    waitForRoomToLogIn();
     const startedAt = Date.now();
     // eslint-disable-next-line no-restricted-syntax -- this file's subject; the one GciTsNbLogin call site, armed by finishNbLogin
     const { session } = gci.GciTsNbLogin(
@@ -160,6 +164,7 @@ describe('GCI login (integration)', () => {
   }
 
   async function gciTsNbLogin_(signal: AbortSignal) {
+    waitForRoomToLogIn();
     const startedAt = Date.now();
     // eslint-disable-next-line no-restricted-syntax -- this file's subject; the one GciTsNbLogin_ call site, armed by finishNbLogin
     const { session } = gci.GciTsNbLogin_(

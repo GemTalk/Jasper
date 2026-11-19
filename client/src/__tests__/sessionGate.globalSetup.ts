@@ -7,7 +7,11 @@
 // once that file has reported its login serial; every other session on the
 // stone counts as taken. A login no file reports fails the file whose test
 // worker made it, or the run, when it was too short for the watcher to see.
-// So does a file that has more sessions logged in at once than it booked.
+// So does a file that has more sessions logged in at once than it booked. Its
+// gems still leaving after a logout count against the booking too, but by
+// timing alone, so they are kept to it rather than checked: before each login a
+// file waits for them (waitForRoomToLogIn), reading the watcher's latest look,
+// which the gate publishes to a file.
 // If the watcher can't log in, or fails mid-run, every file still waiting on
 // the gate, and the run itself, fails with that error rather than vitest crashing.
 // The watcher logs in only when the first file asks for sessions, so a run in
@@ -38,10 +42,15 @@ interface TestProject {
 export default async function setup(project: TestProject) {
   const env = project.viteConfig.env as Record<string, string>;
   const socketPath = gateSocketPath(`jasper-session-gate-${process.pid}`);
-  const teardown = await startGate(socketPath, (onSample, onFail) =>
-    startGciWatcher(env, onSample, onFail),
+  const lookPath = join(tmpdir(), `jasper-session-gate-${process.pid}.look.json`);
+  const teardown = await startGate(
+    socketPath,
+    (onSample, onFail) => startGciWatcher(env, onSample, onFail),
+    undefined,
+    lookPath,
   );
   project.provide('sessionGateSocket', socketPath);
+  project.provide('sessionGateLook', lookPath);
   return teardown;
 }
 
@@ -53,9 +62,10 @@ export function gateSocketPath(name: string): string {
 /**
  * Starts the watcher, the first look included; a failure in later looks goes to
  * `onFail` instead of being thrown, since nothing up the stack could catch it.
+ * `at` is when the look began (`Date.now()`).
  */
 export type StartWatcher = (
-  onSample: (sessions: Map<string, number>) => void,
+  onSample: (sessions: Map<string, number>, at?: number) => void,
   onFail: (error: unknown) => void,
 ) => Watcher;
 
@@ -63,12 +73,13 @@ export type StartWatcher = (
  * Serves the gate on `socketPath`; answers the teardown, which fails the run if
  * a rule was broken. The watcher starts on the first booking. Tests get the
  * stone's session limit less the watcher's own session, unless `capacity` says
- * otherwise.
+ * otherwise. Each look is written to `lookPath`, for the client's `waitForRoomToLogIn`.
  */
 export async function startGate(
   socketPath: string,
   startWatcher: StartWatcher,
   capacity?: number,
+  lookPath?: string,
 ): Promise<() => Promise<void>> {
   const ledger = new SessionLedger<Socket>(capacity ?? 0);
   const waitTimers = new Map<Socket, NodeJS.Timeout>();
@@ -197,8 +208,16 @@ export async function startGate(
     for (const done of afterNextSample.splice(0)) done();
   };
 
-  const onSample = (sessions: Map<string, number>) => {
+  const onSample = (sessions: Map<string, number>, at = Date.now()) => {
     const leftOver = ledger.sample(sessions);
+    if (lookPath) {
+      // A reader that catches it mid-write only waits for the next look.
+      try {
+        writeFileSync(lookPath, JSON.stringify({ at, serials: [...sessions.keys()] }));
+      } catch {
+        // Nor does a look that failed to write hold anything up but a waiting login.
+      }
+    }
     if (leftOver && leftOver.size > 0) {
       console.warn(
         `session gate: ${leftOver.size} session(s) were already on the test stone when the first file booked, and take slots for the whole run: ${[...leftOver].map(([serial, pid]) => `login serial ${serial} (client process ${pid})`).join(', ')}. Usually these are gems left behind by a test run that was killed; end them to free their slots. A login a test made before its file booked shows here too, and then fails the run as a stray login.`,
@@ -210,6 +229,7 @@ export async function startGate(
 
   return async () => {
     watcher?.stop();
+    if (lookPath) rmSync(lookPath, { force: true });
     // Files still connected are given their answer before the server closes.
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (watcherFailure) throw new Error(`session gate: ${watcherFailure}`);
@@ -317,7 +337,7 @@ export type Watcher = {
  */
 function startGciWatcher(
   env: Record<string, string>,
-  onSample: (sessions: Map<string, number>) => void,
+  onSample: (sessions: Map<string, number>, at: number) => void,
   onFail: (error: unknown) => void,
 ): Watcher {
   // The GCI reads GEMSTONE_GLOBAL_DIR; as useIntegrationTest does, from the VITE_ copy.
@@ -345,6 +365,7 @@ function startGciWatcher(
   let stopped = false;
 
   const look = () => {
+    const at = Date.now();
     const started = performance.now();
     const listed = gci.executeAndFetchString(session, LIVE_SESSIONS);
     lookMs.push(performance.now() - started);
@@ -352,7 +373,7 @@ function startGciWatcher(
       .split(/\s+/)
       .filter(Boolean)
       .map((entry) => entry.split(':'));
-    onSample(new Map(pairs.map(([s, pid]) => [s, Number(pid)])));
+    onSample(new Map(pairs.map(([s, pid]) => [s, Number(pid)])), at);
   };
   // Thrown in a timer, a failure would crash vitest's main process.
   const lookAgain = () => {

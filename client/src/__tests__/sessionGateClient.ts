@@ -1,4 +1,5 @@
 // A test file's side of the session gate (see sessionGate.globalSetup.ts).
+import { readFileSync } from 'node:fs';
 import { createConnection, type Socket } from 'node:net';
 import { inject } from 'vitest';
 import type { ActiveSession } from '../activeSession';
@@ -9,6 +10,7 @@ import { LOGIN_ERRORS } from '../loginFailureMessage';
 declare module 'vitest' {
   export interface ProvidedContext {
     sessionGateSocket: string;
+    sessionGateLook: string;
   }
 }
 
@@ -32,6 +34,14 @@ function request<T>(socket: Socket, message: object): Promise<T> {
 // One per useIntegrationTest call that is running; nested describes can hold several.
 const held: Socket[] = [];
 
+export type Booking = {
+  n: number;
+  /** Each reported login serial still on the stone, as far as the watcher has shown, and when it was reported. */
+  mine: Map<string, number>;
+  closed: Set<string>;
+};
+const bookings = new WeakMap<Socket, Booking>();
+
 /** Waits until the stone has room for `n` sessions, then holds them until {@link releaseSessions}. */
 export async function acquireSessions(file: string, n: number): Promise<Socket | undefined> {
   const path = inject('sessionGateSocket');
@@ -48,7 +58,69 @@ export async function acquireSessions(file: string, n: number): Promise<Socket |
     throw new Error(`Session gate: ${answer.error}`);
   }
   held.push(socket);
+  bookings.set(socket, { n, mine: new Map(), closed: new Set() });
   return socket;
+}
+
+const ROOM_WAIT_LIMIT_MS = 10_000;
+
+/** A look at the stone: when it began (`Date.now()`), and the login serials it saw. */
+export type Look = { at: number; serials: string[] };
+
+/** The watcher's latest look, as the gate publishes it; undefined while the file is missing or mid-write. */
+function latestLook(path: string): Look | undefined {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as Look;
+  } catch {
+    return undefined;
+  }
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Waits until this file can log in one more session without going over its
+ * booking. A gem stays on the stone for a moment after its logout returns, and
+ * the stone counts it until it leaves, so logging in again at once holds one
+ * more session than the file booked, after the gate has handed the rest to other
+ * files: the stone can then refuse whichever login comes next. Synchronous,
+ * because tests log out and back in within a synchronous test body. It waits
+ * only for gems still leaving; one still logged in won't leave by waiting.
+ */
+export function waitForRoomToLogIn(socket = held.at(-1)): void {
+  const booking = socket && bookings.get(socket);
+  const lookPath = inject('sessionGateLook');
+  if (!booking || !lookPath) return;
+  const deadline = Date.now() + ROOM_WAIT_LIMIT_MS;
+  while (!roomToLogIn(booking, latestLook(lookPath))) {
+    if (Date.now() >= deadline) {
+      console.warn(
+        `Session gate: logged-out login(s) ${[...booking.closed].join(', ')} were still on the stone ${ROOM_WAIT_LIMIT_MS} ms later; logging in anyway, over this file's booking of ${booking.n}.`,
+      );
+      return;
+    }
+    sleepSync(10);
+  }
+}
+
+/**
+ * Whether `booking` has room for one more login, forgetting each of its gems
+ * that `look` shows has left. Only a look begun after a serial was reported
+ * can show that: an earlier one may predate the login.
+ */
+export function roomToLogIn(booking: Booking, look: Look | undefined): boolean {
+  if (look) {
+    const listed = new Set(look.serials);
+    for (const [serial, reportedAt] of booking.mine) {
+      if (look.at > reportedAt && !listed.has(serial)) {
+        booking.mine.delete(serial);
+        booking.closed.delete(serial);
+      }
+    }
+  }
+  return booking.mine.size < booking.n || booking.closed.size === 0;
 }
 
 /**
@@ -56,15 +128,17 @@ export async function acquireSessions(file: string, n: number): Promise<Socket |
  * and when, by this worker's clock: the message can reach the gate late.
  */
 export function reportSession(serial: string | bigint, socket = held.at(-1)): void {
+  if (socket) bookings.get(socket)?.mine.set(String(serial), Date.now());
   socket?.write(JSON.stringify({ op: 'opened', serial: String(serial), at: Date.now() }) + '\n');
 }
 
 /**
  * Tells the gate the session with login serial `serial` has logged out, or its
- * gem was ended. Its gem may linger on the stone a moment longer; the gate
- * still counts it as taken, but no longer against this file's booking.
+ * gem was ended. Its gem may linger on the stone a moment longer, and counts
+ * against this file's booking until it leaves (see {@link waitForRoomToLogIn}).
  */
 export function reportSessionClosed(serial: string | bigint, socket = held.at(-1)): void {
+  if (socket) bookings.get(socket)?.closed.add(String(serial));
   socket?.write(JSON.stringify({ op: 'closed', serial: String(serial) }) + '\n');
 }
 
@@ -103,8 +177,9 @@ export function deniedByStone(error: unknown): boolean {
   return (error as { number?: unknown } | undefined)?.number === GS_ERR_LOGIN_DENIAL;
 }
 
-/** Runs `login`, telling the gate when it fails, and rethrows. */
+/** Runs `login` once this file has room for it (see {@link waitForRoomToLogIn}), telling the gate when it fails, and rethrows. */
 export function reportingFailedLogin<T>(login: () => T, socket = held.at(-1)): T {
+  waitForRoomToLogIn(socket);
   const startedAt = Date.now();
   try {
     return login();
@@ -210,6 +285,7 @@ export function reportedTransientLogin(
   from: ActiveSession,
   login = from.login,
 ): ReturnType<ActiveSession['transientLogin']> {
+  waitForRoomToLogIn();
   const startedAt = Date.now();
   // eslint-disable-next-line no-restricted-syntax -- the one place a test's transientLogin is allowed: it reports the session
   const result = from.transientLogin(login);
@@ -230,6 +306,7 @@ export function reportingLoginsOf(manager: SessionManager): SessionManager {
   const { login, loginAsync, loginTransient } = manager;
   manager.login = (...args) => reportLogin(reportingFailedLogin(() => login.apply(manager, args)));
   manager.loginAsync = async (...args) => {
+    waitForRoomToLogIn();
     const startedAt = Date.now();
     try {
       return reportLogin(await loginAsync.apply(manager, args));

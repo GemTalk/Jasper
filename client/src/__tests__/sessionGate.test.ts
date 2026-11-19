@@ -12,6 +12,8 @@ import {
   deniedByStone,
   reportedSerialOf,
   reportLogin,
+  roomToLogIn,
+  type Booking,
 } from './sessionGateClient';
 
 // The gate's sockets with a stand-in watcher, driven by hand: no stone needed.
@@ -308,5 +310,73 @@ describe("a test file's side of the session gate", () => {
     const asking = () => reportedSerialOf(own);
 
     expect(asking).toThrow('this session was never reported');
+  });
+
+  describe('before a login', () => {
+    // Booked 2: login 10 still logged in, login 11 logged out, both reported at time 100.
+    const fullWithOneLeaving = (): Booking => ({
+      n: 2,
+      mine: new Map([
+        ['10', 100],
+        ['11', 100],
+      ]),
+      closed: new Set(['11']),
+    });
+
+    it('waits while a logged-out gem is still on the stone and the booking is full', () => {
+      const booking = fullWithOneLeaving();
+
+      const room = roomToLogIn(booking, { at: 200, serials: ['10', '11'] });
+
+      expect(room).toBe(false);
+    });
+
+    it('has room once a look begun after the logout no longer shows the gem', () => {
+      const booking = fullWithOneLeaving();
+
+      const room = roomToLogIn(booking, { at: 200, serials: ['10'] });
+
+      expect(room).toBe(true);
+    });
+
+    it('does not take a look begun before the login was reported as showing its gem gone', () => {
+      const booking = fullWithOneLeaving();
+
+      const room = roomToLogIn(booking, { at: 50, serials: ['10'] });
+
+      expect(room).toBe(false);
+    });
+
+    it('waits while there is no look to go by', () => {
+      const booking = fullWithOneLeaving();
+
+      const room = roomToLogIn(booking, undefined);
+
+      expect(room).toBe(false);
+    });
+
+    it('does not wait for gems still logged in, which waiting cannot free', () => {
+      const booking: Booking = { ...fullWithOneLeaving(), closed: new Set() };
+
+      const room = roomToLogIn(booking, { at: 200, serials: ['10', '11'] });
+
+      expect(room).toBe(true);
+    });
+
+    it('has room while a logged-out gem leaves if the booking is not full', () => {
+      const booking: Booking = { ...fullWithOneLeaving(), n: 3 };
+
+      const room = roomToLogIn(booking, { at: 200, serials: ['10', '11'] });
+
+      expect(room).toBe(true);
+    });
+
+    it('forgets a gem that left without a logout being reported, as a forked one does', () => {
+      const booking: Booking = { ...fullWithOneLeaving(), closed: new Set(['10']) };
+
+      roomToLogIn(booking, { at: 200, serials: ['10'] });
+
+      expect([...booking.mine.keys()]).toEqual(['10']);
+    });
   });
 });
