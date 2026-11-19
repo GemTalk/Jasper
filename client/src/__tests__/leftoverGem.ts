@@ -55,6 +55,16 @@ export async function waitUntilOffTheStone(
   }
 }
 
+/**
+ * Waits until `ms` have passed since `loggedInAt`, or not at all if they already have. A gem
+ * stopped or logged out within moments of logging in sometimes misses it and stays on the stone
+ * (#852, #963), so tests that end a gem right after its login wait for this first.
+ */
+export async function waitUntilSinceLogin(loggedInAt: number, ms: number): Promise<void> {
+  const left = loggedInAt + ms - Date.now();
+  if (left > 0) await new Promise((resolve) => setTimeout(resolve, left));
+}
+
 /** End `own`'s gem when the test finishes, if it is still on the stone, from `admin`. `own` must have been reported to the session gate. */
 export function endGemAfterTest(admin: () => ActiveSession, own: ActiveSession): void {
   const serial = reportedSerialOf(own);
