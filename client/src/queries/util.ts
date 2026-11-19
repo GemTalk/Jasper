@@ -10,7 +10,7 @@ export function escapeString(s: string): string {
 // queries: it is one guard against selector injection, so it gets one
 // definition — patched in two places is patched in neither.
 const VALID_SELECTOR =
-  /^[a-zA-Z_][a-zA-Z0-9_]*:?$|^([a-zA-Z_][a-zA-Z0-9_]*:)+$|^[+\-*/<>=~&|@%?,]{1,2}$/;
+  /^[a-zA-Z_][a-zA-Z0-9_]*:?$|^([a-zA-Z_][a-zA-Z0-9_]*:)+$|^[+\-*/\\<>=~&|@%?,]{1,2}$/;
 
 export function isValidSelector(selector: string): boolean {
   return VALID_SELECTOR.test(selector);

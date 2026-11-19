@@ -327,6 +327,7 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
         pinned: false,
         excludedFromAll: st.excludedFromAll,
         matchMode: st.matchMode,
+        term: st.term,
       }),
     );
   }

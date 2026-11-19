@@ -29,6 +29,7 @@ import {
 import { match, compareMatches, MatchMode } from './omniMatch';
 import { compareMethodRows } from './rank';
 import { referenceRequestFor } from './references';
+import { parseMethodReference } from '../methodReference';
 
 /** A provider's truncation report plus the human scope name, so the webview can say WHICH scope was
  *  capped and at what number without carrying a category table of its own. */
@@ -224,12 +225,14 @@ function isNameLike(categoryId: OmniCategoryId): boolean {
  *    NAME (class/global), a lowercase one means a METHOD — so that kind wins ties. With lowercase
  *    "si", method prefixes lead; with "Si", class/global prefixes lead.
  *
- * Prefix (F) dominates the kind preference (E), which dominates the matcher score. Below that the
+ * An `exact` row (a pasted method reference) leads them all. Prefix (F) dominates the kind
+ * preference (E), which dominates the matcher score. Below that the
  * two kinds break ties differently: method-like rows by score, then class/side/selector
  * (`compareMethodRows`, shared with the Methods provider); name-like rows by the matcher's
  * shorter-then-alphabetical label order. `q` is the trimmed, lower-cased query.
  */
 function omniRank(a: OmniResult, b: OmniResult, q: string, upperFirst: boolean): number {
+  if (!a.exact !== !b.exact) return a.exact ? -1 : 1;
   const aPrefix = primaryName(a).toLowerCase().startsWith(q) ? 0 : 1;
   const bPrefix = primaryName(b).toLowerCase().startsWith(q) ? 0 : 1;
   if (aPrefix !== bPrefix) return aPrefix - bPrefix;
@@ -348,6 +351,8 @@ export interface OmniEngine {
     pivot: boolean;
     excludedFromAll: OmniCategoryId[];
     matchMode: MatchMode;
+    /** The search term the current rows answer, as typed. */
+    term: string;
   };
 }
 
@@ -384,6 +389,13 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
   // cancelled by one. All it has to supersede is an earlier reference load, whose slower resolve would
   // otherwise land in `referenceRows` after a newer row's — see the guard in `referencesFor`.
   let referenceGeneration = 0;
+
+  /** A pasted method reference is unambiguous and costs one lookup, so holding Methods back from
+   *  "All" — a guard against a scan on every keystroke — does not hide it. */
+  const heldBackFor = (term: string): ReadonlySet<OmniCategoryId> => {
+    if (!excludedFromAll.has('methods') || !parseMethodReference(term)) return excludedFromAll;
+    return new Set([...excludedFromAll].filter((id) => id !== 'methods'));
+  };
 
   const effectiveConfig = (): OmniConfig => ({
     ...config,
@@ -482,7 +494,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
         return gen !== generation;
       },
     };
-    const inScope = providersInScope(providers, scopeId, excludedFromAll);
+    const inScope = providersInScope(providers, scopeId, heldBackFor(term));
     // Collected from any provider whose own server fetch ceiling bounded its results (today: methods).
     // A non-empty list means the run can never be an exact total, however high the display cap goes.
     const truncations: OmniViewTruncation[] = [];
@@ -680,6 +692,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       pivot: pivot !== null,
       excludedFromAll: [...excludedFromAll],
       matchMode,
+      term: lastRawValue,
     }),
   };
 }

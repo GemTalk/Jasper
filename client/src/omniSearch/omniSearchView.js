@@ -61,6 +61,14 @@
     // had no consumer at all once the Quick Pick (its only reader) was removed.
     var queryTimer = null;
     var debounceMs = 0;
+    // The term the rows on screen answer, as the host echoes it (undefined until the first results),
+    // and whether a search sent since is still unanswered.
+    var shownTerm;
+    var queryOut = false;
+    // An Enter pressed before its term's results arrived — a paste then Enter beats the debounce and
+    // the stone. Opening the active row then would open nothing, or a row left over from the previous
+    // term, so it waits here for the matching results instead. Typing again cancels it.
+    var pendingEnter = null;
     // When true, the references/senders gesture fills the preview pane with a sticky list (instead of
     // pivoting the left list). Pushed from the host config; false = the classic pivot.
     var referencesInPreview = false;
@@ -125,15 +133,44 @@
     function sendQueryDebounced(value) {
       cancelPendingQuery();
       if (!debounceMs) {
-        setBusy(true);
-        post('query', { value: value });
+        sendQuery(value);
         return;
       }
       queryTimer = setTimeout(function () {
         queryTimer = null;
-        setBusy(true);
-        post('query', { value: value });
+        sendQuery(value);
       }, debounceMs);
+    }
+
+    function sendQuery(value) {
+      setBusy(true);
+      queryOut = true;
+      post('query', { value: value });
+    }
+
+    /** Send a keystroke search still waiting out the debounce now, rather than after the delay. */
+    function flushPendingQuery() {
+      if (!queryTimer) return;
+      cancelPendingQuery();
+      sendQuery(inputEl.value);
+    }
+
+    // The references list filters on the client and keeps the term that found its row in the field,
+    // so it never waits.
+    function answersField(term) {
+      if (inPivot) return true;
+      return (typeof term === 'string' ? term : '').trim() === inputEl.value.trim();
+    }
+
+    /** Plain or Ctrl/Cmd+Enter: open the active row once the rows answer what is in the field. */
+    function activateWhenAnswered(side) {
+      flushPendingQuery();
+      if (queryOut && !answersField(shownTerm)) {
+        pendingEnter = { side: side };
+        return;
+      }
+      var id = activeRowId();
+      if (id !== null) post('activate', { id: id, side: side });
     }
 
     // ── Highlighting ────────────────────────────────────────────────
@@ -639,6 +676,14 @@
           pivotHighlightTerm = msg.pivot ? msg.pivotTarget || '' : '';
           renderResults(msg);
           setBusy(false);
+          shownTerm = msg.term;
+          if (answersField(shownTerm)) queryOut = false;
+          if (pendingEnter && answersField(shownTerm)) {
+            var waiting = pendingEnter;
+            pendingEnter = null;
+            var answeredId = activeRowId();
+            if (answeredId !== null) post('activate', { id: answeredId, side: waiting.side });
+          }
           break;
         case 'pinned':
           setPin(msg.pinned);
@@ -667,6 +712,8 @@
         case 'error':
           setError(msg.message || '');
           setBusy(false);
+          pendingEnter = null;
+          queryOut = false;
           break;
         case 'focusInput':
           inputEl.focus();
@@ -1253,6 +1300,11 @@
      */
     function resetView() {
       cancelPendingQuery();
+      // Nothing from the session just left is still coming, and an Enter meant for it must not open
+      // whatever the new session shows first.
+      pendingEnter = null;
+      queryOut = false;
+      shownTerm = undefined;
       if (previewTimer) {
         clearTimeout(previewTimer);
         previewTimer = null;
@@ -1417,6 +1469,7 @@
       // debounced reply would leave it a keystroke behind.
       updateScopeHint();
       rehighlightSourcePreview(); // clear/refresh the stale blue match marks now, not on the fetch
+      pendingEnter = null;
       sendQueryDebounced(inputEl.value);
     });
 
@@ -1476,15 +1529,19 @@
         case 'Enter': {
           // A plain Enter on a focused button is its own click (Load More, case, pin…) — leave it be.
           if (onButton && !ev.altKey && !ev.ctrlKey && !ev.metaKey && !ev.shiftKey) break;
-          var id = activeRowId();
-          if (id === null) break;
-          ev.preventDefault();
           // Ctrl/Cmd+Enter opens beside (keeps the Spotter visible); Alt+Enter shows references (in
           // the preview pane, or — flag off — as the classic list pivot); Shift+Enter selects the
           // result in the Testing view, for a test class or test method.
+          if (!ev.altKey && !ev.shiftKey) {
+            ev.preventDefault();
+            activateWhenAnswered(ev.ctrlKey || ev.metaKey);
+            break;
+          }
+          var id = activeRowId();
+          if (id === null) break;
+          ev.preventDefault();
           if (ev.altKey) requestReferences(id);
-          else if (ev.shiftKey) post('revealTest', { id: id });
-          else post('activate', { id: id, side: ev.ctrlKey || ev.metaKey });
+          else post('revealTest', { id: id });
           break;
         }
         case 'ArrowLeft':
@@ -1537,7 +1594,8 @@
         // single decisive gesture, not typing, so making the user wait for a timer would feel broken —
         // and a keystroke queued a moment earlier must not land after the clear and refill the list.
         cancelPendingQuery();
-        post('query', { value: '' });
+        pendingEnter = null;
+        sendQuery('');
         inputEl.focus();
       });
     }

@@ -91,6 +91,7 @@ export function resultsMessage(
     pinned: boolean;
     excludedFromAll: OmniCategoryId[];
     matchMode: MatchMode;
+    term: string;
   },
 ): Record<string, unknown> {
   return {
@@ -119,6 +120,8 @@ export function resultsMessage(
     excludedFromAll: chrome.excludedFromAll,
     // Engine-owned, like `caseSensitive` — so it IS re-sent every time, unlike `previewPane`.
     matchMode: chrome.matchMode,
+    // Which search these rows answer: an Enter pressed before they arrived waits for them.
+    term: chrome.term,
     placeholder: placeholderFor(view.pivot ? null : chrome.scopeId),
   };
 }

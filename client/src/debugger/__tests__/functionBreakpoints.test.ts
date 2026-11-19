@@ -76,6 +76,43 @@ describe('parseFunctionName', () => {
     expect(parseFunctionName('Dictionary>>at:ifAbsent:')?.selector).toBe('at:ifAbsent:');
   });
 
+  it('reads a debugger frame label, taking the class that defines the method', () => {
+    expect(parseFunctionName('SmallInteger (Integer)>>#factorial')).toEqual({
+      className: 'Integer',
+      isMeta: false,
+      selector: 'factorial',
+    });
+  });
+
+  it("reads a block frame as the method it is in, and Copy Frame's position is ignored", () => {
+    expect(parseFunctionName('[] in Account>>#balance  @2 line 12')).toEqual({
+      className: 'Account',
+      isMeta: false,
+      selector: 'balance',
+    });
+  });
+
+  it("reads a method's print string", () => {
+    expect(parseFunctionName('GsNMethod Account class>>new')).toEqual({
+      className: 'Account',
+      isMeta: true,
+      selector: 'new',
+    });
+  });
+
+  it('reads a backslash binary selector, bare or qualified', () => {
+    expect(parseFunctionName('Number>>\\\\')).toEqual({
+      className: 'Number',
+      isMeta: false,
+      selector: '\\\\',
+    });
+    expect(parseFunctionName('\\\\')).toEqual({ isMeta: false, selector: '\\\\' });
+  });
+
+  it('rejects a qualified name whose selector has a space in it', () => {
+    expect(parseFunctionName('Account>>foo bar')).toBeNull();
+  });
+
   it('rejects empty input', () => {
     expect(parseFunctionName('   ')).toBeNull();
   });

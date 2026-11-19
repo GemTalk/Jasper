@@ -7,8 +7,14 @@
  *
  * The row label is `Class>>selector` (or `Class class>>selector` for the class side); the match is
  * computed against the selector and the highlight ranges are shifted into label coordinates.
+ *
+ * A term that names one method (`Object>>printString`, a pasted GsNMethod or debugger frame) skips
+ * the scan and the minimum length: it is looked up directly, exact case, and answers that method —
+ * on the class named, or on the ancestor it inherits it from.
  */
 import { SelectorSearchResult } from '../../queries/searchSelectors';
+import { MethodLookupResult } from '../../queries/lookupMethod';
+import { MethodReference, parseMethodReference } from '../../methodReference';
 import {
   CATEGORY_BY_ID,
   OmniCancel,
@@ -27,6 +33,13 @@ export type SelectorSearchRunner = (
   ignoreCase: boolean,
 ) => SelectorSearchResult[];
 
+/** Looks one method up by class, side and selector. Injected so the provider is stone-free. */
+export type MethodLookupRunner = (
+  className: string,
+  isMeta: boolean,
+  selector: string,
+) => MethodLookupResult[];
+
 /** Over-fetch factor: request this many × the displayed cap from the server, so ranking has a
  *  wider pool to pick the best matches from — the tie-break by class name (below) can only be A→Z
  *  over the rows it was given (see search()). */
@@ -35,9 +48,48 @@ function labelFor(r: SelectorSearchResult): string {
   return `${r.className}${r.isMeta ? ' class' : ''}>>${r.selector}`;
 }
 
+function openMethod(sessionId: number, r: SelectorSearchResult): OmniResult['action'] {
+  return {
+    kind: 'openMethod',
+    sessionId,
+    dictName: r.dictName,
+    className: r.className,
+    isMeta: r.isMeta,
+    category: r.category,
+    selector: r.selector,
+    environmentId: 0,
+    dictIndex: 0,
+  };
+}
+
+function referenceResults(
+  sessionId: number,
+  ref: MethodReference,
+  lookup: MethodLookupRunner,
+): OmniResult[] {
+  return lookup(ref.className, ref.isMeta, ref.selector).map((r) => {
+    const label = labelFor(r);
+    const description = [
+      r.dictName,
+      ...(r.inheritedBy ? [`inherited by ${r.inheritedBy}`] : []),
+      ...(ref.inBlock ? ['contains the block'] : []),
+    ].join(' · ');
+    return {
+      categoryId: 'methods',
+      label,
+      description,
+      score: 0,
+      ranges: [[0, label.length]],
+      exact: true,
+      action: openMethod(sessionId, r),
+    };
+  });
+}
+
 export function createMethodsProvider(
   sessionId: number,
   runSearch: SelectorSearchRunner,
+  lookup?: MethodLookupRunner,
 ): OmniProvider {
   return {
     category: CATEGORY_BY_ID.methods,
@@ -48,6 +100,8 @@ export function createMethodsProvider(
       reportTruncated?: OmniTruncationSink,
     ): OmniResult[] {
       const term = query.trim();
+      const ref = parseMethodReference(term);
+      if (ref && lookup) return referenceResults(sessionId, ref, lookup);
       if (term.length < cfg.methodMinQueryLength) return [];
 
       // Fetch a WIDER server slice than we display, then rank + cap client-side: the slice is what the
@@ -100,17 +154,7 @@ export function createMethodsProvider(
           description: r.dictName,
           score: m.score,
           ranges: m.ranges.map(([s, e]) => [s + shift, e + shift] as [number, number]),
-          action: {
-            kind: 'openMethod',
-            sessionId,
-            dictName: r.dictName,
-            className: r.className,
-            isMeta: r.isMeta,
-            category: r.category,
-            selector: r.selector,
-            environmentId: 0,
-            dictIndex: 0,
-          },
+          action: openMethod(sessionId, r),
         });
       }
       // Rank by match score, but break ties between same-scored selectors (e.g. many `withAll:`

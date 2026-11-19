@@ -275,7 +275,7 @@
               ]
             },
             "default": [],
-            "markdownDescription": "Scopes to leave out of the **All** search while keeping their own tab, so you can still search them on purpose. Useful for **methods**, which queries the stone on every keystroke. This is different from `#gemstone.omniSearch.categories#`, which removes a scope altogether (no tab, no search). Source, Literals and Class Categories are always outside All and so cannot be listed here. This is the value the panel **starts** with; the **Scopes** button in the panel changes it for the current session without changing this setting."
+            "markdownDescription": "Scopes to leave out of the **All** search while keeping their own tab, so you can still search them on purpose. Useful for **methods**, which queries the stone on every keystroke; a pasted method name such as `Object>>printString` still finds its method. This is different from `#gemstone.omniSearch.categories#`, which removes a scope altogether (no tab, no search). Source, Literals and Class Categories are always outside All and so cannot be listed here. This is the value the panel **starts** with; the **Scopes** button in the panel changes it for the current session without changing this setting."
           }
         }
       },

@@ -283,6 +283,7 @@ export class OmniSearchPanel {
         pinned: this.pinned,
         excludedFromAll: st.excludedFromAll,
         matchMode: st.matchMode,
+        term: st.term,
       }),
     );
   }

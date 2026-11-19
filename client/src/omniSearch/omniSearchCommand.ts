@@ -24,6 +24,7 @@ import { getAllGlobalNames } from '../queries/getAllGlobalNames';
 import { getAllClassCategories } from '../queries/getAllClassCategories';
 import { getDictionaryNames } from '../queries/getDictionaryNames';
 import { searchSelectors } from '../queries/searchSelectors';
+import { lookupMethod } from '../queries/lookupMethod';
 import {
   searchMethodSource,
   literalSymbolReferences,
@@ -187,8 +188,10 @@ export function buildProviders(session: ActiveSession, enabled: readonly string[
       () => getAllClassNames(exec),
       (name) => getClassNameEntriesFor(exec, name),
     ),
-    createMethodsProvider(session.id, (term, limit, ignoreCase) =>
-      searchSelectors(exec, term, { limit, ignoreCase }),
+    createMethodsProvider(
+      session.id,
+      (term, limit, ignoreCase) => searchSelectors(exec, term, { limit, ignoreCase }),
+      (className, isMeta, selector) => lookupMethod(exec, className, isMeta, selector),
     ),
     createDictionariesProvider(session.id, () => getDictionaryNames(exec)),
     createGlobalsProvider(session.id, () => getAllGlobalNames(exec)),

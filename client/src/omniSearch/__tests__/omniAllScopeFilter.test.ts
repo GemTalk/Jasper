@@ -178,7 +178,7 @@ describe('readOmniConfig — excludeFromAll (#41)', () => {
   });
 });
 
-describe('webview message payloads (#40 / #41)', () => {
+describe('webview message payloads', () => {
   const view = {
     rows: [],
     shownCount: 0,
@@ -196,6 +196,7 @@ describe('webview message payloads (#40 / #41)', () => {
       pinned: false,
       excludedFromAll: ['methods'],
       matchMode: 'fuzzy',
+      term: '',
     });
     expect(msg.excludedFromAll).toEqual(['methods']);
   });
@@ -210,6 +211,7 @@ describe('webview message payloads (#40 / #41)', () => {
       pinned: false,
       excludedFromAll: [],
       matchMode: 'fuzzy',
+      term: '',
     });
     expect(Object.keys(msg)).not.toContain('previewPane');
   });

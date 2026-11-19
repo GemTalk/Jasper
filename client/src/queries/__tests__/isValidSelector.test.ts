@@ -33,6 +33,11 @@ describe('isValidSelector', () => {
       expect(isValidSelector('<=')).toBe(true);
     });
 
+    it('accepts the backslash binary selectors (Number>>\\ and Number>>\\\\)', () => {
+      expect(isValidSelector('\\')).toBe(true);
+      expect(isValidSelector('\\\\')).toBe(true);
+    });
+
     it('accepts a selector starting with underscore', () => {
       expect(isValidSelector('_objectForOop:')).toBe(true);
     });
