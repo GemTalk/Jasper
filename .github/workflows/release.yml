@@ -16,7 +16,7 @@ name: Release
 # a rebuild that could differ.
 #
 # See docs/how-to/publishing-a-release.md for the whole procedure, including
-# how the two registry tokens are obtained.
+# how each registry's credential is set up.
 
 on:
   workflow_dispatch:
@@ -229,9 +229,10 @@ jobs:
   # per (publisher, name, version), so a publish that goes wrong burns this
   # version number for good — there is no retry, only the next version.
   #
-  # This environment must hold NO secrets: the registry tokens live on the two
-  # publish environments instead, so approving a release does not hand the
-  # build a credential.
+  # This environment must hold NO secrets: each registry's credential is tied
+  # to its own publish environment instead (the Open VSX token as a secret, the
+  # Marketplace's Trusted Publishing policy by environment name), so approving
+  # a release does not hand the build a credential.
   gate:
     name: Release approval
     needs: [package, release-notes]
@@ -322,9 +323,13 @@ jobs:
     if: ${{ !inputs.dry-run }}
     timeout-minutes: 15
     runs-on: ubuntu-latest
+    # The Marketplace's Trusted Publishing policy names this repository,
+    # release.yml and this environment; change any of them and the policy on
+    # the gemtalksystems publisher must change with it, or publishing fails.
     environment: release-vsce
     permissions:
       contents: read
+      id-token: write
     env:
       VERSION: ${{ inputs.version }}
       GH_TOKEN: ${{ github.token }}
@@ -345,10 +350,11 @@ jobs:
       # repo pinned and CI has been exercising.
       - name: Install dependencies
         run: npm ci
-      - name: Verify the token
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: npx --no-install @vscode/vsce verify-pat gemtalksystems
+      # No separate credential check: `vsce verify-pat` cannot check OIDC, and
+      # `vsce publish --oidc` exchanges GitHub's identity token before it
+      # uploads anything, so a policy the Marketplace rejects fails Publish
+      # with nothing sent.
+      #
       # Exactly the bytes attached to the Release — never a rebuild. This is
       # the property the manual runbook could not have: the file inspected on
       # the Release and the file each registry serves are the same object.
@@ -357,7 +363,6 @@ jobs:
       - name: Publish
         timeout-minutes: 5
         env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
           VSIX_FILE: ${{ needs.package.outputs.vsix-file }}
         run: bash scripts/publish-to-registry.sh marketplace "$VSIX_FILE"
 

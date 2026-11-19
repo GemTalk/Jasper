@@ -174,15 +174,16 @@ onSupportedPosixDescribe('publish-to-registry.sh', () => {
   });
 
   it.each([
-    ['marketplace', '@vscode/vsce'],
-    ['openvsx', 'ovsx'],
-  ])('publishes to %s with the %s CLI, skipping duplicates', (registry, cli) => {
+    ['marketplace', '@vscode/vsce', ['--oidc']],
+    ['openvsx', 'ovsx', []],
+  ])('publishes to %s with the %s CLI, skipping duplicates', (registry, cli, auth) => {
     const { argv } = run({ registry });
 
     expect(argv).toEqual([
       '--no-install',
       cli,
       'publish',
+      ...auth,
       '--packagePath',
       expect.stringContaining('gemstone-ide-1.9.0.vsix'),
       '--skip-duplicate',

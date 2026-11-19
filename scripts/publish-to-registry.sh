@@ -33,7 +33,8 @@
 # not up.
 #
 # Usage: scripts/publish-to-registry.sh <marketplace|openvsx> <path-to-vsix>
-# Env:   VSCE_PAT (marketplace) or OVSX_PAT (openvsx)
+# Auth:  marketplace signs in with OIDC (Trusted Publishing), so it runs only in
+#        a GitHub Actions job with `id-token: write`; openvsx reads OVSX_PAT.
 
 set -euo pipefail
 
@@ -51,7 +52,7 @@ if [ ! -f "$vsix" ]; then
 fi
 
 case "$registry" in
-    marketplace) set -- npx --no-install @vscode/vsce publish --packagePath "$vsix" --skip-duplicate ;;
+    marketplace) set -- npx --no-install @vscode/vsce publish --oidc --packagePath "$vsix" --skip-duplicate ;;
     openvsx) set -- npx --no-install ovsx publish --packagePath "$vsix" --skip-duplicate ;;
     *)
         echo "error: unknown registry '$registry' (expected marketplace or openvsx)." >&2

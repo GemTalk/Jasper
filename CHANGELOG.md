@@ -4,6 +4,10 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Changed
+
+- **Releases publish to the VS Code Marketplace without a stored token.** Azure DevOps stops accepting the kind of token the release workflow used on 27 January 2027, which would have left later releases off the Marketplace. The workflow now signs in with the Marketplace's Trusted Publishing: GitHub vouches for the release workflow each time it runs, and a policy on the `gemtalksystems` publisher trusts it, so there is no token to expire or rotate. Open VSX still uses its token. [docs/how-to/publishing-a-release.md](docs/how-to/publishing-a-release.md) describes the policy and what breaks it. ([#939](https://github.com/GemTalk/Jasper/issues/939))
+
 ### Fixed
 
 - **Closing a debugger while another run is going throws its paused run away.** Closing the debugger is meant to end the run it shows, but if an Execute It in another editor was still running, or one you had just cancelled was still finishing, the stone refused and Jasper gave up, so the paused run stayed in the session until logout. Jasper now waits for that run to end, then throws the paused run away. The same goes for ending a debug session and for turning down the offer to debug an error. A notebook cell whose debugger you close this way shows as running until the other run ends. ([#933](https://github.com/GemTalk/Jasper/issues/933))
