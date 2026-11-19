@@ -63,7 +63,7 @@ The on-demand `client/src/__tests__/gci/` project **never runs in CI** (see `.cl
 
 **These are not reasons** — each already has a mechanism that runs in CI:
 
-- _needs the server plugin in the image_ → gate it (see below). CI runs the suite twice, once bare and once with the plugin installed, so both worlds are covered.
+- _needs the server plugin in the image_ → gate it (see below). CI runs the integration tests twice, once bare and once with the plugin installed, so both worlds are covered.
 - _needs Rowan or Grail in the image_ → no CI pass has either installed, so a test gated on one skips on every run. Test Jasper's own half instead, from input built by hand: `fileTransfer/__tests__/tonelFileIn.integration.test.ts` builds the class description Rowan's reader would answer and runs on every stone. Leave Rowan's and Grail's own behaviour to their own tests.
 - _needs a class, method, or test-case fixture a bare vendor extent lacks_ → create it in the test; the auto-abort rolls it back.
 - _depends on behavior that differs by stone version_ → a version-applicability gate resolved off the session, never a hardcoded `stoneVersion` literal.
@@ -78,7 +78,7 @@ Whenever a test skips, skip it with a reason — `ctx.skip(reason)`. A bare `ret
 
 ### Tests that depend on the server plugin
 
-CI runs the integration suite twice — once against a bare stone, then again after installing the Jasper Server Plugin. By default a test runs in _both_ passes, so most tests need no gating. Only reach for a gate when the test makes sense in just one of those worlds; call it at the test's top (from `src/__tests__/requireServerPluginFeature.ts`). The gate skips the test, with a reason, when the connected stone isn't in the matching world, so each pass runs exactly the subset that applies instead of failing:
+CI runs the integration suite twice — once against a bare stone, then again after installing the Jasper Server Plugin. The second pass runs only the `*.integration.test.ts` files (`npm run test:stone`), the only tests the plugin can affect. By default a test runs in _both_ passes, so most tests need no gating. Only reach for a gate when the test makes sense in just one of those worlds; call it at the test's top (from `src/__tests__/requireServerPluginFeature.ts`). The gate skips the test, with a reason, when the connected stone isn't in the matching world, so each pass runs exactly the subset that applies instead of failing:
 
 - The test exercises a plugin feature → `requireServerPluginFeature(pluginFeatures.refactoring, ctx, session())` — runs only when the feature is installed.
 - The test asserts fallback/graceful-degradation behavior when the feature is missing → `requireServerPluginFeatureAbsent(pluginFeatures.refactoring, ctx, session())` — runs only when the feature is absent.

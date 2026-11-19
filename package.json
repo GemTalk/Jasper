@@ -3843,6 +3843,8 @@
     "test:server:install-plugin": "tsx client/bin/install-server-plugin.mjs",
     "test:server:check-plugin": "tsx client/bin/check-server-plugin.mjs",
     "test:server:uninstall-plugin": "tsx client/bin/uninstall-server-plugin.mjs",
+    "//test:stone": "Only the client tests that log into the stone (see the client's test:stone). Needs a live test stone.",
+    "test:stone": "npm run test:stone --workspace client",
     "test:server": "npm test --workspace server",
     "test:client": "npm test --workspace client",
     "//test:coverage": "Coverage for the client's default project. Pass a path prefix to scope the report: `npm run test:coverage -- 'src/undo/**'`.",

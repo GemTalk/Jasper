@@ -148,6 +148,7 @@ export function useIntegrationTest(
   // callers assign the values into their own variables before any test runs.
   beforeAll(async () => {
     const testPath = expect.getState().testPath ?? '';
+    assertStoneTestFileName(testPath);
     configureGemstoneGlobalDir();
     // From serverPluginMatch.globalSetup.ts; unset in the gci project. Checked
     // before booking, so a stone with the wrong plugin books no sessions.
@@ -531,6 +532,19 @@ export function useIntegrationTest(
  * commit too many, would fail every test in the suite for a budget that was
  * never openable in the first place.
  */
+// The Health Check's second run, with the server plugin installed, picks its
+// files by this name (`test:stone` in client/package.json), so a stone test
+// named otherwise would silently skip it. The on-demand gci suite has its own
+// names and never takes part in that run.
+function assertStoneTestFileName(testPath: string) {
+  if (/\.integration\.test\.ts$/.test(testPath)) return;
+  if (/[\\/]__tests__[\\/]gci[\\/]/.test(testPath)) return;
+
+  throw new Error(
+    `useIntegrationTest: ${testPath} logs into the stone, so its name must end in .integration.test.ts.`,
+  );
+}
+
 function assertUsableSessions(sessions: number) {
   if (Number.isInteger(sessions) && sessions >= 1) return;
 

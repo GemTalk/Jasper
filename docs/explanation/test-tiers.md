@@ -31,12 +31,10 @@ They are part of `npm test`. This is deliberate and has a consequence worth inte
 
 CI runs this tier the widest: a matrix over every GemStone release in `client/.gemstone-integration-releases.json`, and within each cell, twice — once against a bare stone, once after installing the Jasper Server Plugin.
 
-The convention is to name the file `*.integration.test.ts` and co-locate it in the `__tests__/` dir next to the code it exercises. Two separate things ride on that, and only one is a convention:
+The convention is to name the file `*.integration.test.ts` and co-locate it in the `__tests__/` dir next to the code it exercises. Both halves are load-bearing:
 
 - **The `__tests__/` dir is load-bearing.** The `default` project's glob is `src/**/__tests__/**/*.test.ts`, so a test placed anywhere else under `src/` is never collected — it doesn't fail, it silently never runs.
-- **The `.integration.` suffix is the courtesy.** Nothing enforces it; the harness works from any collected file. It makes the tier visible from a directory listing, so follow it — but read the name as a hint, not a guarantee.
-
-Grep for `useIntegrationTest` when you need the real list, and note it over-reports: a handful of files in the CI-excluded `gci/` directory call the harness too, so filter those out.
+- **The `.integration.` suffix picks the second CI pass.** The pass with the server plugin installed runs `npm run test:stone`, which selects files by that name. `useIntegrationTest` fails a file named otherwise, and lint refuses its import there, so outside the `gci/` directory the name is the real list.
 
 ## GCI tests
 
