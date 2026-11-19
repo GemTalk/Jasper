@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { REFUSAL_REPORT_SLACK_MS, SessionLedger, testFileName } from './sessionGateLedger';
+import { REFUSAL_SPAN_SLACK_MS, SessionLedger, testFileName } from './sessionGateLedger';
 
 // Watcher samples are login serial -> GCI client process id.
 const stone = (...sessions: [serial: string, pid: number][]) => new Map(sessions);
@@ -313,8 +313,8 @@ describe('the session gate ledger', () => {
     it('seen on the stone is excused by a refusal that took longer than the slack to come back', () => {
       book('a', 1, 100);
       ledger.sample(stone(['11', 100]));
-      now += REFUSAL_REPORT_SLACK_MS + 1_000;
-      refuse('a', REFUSAL_REPORT_SLACK_MS + 1_050);
+      now += REFUSAL_SPAN_SLACK_MS + 1_000;
+      refuse('a', REFUSAL_SPAN_SLACK_MS + 1_050);
 
       const unreported = ledger.unreportedFrom('a');
 
@@ -325,7 +325,7 @@ describe('the session gate ledger', () => {
       book('a', 1, 100);
       ledger.sample(stone(['11', 100]));
       const refused = refusal(now - 500, now);
-      now += REFUSAL_REPORT_SLACK_MS + 1_000;
+      now += REFUSAL_SPAN_SLACK_MS + 1_000;
       ledger.loginFailed('a', refused, true);
 
       const unreported = ledger.unreportedFrom('a');
@@ -334,10 +334,10 @@ describe('the session gate ledger', () => {
     });
 
     it('seen on the stone before the slow login was even started is not excused', () => {
-      const took = REFUSAL_REPORT_SLACK_MS + 1_050;
+      const took = REFUSAL_SPAN_SLACK_MS + 1_050;
       book('a', 1, 100);
       ledger.sample(stone(['11', 100]));
-      now += REFUSAL_REPORT_SLACK_MS + 1_000 + took;
+      now += REFUSAL_SPAN_SLACK_MS + 1_000 + took;
       refuse('a', took);
 
       const unreported = ledger.unreportedFrom('a');
@@ -505,8 +505,8 @@ describe('the session gate ledger', () => {
       ledger.opened('a', '11');
       now += 100;
       ledger.opened('a', '13');
-      now += REFUSAL_REPORT_SLACK_MS + 1_000;
-      refuse('a', REFUSAL_REPORT_SLACK_MS + 1_050);
+      now += REFUSAL_SPAN_SLACK_MS + 1_000;
+      refuse('a', REFUSAL_SPAN_SLACK_MS + 1_050);
 
       const unseen = ledger.loginsNeverSeen(10, 14);
 
@@ -519,7 +519,7 @@ describe('the session gate ledger', () => {
       now += 100;
       ledger.opened('a', '13');
       const refused = refusal(now - 500, now);
-      now += REFUSAL_REPORT_SLACK_MS + 1_000;
+      now += REFUSAL_SPAN_SLACK_MS + 1_000;
       ledger.loginFailed('a', refused, true);
 
       const unseen = ledger.loginsNeverSeen(10, 14);
@@ -527,13 +527,41 @@ describe('the session gate ledger', () => {
       expect(unseen).toEqual([]);
     });
 
+    it('are placed by when the test reported the serials either side, not when the reports arrived', () => {
+      book('a', 2);
+      const loggedIn = now;
+      now += 100;
+      const refused = refusal(now - 50, now);
+      now += 100;
+      ledger.opened('a', '13');
+      now += REFUSAL_SPAN_SLACK_MS + 1_000;
+      ledger.opened('a', '11', loggedIn);
+      ledger.loginFailed('a', refused, true);
+
+      const unseen = ledger.loginsNeverSeen(10, 14);
+
+      expect(unseen).toEqual([]);
+    });
+
+    it('are excused by a refusal sent without its times, by when its report arrived', () => {
+      book('a', 2);
+      ledger.opened('a', '11');
+      now += 100;
+      ledger.loginFailed('a', refusal(NaN, NaN), true);
+      ledger.opened('a', '13');
+
+      const unseen = ledger.loginsNeverSeen(10, 14);
+
+      expect(unseen).toEqual([]);
+    });
+
     it('are not excused by a slow refusal whose login started well after them', () => {
-      const took = REFUSAL_REPORT_SLACK_MS + 1_050;
+      const took = REFUSAL_SPAN_SLACK_MS + 1_050;
       book('a', 2);
       ledger.opened('a', '11');
       now += 100;
       ledger.opened('a', '13');
-      now += REFUSAL_REPORT_SLACK_MS + 1_000 + took;
+      now += REFUSAL_SPAN_SLACK_MS + 1_000 + took;
       refuse('a', took);
 
       const unseen = ledger.loginsNeverSeen(10, 14);
@@ -544,7 +572,7 @@ describe('the session gate ledger', () => {
     it('are not excused by a refusal long before them', () => {
       book('a', 2);
       refuse('a', 0);
-      now += REFUSAL_REPORT_SLACK_MS + 1_000;
+      now += REFUSAL_SPAN_SLACK_MS + 1_000;
       ledger.opened('a', '11');
       now += 100;
       ledger.opened('a', '13');
@@ -560,7 +588,7 @@ describe('the session gate ledger', () => {
       refuse('a', 0);
       ledger.unreportedFrom('a');
       refuse('a', 0);
-      now += REFUSAL_REPORT_SLACK_MS + 1_000;
+      now += REFUSAL_SPAN_SLACK_MS + 1_000;
       ledger.opened('a', '12');
       now += 100;
       ledger.opened('a', '14');

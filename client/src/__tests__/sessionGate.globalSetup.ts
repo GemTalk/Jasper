@@ -138,7 +138,7 @@ export async function startGate(
           );
           tryGrant();
         } else if (msg.op === 'opened') {
-          ledger.opened(socket, String(msg.serial));
+          ledger.opened(socket, String(msg.serial), Number(msg.at));
         } else if (msg.op === 'closed') {
           ledger.closed(socket, String(msg.serial));
         } else if (msg.op === 'loginFailed') {

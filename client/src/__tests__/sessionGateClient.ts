@@ -51,9 +51,12 @@ export async function acquireSessions(file: string, n: number): Promise<Socket |
   return socket;
 }
 
-/** Tells the gate that a session with login serial `serial` belongs to this file. */
+/**
+ * Tells the gate that a session with login serial `serial` belongs to this file,
+ * and when, by this worker's clock: the message can reach the gate late.
+ */
 export function reportSession(serial: string | bigint, socket = held.at(-1)): void {
-  socket?.write(JSON.stringify({ op: 'opened', serial: String(serial) }) + '\n');
+  socket?.write(JSON.stringify({ op: 'opened', serial: String(serial), at: Date.now() }) + '\n');
 }
 
 /**
@@ -101,7 +104,7 @@ export function deniedByStone(error: unknown): boolean {
 }
 
 /** Runs `login`, telling the gate when it fails, and rethrows. */
-export function reportingRefusal<T>(login: () => T, socket = held.at(-1)): T {
+export function reportingFailedLogin<T>(login: () => T, socket = held.at(-1)): T {
   const startedAt = Date.now();
   try {
     return login();
@@ -185,7 +188,7 @@ export async function assertBookingKept(socket: Socket | undefined): Promise<voi
         `whose login the stone then refuses. Report each login with reportLogin (sessionGateClient.ts). ` +
         `If app code the test calls logs in for itself, the test has to report that login too.` +
         (answer.loginsAround?.length
-          ? `\nWhat the gate knew of the logins from this test worker (seconds into the run):\n${answer.loginsAround.map((l) => `  ${l}`).join('\n')}\n`
+          ? `\nWhat the gate knew of the logins from this test worker (seconds into the run):\n${answer.loginsAround.map((l) => `  ${l}`).join('\n')}`
           : ''),
     );
   }
@@ -225,7 +228,7 @@ export function reportedTransientLogin(
  */
 export function reportingLoginsOf(manager: SessionManager): SessionManager {
   const { login, loginAsync, loginTransient } = manager;
-  manager.login = (...args) => reportLogin(reportingRefusal(() => login.apply(manager, args)));
+  manager.login = (...args) => reportLogin(reportingFailedLogin(() => login.apply(manager, args)));
   manager.loginAsync = async (...args) => {
     const startedAt = Date.now();
     try {
@@ -236,7 +239,7 @@ export function reportingLoginsOf(manager: SessionManager): SessionManager {
     }
   };
   manager.loginTransient = (...args) => {
-    const result = reportingRefusal(() => loginTransient.apply(manager, args));
+    const result = reportingFailedLogin(() => loginTransient.apply(manager, args));
     reportLogin(result.session);
     return result;
   };

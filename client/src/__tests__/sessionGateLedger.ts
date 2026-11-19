@@ -6,7 +6,7 @@
  * How far outside a refused login's own span, from the call to the refusal, the
  * watcher can date the serial it used.
  */
-export const REFUSAL_REPORT_SLACK_MS = 2_000;
+export const REFUSAL_SPAN_SLACK_MS = 2_000;
 
 /** Smalltalk answering the login serial of the session that runs it. */
 export const LOGIN_SERIAL_CODE = '(System descriptionOfSession: System session) at: 9';
@@ -179,14 +179,18 @@ export class SessionLedger<K> {
     this.withdraw(key);
   }
 
-  /** `key`'s file logged in the session with login serial `serial`. */
-  opened(key: K, serial: string): void {
+  /**
+   * `key`'s file logged in the session with login serial `serial`, reported at
+   * `reportedAt` by the test's clock: the report itself can reach the gate late
+   * (see {@link ReportedFailure}).
+   */
+  opened(key: K, serial: string, reportedAt?: number): void {
     // As in `sample`: serial 0 would read as the start of the run's serials,
     // and is what the stone describes a session that has already gone with.
     if (!(Number(serial) > 0)) return;
     const h = this.holders.get(key);
     h?.serials.add(serial);
-    this.reported.set(serial, { at: this.clock(), file: h?.file });
+    this.reported.set(serial, { at: this.testTime(reportedAt), file: h?.file });
   }
 
   /** `key`'s file logged out the session with login serial `serial`, or ended its gem. */
@@ -201,8 +205,18 @@ export class SessionLedger<K> {
    */
   loginFailed(key: K, failure: FailedLogin, denied: boolean): void {
     const h = this.holders.get(key);
-    const reported = { failure, at: this.clock(), pid: h?.pid, file: h?.file };
+    const at = this.clock();
+    const times = {
+      startedAt: this.testTime(failure.startedAt),
+      failedAt: this.testTime(failure.failedAt),
+    };
+    const reported = { failure: { ...failure, ...times }, at, pid: h?.pid, file: h?.file };
     (denied ? this.refusals : this.otherFailures).push(reported);
+  }
+
+  /** A time the test sent, or, if it sent none, when its report reached the gate. */
+  private testTime(at: number | undefined): number {
+    return Number.isFinite(at) ? at! : this.clock();
   }
 
   /** Matches an unmatched refusal by worker `pid` near `at` to `what`, if there is one. */
@@ -211,7 +225,7 @@ export class SessionLedger<K> {
       (x) =>
         x.matchedTo === undefined &&
         x.pid === pid &&
-        apart(spanOf(x), [at, at]) <= REFUSAL_REPORT_SLACK_MS,
+        apart(spanOf(x), [at, at]) <= REFUSAL_SPAN_SLACK_MS,
     );
     if (r) r.matchedTo = what;
     return r !== undefined;
@@ -332,7 +346,7 @@ export class SessionLedger<K> {
     const failures = [
       ...this.refusals.filter(its).map((r) => ({ r, denied: true })),
       ...this.otherFailures.filter(its).map((r) => ({ r, denied: false })),
-    ].sort((a, b) => a.r.at - b.r.at);
+    ].sort((a, b) => a.r.failure.startedAt - b.r.failure.startedAt);
     const lines = failures.length
       ? failures.map(({ r, denied }) => this.describeFailure(r, denied))
       : ['no failed login reported from this test worker'];
@@ -354,7 +368,8 @@ export class SessionLedger<K> {
     const error = `error ${f.number ?? 'with no number'}: ${f.message}`;
     let outcome: string;
     if (!denied) outcome = 'not refused by the stone, so matched to nothing';
-    else outcome = r.matchedTo ? `matched to ${r.matchedTo}` : 'matched to nothing';
+    // The end of the run can still match it to a login too short for the watcher to see.
+    else outcome = r.matchedTo ? `matched to ${r.matchedTo}` : 'not matched yet';
     return `failed login: ${when}; ${error}; ${outcome}`;
   }
 
@@ -446,7 +461,7 @@ export class SessionLedger<K> {
         if (best < 0 || distance(unexplained[i], refusal) < distance(unexplained[best], refusal))
           best = i;
       }
-      if (best >= 0 && distance(unexplained[best], refusal) <= REFUSAL_REPORT_SLACK_MS) {
+      if (best >= 0 && distance(unexplained[best], refusal) <= REFUSAL_SPAN_SLACK_MS) {
         refusal.matchedTo = `unseen login serial ${unexplained[best].serial}`;
         unexplained.splice(best, 1);
       }

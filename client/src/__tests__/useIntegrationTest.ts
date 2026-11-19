@@ -9,7 +9,7 @@ import {
   assertBookingKept,
   noteTestStarted,
   releaseSessions,
-  reportingRefusal,
+  reportingFailedLogin,
   reportSession,
   reportSessionClosed,
 } from './sessionGateClient';
@@ -252,7 +252,7 @@ export function useIntegrationTest(
    * @throws {GciLibraryError} If login fails (see `GciLibrary.login`).
    */
   function login(loginOptions?: LoginOptions) {
-    session = reportingRefusal(
+    session = reportingFailedLogin(
       () =>
         gciLibrary.login(
           process.env.VITE_GEMSTONE_STONE_NRS!,
@@ -376,7 +376,7 @@ export function useIntegrationTest(
    * @throws {GciLibraryError} If logging into the transient session fails.
    */
   function withTransientSession(callback: (transientSession: unknown) => void) {
-    const transientSession = reportingRefusal(
+    const transientSession = reportingFailedLogin(
       () =>
         gciLibrary.login(
           process.env.VITE_GEMSTONE_STONE_NRS!,
