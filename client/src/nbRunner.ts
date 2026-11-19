@@ -578,6 +578,16 @@ export function ensureSessionFree(session: ActiveSession): void {
 }
 
 /**
+ * Tell the user what holds a session that refused a call: a stopped run still
+ * finishing (Force Stop), or a run still going (Stop). Says nothing when the
+ * runner knows of neither, since there is nothing to offer to stop.
+ */
+export function sayWhatHolds(session: ActiveSession): void {
+  if (abandonedRunHolds(session)) sayStillRunning(session);
+  else if (isRunning(session)) sayRunInProgress(session);
+}
+
+/**
  * Whether a run the user stopped still holds the session, collecting it first if
  * its result is in.
  */

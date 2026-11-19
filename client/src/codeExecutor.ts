@@ -7,6 +7,7 @@ import {
   GCI_PERFORM_FLAG_SINGLE_STEP,
   GCI_PERFORM_FLAG_INTERPRETED,
   SOFT_BREAK_ERROR,
+  GCI_ERR_OP_IN_PROGRESS,
   toBigInt,
 } from './gciConstants';
 import { logError, logInfo } from './gciLog';
@@ -27,7 +28,7 @@ import {
   pollNbToCompletion,
   NbCancelledError,
   NbSessionBusyError,
-  sayRunInProgress,
+  sayWhatHolds,
   whenSessionFree,
 } from './nbRunner';
 import {
@@ -37,6 +38,15 @@ import {
 } from './debugger/conditionalBreakpoints';
 
 const MAX_RESULT_SIZE = 64 * 1024;
+
+/** The error for a run refused because `session` is busy, after saying what holds it. */
+function refusedAsBusy(session: ActiveSession): NbSessionBusyError {
+  sayWhatHolds(session);
+  return new NbSessionBusyError(
+    'Another run is still in progress on this session. Wait for it to finish, or stop it, ' +
+      'before starting another.',
+  );
+}
 
 // Decoration type for Display It results.
 // Uses color + italic so it's visible even while text is selected
@@ -164,11 +174,6 @@ export class CodeExecutor {
     const session = await this.sessionManager.resolveSession();
     if (!session) return;
 
-    if (this.executing.has(session.id)) {
-      sayRunInProgress(session);
-      return;
-    }
-
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
       vscode.window.showErrorMessage('No active text editor.');
@@ -231,6 +236,10 @@ export class CodeExecutor {
         0,
       );
       if (!success) {
+        if (startErr.number === GCI_ERR_OP_IN_PROGRESS) {
+          sayWhatHolds(session);
+          return;
+        }
         const msg = startErr.message || `error ${startErr.number}`;
         logError(session.id, msg);
         this.showCompileError(editor, selection, code, 0, msg);
@@ -524,22 +533,20 @@ export class CodeExecutor {
    * user opened on it, so its eventual fate isn't ours to report. A
    * cancel (a soft break, the runner giving up waiting, or Cancel while
    * breakpoint rules are being applied) is reported as `cancelled`, not `raised`, and never opens a
-   * debugger: it was the user's decision, not the code's fault. Throws when the
-   * execution could not be started at all, or stopped with nothing left to
-   * debug (no process, or the session logged out).
+   * debugger: it was the user's decision, not the code's fault. Throws
+   * {@link NbSessionBusyError}, after saying what holds the session, when another
+   * run holds it; otherwise throws when the execution could not be started at all, or
+   * stopped with nothing left to debug (no process, or the session logged out).
    */
   async executeWithDebugger(
     session: ActiveSession,
     code: string,
     label: string,
   ): Promise<{ raised: boolean; cancelled?: boolean; message?: string }> {
-    if (this.executing.has(session.id)) {
-      throw new Error('A GemStone execution is already in progress on this session.');
-    }
-    return await whenSessionFree(session, () => this.runWithDebugger(session, code, label));
+    return await this.whenNotExecuting(session, () => this.runWithDebugger(session, code, label));
   }
 
-  /** Everything in `executeWithDebugger` after the session check; see whenSessionFree. */
+  /** Everything in `executeWithDebugger` after the session check; see whenNotExecuting. */
   private async runWithDebugger(
     session: ActiveSession,
     code: string,
@@ -558,6 +565,7 @@ export class CodeExecutor {
         0,
       );
       if (!success) {
+        if (startErr.number === GCI_ERR_OP_IN_PROGRESS) throw refusedAsBusy(session);
         throw new Error(startErr.message || `GemStone error ${startErr.number}`);
       }
 
@@ -573,6 +581,7 @@ export class CodeExecutor {
       // while breakpoint rules are being applied stops at the hit it reached.
       // No debugger will own the suspended process, so it is released here.
       if (e instanceof NbCancelledError) return { raised: false, cancelled: true };
+      if (e instanceof NbSessionBusyError) throw e;
       if (e instanceof DebuggableError && (e.cancelled || e.errorNumber === SOFT_BREAK_ERROR)) {
         this.releaseProcess(session, e.context);
         return { raised: false, cancelled: true };
@@ -749,18 +758,28 @@ export class CodeExecutor {
   }
 
   /**
-   * Run `start` once the session is free ({@link whenSessionFree}), or, while it
+   * Run `start` once the session is free ({@link whenNotExecuting}), or, while it
    * still has a run on it — one the user stopped that is still finishing, or one
    * still going — tell them so and start nothing: until then GemStone refuses
    * every call on the session, clientForwarder mode's start included.
    */
   private async whenFree(session: ActiveSession, start: () => Promise<void>): Promise<void> {
     try {
-      await whenSessionFree(session, start);
+      await this.whenNotExecuting(session, start);
     } catch (e) {
-      // Already told: the refusal raises its own notice, with a way to stop the run.
+      // Already told: the refusal raises its own notice whenever there is a run to stop.
       if (!(e instanceof NbSessionBusyError)) throw e;
     }
+  }
+
+  /**
+   * {@link whenSessionFree}, refused also while one of this executor's own runs
+   * holds the session. An Execute It holds it past its poll (its error prompt,
+   * showing its result), when the runner no longer counts it.
+   */
+  private async whenNotExecuting<T>(session: ActiveSession, start: () => Promise<T>): Promise<T> {
+    if (this.executing.has(session.id)) throw refusedAsBusy(session);
+    return await whenSessionFree(session, start);
   }
 
   private pollForCompletion<T>(
@@ -838,11 +857,6 @@ export class CodeExecutor {
     const session = await this.sessionManager.resolveSession();
     if (!session) return;
 
-    if (this.executing.has(session.id)) {
-      sayRunInProgress(session);
-      return;
-    }
-
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
       vscode.window.showErrorMessage('No active text editor.');
@@ -868,11 +882,6 @@ export class CodeExecutor {
   async inspectExpression(code: string, label: string): Promise<void> {
     const session = await this.sessionManager.resolveSession();
     if (!session) return;
-
-    if (this.executing.has(session.id)) {
-      sayRunInProgress(session);
-      return;
-    }
 
     await this.executeAndInspect(session, code, label);
   }
@@ -909,6 +918,10 @@ export class CodeExecutor {
         0,
       );
       if (!success) {
+        if (startErr.number === GCI_ERR_OP_IN_PROGRESS) {
+          sayWhatHolds(session);
+          return;
+        }
         const msg = `Execution failed to start: ${startErr.message || `error ${startErr.number}`}`;
         logError(session.id, msg);
         vscode.window.showErrorMessage(msg);

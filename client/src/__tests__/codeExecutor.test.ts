@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
@@ -47,13 +47,14 @@ vi.mock('../debugger/logpointChannel', () => ({
 }));
 
 import { CodeExecutor } from '../codeExecutor';
+import { logError } from '../gciLog';
 import {
   pollNbToCompletion,
   whenSessionFree,
   clearInBackground,
   forgetSession,
   NbSessionBusyError,
-  sayRunInProgress,
+  setRunInProgressHandler,
   type NbRunOptions,
 } from '../nbRunner';
 import { DebuggerPanel } from '../debugger/debuggerPanel';
@@ -209,6 +210,23 @@ function setActiveEditor(
 }
 
 /**
+ * Make the next run on `gci` raise an error, and keep its
+ * modal Debug prompt open until `close`: the executor still holds the session,
+ * though the runner no longer counts the run.
+ */
+function holdErrorPromptOpen(gci: ReturnType<typeof makeGci>): { close: () => void } {
+  gci.GciTsNbResult.mockReturnValueOnce({
+    result: 0x01n,
+    err: { number: 2003, message: 'a UndefinedObject does not understand #foo', context: 0x123n },
+  });
+  let close: () => void = () => {};
+  vi.mocked(vscode.window.showErrorMessage).mockImplementationOnce(
+    () => new Promise((resolve) => (close = () => resolve(undefined))),
+  );
+  return { close: () => close() };
+}
+
+/**
  * An editor whose underlying document text grows when `edit()` inserts.
  * Use this when a test depends on `offsetAt` / `positionAt` reflecting the
  * post-insertion document — e.g. assertions about the selection placed over
@@ -320,6 +338,10 @@ describe('CodeExecutor', () => {
     executor = executorWith(sessionManager, NO_CONDITIONS);
   });
 
+  afterEach(() => {
+    setRunInProgressHandler(undefined);
+  });
+
   // ── Auto-commit (issue #254) ───────────────────────────────
 
   /**
@@ -418,6 +440,33 @@ describe('CodeExecutor', () => {
       expect(diags).toHaveLength(1);
       expect(diags[0].message).toContain('CompileError');
       expect(diags[0].source).toBe('GemStone');
+    });
+
+    it('shows no diagnostic when GemStone refuses the start because the session is busy', async () => {
+      (gci.GciTsNbExecute as Mock).mockReturnValue({
+        success: false,
+        err: { number: 2203, message: 'operation in progress' },
+      });
+      setActiveEditor(makeEditor('3 + 4'));
+
+      await executor.executeIt();
+
+      expect(lastDiagCollection().set).not.toHaveBeenCalled();
+      expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+    });
+
+    it('lets the next run start after GemStone refuses one because the session is busy', async () => {
+      (gci.GciTsNbExecute as Mock).mockReturnValueOnce({
+        success: false,
+        err: { number: 2203, message: 'operation in progress' },
+      });
+      gci.executeAndFetchString.mockReturnValue('7');
+      setActiveEditor(makeEditor('3 + 4'));
+      await executor.executeIt();
+
+      await executor.executeIt();
+
+      expect(gci.GciTsNbExecute).toHaveBeenCalledTimes(2);
     });
 
     it('extracts character offset from error and maps to user code position', async () => {
@@ -1353,14 +1402,64 @@ describe('CodeExecutor', () => {
       '%s on a session still running one offers to stop that run, and starts nothing',
       async (command) => {
         setActiveEditor(makeEditor('3 + 4'));
-        (executor as unknown as { executing: Set<number> }).executing.add(session.id);
+        const notice = vi.fn();
+        setRunInProgressHandler(notice);
+        gci.GciTsNbPoll.mockReturnValue({ result: 0, err: { number: 0 } });
+        const first = executor.executeIt();
 
         await executor[command]();
 
-        expect(gci.GciTsNbExecute).not.toHaveBeenCalled();
-        expect(sayRunInProgress).toHaveBeenCalledWith(session);
+        expect(gci.GciTsNbExecute).toHaveBeenCalledOnce();
+        expect(notice).toHaveBeenCalledWith(session);
+        gci.GciTsNbPoll.mockReturnValue({ result: 1, err: { number: 0 } });
+        gci.executeAndFetchString.mockReturnValue('7');
+        await first;
       },
     );
+
+    it.each(['executeIt', 'displayIt', 'inspectIt'] as const)(
+      '%s starts nothing while an Execute It waits on its error prompt, with nothing to offer to stop',
+      async (command) => {
+        setActiveEditor(makeEditor('3 + 4'));
+        const notice = vi.fn();
+        setRunInProgressHandler(notice);
+        const prompt = holdErrorPromptOpen(gci);
+        const first = executor.executeIt();
+        await vi.waitFor(() => expect(vscode.window.showErrorMessage).toHaveBeenCalled());
+
+        await executor[command]();
+
+        expect(gci.GciTsNbExecute).toHaveBeenCalledOnce();
+        expect(notice).not.toHaveBeenCalled();
+        prompt.close();
+        await first;
+      },
+    );
+
+    it('Inspect It shows no error when GemStone refuses its start because the session is busy', async () => {
+      gci.GciTsNbExecute.mockReturnValue({
+        success: false,
+        err: { number: 2203, message: 'operation in progress' },
+      });
+      setActiveEditor(makeEditor('3 + 4'));
+
+      await executor.inspectIt();
+
+      expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+    });
+
+    it('Inspect Expression starts nothing while an Execute It waits on its error prompt', async () => {
+      setActiveEditor(makeEditor('3 + 4'));
+      const prompt = holdErrorPromptOpen(gci);
+      const executeIt = executor.executeIt();
+      await vi.waitFor(() => expect(vscode.window.showErrorMessage).toHaveBeenCalled());
+
+      await executor.inspectExpression('3 + 4', 'sum');
+
+      expect(gci.GciTsNbExecute).toHaveBeenCalledOnce();
+      prompt.close();
+      await executeIt;
+    });
 
     it('sets gemstone.executing context to true on start and false on finish', async () => {
       const editor = makeEditor('3 + 4');
@@ -1998,22 +2097,51 @@ describe('CodeExecutor', () => {
       expect(gci.GciTsNbExecute.mock.calls).toHaveLength(2);
     });
 
-    it('refuses to start on a session that is already executing', async () => {
+    it('refuses to start on a session that is already executing, with the Stop notice', async () => {
       const gci = makeGci();
       const session = makeSession(gci);
       const executor = executorWith(makeSessionManager(session), NO_CONDITIONS);
+      const notice = vi.fn();
+      setRunInProgressHandler(notice);
       // Hold the first execution open so the session is genuinely busy.
       gci.GciTsNbPoll.mockReturnValue({ result: 0, err: { number: 0 } });
       const pending = executor.executeWithDebugger(session, '3 + 4', 'MyTest>>testAdd');
 
-      await expect(
-        executor.executeWithDebugger(session, '3 + 4', 'MyTest>>testRemove'),
-      ).rejects.toThrow(/already in progress/);
+      const second = executor.executeWithDebugger(session, '3 + 4', 'MyTest>>testRemove');
 
+      await expect(second).rejects.toBeInstanceOf(NbSessionBusyError);
+      expect(notice).toHaveBeenCalledWith(session);
+      expect(gci.GciTsNbExecute).toHaveBeenCalledOnce();
       // Let it finish: a poll loop still spinning at the end of this test would
       // be drained by whichever fake-timer test runs next.
       gci.GciTsNbPoll.mockReturnValue({ result: 1, err: { number: 0 } });
       await pending;
+    });
+
+    it('refuses to start while an Execute It waits on its error prompt', async () => {
+      setActiveEditor(makeEditor('3 + 4'));
+      const prompt = holdErrorPromptOpen(gci);
+      const executeIt = executor.executeIt();
+      await vi.waitFor(() => expect(vscode.window.showErrorMessage).toHaveBeenCalled());
+
+      const run = executor.executeWithDebugger(session, '3 + 4', 'MyTest>>testAdd');
+
+      await expect(run).rejects.toBeInstanceOf(NbSessionBusyError);
+      expect(gci.GciTsNbExecute).toHaveBeenCalledOnce();
+      prompt.close();
+      await executeIt;
+    });
+
+    it('reports a start GemStone refuses as busy as a refusal, not an error', async () => {
+      gci.GciTsNbExecute.mockReturnValue({
+        success: false,
+        err: { number: 2203, message: 'operation in progress' },
+      });
+
+      const run = executor.executeWithDebugger(session, '3 + 4', 'MyTest>>testAdd');
+
+      await expect(run).rejects.toBeInstanceOf(NbSessionBusyError);
+      expect(logError).not.toHaveBeenCalled();
     });
   });
 

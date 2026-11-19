@@ -931,12 +931,12 @@ export class SunitTestController implements vscode.Disposable {
   }
 
   /**
-   * Whether a run never started because the session still had another on it,
-   * telling the user so. It has no outcome — calling it an error would blame the
+   * Whether a run never started because the session still had another on it.
+   * It has no outcome — calling it an error would blame the
    * test — so it leaves no verdict, as a stopped run does.
    */
   private wasRefused(e: unknown): boolean {
-    // Already told: the refusal raises its own notice, with a way to stop the run.
+    // Already told: the refusal raises its own notice whenever there is a run to stop.
     return e instanceof NbSessionBusyError;
   }
 
