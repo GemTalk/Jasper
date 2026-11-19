@@ -16,6 +16,7 @@ vi.mock('../../debugger/debugQueries', () => ({
   fetchPrintString: vi.fn(),
   getObjectClassName: vi.fn(),
   fetchFullPrintString: vi.fn(),
+  FULL_PRINT_STRING_MAX_CHARS: 1_000_000,
 }));
 
 vi.mock('../../browserQueries', () => ({
@@ -87,6 +88,11 @@ function makeMockPanel() {
     },
     sendMessage(msg: unknown) {
       messageHandler!(msg);
+    },
+    /** Fire the panel's onDidDispose, as closing it in VS Code does. */
+    close() {
+      const [onDispose] = panel.onDidDispose.mock.calls[0] as unknown as [() => void];
+      onDispose();
     },
   };
 }
@@ -553,23 +559,116 @@ describe('EnhancedInspector', () => {
   });
 
   describe('K — fetchFullPrintString', () => {
-    it('wraps fetchFullPrintString result in JSON with stylerSpecification null and posts fullPrintString', () => {
-      expect.assertions(2);
-      vi.mocked(debug.fetchFullPrintString).mockReturnValue('this is the full text');
+    // The fetch is awaited inside the message handler; one macrotask lets it settle.
+    const settle = () => new Promise((r) => setTimeout(r, 0));
+
+    function fullPrintPosts() {
+      return mock.postMessage.mock.calls
+        .map(([m]) => m as { command: string })
+        .filter((m) => m.command === 'fullPrintString');
+    }
+
+    it('posts the print as styler-less text the webview can render', async () => {
+      expect.assertions(1);
+      vi.mocked(debug.fetchFullPrintString).mockResolvedValue({
+        text: 'this is the full text',
+        cutShortAt: 0,
+      });
       setup();
       mock.sendMessage({
         command: 'fetchFullPrintString',
+        columnId: 3,
         oop: '1000',
         methodSelector: 'gtPrintFor:',
       });
-      expect(debug.fetchFullPrintString).toHaveBeenCalled();
-      expect(mock.postMessage).toHaveBeenCalledWith(
-        expect.objectContaining({
-          command: 'fullPrintString',
-          methodSelector: 'gtPrintFor:',
-          data: JSON.stringify({ string: 'this is the full text', stylerSpecification: null }),
+      await settle();
+      expect(mock.postMessage).toHaveBeenCalledWith({
+        command: 'fullPrintString',
+        columnId: 3,
+        methodSelector: 'gtPrintFor:',
+        data: JSON.stringify({
+          string: 'this is the full text',
+          stylerSpecification: null,
+          cutShortAt: 0,
+        }),
+      });
+    });
+
+    it('fetches the object the column asked for', async () => {
+      expect.assertions(1);
+      vi.mocked(debug.fetchFullPrintString).mockResolvedValue({ text: 'x', cutShortAt: 0 });
+      setup();
+      mock.sendMessage({
+        command: 'fetchFullPrintString',
+        columnId: 0,
+        oop: '4242',
+        methodSelector: 'gtPrintFor:',
+      });
+      await settle();
+      expect(debug.fetchFullPrintString).toHaveBeenCalledWith(session, 4242n);
+    });
+
+    it('tells the webview the cap it stopped at when the print was cut short', async () => {
+      expect.assertions(2);
+      vi.mocked(debug.fetchFullPrintString).mockResolvedValue({
+        text: '#( 1, 2...',
+        cutShortAt: 1_000_000,
+      });
+      setup();
+      mock.sendMessage({
+        command: 'fetchFullPrintString',
+        columnId: 0,
+        oop: '1000',
+        methodSelector: 'gtPrintFor:',
+      });
+      await settle();
+      expect(fullPrintPosts()).toHaveLength(1);
+      const posted = fullPrintPosts()[0] as unknown as { data: string };
+      expect(JSON.parse(posted.data)).toMatchObject({
+        string: '#( 1, 2...',
+        cutShortAt: 1_000_000,
+      });
+    });
+
+    it('posts nothing when the panel closed while the gem printed', async () => {
+      expect.assertions(1);
+      let finish!: (v: { text: string; cutShortAt: number }) => void;
+      vi.mocked(debug.fetchFullPrintString).mockReturnValue(
+        new Promise((resolve) => {
+          finish = resolve;
         }),
       );
+      setup();
+      mock.sendMessage({
+        command: 'fetchFullPrintString',
+        columnId: 0,
+        oop: '1000',
+        methodSelector: 'gtPrintFor:',
+      });
+      mock.close();
+      finish({ text: 'late', cutShortAt: 0 });
+      await settle();
+      expect(fullPrintPosts()).toHaveLength(0);
+    });
+
+    it('posts a failure on its own, so the webview keeps the text it was showing', async () => {
+      expect.assertions(2);
+      vi.mocked(debug.fetchFullPrintString).mockResolvedValue({ error: 'session busy' });
+      setup();
+      mock.sendMessage({
+        command: 'fetchFullPrintString',
+        columnId: 2,
+        oop: '1000',
+        methodSelector: 'gtPrintFor:',
+      });
+      await settle();
+      expect(fullPrintPosts()).toHaveLength(0);
+      expect(mock.postMessage).toHaveBeenCalledWith({
+        command: 'fullPrintStringFailed',
+        columnId: 2,
+        methodSelector: 'gtPrintFor:',
+        error: 'session busy',
+      });
     });
   });
 

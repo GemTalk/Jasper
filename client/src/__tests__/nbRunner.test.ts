@@ -1598,6 +1598,192 @@ describe('a clean-up started while something else holds the session', () => {
   });
 });
 
+// Closing a debugger while an Execute It in another editor is still running: GemStone
+// refuses a clear while that run holds the session.
+describe('a clean-up asked for while a run holds the session', () => {
+  const WAIT = { waitForRun: true } as const;
+
+  /**
+   * A run on `session` whose call goes on until `finish` is called. `afterResult`
+   * runs once the result is collected, still inside the run, as `onReady` work does.
+   */
+  function startRun(
+    session: ReturnType<typeof makeSession>['session'],
+    gci: ReturnType<typeof makeSession>['gci'],
+    afterResult: () => unknown = () => undefined,
+    opts: NbRunOptions = {},
+  ) {
+    const poll = gci.GciTsNbPoll as ReturnType<typeof vi.fn>;
+    poll.mockReturnValue({ result: 0, err: noErr });
+    let cancel: (() => void) | undefined;
+    const run = runNbCall(
+      session,
+      () => session.GciTsNbExecute('x', OOP_ILLEGAL, OOP_ILLEGAL, OOP_NIL, 0, 0),
+      async () => {
+        session.GciTsNbResult();
+        await afterResult();
+        return 'x';
+      },
+      { suppressNotification: true, onStart: (c) => (cancel = c), ...opts },
+    );
+    return {
+      run,
+      finish: () => poll.mockReturnValue({ result: 1, err: noErr }),
+      cancel: () => cancel!(),
+    };
+  }
+
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  it('waits for the run to end without holding the session, then clears once', async () => {
+    vi.useFakeTimers();
+    const { session, gci } = makeSession([]);
+    const { run, finish } = startRun(session, gci);
+    const then = vi.fn();
+
+    const clearing = clearInBackground(session, 0x4242n, then, [], WAIT);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(gci.GciTsClearStackAsync).not.toHaveBeenCalled();
+    expect(clearHolds(session)).toBe(false);
+    expect(then).not.toHaveBeenCalled();
+
+    finish();
+    await vi.advanceTimersByTimeAsync(2000);
+    await run;
+    await clearing;
+
+    expect(gci.GciTsClearStackAsync).toHaveBeenCalledTimes(1);
+    expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(expect.anything(), 0x4242n);
+    expect(then).toHaveBeenCalledTimes(1);
+    expect(clearHolds(session)).toBe(false);
+  });
+
+  // An Execute It auto-commits as soon as its result is back.
+  it("lets the run's caller make its next call before the clear", async () => {
+    vi.useFakeTimers();
+    const { session, gci } = makeSession([]);
+    const { run, finish } = startRun(session, gci);
+    const order: string[] = [];
+    gci.GciTsClearStackAsync.mockImplementation(() => {
+      order.push('clear');
+      return { success: true, err: noErr };
+    });
+    const followUp = run.then(() => order.push('caller'));
+
+    const clearing = clearInBackground(session, 0x4242n, undefined, [], WAIT);
+    finish();
+    await vi.advanceTimersByTimeAsync(2000);
+    await followUp;
+    await clearing;
+
+    expect(order).toEqual(['caller', 'clear']);
+  });
+
+  it('waits again for a run that starts before the clear does', async () => {
+    vi.useFakeTimers();
+    const { session, gci } = makeSession([]);
+    const first = startRun(session, gci);
+    const clearing = clearInBackground(session, 0x4242n, undefined, [], WAIT);
+    // Straight from the first run's end, as a caller chaining runs would.
+    const second = first.run.then(() => startRun(session, gci));
+
+    first.finish();
+    await vi.advanceTimersByTimeAsync(2000);
+    const { run: secondRun, finish: finishSecond } = await second;
+
+    expect(gci.GciTsClearStackAsync).not.toHaveBeenCalled();
+
+    finishSecond();
+    await vi.advanceTimersByTimeAsync(2000);
+    await secondRun;
+    await clearing;
+
+    expect(gci.GciTsClearStackAsync).toHaveBeenCalledTimes(1);
+  });
+
+  // Cancel on a slow Execute It whose ensure: blocks take a while, then close the
+  // debugger at once: the run is stopped, and still finishing.
+  it('waits for a run the user has stopped that is still finishing', async () => {
+    vi.useFakeTimers();
+    const { session, gci } = makeSession([]);
+    const { run, finish, cancel } = startRun(session, gci);
+    run.catch(() => {});
+    cancel();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(stoppedRunHolds(session)).toBe(true);
+
+    const clearing = clearInBackground(session, 0x4242n, undefined, [], WAIT);
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(gci.GciTsClearStackAsync).not.toHaveBeenCalled();
+
+    finish();
+    await vi.advanceTimersByTimeAsync(2000);
+    await clearing;
+
+    expect(gci.GciTsClearStackAsync).toHaveBeenCalledTimes(1);
+    expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(expect.anything(), 0x4242n);
+  });
+
+  // The breakpoint-rules loop hands control back between its calls, with none out.
+  it("waits through a gap between the run's own calls, when nothing is out", async () => {
+    vi.useFakeTimers();
+    const { session, gci } = makeSession([]);
+    let endGap: () => void = () => {};
+    const gap = new Promise<void>((resolve) => (endGap = resolve));
+    const { run, finish } = startRun(session, gci, () => gap);
+    finish();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(session.isBusy()).toBe(false);
+
+    const clearing = clearInBackground(session, 0x4242n, undefined, [], WAIT);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(gci.GciTsClearStackAsync).not.toHaveBeenCalled();
+
+    endGap();
+    await vi.advanceTimersByTimeAsync(2000);
+    await run;
+    await clearing;
+
+    expect(gci.GciTsClearStackAsync).toHaveBeenCalledTimes(1);
+  });
+
+  // A notebook cell, the Transcript catch-up and the breakpoint-rules loop clear their
+  // own run's process from inside it; waiting for the run would wait on themselves.
+  it('clears at once for a run clearing its own process, which then ends', async () => {
+    vi.useFakeTimers();
+    const { session, gci } = makeSession([]);
+    const { run, finish } = startRun(session, gci, () => clearInBackground(session, 0x4343n));
+    finish();
+    await vi.advanceTimersByTimeAsync(500);
+
+    await expect(run).resolves.toBe('x');
+    expect(gci.GciTsClearStackAsync).toHaveBeenCalledWith(expect.anything(), 0x4343n);
+  });
+
+  it('gives up at logout, still telling its caller it is done', async () => {
+    vi.useFakeTimers();
+    const { session, gci } = makeSession([]);
+    const { run } = startRun(session, gci);
+    run.catch(() => {});
+    const then = vi.fn();
+    const clearing = clearInBackground(session, 0x4242n, then, [], WAIT);
+
+    session.logout();
+    forgetSession(session.id);
+    await vi.advanceTimersByTimeAsync(2000);
+    await clearing;
+
+    expect(gci.GciTsClearStackAsync).not.toHaveBeenCalled();
+    expect(then).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('stoppedRunCleared', () => {
   it('settles at once when nothing is being cleared', async () => {
     const { session } = makeSession([]);

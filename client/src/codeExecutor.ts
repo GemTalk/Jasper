@@ -680,8 +680,9 @@ export class CodeExecutor {
     appendTranscriptOutput(endClientForwarderMode(session));
   }
 
+  /** Every caller is past its own run, so the clear can wait out another one. */
   private releaseProcess(session: ActiveSession, gsProcess: bigint): void {
-    void releaseStoppedProcess(session, gsProcess);
+    void releaseStoppedProcess(session, gsProcess, { waitForRun: true });
   }
 
   /**

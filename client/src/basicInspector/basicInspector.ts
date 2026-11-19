@@ -165,6 +165,9 @@ export class BasicInspector {
   private readonly panel: vscode.WebviewPanel;
   private readonly sessionId: number;
   private disposables: vscode.Disposable[] = [];
+  private disposed = false;
+  /** Print tab fetches still holding the session; see {@link dispose}. */
+  private printsInFlight = 0;
   // Titles go through this, never `panel.title`, so they keep the session tag.
   private readonly title: SessionPanelTitle;
   /** Monotonic id handed to each miller column; the root column is 0. */
@@ -266,7 +269,10 @@ export class BasicInspector {
   }
 
   private dispose(): void {
-    this.releasePins();
+    this.disposed = true;
+    // A print still running holds the session, which would refuse the unpin;
+    // the last one to finish releases the pins instead.
+    if (this.printsInFlight === 0) this.releasePins();
     BasicInspector.panels.get(this.sessionId)?.delete(this);
     for (const d of this.disposables) d.dispose();
     this.disposables = [];
@@ -285,14 +291,24 @@ export class BasicInspector {
           this.postColumn('addRoot', 0, this.rootOop, this.rootLabel);
           return;
         case 'fetchTab':
-          this.postTabData(
-            msg.columnId,
-            BigInt(msg.oop),
-            msg.tab,
-            msg.from,
-            msg.all === true,
-            msg.through ?? 0,
-          );
+          if (msg.tab === 'print') {
+            void this.postPrintTab(msg.columnId, BigInt(msg.oop));
+            return;
+          }
+          try {
+            this.postTabData(
+              msg.columnId,
+              BigInt(msg.oop),
+              msg.tab,
+              msg.from,
+              msg.all === true,
+              msg.through ?? 0,
+            );
+          } catch (e: unknown) {
+            const message = e instanceof Error ? e.message : String(e);
+            logError(this.sessionId, message);
+            this.postTabFailed(msg.columnId, BigInt(msg.oop), msg.tab, message);
+          }
           return;
         case 'inspectRow':
           this.postColumn('addChild', this.nextColumnId++, BigInt(msg.oop), msg.label, {
@@ -400,7 +416,13 @@ export class BasicInspector {
     through = 0,
   ): void {
     const exec = this.makeExecutor();
-    const payload: Record<string, unknown> = { command: 'tabData', columnId, tab, from };
+    const payload: Record<string, unknown> = {
+      command: 'tabData',
+      columnId,
+      oop: oop.toString(),
+      tab,
+      from,
+    };
     const maxPages = loadAllPageLimit();
 
     switch (tab) {
@@ -449,11 +471,53 @@ export class BasicInspector {
       case 'meta':
         payload.meta = fetchObjectMeta(exec, oop);
         break;
-      case 'print':
-        payload.text = debug.fetchFullPrintString(this.session, oop);
-        break;
     }
     this.panel.webview.postMessage(payload);
+  }
+
+  /**
+   * The Print tab: the object's printString up to the cap, fetched without
+   * blocking, so it has its own path rather than a case in {@link postTabData}.
+   * The panel may have closed while the gem printed.
+   */
+  private async postPrintTab(columnId: number, oop: bigint): Promise<void> {
+    this.printsInFlight++;
+    let full;
+    try {
+      full = await debug.fetchFullPrintString(this.session, oop);
+    } finally {
+      this.printsInFlight--;
+      if (this.disposed && this.printsInFlight === 0) this.releasePins();
+    }
+    if (this.disposed) return;
+    if ('error' in full) {
+      this.postTabFailed(columnId, oop, 'print', full.error);
+      return;
+    }
+    this.panel.webview.postMessage({
+      command: 'tabData',
+      columnId,
+      oop: oop.toString(),
+      tab: 'print',
+      from: 1,
+      text: full.text,
+      cutShortAt: full.cutShortAt,
+    });
+  }
+
+  /**
+   * Tell the column a tab's read failed, typically refused because another call
+   * holds the session, so it can say so and let a click on the tab try again
+   * instead of showing "Loading…" for good.
+   */
+  private postTabFailed(columnId: number, oop: bigint, tab: TabName, error: string): void {
+    this.panel.webview.postMessage({
+      command: 'tabFailed',
+      columnId,
+      oop: oop.toString(),
+      tab,
+      error,
+    });
   }
 
   /**

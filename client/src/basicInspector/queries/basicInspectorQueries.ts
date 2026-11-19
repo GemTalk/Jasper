@@ -77,7 +77,7 @@ export interface ObjectHeader {
   byteSize: number;
   /** Understands `keys` + `keysAndValuesDo:` — routed to Entries, not Items. */
   isDictionary: boolean;
-  /** printString, capped. The full text lives on the Print tab. */
+  /** printString, capped. The Print tab shows far more of it. */
   printString: string;
   /**
    * What {@link itemCount} counts, for the two classes where the count is the

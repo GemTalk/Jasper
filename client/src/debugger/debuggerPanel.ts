@@ -5330,7 +5330,9 @@ export class DebuggerPanel {
       // dismissing the error notifier); best-effort, the session may be gone.
       const cleared = this.onCleared;
       if (!this.processReleasedByCaller) {
-        void debug.clearStack(this.session, this.gsProcess).then(cleared, cleared);
+        void debug
+          .clearStack(this.session, this.gsProcess, undefined, { waitForRun: true })
+          .then(cleared, cleared);
       }
     }
   }
