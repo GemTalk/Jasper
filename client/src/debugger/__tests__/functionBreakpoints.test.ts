@@ -117,8 +117,17 @@ describe('parseFunctionName', () => {
     expect(parseFunctionName('\\\\')).toEqual({ isMeta: false, selector: '\\\\' });
   });
 
-  it('rejects a qualified name whose selector has a space in it', () => {
-    expect(parseFunctionName('Account>>foo bar')).toBeNull();
+  it('reads a binary selector longer than two characters', () => {
+    expect(parseFunctionName('PPParser>>==>')).toEqual({
+      className: 'PPParser',
+      isMeta: false,
+      selector: '==>',
+    });
+    expect(parseFunctionName('PPParser>>>=>')?.selector).toBe('>=>');
+  });
+
+  it('takes the selector of a qualified name as written, leaving the lookup to judge it', () => {
+    expect(parseFunctionName('Account>>foo bar')?.selector).toBe('foo bar');
   });
 
   it('rejects empty input', () => {

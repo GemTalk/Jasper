@@ -143,9 +143,16 @@ describe('parseMethodReference', () => {
     });
   });
 
-  it('reads a backslash binary selector', () => {
+  it('reads a binary selector of any length', () => {
     expect(parseMethodReference('Number>>\\\\')?.selector).toBe('\\\\');
     expect(parseMethodReference('Number>>\\')?.selector).toBe('\\');
+    expect(parseMethodReference('PPParser>>==>')?.selector).toBe('==>');
+    expect(parseMethodReference('PPParser>>>=>')?.selector).toBe('>=>');
+  });
+
+  it('takes the selector as written, leaving the lookup to find nothing for a name no method has', () => {
+    expect(parseMethodReference('Object>>print String')?.selector).toBe('print String');
+    expect(parseMethodReference("Object>>foo'bar")?.selector).toBe("foo'bar");
   });
 
   it('is not a reference: a doit block, which has no class and no selector', () => {
@@ -158,14 +165,8 @@ describe('parseMethodReference', () => {
     }
   });
 
-  it('is not a reference: a malformed class half or selector', () => {
-    for (const term of [
-      'Foo Bar>>x',
-      '123>>balance',
-      'Object>>print String',
-      "Object>>foo'bar",
-      'Object>>a:b',
-    ]) {
+  it('is not a reference: a malformed class half', () => {
+    for (const term of ['Foo Bar>>x', '123>>balance']) {
       expect(parseMethodReference(term), term).toBeNull();
     }
   });

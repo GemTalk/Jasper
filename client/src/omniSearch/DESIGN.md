@@ -353,7 +353,8 @@ Behaviour decisions (Eric's review of the first webview cut):
   Enter opens beside and Ctrl+Enter opens beside keeping the field focused. Alt+Enter → references.
   An Enter that beats its own results (paste, then Enter — inside the debounce or the stone round
   trip) sends the search at once and opens the top row when results for that term arrive; the host
-  echoes the term on every results message so the webview can tell. Typing again cancels it.
+  echoes the term on every results message so the webview can tell. Typing again, or leaving the
+  panel, cancels it.
 
 ## Overlap with #377 / #387 (documented, not silently merged)
 

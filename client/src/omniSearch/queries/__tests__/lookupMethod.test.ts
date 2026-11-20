@@ -68,12 +68,19 @@ describe('parseMethodLookupResults', () => {
 });
 
 describe('lookupMethod', () => {
-  it('asks the stone nothing for a name that is not a class or a selector', () => {
+  it('asks the stone nothing for a name that is not a class', () => {
     const execute = vi.fn(() => '');
     expect(lookupMethod(execute, "Ob'ject", false, 'printString')).toEqual([]);
-    expect(lookupMethod(execute, 'Object', false, "print'String")).toEqual([]);
-    expect(lookupMethod(execute, 'Object', false, 'a:b')).toEqual([]);
+    expect(lookupMethod(execute, 'Foo Bar', false, 'printString')).toEqual([]);
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('sends any selector as written, escaped inside its string literal', () => {
+    const execute = vi.fn((_code: string) => '');
+    lookupMethod(execute, 'PPParser', false, '==>');
+    lookupMethod(execute, 'Object', false, "print'String");
+    expect(execute.mock.calls[0][0]).toContain("Symbol _existingWithAll: '==>'");
+    expect(execute.mock.calls[1][0]).toContain("Symbol _existingWithAll: 'print''String'");
   });
 
   it('returns the parsed rows', () => {

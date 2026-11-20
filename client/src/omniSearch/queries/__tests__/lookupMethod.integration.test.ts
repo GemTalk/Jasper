@@ -92,6 +92,17 @@ describe('lookupMethod (integration)', () => {
     ]);
   });
 
+  it('finds a binary method whose selector is longer than two characters', () => {
+    defineClass('UserGlobals');
+    exec(
+      `Jasper677Lookup compileMethod: '==> x ^ x' dictionaries: System myUserProfile symbolList ` +
+        `category: #testing environmentId: 0. 'ok'`,
+    );
+    expect(lookupMethod(exec, 'Jasper677Lookup', false, '==>')).toMatchObject([
+      { className: 'Jasper677Lookup', selector: '==>' },
+    ]);
+  });
+
   it('gives one row when two same-named classes inherit the method from the same class', () => {
     defineClass('UserGlobals');
     exec(
@@ -117,6 +128,14 @@ describe('lookupMethod (integration)', () => {
     expect(lookupMethod(exec, unseenClass, false, 'printString')).toEqual([]);
     expect(exec(`(Symbol _existingWithAll: '${unseen}') printString`)).toBe('nil');
     expect(exec(`(Symbol _existingWithAll: '${unseenClass}') printString`)).toBe('nil');
+  });
+
+  it('finds nothing, and creates no symbol, for a selector with a quote or a space in it', () => {
+    const quoted = `it's ${Date.now()}`;
+    expect(lookupMethod(exec, 'Object', false, quoted)).toEqual([]);
+    expect(exec(`(Symbol _existingWithAll: '${quoted.replace(/'/g, "''")}') printString`)).toBe(
+      'nil',
+    );
   });
 
   it('finds nothing for a selector no class in the chain defines', () => {

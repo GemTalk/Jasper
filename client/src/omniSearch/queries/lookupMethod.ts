@@ -1,27 +1,7 @@
 import { QueryExecutor } from '../../queries/types';
-import {
-  escapeString,
-  homeDictionaryNameExpr,
-  isValidSelector,
-  splitLines,
-} from '../../queries/util';
+import { escapeString, homeDictionaryNameExpr, splitLines } from '../../queries/util';
 import { SelectorSearchResult, parseSelectorSearchResults } from '../../queries/searchSelectors';
 
-/**
- * Find the one method a `Class>>selector` reference names — on that class, or on the ancestor it
- * inherits it from. The backend for pasting a method reference into GemStone Search (issue #677).
- *
- * One row per method found: normally one, two only when two dictionaries hold different classes
- * under the same name and they reach different methods. Two such classes that inherit the same
- * method give one row, since both rows would read and open the same. Exact case, environment 0 (the
- * environment the Methods scope reports).
- *
- * Row: `dictName<TAB>className<TAB>isMeta(0|1)<TAB>selector<TAB>category<TAB>inheritedBy`, where the
- * class and dictionary are the DEFINING class's and `inheritedBy` is empty when the named class
- * defines the method itself. A class-side reference can resolve to an instance-side method: the
- * metaclass chain ends in `Class`, so `Foo class>>new` may be `Behavior>>new`. A defining class no
- * dictionary binds gives no row, since there would be nothing to open it in.
- */
 export interface MethodLookupResult extends SelectorSearchResult {
   /** The class the reference named (`Foo` or `Foo class`), when it inherits the method. */
   inheritedBy?: string;
@@ -74,12 +54,28 @@ export function parseMethodLookupResults(raw: string): MethodLookupResult[] {
   });
 }
 
+/**
+ * Find the one method a `Class>>selector` reference names — on that class, or on the ancestor it
+ * inherits it from. The backend for pasting a method reference into GemStone Search (issue #677).
+ *
+ * One row per method found: normally one, two only when two dictionaries hold different classes
+ * under the same name and they reach different methods. Two such classes that inherit the same
+ * method give one row, since both rows would read and open the same. Exact case, environment 0 (the
+ * environment the Methods scope reports).
+ *
+ * Row: `dictName<TAB>className<TAB>isMeta(0|1)<TAB>selector<TAB>category<TAB>inheritedBy`, where the
+ * class and dictionary are the DEFINING class's and `inheritedBy` is empty when the named class
+ * defines the method itself. A class-side reference can resolve to an instance-side method: the
+ * metaclass chain ends in `Class`, so `Foo class>>new` may be `Behavior>>new`. A defining class no
+ * dictionary binds gives no row, since there would be nothing to open it in.
+ */
 export function lookupMethod(
   execute: QueryExecutor,
   className: string,
   isMeta: boolean,
   selector: string,
 ): MethodLookupResult[] {
-  if (!CLASS_NAME.test(className) || !isValidSelector(selector)) return [];
+  // The selector needs no check: it reaches the stone only inside an escaped string literal.
+  if (!CLASS_NAME.test(className)) return [];
   return parseMethodLookupResults(execute(buildMethodLookupCode(className, isMeta, selector)));
 }

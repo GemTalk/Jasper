@@ -67,7 +67,8 @@
     var queryOut = false;
     // An Enter pressed before its term's results arrived — a paste then Enter beats the debounce and
     // the stone. Opening the active row then would open nothing, or a row left over from the previous
-    // term, so it waits here for the matching results instead. Typing again cancels it.
+    // term, so it waits here for the matching results instead. Typing again, or leaving the panel,
+    // cancels it.
     var pendingEnter = null;
     // When true, the references/senders gesture fills the preview pane with a sticky list (instead of
     // pivoting the left list). Pushed from the host config; false = the classic pivot.
@@ -1708,6 +1709,11 @@
     });
 
     doc.defaultView.addEventListener('message', onMessage);
+    // Leaving the panel gives up a waiting Enter, so late results don't open a row and pull focus
+    // back from wherever the user went.
+    doc.defaultView.addEventListener('blur', function () {
+      pendingEnter = null;
+    });
 
     post('ready');
     inputEl.focus();

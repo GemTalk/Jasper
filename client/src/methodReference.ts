@@ -1,5 +1,3 @@
-import { isValidSelector } from './queries/util';
-
 /** A method named in text — `Object>>printString`, `String class>>new`. */
 export interface MethodReference {
   className: string;
@@ -13,7 +11,7 @@ const NAME = String.raw`[A-Za-z_]\w*(?:\s+class)?`;
 // `Name>>sel`, or a debugger frame's `Receiver (DefiningClass)>>sel`, whose method lives on the
 // class in parentheses. `>>` splits at its first occurrence, so `Integer>>>>` names the `>>` selector.
 const QUALIFIED = new RegExp(
-  String.raw`^(?:${NAME}\s*\(\s*(${NAME})\s*\)|(${NAME}))\s*>>\s*#?\s*(.+)$`,
+  String.raw`^(?:${NAME}\s*\(\s*(${NAME})\s*\)|(${NAME}))\s*>>\s*#?\s*([^#].*)$`,
 );
 
 // What the debugger's Copy Stack and Copy Frame add around a frame label: `[3] ` before it, and the
@@ -26,8 +24,9 @@ const COPIED_FRAME_POSITION = /\s+(?:@\d+(?:\s+line\s+\d+)?|line\s+\d+)$/;
  * GsNMethod's printString (`GsNMethod [] in Foo class>>bar`) and a debugger frame label
  * (`[] in Foo>>#bar`, `Receiver (Foo)>>#bar`), as Copy Frame and Copy Stack copy it.
  *
- * Returns null for anything else — a bare selector, a bare class name, a doit block
- * (`[] in <nil>>><anonymous>`), or a selector that isn't legal Smalltalk.
+ * Returns null for anything else — a bare selector, a bare class name, or a doit block
+ * (`[] in <nil>>><anonymous>`). The selector half is taken as written, not checked: binary
+ * selectors have no length limit (`PPParser>>==>`), and a name no method has just finds nothing.
  */
 export function parseMethodReference(raw: string): MethodReference | null {
   const text = raw.trim().replace(COPIED_FRAME_NUMBER, '').replace(COPIED_FRAME_POSITION, '');
@@ -44,7 +43,6 @@ function parseFrameLabel(label: string): MethodReference | null {
   if (!m) return null;
   const classPart = m[1] ?? m[2];
   const selector = m[3].trim();
-  if (!isValidSelector(selector)) return null;
   const isMeta = /\s+class$/.test(classPart);
   return {
     className: isMeta ? classPart.replace(/\s+class$/, '') : classPart,

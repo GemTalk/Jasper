@@ -1332,6 +1332,21 @@ describe('Enter before the results arrive (paste, then Enter)', () => {
     expect(posted(vscode, 'activate')).toEqual([{ command: 'activate', id: 5, side: false }]);
   });
 
+  it('leaving the panel drops the waiting Enter, so late results do not take focus back', () => {
+    const { handle, vscode } = mountWithDebounce(0);
+    type('Object>>printString');
+    enter();
+    window.dispatchEvent(new Event('blur'));
+    handle.onMessage({
+      data: resultsMsg({
+        rows: [row(0, 'Object>>printString')],
+        shownCount: 1,
+        term: 'Object>>printString',
+      }),
+    });
+    expect(posted(vscode, 'activate')).toEqual([]);
+  });
+
   it('the clear button drops the waiting Enter', () => {
     const { handle, vscode } = mountWithDebounce(0);
     type('Object>>printString');
