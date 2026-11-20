@@ -4,7 +4,7 @@ import { GciError } from './gciLibrary';
 import { pollReadable } from './socketPoll';
 import { logInfo } from './gciLog';
 import { GciLibraryError } from './gciLibraryError';
-import { OOP_ILLEGAL, OOP_NIL, SOFT_BREAK_ERROR } from './gciConstants';
+import { GCI_ERR_BAD_SESSION_ID, OOP_ILLEGAL, OOP_NIL, SOFT_BREAK_ERROR } from './gciConstants';
 
 /**
  * Shared non-blocking GCI call runner.
@@ -1182,7 +1182,14 @@ export function pollNbToCompletion<T>(
           opts.disposableResult === true,
           opts.onAbandonedCollected,
         );
-        settle(() => reject(new Error(pollErr.message || `GemStone poll error ${pollErr.number}`)));
+        settle(() =>
+          reject(
+            GciLibraryError.fromGciError({
+              number: pollErr.number,
+              message: pollErr.message || `GemStone poll error ${pollErr.number}`,
+            }),
+          ),
+        );
         return;
       }
 
@@ -1196,9 +1203,13 @@ export function pollNbToCompletion<T>(
       if (alive === -1) {
         settle(() =>
           reject(
-            new Error(
-              aliveErr?.message || 'The GemStone session ended while this call was still running.',
-            ),
+            GciLibraryError.fromGciError({
+              // Without a number of its own it is still a session that's gone.
+              number: aliveErr?.number || GCI_ERR_BAD_SESSION_ID,
+              message:
+                aliveErr?.message ||
+                'The GemStone session ended while this call was still running.',
+            }),
           ),
         );
         return;

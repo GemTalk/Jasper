@@ -53,6 +53,8 @@ export const GCI_ERR_OP_IN_PROGRESS = 2203;
 // The Data Curator is shutting this session down (gcierr.ht). A logout of a gem
 // the stone already stopped answers it.
 export const GS_ERR_SESSION_SHUTDOWN = 4059;
+// The connection to the gem failed: "socket read EOF" once its process has died.
+export const NET_ERROR = 4137;
 // A Halt was signalled, e.g. by `self pause`.
 export const GS_ERR_HALT = 2709;
 // A soft break was received, e.g. from the user's Cancel.

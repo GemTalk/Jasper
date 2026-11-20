@@ -34,6 +34,8 @@ export const ERR_NOT_IN_TRANSACTION = 2030;
  */
 export const ERR_GEM_AUTO_ABORT = 3007;
 export const ERR_GEM_AUTO_LOST_OT = 3008;
+/** The stone revoked an idle session's object table: it didn't abort when asked. */
+export const ABORT_ERR_LOST_OT_ROOT = 3031;
 
 /** `printString` of a Boolean, or `undefined` for anything else. */
 function parseBoolean(text: string): boolean | undefined {

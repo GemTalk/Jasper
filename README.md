@@ -557,7 +557,7 @@ A Smalltalk cell that calls a method with a breakpoint in it, or runs `self halt
 - **GemStone: Reset Grail Notebook Scope** (command palette) clears the active notebook's globals — the equivalent of restarting a kernel.
 - Without Grail in the stone, running a cell reports "Grail (GemStone-Python) not detected".
 
-In either language, a cell's own stop button stops it, the same way Cancel stops Execute It. The cell then says "Stopped.", and any cells queued after it don't run. The same goes for a cell refused because the session is busy with another run: it shows why, with the notice that lets you stop that run, and the cells after it don't run. A cell that keeps going gets the same **Force Stop** notice as the rest of Jasper, and VS Code stays usable while any cell runs.
+In either language, a cell's own stop button stops it, the same way Cancel stops Execute It. The cell then says "Stopped.", and any cells queued after it don't run. The same goes for a cell the session can't run: busy with another run, logged out, stopped by an administrator, or no longer connected. The cell shows why, and the cells after it don't run. When Jasper knows which run holds the session, a notice also offers to stop it. A cell that keeps going gets the same **Force Stop** notice as the rest of Jasper, and VS Code stays usable while any cell runs.
 
 ### Class Sync (File Export)
 

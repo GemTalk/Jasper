@@ -54,7 +54,7 @@ The hand-off's "Remaining work" list, by its own numbers. Items not listed have 
 
 From the hand-off's "Open issues from this work" list.
 
-| Issue | Fix                                                                                              | PR   |
-| ----- | ------------------------------------------------------------------------------------------------ | ---- |
-| #933  | Closing a debugger while another run holds the session clears its process once that run ends     | #956 |
-| #931  | Notebook Run All stops at the first cell a busy session refuses, with the notice to stop the run | #965 |
+| Issue | Fix                                                                                                                                  | PR   |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------ | ---- |
+| #933  | Closing a debugger while another run holds the session clears its process once that run ends                                         | #956 |
+| #931  | Notebook Run All stops at the first cell the session refuses: busy, logged out, stopped, disconnected, or its view refreshed instead | #965 |

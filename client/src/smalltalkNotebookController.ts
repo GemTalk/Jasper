@@ -9,13 +9,7 @@ import {
   settleNbResult,
 } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
-import {
-  NbCancelledError,
-  NbRunOptions,
-  ensureSessionFree,
-  runNbCall,
-  whenSessionFree,
-} from './nbRunner';
+import { NbCancelledError, NbRunOptions, runNbCall, whenSessionFree } from './nbRunner';
 import { failCell, fetchCellResult } from './notebookCellResult';
 import { autoCommitAfterWrite } from './autoCommit/autoCommitRunner';
 import {
@@ -153,10 +147,6 @@ async function runCell(
   source: string,
   onStart: NbRunOptions['onStart'],
 ): Promise<string | CellStop> {
-  // Before the clientForwarder start, which GemStone would refuse too. Unlike a
-  // bare busy check, this raises the notice that lets the user stop what holds it.
-  ensureSessionFree(session);
-
   const code = wrapCellCode(source);
   // Before clearing a process too: a clean-up that writes to the Transcript
   // while clientForwarder mode is on stops at that write. A refused end (the

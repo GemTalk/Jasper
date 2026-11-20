@@ -55,7 +55,6 @@ vi.mock('../nbRunner', () => ({
     return 1n;
   }),
   whenSessionFree: vi.fn((_session: unknown, start: () => unknown) => start()),
-  ensureSessionFree: vi.fn(),
   forgetSession: vi.fn(),
   // Logout asks whether a run is on the session; none is, here.
   isRunning: vi.fn(() => false),
