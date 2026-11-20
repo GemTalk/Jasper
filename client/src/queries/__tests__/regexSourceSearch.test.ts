@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
+  isAscii,
+  patternLiteral,
   RegexPatternError,
   parseRegexSourceSearch,
   regexSourceSearchCode,
@@ -53,7 +55,7 @@ describe('regexSourceSearchCode', () => {
 
 describe('parseRegexSourceSearch', () => {
   it('reads the summary and the rows', () => {
-    const result = parseRegexSourceSearch(`0\t3\t17000\t0\n5-12\n${ROW}\n`);
+    const result = parseRegexSourceSearch(`0\t3\t17000\t0\t2\n5-12\n${ROW}\n`);
 
     expect(result).toEqual({
       methods: [
@@ -69,13 +71,14 @@ describe('parseRegexSourceSearch', () => {
       ],
       wholeMethods: false,
       skipped: 3,
+      failed: 2,
       scanned: 17000,
       truncated: false,
     });
   });
 
   it('reads whole-method mode and truncation', () => {
-    const result = parseRegexSourceSearch(`1\t0\t42\t1\n5-12\n${ROW}\n`);
+    const result = parseRegexSourceSearch(`1\t0\t42\t1\t0\n5-12\n${ROW}\n`);
 
     expect(result.wholeMethods).toBe(true);
     expect(result.truncated).toBe(true);
@@ -83,7 +86,7 @@ describe('parseRegexSourceSearch', () => {
 
   it('reads every match of every method, converting to 0-based, end-exclusive offsets', () => {
     const second = 'Globals\tObject\t0\tprintString\tprinting\t0';
-    const result = parseRegexSourceSearch(`0\t0\t9\t0\n1-3,10-14 7-7\n${ROW}\n${second}\n`);
+    const result = parseRegexSourceSearch(`0\t0\t9\t0\t0\n1-3,10-14 7-7\n${ROW}\n${second}\n`);
 
     expect(result.methods.map((m) => m.matches)).toEqual([
       [
@@ -96,27 +99,29 @@ describe('parseRegexSourceSearch', () => {
 
   // A whole-method match is one range that runs across a line break; nothing about it is per-line.
   it('keeps a match that spans a line break as one range', () => {
-    const result = parseRegexSourceSearch(`1\t0\t9\t0\n12-40\n${ROW}\n`);
+    const result = parseRegexSourceSearch(`1\t0\t9\t0\t0\n12-40\n${ROW}\n`);
 
     expect(result.methods[0].matches).toEqual([{ start: 11, end: 40 }]);
   });
 
   it('keeps an empty match (a pattern like ^), which still says where to put the cursor', () => {
-    const result = parseRegexSourceSearch(`0\t0\t9\t0\n5-4\n${ROW}\n`);
+    const result = parseRegexSourceSearch(`0\t0\t9\t0\t0\n5-4\n${ROW}\n`);
 
     expect(result.methods[0].matches).toEqual([{ start: 4, end: 4 }]);
   });
 
   it('drops a malformed pair rather than guessing, and a method with none carries no matches', () => {
-    const result = parseRegexSourceSearch(`0\t0\t9\t0\nx-3,2-5\n${ROW}\n`);
+    const result = parseRegexSourceSearch(`0\t0\t9\t0\t0\nx-3,2-5\n${ROW}\n`);
 
     expect(result.methods[0].matches).toEqual([{ start: 1, end: 5 }]);
-    expect(parseRegexSourceSearch(`0\t0\t9\t0\nbad\n${ROW}\n`).methods[0].matches).toBeUndefined();
+    expect(
+      parseRegexSourceSearch(`0\t0\t9\t0\t0\nbad\n${ROW}\n`).methods[0].matches,
+    ).toBeUndefined();
   });
 
   it('answers no rows when nothing matched', () => {
-    expect(parseRegexSourceSearch('0\t0\t17000\t0\n\n').methods).toEqual([]);
-    expect(parseRegexSourceSearch('0\t0\t17000\t0').methods).toEqual([]);
+    expect(parseRegexSourceSearch('0\t0\t17000\t0\t0\n\n').methods).toEqual([]);
+    expect(parseRegexSourceSearch('0\t0\t17000\t0\t0').methods).toEqual([]);
   });
 
   it("raises the server's reason for a refused pattern as RegexPatternError", () => {
@@ -134,7 +139,7 @@ describe('parseRegexSourceSearch', () => {
 
 describe('searchMethodSourceRegex', () => {
   it('runs the code and parses the answer', () => {
-    const execute = vi.fn(() => `0\t0\t5\t0\n1-3\n${ROW}\n`);
+    const execute = vi.fn(() => `0\t0\t5\t0\t0\n1-3\n${ROW}\n`);
 
     const result = searchMethodSourceRegex(execute, 'printOn:', false);
 
@@ -143,11 +148,33 @@ describe('searchMethodSourceRegex', () => {
   });
 
   it('does the same without blocking', async () => {
-    const execute = vi.fn(() => Promise.resolve(`0\t0\t5\t0\n1-3\n${ROW}\n`));
+    const execute = vi.fn(() => Promise.resolve(`0\t0\t5\t0\t0\n1-3\n${ROW}\n`));
 
     const result = await searchMethodSourceRegexAsync(execute, 'printOn:', true);
 
     expect(execute).toHaveBeenCalledWith(regexSourceSearchCode('printOn:', true));
     expect(result.scanned).toBe(5);
+  });
+});
+
+describe('patternLiteral', () => {
+  it('writes an ASCII pattern as a string literal, quotes doubled', () => {
+    expect(patternLiteral("'x'\\d")).toBe("'''x''\\d'");
+  });
+
+  // The 3.6.x compiler fails on non-ASCII source, so the doit must stay ASCII.
+  it('builds any other pattern on the stone from its character codes, astral ones whole', () => {
+    const literal = patternLiteral('café😀');
+
+    expect(literal).toBe(
+      '(String withAll: (#(99 97 102 233 128512) collect: [:c | Character codePoint: c]))',
+    );
+    expect(isAscii(literal)).toBe(true);
+  });
+
+  it('is what the search code uses', () => {
+    expect(regexSourceSearchCode('é', false)).toContain(
+      'GsRegexSourceSearch pattern: (String withAll: (#(233)',
+    );
   });
 });

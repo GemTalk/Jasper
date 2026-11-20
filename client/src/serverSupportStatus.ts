@@ -150,9 +150,11 @@ async function differentSupports(base: ActiveSession, extensionPath: string) {
  * After login, when the stone's server support is not the one this Jasper ships:
  * with `autoUpdate` (the `always` setting), replace it and say so; otherwise warn
  * and offer to reinstall it. The features are installed together, so one notice
- * covers them all. The warning never blocks or fails the login: someone editing
- * that code in the stone must still be able to work, and can decline.
- * Silent for every other state, including a read that failed.
+ * covers them all. Under `always`, any login replaces it, edits made to that code
+ * in the stone included: always means always. Under `ask` and `never` the warning
+ * never blocks or fails the login, so someone editing that code in the stone can
+ * keep working and decline. Silent for every other state, including a read that
+ * still fails after the retries below.
  *
  * Support installed by a newer Jasper is never replaced without asking, and the
  * warning says whose it is: two Jaspers sharing a stone would otherwise replace

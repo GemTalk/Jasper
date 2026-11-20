@@ -1988,11 +1988,100 @@ testSummaryLine
 	| search fields |
 	search := self search: 'regexFixture(Alpha|Beta)' ignoreCase: false limit: 1.
 	fields := search summaryLine subStrings: (String with: Character tab).
-	self assert: fields size equals: 4.
+	self assert: fields size equals: 5.
 	self assert: (fields at: 1) equals: '0'.
 	self assert: (fields at: 2) equals: search skipped printString.
 	self assert: (fields at: 3) asNumber > 0.
-	self assert: (fields at: 4) equals: '1'
+	self assert: (fields at: 4) equals: '1'.
+	self assert: (fields at: 5) equals: search failed printString
+%
+
+category: 'tests'
+method: GsRegexSourceSearchTest
+testSeveralTooLongMethodsAreAllSkipped
+	"After the first method runs out of stack, the next ones must be counted the same way and
+	 the search must end normally."
+
+	| long lf search |
+	lf := String with: Character lf.
+	long := String new: 5000.
+	long atAllPut: $x.
+	self compile: 'long2', lf, '	"regexFixtureLongStart ', long, lf, ' regexFixtureLongEnd"'.
+	self compile: 'long3', lf, '	"regexFixtureLongStart ', long, lf, ' regexFixtureLongEnd"'.
+	search := (GsRegexSourceSearch pattern: 'regexFixtureLongStart.*\n.*regexFixtureLongEnd' ignoreCase: false limit: 10)
+		classes: (Array with: fixture); run; yourself.
+	self assert: search skipped equals: 3.
+	self assert: search failed equals: 0.
+	self assert: search methods isEmpty
+%
+
+category: 'tests'
+method: GsRegexSourceSearchTest
+testOtherErrorsCountAsFailedNotSkipped
+	"A fault while matching is not a method being too long."
+
+	| failing search |
+	failing := GsRegexSourceSearch
+		subclass: 'GsRegexFailingSearch'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	[ failing
+		compileMethod: 'collect: aString after: offset into: found  ^self error: ''matcher fault'''
+		dictionaries: System myUserProfile symbolList
+		category: 'test'.
+	  search := (failing pattern: 'regexFixtureAlpha' ignoreCase: false limit: 10)
+		classes: (Array with: fixture); run; yourself.
+	  self assert: search failed >= 1.
+	  self assert: search skipped equals: 0 ]
+		ensure: [ UserGlobals removeKey: #GsRegexFailingSearch ifAbsent: [nil] ]
+%
+
+category: 'tests'
+method: GsRegexSourceSearchTest
+testNestedSetDoesNotHideAMatch
+	"With [[]abcdef] read wrongly, abcdef would be taken as required text and this method skipped."
+
+	| search |
+	self compile: 'nestedSet', (String with: Character lf), '	^#regexFixtureNested_ax'.
+	search := (GsRegexSourceSearch pattern: 'Nested_[[]abcdef]x' ignoreCase: false limit: 10)
+		classes: (Array with: fixture); run; yourself.
+	self assert: (self fixtureSelectorsIn: search) equals: #('nestedSet')
+%
+
+category: 'tests'
+method: GsRegexSourceSearchTest
+testCrlfLinesSplitAndRangesLineUp
+	| crlf src search r |
+	crlf := String with: Character cr with: Character lf.
+	self compile: 'crlf', crlf, '	^#regexFixtureCrlfOne', crlf, '	-> #regexFixtureCrlfTwo'.
+	search := (GsRegexSourceSearch pattern: '^\s*-> #regexFixtureCrlf\w+$' ignoreCase: false limit: 10)
+		classes: (Array with: fixture); run; yourself.
+	self assert: (self fixtureSelectorsIn: search) equals: #('crlf').
+	src := self sourceOf: #crlf.
+	r := (self rangesOf: #crlf in: search) first.
+	self assert: (src copyFrom: (r at: 1) to: (r at: 2)) equals: '	-> #regexFixtureCrlfTwo'
+%
+
+category: 'tests'
+method: GsRegexSourceSearchTest
+testLimitZeroAnswersNothing
+	| search |
+	search := self search: 'regexFixtureAlpha' ignoreCase: false limit: 0.
+	self assert: search methods isEmpty.
+	self assert: search truncated
+%
+
+category: 'tests'
+method: GsRegexSourceSearchTest
+testClassesLimitTheScan
+	| search |
+	search := (GsRegexSourceSearch pattern: 'regexFixture\w+' ignoreCase: false limit: 100)
+		classes: (Array with: fixture); run; yourself.
+	self assert: (search methods reject: [:m | m inClass theNonMetaClass == fixture ]) isEmpty.
+	self assert: ((self fixtureSelectorsIn: search) includes: 'class>>gamma')
 %
 
 category: 'running'
@@ -2267,7 +2356,62 @@ testRequiredLiteralIsInEveryMatch
 		literal := GsRegex requiredLiteralIn: (row at: 1).
 		(row at: 2) do: [:s |
 			self assert: (GsRegex matches: s pattern: (row at: 1)).
-			self assert: (s findString: literal startingAt: 1) > 0 ] ]
+			literal ifNotNil: [ self assert: (s findString: literal startingAt: 1) > 0 ] ] ]
+%
+
+category: 'unsupported'
+method: GsRegexTest
+testRequiredLiteralReadsNestedSetsAsTheLibraryDoes
+	"Every [ inside a set needs its own ], so [[]abcdef] is one set and abcdef is not required
+	 text. Reading the set as [[] would make the search skip methods that match."
+
+	self assert: (GsRegex matches: 'ax' pattern: '[[]abcdef]x').
+	self assert: (GsRegex requiredLiteralIn: '[[]abcdef]x') isNil.
+	self assert: (GsRegex requiredLiteralIn: '[[]ab]xyz') equals: 'xyz'
+%
+
+category: 'unsupported'
+method: GsRegexTest
+testUnknownEscapesAreRefused
+	"A backslash before a letter or digit the library does not know would match that letter or
+	 digit itself: (a)\1 would find a1, not aa."
+
+	#('\1' '(a)\1' '\x41' '\A' '\z' '\p') do: [:p |
+		self should: [ GsRegex pattern: p ] raise: GsRegexSyntaxError ].
+	self
+		assert: ([ GsRegex pattern: '(a)\1'. '' ] on: GsRegexSyntaxError do: [:e | e messageText ])
+		equals: '\1 is not supported: there are no back-references'.
+	#('\.' '\(' '\\' '\w' '\W' '\d' '\D' '\s' '\S' '\b' '\B' '\<' '\>' '\n' '\r' '\t' '\f' '\e' '\[1]')
+		do: [:p | GsRegex pattern: p ]
+%
+
+category: 'unsupported'
+method: GsRegexTest
+testLazyQuantifiersAreRefused
+	#('a.*?b' 'a+?' 'a??' 'a*+') do: [:p |
+		self should: [ GsRegex pattern: p ] raise: GsRegexSyntaxError ].
+	self
+		assert: ([ GsRegex pattern: 'a.*?b'. '' ] on: GsRegexSyntaxError do: [:e | e messageText ])
+		equals: 'lazy and possessive quantifiers such as *? and +? are not supported; * + ? always match as much as they can'.
+	"Escaped, or inside a set, they are plain characters."
+	GsRegex pattern: 'a\*?'.
+	GsRegex pattern: '[*?]+'
+%
+
+category: 'dialect'
+method: GsRegexTest
+testWhatUsersTypeFromOtherDialects
+	"The common constructs, as a user coming from JavaScript or PCRE would write them."
+
+	self assert: (GsRegex search: 'x 42 y' pattern: '\d+').
+	self assert: (GsRegex search: 'a b' pattern: 'a\sb').
+	self assert: (GsRegex search: 'say halt now' pattern: '\bhalt\b').
+	self deny: (GsRegex search: 'haltIfNil' pattern: '\bhalt\b').
+	self assert: (GsRegex search: 'haltIfNil' pattern: 'halt\B').
+	self assert: (GsRegex search: 'self' pattern: 'self$').
+	self assert: (GsRegex search: 'cat' pattern: 'dog|cat').
+	self assert: (GsRegex matches: 'abab' pattern: '((ab))+').
+	self assert: (GsRegex search: 'foo_bar' pattern: '\w+')
 %
 
 category: 'api'

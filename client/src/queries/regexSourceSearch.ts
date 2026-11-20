@@ -13,8 +13,8 @@ import {
  * installed; on a stone without it the query fails to compile.
  *
  * The search matches one line at a time unless the pattern contains `\n` or `\r`,
- * when it matches whole methods and counts the ones too long to match as
- * `skipped`. Rows are the same as every other method search (environment 0, like
+ * when it matches whole methods. Methods the matcher runs out of stack on are counted as
+ * `skipped`, and ones it fails on otherwise as `failed`. Rows are the same as every other method search (environment 0, like
  * the plain Source search), at most `limit` of them (GemStone Search passes
  * `gemstone.omniSearch.maxServerScan`; other callers get `METHOD_SEARCH_RESULT_LIMIT`).
  */
@@ -30,8 +30,10 @@ export interface RegexSourceSearchResult {
   methods: Array<MethodSearchResult & { matches?: RegexMatchRange[] }>;
   /** True when the pattern spans lines, so whole methods were matched. */
   wholeMethods: boolean;
-  /** Methods too long for the matcher to finish; not searched. */
+  /** Methods the matcher ran out of stack on (too long to match); not searched. */
   skipped: number;
+  /** Methods the matcher failed on for any other reason; not searched. */
+  failed: number;
   /** Methods whose source was read before the search ended. */
   scanned: number;
   /** True when more methods matched than were returned. */
@@ -49,6 +51,21 @@ export class RegexPatternError extends Error {
 
 const ERROR_MARK = '#error\t';
 
+/**
+ * The pattern as a Smalltalk expression. An ASCII pattern is a string literal; any other is built
+ * on the stone from its character codes, because the 3.6.x compiler fails on non-ASCII source
+ * (`ComStrmSetCursor: new cursor out of range`) and the doit must stay ASCII.
+ */
+export function isAscii(s: string): boolean {
+  return Array.from(s).every((ch) => ch.charCodeAt(0) < 128);
+}
+
+export function patternLiteral(pattern: string): string {
+  if (isAscii(pattern)) return `'${escapeString(pattern)}'`;
+  const codes = Array.from(pattern, (ch) => ch.codePointAt(0));
+  return `(String withAll: (#(${codes.join(' ')}) collect: [:c | Character codePoint: c]))`;
+}
+
 export function regexSourceSearchCode(
   pattern: string,
   ignoreCase: boolean,
@@ -58,7 +75,7 @@ export function regexSourceSearchCode(
   // as "Invalid pattern: ..." and leaves the session clean. Only GsRegexError is caught:
   // a soft break (Stop) must still end a long search.
   return `| search methods stream limit classDict sl |
-search := GsRegexSourceSearch pattern: '${escapeString(pattern)}' ignoreCase: ${ignoreCase} limit: ${limit}.
+search := GsRegexSourceSearch pattern: ${patternLiteral(pattern)} ignoreCase: ${ignoreCase} limit: ${limit}.
 [search run] on: GsRegexError do: [:e | ^'#error', (String with: Character tab), e messageText].
 methods := search methods.
 ${methodSerialization(0, limit)}.
@@ -90,9 +107,9 @@ export function parseRegexSourceSearch(raw: string): RegexSourceSearchResult {
   if (raw.startsWith(ERROR_MARK)) throw new RegexPatternError(raw.slice(ERROR_MARK.length));
   const [summaryLine, rangesLine = '', ...rows] = raw.split('\n');
   const summary = summaryLine.split('\t');
-  if (summary.length !== 4)
+  if (summary.length !== 5)
     throw new Error(`Unexpected regex search summary: ${summary.join(' ')}`);
-  const [whole, skipped, scanned, truncated] = summary;
+  const [whole, skipped, scanned, truncated, failed] = summary;
   // The ranges come in the order the rows do (both are the search's #methods, in order).
   const ranges = parseRanges(rangesLine);
   return {
@@ -101,6 +118,7 @@ export function parseRegexSourceSearch(raw: string): RegexSourceSearchResult {
     ),
     wholeMethods: whole === '1',
     skipped: Number(skipped),
+    failed: Number(failed),
     scanned: Number(scanned),
     truncated: truncated === '1',
   };

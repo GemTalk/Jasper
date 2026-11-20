@@ -12,7 +12,7 @@
  * Editing other users' symbol lists needs SystemUser, as the install does.
  */
 import { ActiveSession } from '../sessionManager';
-import { executeFetchString, checkRegexSupportAvailable } from '../browserQueries';
+import { executeFetchString, probeRegexSupport } from '../browserQueries';
 import { messageOf, safeAbort, yieldToEventLoop } from '../serverPlugin/installHelpers';
 import { explainGciError } from '../gciLibraryError';
 
@@ -44,8 +44,10 @@ AllUsers do: [:prof |
 		list := prof symbolList.
 		idx := (1 to: list size) detect: [:i | (list at: i) name == dictName] ifNone: [nil] ] ].
 dict notNil ifTrue: [ dict keys asArray do: [:k | dict removeKey: k ] ].
-(UserGlobals includesKey: #GsRegexLoader)
-	ifTrue: [ UserGlobals removeKey: #GsRegexLoader ].
+AllUsers do: [:prof |
+	prof symbolList do: [:d |
+		(d name == #UserGlobals and: [ d includesKey: #GsRegexLoader ])
+			ifTrue: [ d removeKey: #GsRegexLoader ] ] ].
 'ok'`;
 
 /**
@@ -89,7 +91,8 @@ export async function uninstallRegexSupport(
 
   onProgress('Verifying…', 20);
   await yieldToEventLoop();
-  const stillPresent = checkRegexSupportAvailable(session);
+  // A probe that could not ask counts as still present: the removal is then unverified.
+  const stillPresent = probeRegexSupport(session) !== false;
   return {
     success: !stillPresent,
     committed: true,

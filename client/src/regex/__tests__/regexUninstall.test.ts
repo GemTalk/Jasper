@@ -2,15 +2,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../../browserQueries', () => ({
   executeFetchString: vi.fn(),
-  checkRegexSupportAvailable: vi.fn(),
+  probeRegexSupport: vi.fn(),
 }));
 
-import { executeFetchString, checkRegexSupportAvailable } from '../../browserQueries';
+import { executeFetchString, probeRegexSupport } from '../../browserQueries';
 import { uninstallRegexSupport } from '../regexUninstall';
 import { fakeActiveSession } from '../../__tests__/fakeActiveSession';
 
 const executeFetchStringMock = executeFetchString as ReturnType<typeof vi.fn>;
-const checkAvailableMock = checkRegexSupportAvailable as ReturnType<typeof vi.fn>;
+const checkAvailableMock = probeRegexSupport as ReturnType<typeof vi.fn>;
 
 function createMockSession() {
   const commit = vi.fn(() => ({ success: true, err: { number: 0, message: '' } }));
@@ -94,6 +94,28 @@ describe('uninstallRegexSupport', () => {
     expect(result.success).toBe(false);
     expect(result.committed).toBe(true);
     expect(result.message).toContain('still detected');
+  });
+
+  it('does not report a verified removal when the check afterwards could not ask the stone', async () => {
+    const { session } = createMockSession();
+    checkAvailableMock.mockReturnValue(undefined);
+
+    const result = await uninstallRegexSupport(session);
+
+    expect(result.success).toBe(false);
+    expect(result.verified).toBe(false);
+  });
+
+  // A by-hand topaz load (load-regex.gs) can be run as any user, leaving the loader in that
+  // user's UserGlobals.
+  it("removes the loader from every user's UserGlobals, not only SystemUser's", async () => {
+    const { session } = createMockSession();
+
+    await uninstallRegexSupport(session);
+
+    const code = String(executeFetchStringMock.mock.calls[0][1]);
+    expect(code).toMatch(/AllUsers do: \[:prof \|\s*prof symbolList do:/);
+    expect(code).toContain('#GsRegexLoader');
   });
 
   it('reports incremental progress as it works', async () => {

@@ -739,17 +739,23 @@ export function checkRefactoringSupportAvailable(session: ActiveSession): boolea
 
 /** Whether Jasper's regex support (the server plugin's `regex` feature) is present in the
  *  session's stone: probes for `GsRegexSourceSearch`, by String name for the same reason
- *  as `checkRefactoringSupportAvailable` above. */
-export function checkRegexSupportAvailable(session: ActiveSession): boolean {
+ *  as `checkRefactoringSupportAvailable` above. `undefined` when the stone could not be
+ *  asked (a busy session, say): that is not evidence the support is missing. */
+export function probeRegexSupport(session: ActiveSession): boolean | undefined {
   try {
     const result = executeFetchString(
       session,
       "(System myUserProfile symbolList objectNamed: 'GsRegexSourceSearch') notNil printString",
-    );
-    return result.trim() === 'true';
+    ).trim();
+    return result === 'true' ? true : result === 'false' ? false : undefined;
   } catch {
-    return false;
+    return undefined;
   }
+}
+
+/** `probeRegexSupport`, with "could not ask" read as absent: for callers that need a yes or no. */
+export function checkRegexSupportAvailable(session: ActiveSession): boolean {
+  return probeRegexSupport(session) === true;
 }
 
 /**

@@ -176,11 +176,94 @@ GsRegexSourceSearchTest >> testSummaryLine [
 	| search fields |
 	search := self search: 'regexFixture(Alpha|Beta)' ignoreCase: false limit: 1.
 	fields := search summaryLine subStrings: (String with: Character tab).
-	self assert: fields size equals: 4.
+	self assert: fields size equals: 5.
 	self assert: (fields at: 1) equals: '0'.
 	self assert: (fields at: 2) equals: search skipped printString.
 	self assert: (fields at: 3) asNumber > 0.
-	self assert: (fields at: 4) equals: '1'
+	self assert: (fields at: 4) equals: '1'.
+	self assert: (fields at: 5) equals: search failed printString
+]
+
+{ #category : 'tests' }
+GsRegexSourceSearchTest >> testSeveralTooLongMethodsAreAllSkipped [
+	"After the first method runs out of stack, the next ones must be counted the same way and
+	 the search must end normally."
+
+	| long lf search |
+	lf := String with: Character lf.
+	long := String new: 5000.
+	long atAllPut: $x.
+	self compile: 'long2', lf, '	"regexFixtureLongStart ', long, lf, ' regexFixtureLongEnd"'.
+	self compile: 'long3', lf, '	"regexFixtureLongStart ', long, lf, ' regexFixtureLongEnd"'.
+	search := (GsRegexSourceSearch pattern: 'regexFixtureLongStart.*\n.*regexFixtureLongEnd' ignoreCase: false limit: 10)
+		classes: (Array with: fixture); run; yourself.
+	self assert: search skipped equals: 3.
+	self assert: search failed equals: 0.
+	self assert: search methods isEmpty
+]
+
+{ #category : 'tests' }
+GsRegexSourceSearchTest >> testOtherErrorsCountAsFailedNotSkipped [
+	"A fault while matching is not a method being too long."
+
+	| failing search |
+	failing := GsRegexSourceSearch
+		subclass: 'GsRegexFailingSearch'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	[ failing
+		compileMethod: 'collect: aString after: offset into: found  ^self error: ''matcher fault'''
+		dictionaries: System myUserProfile symbolList
+		category: 'test'.
+	  search := (failing pattern: 'regexFixtureAlpha' ignoreCase: false limit: 10)
+		classes: (Array with: fixture); run; yourself.
+	  self assert: search failed >= 1.
+	  self assert: search skipped equals: 0 ]
+		ensure: [ UserGlobals removeKey: #GsRegexFailingSearch ifAbsent: [nil] ]
+]
+
+{ #category : 'tests' }
+GsRegexSourceSearchTest >> testNestedSetDoesNotHideAMatch [
+	"With [[]abcdef] read wrongly, abcdef would be taken as required text and this method skipped."
+
+	| search |
+	self compile: 'nestedSet', (String with: Character lf), '	^#regexFixtureNested_ax'.
+	search := (GsRegexSourceSearch pattern: 'Nested_[[]abcdef]x' ignoreCase: false limit: 10)
+		classes: (Array with: fixture); run; yourself.
+	self assert: (self fixtureSelectorsIn: search) equals: #('nestedSet')
+]
+
+{ #category : 'tests' }
+GsRegexSourceSearchTest >> testCrlfLinesSplitAndRangesLineUp [
+	| crlf src search r |
+	crlf := String with: Character cr with: Character lf.
+	self compile: 'crlf', crlf, '	^#regexFixtureCrlfOne', crlf, '	-> #regexFixtureCrlfTwo'.
+	search := (GsRegexSourceSearch pattern: '^\s*-> #regexFixtureCrlf\w+$' ignoreCase: false limit: 10)
+		classes: (Array with: fixture); run; yourself.
+	self assert: (self fixtureSelectorsIn: search) equals: #('crlf').
+	src := self sourceOf: #crlf.
+	r := (self rangesOf: #crlf in: search) first.
+	self assert: (src copyFrom: (r at: 1) to: (r at: 2)) equals: '	-> #regexFixtureCrlfTwo'
+]
+
+{ #category : 'tests' }
+GsRegexSourceSearchTest >> testLimitZeroAnswersNothing [
+	| search |
+	search := self search: 'regexFixtureAlpha' ignoreCase: false limit: 0.
+	self assert: search methods isEmpty.
+	self assert: search truncated
+]
+
+{ #category : 'tests' }
+GsRegexSourceSearchTest >> testClassesLimitTheScan [
+	| search |
+	search := (GsRegexSourceSearch pattern: 'regexFixture\w+' ignoreCase: false limit: 100)
+		classes: (Array with: fixture); run; yourself.
+	self assert: (search methods reject: [:m | m inClass theNonMetaClass == fixture ]) isEmpty.
+	self assert: ((self fixtureSelectorsIn: search) includes: 'class>>gamma')
 ]
 
 { #category : 'running' }

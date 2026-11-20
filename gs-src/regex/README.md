@@ -12,13 +12,13 @@ The library is a modified version of Vassili Bykov's Regular Expression Matcher,
 4. A colon is an ordinary character, so `printOn:` and `at:.*put:` search for exactly that text.
 5. `_` is part of a word, as in other regex tools: `\<halt\>` finds `self halt` and `self halt: 'x'` but not `_halt:`.
 
-Not supported, and refused with a message rather than misread: counted repetition such as `a{3}`, and `(?...)` groups (non-capturing groups, flags, lookaround). A `{` that is not a count is plain text.
+Not supported, and refused with a message rather than misread: counted repetition such as `a{3}`; `(?...)` groups (non-capturing groups, flags, lookaround); lazy and possessive quantifiers such as `*?` and `+?`; and a backslash before a letter or digit not listed above, such as the back-reference `\1` or `\x41`, which the library would otherwise read as that letter or digit itself. A `{` that is not a count is plain text.
 
 ## How a source search runs
 
 `GsRegexSourceSearch` reads every method in the user's symbol list, instance and class side, and keeps the ones whose source matches.
 
-1. **One line at a time.** The matcher recurses once per character it consumes, so a pattern such as `a.*b` over a long method overflows the stack. A line is short enough. A pattern with `\n` or `\r` asks to cross lines, so it is matched against whole methods instead; a method too long to match that way is counted as skipped, not failed.
+1. **One line at a time.** The matcher recurses once per character it consumes, so a pattern such as `a.*b` over a long method overflows the stack. A line is short enough. A pattern with `\n` or `\r` asks to cross lines, so it is matched against whole methods instead; a method too long to match that way (or with one very long line) is counted as skipped. Any other error while matching a method is counted apart, as failed, so a fault is not reported as a method being too long.
 2. **A quick test first.** When every match must contain some plain text (`GsRegex class >> requiredLiteralIn:`), a method without it is skipped with a substring test. On a 3.6.2 base image, `Ordered\w+` takes about 17 ms this way, against about 1.5 s for the matcher alone.
 3. **Stop works.** Only errors are caught while matching. A badly written pattern such as `(a+)+b` can take time that doubles with each extra character, and Jasper's Stop (a soft break) ends it.
 4. **Where the matches are.** For each method it returns, the search records where its matches are in the source (up to 100 per method), so GemStone Search can open the method at the first match and mark the others. A match across lines, in whole-method mode, is recorded as one range.
