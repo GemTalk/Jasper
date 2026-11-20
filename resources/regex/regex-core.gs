@@ -17,6 +17,7 @@
 !
 ! Modified by Jasper (not the original software): classes renamed with a Gs
 ! prefix; the 12 String extension methods left out; the :name: syntax removed;
+! _ counted as part of a word for \< \> \b \B;
 ! Pharo idioms ported to GemStone; #new sends #initialize in two classes; in
 ! the tests, calls to the String methods rewritten as calls to GsRegex and one
 ! test removed. PROVENANCE.md lists every change.
@@ -1261,7 +1262,7 @@ isWordChar: aCharacterOrNil
 	alphanumeric or _."
 
 	^aCharacterOrNil ~~ nil
-		and: [aCharacterOrNil isAlphaNumeric]
+		and: [aCharacterOrNil isAlphaNumeric or: [aCharacterOrNil == $_]]
 %
 
 category: 'accessing'

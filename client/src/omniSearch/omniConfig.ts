@@ -19,6 +19,9 @@ const ALL_CATEGORY_IDS: readonly OmniCategoryId[] = OMNI_CATEGORIES.map((c) => c
 export const OMNI_DEFAULTS: OmniConfig = {
   matchMode: 'fuzzy',
   caseSensitive: false,
+  // Regex search needs the server plugin's regex support; this is only the starting position of the
+  // panel's .* button, which the session then owns like Aa.
+  regex: false,
   enabledCategories: [...ALL_CATEGORY_IDS],
   maxResultsPerCategory: 20,
   debounceMs: 120,
@@ -72,6 +75,7 @@ export function readOmniConfig(cfg: ConfigLike): OmniConfig {
   return {
     matchMode,
     caseSensitive: cfg.get<boolean>('caseSensitive', OMNI_DEFAULTS.caseSensitive) === true,
+    regex: cfg.get<boolean>('regex', OMNI_DEFAULTS.regex) === true,
     enabledCategories:
       enabledCategories.length > 0 ? enabledCategories : [...OMNI_DEFAULTS.enabledCategories],
     maxResultsPerCategory: clampInt(

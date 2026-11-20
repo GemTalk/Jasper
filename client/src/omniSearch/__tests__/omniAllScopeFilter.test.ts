@@ -196,6 +196,8 @@ describe('webview message payloads (#40 / #41)', () => {
       pinned: false,
       excludedFromAll: ['methods'],
       matchMode: 'fuzzy',
+      regex: false,
+      regexAvailable: false,
     });
     expect(msg.excludedFromAll).toEqual(['methods']);
   });
@@ -210,12 +212,18 @@ describe('webview message payloads (#40 / #41)', () => {
       pinned: false,
       excludedFromAll: [],
       matchMode: 'fuzzy',
+      regex: false,
+      regexAvailable: false,
     });
     expect(Object.keys(msg)).not.toContain('previewPane');
   });
 
   it('the config message carries both starting values', () => {
-    const msg = configMessage(cfg({ previewPane: false, excludedFromAll: ['methods'] }), false);
+    const msg = configMessage(cfg({ previewPane: false, excludedFromAll: ['methods'] }), false, {
+      scopeId: null,
+      regex: false,
+      regexAvailable: false,
+    });
     expect(msg.previewPane).toBe(false);
     expect(msg.excludedFromAll).toEqual(['methods']);
   });

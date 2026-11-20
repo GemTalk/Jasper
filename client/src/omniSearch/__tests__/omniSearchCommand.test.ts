@@ -67,6 +67,37 @@ describe('buildOmniHandlers', () => {
     expect(call[2]).toEqual({ preserveFocus: true, preview: false });
   });
 
+  it("opens a regex hit with its matches, keeping the caller's own open options", async () => {
+    const matches = [
+      { start: 4, end: 9 },
+      { start: 20, end: 41 },
+    ];
+    void buildOmniHandlers({ preserveFocus: true, preview: false }).openMethod({
+      kind: 'openMethod',
+      sessionId: 1,
+      dictName: 'UserGlobals',
+      className: 'Foo',
+      isMeta: false,
+      category: 'accessing',
+      selector: 'bar',
+      environmentId: 0,
+      dictIndex: 0,
+      matches,
+    });
+
+    await vi.waitFor(() =>
+      expect(
+        vi
+          .mocked(vscode.commands.executeCommand)
+          .mock.calls.some((c) => c[0] === 'gemstone.openDocument'),
+      ).toBe(true),
+    );
+    const call = vi
+      .mocked(vscode.commands.executeCommand)
+      .mock.calls.find((c) => c[0] === 'gemstone.openDocument')!;
+    expect(call[2]).toEqual({ preserveFocus: true, preview: false, matches });
+  });
+
   it('reveals a class category via dict + path, threading the result session and position', () => {
     void buildOmniHandlers().revealCategory({
       kind: 'revealCategory',

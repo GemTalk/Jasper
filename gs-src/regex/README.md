@@ -10,6 +10,7 @@ The library is a modified version of Vassili Bykov's Regular Expression Matcher,
 2. Classes: `\w` `\W` (word characters), `\d` `\D` (digits), `\s` `\S` (white space), `[[:alpha:]]` and the other named classes inside a set. `\b` `\B` `\<` `\>` match word boundaries.
 3. Control characters: `\n` line feed, `\r` carriage return, `\t` tab, `\f` form feed, `\e` escape.
 4. A colon is an ordinary character, so `printOn:` and `at:.*put:` search for exactly that text.
+5. `_` is part of a word, as in other regex tools: `\<halt\>` finds `self halt` and `self halt: 'x'` but not `_halt:`.
 
 Not supported, and refused with a message rather than misread: counted repetition such as `a{3}`, and `(?...)` groups (non-capturing groups, flags, lookaround). A `{` that is not a count is plain text.
 
@@ -20,6 +21,7 @@ Not supported, and refused with a message rather than misread: counted repetitio
 1. **One line at a time.** The matcher recurses once per character it consumes, so a pattern such as `a.*b` over a long method overflows the stack. A line is short enough. A pattern with `\n` or `\r` asks to cross lines, so it is matched against whole methods instead; a method too long to match that way is counted as skipped, not failed.
 2. **A quick test first.** When every match must contain some plain text (`GsRegex class >> requiredLiteralIn:`), a method without it is skipped with a substring test. On a 3.6.2 base image, `Ordered\w+` takes about 17 ms this way, against about 1.5 s for the matcher alone.
 3. **Stop works.** Only errors are caught while matching. A badly written pattern such as `(a+)+b` can take time that doubles with each extra character, and Jasper's Stop (a soft break) ends it.
+4. **Where the matches are.** For each method it returns, the search records where its matches are in the source (up to 100 per method), so GemStone Search can open the method at the first match and mark the others. A match across lines, in whole-method mode, is recorded as one range.
 
 ## Layout
 
@@ -66,8 +68,8 @@ The loader creates the `GsRegexLibrary` dictionary at the end of every user's sy
 
 | # | Where | What |
 |---|---|---|
-| 1 | `gs-src/regex/tests/` | Jasper's Smalltalk tests (28), built into `regex-tests.gs` with the library's own (187) |
-| 2 | `client/src/regex/__tests__/regexLibrarySuite.integration.test.ts` | Runs all 215 in a stone and checks the exact count of each class |
+| 1 | `gs-src/regex/tests/` | Jasper's Smalltalk tests (35), built into `regex-tests.gs` with the library's own (187) |
+| 2 | `client/src/regex/__tests__/regexLibrarySuite.integration.test.ts` | Runs all 222 in a stone and checks the exact count of each class |
 | 3 | `client/src/regex/__tests__/*.integration.test.ts` | Install, reinstall, a stone that already has GLASS's regex classes, uninstall, and the search end to end, including Stop |
 | 4 | `client/src/regex/__tests__/*.test.ts`, `client/src/queries/__tests__/regexSourceSearch.test.ts` | The install and uninstall drivers, the availability check, the build's audits, and the search query |
 

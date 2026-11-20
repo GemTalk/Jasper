@@ -310,7 +310,7 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     this.builtForSession = ctx.sessionId;
     this.syncPending = false; // a brand-new engine primes below, so there is no stale corpus to catch up
     this.post({ command: 'error', message: '' }); // clear any prior "log in" notice
-    this.post(configMessage(ctx.deps.config, false));
+    this.post(configMessage(ctx.deps.config, false, this.engine.state()));
     this.webviewNeedsConfig = false; // just pushed it
     await this.engine.prime(ctx.deps.onError);
     return true;
@@ -327,6 +327,8 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
         pinned: false,
         excludedFromAll: st.excludedFromAll,
         matchMode: st.matchMode,
+        regex: st.regex,
+        regexAvailable: st.regexAvailable,
       }),
     );
   }
@@ -338,9 +340,9 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
         // A reopen reaches here with an engine that ensureEngine had no reason to rebuild, so the
         // config it would have pushed never went out. Push it now, or the fresh webview runs with an
         // empty tab row and a zero debounce until the first search happens to refill them.
-        if (this.webviewNeedsConfig && this.deps) {
+        if (this.webviewNeedsConfig && this.deps && this.engine) {
           this.webviewNeedsConfig = false;
-          this.post(configMessage(this.deps.config, false));
+          this.post(configMessage(this.deps.config, false, this.engine.state()));
         }
         await this.flushDeferred();
         this.deliverFocus(); // a focus() that raced the webview load lands the cursor now
@@ -385,7 +387,13 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
           } catch {
             source = '';
           }
-          this.post({ command: 'preview', id: m.id, source, title: result.label });
+          this.post({
+            command: 'preview',
+            id: m.id,
+            source,
+            title: result.label,
+            matches: result.action.kind === 'openMethod' ? result.action.matches : undefined,
+          });
           return;
         }
         case 'referencesInline': {

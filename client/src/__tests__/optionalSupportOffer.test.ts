@@ -176,6 +176,24 @@ describe('maybeOfferServerSupport', () => {
     expect(succeeded).toBe(false);
   });
 
+  // The refresh after each install aborts the session directly, which GemStone Search does not hear
+  // about, so a panel opened at login kept .* greyed out after regex support was installed.
+  it('tells GemStone Search after installing, so it sees what was installed', async () => {
+    answer('Install');
+
+    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH);
+
+    expect(mocks.executeCommand).toHaveBeenCalledWith('gemstone.omniSearch.resync', 1);
+  });
+
+  it('tells GemStone Search after a silent install too', async () => {
+    mocks.config[AUTO_INSTALL_KEY] = 'always';
+
+    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH);
+
+    expect(mocks.executeCommand).toHaveBeenCalledWith('gemstone.omniSearch.resync', 1);
+  });
+
   it('reloads the Explorer dictionary list after installing, so a new dictionary appears', async () => {
     answer('Install');
 
@@ -383,6 +401,7 @@ describe('runUninstallServerSupport', () => {
     expect(mocks.uninstallRB).toHaveBeenCalledWith(expect.anything(), sessionManager, true);
     expect(mocks.uninstallRX).toHaveBeenCalledWith(expect.anything(), sessionManager, true);
     expect(mocks.executeCommand).toHaveBeenCalledWith('gemstone.explorer.refresh');
+    expect(mocks.executeCommand).toHaveBeenCalledWith('gemstone.omniSearch.resync', 1);
     expect(mocks.showInformationMessage).toHaveBeenCalledWith(
       'GemStone server support uninstalled.',
     );

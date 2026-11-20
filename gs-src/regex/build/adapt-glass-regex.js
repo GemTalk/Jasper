@@ -13,7 +13,8 @@
  *      String. Jasper never adds methods to a kernel class for this feature.
  *   2. Delete one test, RxMatcherTest>>testRegex004 (see REMOVED_METHODS).
  *   3. Port Pharo/GLASS idioms to plain GemStone (PORTS).
- *   4. Make `:` an ordinary character (COLON_IS_LITERAL).
+ *   4. Make `:` an ordinary character (COLON_IS_LITERAL), and count `_` as part of a word
+ *      for \< \> \b \B (UNDERSCORE_IN_WORDS).
  *   5. Add a class-side #new that sends #initialize where the library relies on it.
  *   6. Rewrite the tests' calls to the String helpers as calls to Jasper's GsRegex.
  *   7. Prefix every class name with `Gs`, in code only: comments and strings, which
@@ -176,6 +177,18 @@ const COLON_IS_LITERAL = {
     '\t\t\t^atom].',
     '',
   ].join('\n'),
+};
+
+// 4, continued. `\<`, `\>`, `\b` and `\B` decide where a word starts and ends with
+// RxMatcher>>isWordChar:, whose comment says "alphanumeric or _" but whose code checks
+// alphanumeric only. So `\<halt\>` matched the `halt` in `_halt:`, which no other regex
+// tool does, and which disagrees with this library's own `\w` (letters, digits and `_`).
+const UNDERSCORE_IN_WORDS = {
+  className: 'RxMatcher',
+  side: 'instance',
+  selector: 'isWordChar:',
+  find: '\t\tand: [aCharacterOrNil isAlphaNumeric]',
+  replace: '\t\tand: [aCharacterOrNil isAlphaNumeric or: [aCharacterOrNil == $_]]',
 };
 
 // 5. Pharo's Behavior>>new sends #initialize; GemStone's does not, so these two
@@ -418,6 +431,15 @@ function main() {
     if (n !== 1) fail(`4. expected the :name: branch once in RxParser>>atom, found ${n}`);
     m.source = m.source.replace(COLON_IS_LITERAL.find, '');
     console.error('  4. removed the :name: branch from RxParser>>atom');
+  }
+  {
+    const u = UNDERSCORE_IN_WORDS;
+    const { m } = findMethod(core, u.className, u.side, u.selector);
+    const n = m ? m.source.split(u.find).length - 1 : 0;
+    if (n !== 1)
+      fail(`4. expected the alphanumeric test once in RxMatcher>>isWordChar:, found ${n}`);
+    m.source = m.source.replace(u.find, u.replace);
+    console.error('  4. RxMatcher>>isWordChar: counts _ as a word character');
   }
 
   // 5.

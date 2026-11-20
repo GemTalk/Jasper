@@ -191,6 +191,11 @@
             "default": false,
             "description": "Match case-sensitively. Off by default."
           },
+          "gemstone.omniSearch.regex": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Start GemStone Search with regular-expression search (the `.*` button) on. Regex searches method source only, runs when you press Enter, and needs the server plugin's regex support (**GemStone: Install Server Support**). The button changes it for the session. Off by default."
+          },
           "gemstone.omniSearch.categories": {
             "type": "array",
             "items": {

@@ -81,6 +81,9 @@ export type OmniAction =
       selector: string;
       environmentId: number;
       dictIndex: number;
+      /** A regex search's matches in the method's source (0-based, `end` exclusive), in order:
+       *  opening selects the first and marks the rest. Absent for every other kind of search. */
+      matches?: Array<{ start: number; end: number }>;
     }
   | { kind: 'revealDictionary'; sessionId: number; dictName: string }
   | { kind: 'revealGlobal'; sessionId: number; dictName: string; name: string; className: string }
@@ -110,6 +113,9 @@ export interface OmniResult {
 export interface OmniConfig {
   matchMode: MatchMode;
   caseSensitive: boolean;
+  /** Start with the .* (regular expression) button on. Has no effect on a session without the server
+   *  plugin's regex support. The session owns the button afterwards, as it does `caseSensitive`. */
+  regex: boolean;
   enabledCategories: OmniCategoryId[];
   maxResultsPerCategory: number;
   debounceMs: number;
@@ -224,3 +230,26 @@ export interface OmniProvider {
     reportTruncated?: OmniTruncationSink,
   ): Promise<OmniResult[]> | OmniResult[];
 }
+
+/** What a regex source search answered. `refused` carries a message written for the user: the pattern
+ *  could not be used, or the session was busy. */
+export type RegexSearchOutcome =
+  | {
+      kind: 'results';
+      results: OmniResult[];
+      /** Methods too long for the matcher to finish, so not searched (whole-method mode only). */
+      skipped: number;
+      /** More methods matched than were returned. */
+      truncated: boolean;
+      /** The pattern asked for a line break, so whole methods were matched. */
+      wholeMethods: boolean;
+    }
+  | { kind: 'refused'; message: string }
+  | { kind: 'cancelled' };
+
+/** Starts a regex search over method source on the stone. `cancel` stops it there, not just here:
+ *  a pattern can run for minutes, and the session stays busy until the stone lets go of it. */
+export type RegexSearchRunner = (
+  pattern: string,
+  ignoreCase: boolean,
+) => { outcome: Promise<RegexSearchOutcome>; cancel: () => void };

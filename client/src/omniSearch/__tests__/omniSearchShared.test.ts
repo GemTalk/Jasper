@@ -10,6 +10,8 @@ const chrome = {
   pinned: false,
   excludedFromAll: OMNI_DEFAULTS.excludedFromAll,
   matchMode: OMNI_DEFAULTS.matchMode,
+  regex: false,
+  regexAvailable: true,
 };
 
 /**
@@ -38,6 +40,9 @@ function viewData(over: Partial<OmniViewData> = {}): Required<OmniViewData> {
     pivotTitle: 'Senders of foo',
     pivotTarget: 'foo',
     pivotHint: 'Esc to go back',
+    notice: 'Press Enter to search.',
+    noticeIsError: false,
+    regexPending: true,
     ...over,
   };
 }

@@ -30,6 +30,8 @@ vi.mock('../omniEngine', () => ({
     refresh: vi.fn(async () => null),
     // Present so the logout test can prove a keystroke never reaches it.
     search: vi.fn(async () => null),
+    // Read for the config message a rebind sends.
+    state: vi.fn(() => ({ scopeId: null, regex: false, regexAvailable: false })),
   })),
 }));
 
