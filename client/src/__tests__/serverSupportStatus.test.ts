@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
+vi.mock('../gciLog', () => ({ logWarning: vi.fn(), logInfo: vi.fn(), logError: vi.fn() }));
 vi.mock('../serverPlugin/pluginFingerprint', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../serverPlugin/pluginFingerprint')>()),
   pluginStatus: vi.fn(),
@@ -7,6 +8,7 @@ vi.mock('../serverPlugin/pluginFingerprint', async (importOriginal) => ({
 }));
 
 import * as vscode from 'vscode';
+import { logWarning } from '../gciLog';
 import { pluginStatus, PluginStatus, ReceiptSpec } from '../serverPlugin/pluginFingerprint';
 import { REFACTORING_RECEIPT } from '../refactoring/refactoringPayload';
 import {
@@ -155,11 +157,66 @@ describe('noticeDifferentServerSupport', () => {
     { state: 'unknown' as const, unknownReason: 'noReceipt' as const },
     { state: 'unknown' as const, unknownReason: 'unreadable' as const, detail: 'session busy' },
   ])('stays silent when the server support is $state', async (status) => {
-    respond(status, status);
+    vi.useFakeTimers();
+    try {
+      respond(status, status);
 
-    await noticeDifferentServerSupport(session(), '/ext', memento());
+      const done = noticeDifferentServerSupport(session(), '/ext', memento());
+      await vi.runAllTimersAsync();
+      await done;
 
-    expect(warn).not.toHaveBeenCalled();
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // A login keeps its session busy for a moment; a read that fails then must not leave a different
+  // support unreported.
+  it('asks the stone again when it could not be read, and warns once it answers', async () => {
+    vi.useFakeTimers();
+    try {
+      const busy = {
+        state: 'unknown' as const,
+        unknownReason: 'unreadable' as const,
+        detail: 'busy',
+      };
+      let reads = 0;
+      statusMock.mockImplementation((_s, _i, _d, spec: ReceiptSpec) =>
+        spec === REFACTORING_RECEIPT
+          ? ++reads < 3
+            ? busy
+            : different('aaaa')
+          : { state: 'current' },
+      );
+
+      const done = noticeDifferentServerSupport(session(), '/ext', memento());
+      await vi.runAllTimersAsync();
+      await done;
+
+      expect(reads).toBe(3);
+      expect(warn).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('logs a support it never managed to read', async () => {
+    vi.useFakeTimers();
+    try {
+      respond({ state: 'unknown', unknownReason: 'unreadable', detail: 'session busy' });
+
+      const done = noticeDifferentServerSupport(session(), '/ext', memento());
+      await vi.runAllTimersAsync();
+      await done;
+
+      expect(vi.mocked(logWarning)).toHaveBeenCalledWith(
+        expect.stringContaining('Could not check whether Refactoring engine'),
+      );
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not ask the stone about a feature that is not installed', async () => {

@@ -8,6 +8,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { ActiveSession, SessionManager } from './sessionManager';
 import { stoneNrsFor } from './loginTypes';
+import { logInfo, logWarning } from './gciLog';
 import { PLUGIN_FEATURES, PluginFeature } from './serverPlugin/pluginFeatures';
 import { PluginStatus, pluginStatus, readJasperVersion } from './serverPlugin/pluginFingerprint';
 
@@ -111,10 +112,38 @@ export function isNewerVersion(installed: string | undefined, mine: string): boo
   return false;
 }
 
-function differentSupports(base: ActiveSession, extensionPath: string) {
-  return PLUGIN_FEATURES.filter((f) => f.isAvailable(base))
-    .map((feature) => ({ feature, status: statusOf(base, feature, true, extensionPath) }))
-    .filter(({ status }) => status.state === 'different');
+/** How often, and how far apart, the login check asks again when the stone could not be read. */
+export const UNREADABLE_RETRIES = 4;
+export const UNREADABLE_RETRY_MS = 1500;
+
+/**
+ * The installed supports that are not this Jasper's. A login keeps its session busy for a moment,
+ * and a read that fails then is `unknown`, which would leave a different support unreported; so a
+ * failed read is asked again a few times, and logged if it never succeeds.
+ */
+async function differentSupports(base: ActiveSession, extensionPath: string) {
+  for (let attempt = 0; ; attempt++) {
+    const statuses = PLUGIN_FEATURES.filter((f) => f.isAvailable(base)).map((feature) => ({
+      feature,
+      status: statusOf(base, feature, true, extensionPath),
+    }));
+    const unreadable = statuses.filter(({ status }) => status.unknownReason === 'unreadable');
+    if (unreadable.length === 0 || attempt >= UNREADABLE_RETRIES) {
+      // One line per login, so a missing warning can be explained from the log.
+      logInfo(
+        `Server support on "${base.login.stone}": ` +
+          (statuses.map(({ feature, status }) => `${feature.label} ${status.state}`).join(', ') ||
+            'none installed'),
+      );
+      for (const { feature, status } of unreadable) {
+        logWarning(
+          `Could not check whether ${feature.label} on "${base.login.stone}" is the one this Jasper ships: ${status.detail ?? 'the stone did not answer'}`,
+        );
+      }
+      return statuses.filter(({ status }) => status.state === 'different');
+    }
+    await new Promise((resolve) => setTimeout(resolve, UNREADABLE_RETRY_MS));
+  }
 }
 
 /**
@@ -140,7 +169,7 @@ export async function noticeDifferentServerSupport(
   memento: vscode.Memento,
   autoUpdate?: (featureIds: string[]) => Promise<void>,
 ): Promise<void> {
-  const different = differentSupports(base, extensionPath);
+  const different = await differentSupports(base, extensionPath);
   if (different.length === 0) return;
 
   const jasperVersion = readJasperVersion(extensionPath);
