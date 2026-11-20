@@ -46,18 +46,18 @@ Use `withTransientSession` when a test needs a second, independent session (e.g.
 
 ## The session gate
 
-The test stone takes only 10 sessions at once (the gate asks the stone for its `StnMaxSessions` when the first file books). A run in which no file books, such as one of unit tests only, never logs the gate in to the stone. Before logging in, each file books the sessions it will use and waits, first come first served, until the stone has room, so a login is never refused for want of a slot (`sessionGate.globalSetup.ts`). Each `useIntegrationTest` call books its `sessions` option: the most sessions its suite has logged in at once. Most suites need 1, the default. A gem that has logged out but not yet left the stone still takes a slot, and the gate counts it as taken, but not against its file's booking.
+The test stone takes only 10 sessions at once (the gate asks the stone for its `StnMaxSessions` when the first file books). A run in which no file books, such as one of unit tests only, never logs the gate in to the stone. Before logging in, each file books the sessions it will use and waits, first come first served, until the stone has room, so a login is never refused for want of a slot (`sessionGate.globalSetup.ts`). Each `useIntegrationTest` call books its `sessions` option: the most sessions its suite has logged in at once. Most suites need 1, the default. A gem that has logged out but not yet left the stone still takes a slot, for a moment that can reach a few hundred ms, and it counts against its file's booking until it leaves. So before each login the file waits, if it must, for its own leaving gems until the login fits its booking (`waitForRoomToLogIn` in `sessionGateClient.ts`, which reads the watcher's latest look). Without that wait, a test that logs out and straight back in holds one session more than it booked, after the gate has given the rest to other files, and the stone refuses whichever login comes next.
 
 For that, the gate has to know which sessions on the stone are whose, so **every login a test makes must be reported to it**, including logins made by app code the test calls:
 
 - a second session: `reportedTransientLogin(session)`, never `session.transientLogin(...)`, which lint rejects in tests;
 - a `SessionManager` the test builds: wrap it in `reportingLoginsOf(...)`, which also reports the logins it makes for itself, such as the one that ends a stopped run's gem;
-- any other login: `reportLogin(own)`, which also reports its logout, or `reportFailedLogin(startedAt, err)` for a login that fails. Only a login the stone itself refused (`deniedByStone(err)`: a wrong user or password) uses up a login serial, when the login begins, and the refusal can take seconds to come back, so pass `Date.now()` from just before the login. A login that never reached the stone, to an unknown stone or NetLDI, uses none; the gate keeps it only to list it if it blames the file.
-- a gem the test forks: report its login serial with `reportSession(serial)` and book it, as `forkGem.integration.test.ts` does. Lint holds that file to its reporting `fork()` helper; every other test file is barred from forking at all.
+- any other login: call `waitForRoomToLogIn()` just before it, then `reportLogin(own)`, which also reports its logout, or `reportFailedLogin(startedAt, err)` for a login that fails. Only a login the stone itself refused (`deniedByStone(err)`: a wrong user or password) uses up a login serial, when the login begins, and the refusal can take seconds to come back, so pass `Date.now()` from just before the login. A login that never reached the stone, to an unknown stone or NetLDI, uses none; the gate keeps it only to list it if it blames the file.
+- a gem the test forks: call `waitForRoomToLogIn()` before forking, report its login serial with `reportSession(serial)`, and book it, as `forkGem.integration.test.ts` does. Lint holds that file to its reporting `fork()` helper; every other test file is barred from forking at all.
 
 A reported session's serial is kept: `reportedSerialOf(own)` answers it without asking the stone again.
 
-The harness's own `login()` and `withTransientSession` report for you.
+The harness's own `login()`, `withTransientSession`, `reportedTransientLogin` and `reportingLoginsOf` report each login, and wait for room, for you.
 
 ## The commit invariant
 
