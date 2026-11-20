@@ -677,6 +677,8 @@ export default tseslint.config(
     // Why a stone test must carry the name: assertStoneTestFileName in
     // useIntegrationTest.ts. The base rule, not the typescript-eslint one the
     // blocks above configure, so this block replaces none of their options.
+    // The base rule can't allow type-only imports, so a unit test that needs
+    // GciTestContext would need an allowImportNames exemption here.
     files: ['**/*.test.ts'],
     ignores: ['**/*.integration.test.ts', 'client/src/__tests__/gci/**'],
     rules: {
