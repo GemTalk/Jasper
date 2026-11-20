@@ -17,6 +17,7 @@
 !
 ! Modified by Jasper (not the original software): classes renamed with a Gs
 ! prefix; the 12 String extension methods left out; the :name: syntax removed;
+! _ counted as part of a word for \< \> \b \B;
 ! Pharo idioms ported to GemStone; #new sends #initialize in two classes; in
 ! the tests, calls to the String methods rewritten as calls to GsRegex and one
 ! test removed. PROVENANCE.md lists every change.
@@ -1825,6 +1826,7 @@ setUp
 	self compile: 'beta', lf, '	^#regexFixtureBeta', lf, '		at: 1', lf, '		put: 2'.
 	self compile: 'crOnly', cr, '	^#regexFixtureCrStart', cr, '	"regexFixtureCrEnd"'.
 	self compile: 'long', lf, '	"regexFixtureLongStart ', long, lf, ' regexFixtureLongEnd"'.
+	self compile: 'twice', lf, '	^#regexFixtureTwice -> #regexFixtureTwice'.
 	fixture class
 		compileMethod: 'gamma', lf, '	^#regexFixtureGamma'
 		dictionaries: System myUserProfile symbolList
@@ -1993,6 +1995,109 @@ testSummaryLine
 	self assert: (fields at: 4) equals: '1'
 %
 
+category: 'running'
+method: GsRegexSourceSearchTest
+rangesOf: aSelector in: aSearch
+	"The recorded matches of the fixture's method aSelector, each #(start stop)."
+
+	| i |
+	i := aSearch methods findFirst: [:m | m inClass == fixture and: [ m selector == aSelector ] ].
+	self assert: i > 0.
+	^aSearch ranges at: i
+%
+
+category: 'running'
+method: GsRegexSourceSearchTest
+sourceOf: aSelector
+	^(fixture compiledMethodAt: aSelector) sourceString
+%
+
+category: 'running'
+method: GsRegexSourceSearchTest
+range: aString in: src after: anIndex
+	"#(start stop) of aString's first occurrence in src at or after anIndex."
+
+	| start |
+	start := src indexOfSubCollection: aString startingAt: anIndex.
+	self assert: start > 0.
+	^Array with: start with: start + aString size - 1
+%
+
+category: 'ranges'
+method: GsRegexSourceSearchTest
+testRangeOfAMatchOnOneLine
+	| src |
+	src := self sourceOf: #alpha.
+	self
+		assert: (self rangesOf: #alpha in: (self search: 'at: 1 put:'))
+		equals: (Array with: (self range: 'at: 1 put:' in: src after: 1))
+%
+
+category: 'ranges'
+method: GsRegexSourceSearchTest
+testRangeOfAMatchAcrossALineBreak
+	"One match spanning two lines: from the token on the first to 'at: 1' on the second."
+
+	| src start stop |
+	src := self sourceOf: #beta.
+	start := src indexOfSubCollection: 'regexFixtureBeta' startingAt: 1.
+	stop := (src indexOfSubCollection: 'at: 1' startingAt: 1) + 4.
+	self
+		assert: (self rangesOf: #beta in: (self search: 'regexFixtureBeta\n\t\tat: 1'))
+		equals: (Array with: (Array with: start with: stop))
+%
+
+category: 'ranges'
+method: GsRegexSourceSearchTest
+testRangesOnLaterLinesCountTheLinesBefore
+	"crOnly's lines are separated by carriage returns alone; offsets still index the whole source."
+
+	| src |
+	src := self sourceOf: #crOnly.
+	self
+		assert: (self rangesOf: #crOnly in: (self search: 'regexFixtureCr\w+'))
+		equals: (Array
+			with: (self range: 'regexFixtureCrStart' in: src after: 1)
+			with: (self range: 'regexFixtureCrEnd' in: src after: 1))
+%
+
+category: 'ranges'
+method: GsRegexSourceSearchTest
+testEveryMatchIsRecordedInOrder
+	| src first |
+	src := self sourceOf: #twice.
+	first := self range: 'regexFixtureTwice' in: src after: 1.
+	self
+		assert: (self rangesOf: #twice in: (self search: 'regexFixtureTwice'))
+		equals: (Array
+			with: first
+			with: (self range: 'regexFixtureTwice' in: src after: first last + 1))
+%
+
+category: 'ranges'
+method: GsRegexSourceSearchTest
+testMatchesPerMethodAreCapped
+	"#long holds a run of 5,000 x's: a thousand matches of xxxxx."
+
+	| search |
+	search := self search: 'xxxxx'.
+	self assert: (self rangesOf: #long in: search) size equals: search maxRangesPerMethod
+%
+
+category: 'ranges'
+method: GsRegexSourceSearchTest
+testRangesLineHasOneEntryPerMethod
+	| search entries |
+	search := self search: 'regexFixture(Alpha|Twice)'.
+	entries := search rangesLine subStrings: ' '.
+	self assert: entries size equals: search methods size.
+	entries with: search ranges do: [:entry :found | | pairs |
+		pairs := entry subStrings: ','.
+		self assert: pairs size equals: found size.
+		pairs with: found do: [:pair :range |
+			self assert: pair equals: (range at: 1) printString, '-', (range at: 2) printString ] ]
+%
+
 category: 'colon'
 method: GsRegexTest
 testColonIsPlainText
@@ -2016,6 +2121,20 @@ testNamedClassesInSetsStillWork
 	self assert: (GsRegex matches: 'abc' pattern: '[[:alpha:]]+').
 	self assert: (GsRegex matches: '42' pattern: '[[:digit:]]+').
 	self deny: (GsRegex matches: 'a1' pattern: '[[:alpha:]]+')
+%
+
+category: 'words'
+method: GsRegexTest
+testUnderscoreIsPartOfAWord
+	"As in other regex tools, and as \w already has it. Upstream, \<halt\> matched inside _halt:."
+
+	self assert: (GsRegex search: 'self halt' pattern: '\<halt\>').
+	self assert: (GsRegex search: 'self halt: ''x''' pattern: '\<halt\>').
+	self deny: (GsRegex search: 'self _halt: ''x''' pattern: '\<halt\>').
+	self deny: (GsRegex search: 'halt_now' pattern: '\<halt\>').
+	self deny: (GsRegex search: 'my_foo' pattern: '\bfoo').
+	self assert: (GsRegex search: 'my_foo' pattern: '\Bfoo').
+	self assert: (GsRegex matches: 'my_var' pattern: '\w+')
 %
 
 category: 'unsupported'

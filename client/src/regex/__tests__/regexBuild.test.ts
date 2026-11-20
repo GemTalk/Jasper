@@ -97,6 +97,26 @@ describe('adapt-glass-regex.js', () => {
     expect(run.stderr).toContain('expected one extension (String, 12 methods)');
   });
 
+  it('makes word boundaries count _ as part of a word', () => {
+    const matcher = fs.readFileSync(
+      path.join(okStage, 'Regex-Core', 'GsRxMatcher.class.st'),
+      'utf8',
+    );
+
+    expect(matcher).toContain('aCharacterOrNil isAlphaNumeric or: [aCharacterOrNil == $_]');
+  });
+
+  it('stops the build when the word-character test is no longer what it was', () => {
+    const vendor = vendorCopy('drift-word');
+    const file = path.join(vendor, CORE_PKG, 'RxMatcher.class', 'instance', 'isWordChar..st');
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('isAlphaNumeric]', 'isLetter]'));
+
+    const run = adapt(vendor, path.join(scratch, 'drift-word-out'));
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain('isWordChar:');
+  });
+
   it('stops the build when the :name: branch is no longer where it was', () => {
     const vendor = vendorCopy('drift-colon');
     const atom = path.join(vendor, CORE_PKG, 'RxParser.class', 'instance', 'atom.st');

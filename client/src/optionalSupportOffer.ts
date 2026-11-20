@@ -39,12 +39,13 @@ import { uninstallEnhancedInspectorFeature } from './enhancedInspector/enhancedI
 import { uninstallRefactoringFeature } from './refactoring/refactoringUninstallCommand';
 import { installRegexFeature } from './regex/regexInstallCommand';
 import { uninstallRegexFeature } from './regex/regexUninstallCommand';
+import { SEARCH_RESYNC_COMMAND } from './undo/afterUndo';
 
 export type AutoInstallMode = 'ask' | 'always' | 'never';
 
 const AUTO_INSTALL_SETTING = 'serverSupport.autoInstall';
 
-function getAutoInstallMode(): AutoInstallMode {
+export function getAutoInstallMode(): AutoInstallMode {
   return vscode.workspace
     .getConfiguration('gemstone')
     .get<AutoInstallMode>(AUTO_INSTALL_SETTING, 'ask');
@@ -145,9 +146,13 @@ function refreshServerSupportInstalledContext(base: ActiveSession): void {
  * uninstall drivers no longer show their own success toast — this is the single
  * source of the success message.
  */
-function announceServerSupportChange(verb: 'installed' | 'uninstalled', outcomes: boolean[]): void {
+function announceServerSupportChange(
+  verb: 'installed' | 'uninstalled',
+  outcomes: boolean[],
+  message = `GemStone server support ${verb}.`,
+): void {
   if (outcomes.length > 0 && outcomes.every((ok) => ok)) {
-    vscode.window.showInformationMessage(`GemStone server support ${verb}.`);
+    vscode.window.showInformationMessage(message);
   }
 }
 
@@ -166,6 +171,7 @@ async function installFeatures(
   extensionPath: string,
   interactive: boolean,
   features: ServerSupportFeature[],
+  successMessage?: string,
 ): Promise<void> {
   const outcomes: boolean[] = [];
   for (const f of features) {
@@ -180,8 +186,11 @@ async function installFeatures(
   // install just re-reads the unchanged list (retaining the selection) — harmless.
   // The command no-ops gracefully when the Explorer has no active session.
   await vscode.commands.executeCommand('gemstone.explorer.refresh');
+  // GemStone Search too: the refresh after each install aborts the session directly, which does not
+  // tell it, so a panel opened before the install finished kept .* greyed out.
+  await vscode.commands.executeCommand(SEARCH_RESYNC_COMMAND, base.id);
   refreshServerSupportInstalledContext(base);
-  announceServerSupportChange('installed', outcomes);
+  announceServerSupportChange('installed', outcomes, successMessage);
 }
 
 /**
@@ -270,6 +279,31 @@ export async function runInstallServerSupport(
   await installFeatures(base, sessionManager, extensionPath, true, applicable);
 }
 
+/**
+ * Replace the server support named by `featureIds` with this Jasper's, without
+ * asking: what `always` does for a stone whose support is not the one this Jasper
+ * ships (`noticeDifferentServerSupport`). Says what it replaced, and why.
+ */
+export async function updateServerSupport(
+  base: ActiveSession,
+  sessionManager: SessionManager,
+  extensionPath: string,
+  featureIds: readonly string[],
+): Promise<void> {
+  const features = SERVER_SUPPORT_FEATURES.filter((f) => featureIds.includes(f.id));
+  if (features.length === 0) return;
+  const names = features.map((f) => f.label).join(' and ');
+  await installFeatures(
+    base,
+    sessionManager,
+    extensionPath,
+    false,
+    features,
+    `Updated the server support on "${base.login.stone}" (${names}) to the one this Jasper ships, ` +
+      'because gemstone.serverSupport.autoInstall is "always".',
+  );
+}
+
 async function uninstallFeatures(
   base: ActiveSession,
   sessionManager: SessionManager,
@@ -287,6 +321,8 @@ async function uninstallFeatures(
   // Refresh. Harmless when nothing dictionary-shaped changed, and the command
   // no-ops gracefully when the Explorer has no active session.
   await vscode.commands.executeCommand('gemstone.explorer.refresh');
+  // And GemStone Search, for the same reason as after an install: .* must grey out again.
+  await vscode.commands.executeCommand(SEARCH_RESYNC_COMMAND, base.id);
   refreshServerSupportInstalledContext(base);
   announceServerSupportChange('uninstalled', outcomes);
 }

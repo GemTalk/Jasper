@@ -69,6 +69,7 @@ import {
   maybeOfferServerSupport,
   runInstallServerSupport,
   runUninstallServerSupport,
+  updateServerSupport,
 } from '../optionalSupportOffer';
 
 const AUTO_INSTALL_KEY = 'serverSupport.autoInstall';
@@ -174,6 +175,24 @@ describe('maybeOfferServerSupport', () => {
       (c) => c[0] === 'GemStone server support installed.',
     );
     expect(succeeded).toBe(false);
+  });
+
+  // The refresh after each install aborts the session directly, which GemStone Search does not hear
+  // about, so a panel opened at login kept .* greyed out after regex support was installed.
+  it('tells GemStone Search after installing, so it sees what was installed', async () => {
+    answer('Install');
+
+    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH);
+
+    expect(mocks.executeCommand).toHaveBeenCalledWith('gemstone.omniSearch.resync', 1);
+  });
+
+  it('tells GemStone Search after a silent install too', async () => {
+    mocks.config[AUTO_INSTALL_KEY] = 'always';
+
+    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH);
+
+    expect(mocks.executeCommand).toHaveBeenCalledWith('gemstone.omniSearch.resync', 1);
   });
 
   it('reloads the Explorer dictionary list after installing, so a new dictionary appears', async () => {
@@ -338,6 +357,54 @@ describe('runInstallServerSupport', () => {
   });
 });
 
+describe('updateServerSupport', () => {
+  const installed = () =>
+    baseSession({
+      enhancedInspectorAvailable: true,
+      rbSupportAvailable: true,
+      regexSupportAvailable: true,
+    });
+
+  it('replaces only the named supports, without asking', async () => {
+    await updateServerSupport(installed(), sessionManager, EXTENSION_PATH, ['regex']);
+
+    expect(mocks.installRX).toHaveBeenCalledWith(
+      expect.anything(),
+      sessionManager,
+      EXTENSION_PATH,
+      false,
+    );
+    expect(mocks.installRB).not.toHaveBeenCalled();
+    expect(mocks.installEI).not.toHaveBeenCalled();
+  });
+
+  it('says what it replaced on which stone, and why', async () => {
+    await updateServerSupport(installed(), sessionManager, EXTENSION_PATH, [
+      'refactoring',
+      'regex',
+    ]);
+
+    expect(mocks.showInformationMessage).toHaveBeenCalledWith(
+      'Updated the server support on "demo" (Refactoring engine and Regex support) to the one this ' +
+        'Jasper ships, because gemstone.serverSupport.autoInstall is "always".',
+    );
+  });
+
+  it('says nothing of an update when the install failed', async () => {
+    mocks.installRX.mockResolvedValueOnce(false);
+
+    await updateServerSupport(installed(), sessionManager, EXTENSION_PATH, ['regex']);
+
+    expect(mocks.showInformationMessage).not.toHaveBeenCalled();
+  });
+
+  it('tells GemStone Search afterwards, as an install does', async () => {
+    await updateServerSupport(installed(), sessionManager, EXTENSION_PATH, ['regex']);
+
+    expect(mocks.executeCommand).toHaveBeenCalledWith('gemstone.omniSearch.resync', 1);
+  });
+});
+
 describe('runUninstallServerSupport', () => {
   // A stone with every support installed.
   const installed = () =>
@@ -383,6 +450,7 @@ describe('runUninstallServerSupport', () => {
     expect(mocks.uninstallRB).toHaveBeenCalledWith(expect.anything(), sessionManager, true);
     expect(mocks.uninstallRX).toHaveBeenCalledWith(expect.anything(), sessionManager, true);
     expect(mocks.executeCommand).toHaveBeenCalledWith('gemstone.explorer.refresh');
+    expect(mocks.executeCommand).toHaveBeenCalledWith('gemstone.omniSearch.resync', 1);
     expect(mocks.showInformationMessage).toHaveBeenCalledWith(
       'GemStone server support uninstalled.',
     );

@@ -16,11 +16,15 @@ hundred times faster than running the matcher.
 
 Only Error and AlmostOutOfStack are caught while matching. A soft break from the
 client (Stop) is not an Error, so it still ends a search that runs too long.
+
+For each method it keeps, it also records where in the source its matches are
+(#ranges, at most #maxRangesPerMethod of them), so Jasper can open the method at
+the first match and mark the others.
 "
 Class {
 	#name : 'GsRegexSourceSearch',
 	#superclass : 'Object',
-	#instVars : [ 'pattern', 'ignoreCase', 'limit', 'matcher', 'literal', 'wholeMethods', 'methods', 'skipped', 'scanned', 'truncated' ],
+	#instVars : [ 'pattern', 'ignoreCase', 'limit', 'matcher', 'literal', 'wholeMethods', 'methods', 'ranges', 'skipped', 'scanned', 'truncated' ],
 	#classVars : [ ],
 	#classInstVars : [ ],
 	#category : 'Regex-Jasper'
@@ -40,6 +44,7 @@ GsRegexSourceSearch >> setPattern: aString ignoreCase: aBoolean limit: anInteger
 	ignoreCase := aBoolean.
 	limit := anInteger.
 	methods := OrderedCollection new.
+	ranges := OrderedCollection new.
 	skipped := 0.
 	scanned := 0.
 	truncated := false
@@ -57,9 +62,10 @@ GsRegexSourceSearch >> run [
 		cls selectors do: [:sel | | m |
 			m := cls compiledMethodAt: sel otherwise: nil.
 			m ifNotNil: [
-				(self sourceMatches: m) ifTrue: [
+				(self matchesIn: m) ifNotNil: [:found |
 					methods size >= limit ifTrue: [ truncated := true. ^self ].
-					methods add: m ] ] ] ]
+					methods add: m.
+					ranges add: found ] ] ] ]
 ]
 
 { #category : 'running' }
@@ -76,18 +82,46 @@ GsRegexSourceSearch >> behaviorsDo: aBlock [
 				aBlock value: v class ] ] ]
 ]
 
+{ #category : 'constants' }
+GsRegexSourceSearch >> maxRangesPerMethod [
+	"Enough to mark every match a reader will look at; a cap so a method full of matches (a
+	 pattern like . over a long method) cannot swell the reply."
+
+	^100
+]
+
 { #category : 'running' }
-GsRegexSourceSearch >> sourceMatches: aMethod [
-	| src |
+GsRegexSourceSearch >> matchesIn: aMethod [
+	"Where the matches in aMethod's source are, each #(start stop) indexing the whole source, in
+	 order; nil when there are none. A method the matcher cannot finish counts as skipped."
+
+	| src found |
 	src := [ aMethod sourceString ] on: Error do: [:e | nil ].
-	src isNil ifTrue: [ ^false ].
+	src isNil ifTrue: [ ^nil ].
 	scanned := scanned + 1.
-	(literal notNil and: [ (self source: src contains: literal) not ]) ifTrue: [ ^false ].
-	^[ wholeMethods
-		ifTrue: [ matcher search: src ]
-		ifFalse: [ (self linesOf: src) anySatisfy: [:line | matcher search: line ] ] ]
+	(literal notNil and: [ (self source: src contains: literal) not ]) ifTrue: [ ^nil ].
+	found := OrderedCollection new.
+	[ wholeMethods
+		ifTrue: [ self collect: src after: 0 into: found ]
+		ifFalse: [
+			self linesOf: src do: [:line :offset |
+				found size >= self maxRangesPerMethod ifFalse: [
+					self collect: line after: offset into: found ] ] ] ]
 		on: AlmostOutOfStack, Error
-		do: [:e | skipped := skipped + 1. e return: false ]
+		do: [:e | skipped := skipped + 1. ^nil ].
+	^found isEmpty ifTrue: [ nil ] ifFalse: [ found asArray ]
+]
+
+{ #category : 'running' }
+GsRegexSourceSearch >> collect: aString after: offset into: found [
+	"Add each match in aString to found, as #(start stop) shifted by offset (the characters
+	 before aString in the method), up to #maxRangesPerMethod. The matcher's position is the end
+	 of the match it has just answered."
+
+	matcher matchesIn: aString do: [:match | | stop |
+		found size >= self maxRangesPerMethod ifTrue: [ ^self ].
+		stop := matcher position.
+		found add: (Array with: stop - match size + 1 + offset with: stop + offset) ]
 ]
 
 { #category : 'running' }
@@ -98,11 +132,21 @@ GsRegexSourceSearch >> source: src contains: aString [
 ]
 
 { #category : 'running' }
-GsRegexSourceSearch >> linesOf: src [
-	"Split on line feed and carriage return both: a method saved with carriage returns
-	 alone would otherwise be one long line, and could overflow the matcher again."
+GsRegexSourceSearch >> linesOf: src do: aBlock [
+	"Each non-empty line of src with the number of characters before it. Splits on line feed and
+	 carriage return both: a method saved with carriage returns alone would otherwise be one long
+	 line, and could overflow the matcher again."
 
-	^src subStrings: (String with: Character lf with: Character cr)
+	| start lf cr |
+	lf := Character lf.
+	cr := Character cr.
+	start := 1.
+	1 to: src size do: [:i | | ch |
+		ch := src at: i.
+		(ch = lf or: [ ch = cr ]) ifTrue: [
+			i > start ifTrue: [ aBlock value: (src copyFrom: start to: i - 1) value: start - 1 ].
+			start := i + 1 ] ].
+	start <= src size ifTrue: [ aBlock value: (src copyFrom: start to: src size) value: start - 1 ]
 ]
 
 { #category : 'results' }
@@ -110,6 +154,30 @@ GsRegexSourceSearch >> methods [
 	"The matching methods, at most #limit of them, as an Array."
 
 	^methods asArray
+]
+
+{ #category : 'results' }
+GsRegexSourceSearch >> ranges [
+	"For each of #methods, in the same order, the Array of its matches, each #(start stop): 1-based
+	 indexes into its source, both inclusive (an empty match has stop = start - 1)."
+
+	^ranges asArray
+]
+
+{ #category : 'results' }
+GsRegexSourceSearch >> rangesLine [
+	"#ranges as one line for the client: one entry per method, separated by spaces, each its
+	 start-stop pairs separated by commas."
+
+	| ws |
+	ws := WriteStream on: String new.
+	ranges
+		do: [:found |
+			found
+				do: [:r | ws print: (r at: 1); nextPut: $-; print: (r at: 2) ]
+				separatedBy: [ ws nextPut: $, ] ]
+		separatedBy: [ ws space ].
+	^ws contents
 ]
 
 { #category : 'results' }

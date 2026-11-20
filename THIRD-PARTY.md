@@ -211,7 +211,8 @@ SOFTWARE.
   with a `Gs` prefix (in code only, so the library's documentation keeps its
   original names), leaves out the 12 methods the library adds to `String`,
   removes the `:name:` pattern syntax so a colon is an ordinary character,
-  ports five Pharo idioms to GemStone, makes two classes' `new` send
+  counts `_` as part of a word for word boundaries (as the library's own
+  comment says it should), ports five Pharo idioms to GemStone, makes two classes' `new` send
   `initialize`, and in the tests rewrites calls to the `String` methods as
   calls to Jasper's `GsRegex` and removes one test. Every change, with its
   reason and count, is in `gs-src/regex/vendor/glass-regex/PROVENANCE.md`,

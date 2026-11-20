@@ -132,6 +132,8 @@ import { showClassHierarchy } from './commands/classHierarchy';
 import { revealInspect } from './inspectRouter';
 import {
   maybeOfferServerSupport,
+  getAutoInstallMode,
+  updateServerSupport,
   runInstallServerSupport,
   runUninstallServerSupport,
 } from './optionalSupportOffer';
@@ -2320,13 +2322,21 @@ export function activate(context: vscode.ExtensionContext) {
     // The "Start Here" status-bar button (shown from onConnected above) points
     // a new user at the basics; see StartHereStatusBar (issue #468).
 
-    // Offer the optional server-side supports this stone lacks (Enhanced
-    // Inspector + refactoring engine) as one bundle, per
+    // Offer the server support this stone lacks as one bundle, per
     // gemstone.serverSupport.autoInstall: `always` installs silently, `ask`
-    // shows one Install/Always/Never modal, `never` does nothing.
-    // Fire-and-forget; no-ops when the stone already has everything applicable.
-    void maybeOfferServerSupport(session, sessionManager, context.extensionPath);
-    void noticeDifferentServerSupport(session, context.extensionPath, context.globalState);
+    // shows one Install/Always/Never modal, `never` does nothing. Then deal with
+    // support that isn't this Jasper's: `always` replaces it, otherwise a warning.
+    // One after the other, so `always` never runs two installs on the stone at once.
+    void maybeOfferServerSupport(session, sessionManager, context.extensionPath).then(() =>
+      noticeDifferentServerSupport(
+        session,
+        context.extensionPath,
+        context.globalState,
+        getAutoInstallMode() === 'always'
+          ? (ids) => updateServerSupport(session, sessionManager, context.extensionPath, ids)
+          : undefined,
+      ),
+    );
   }
 
   context.subscriptions.push(

@@ -39,16 +39,17 @@ His license allows modified versions provided that (5a) a modified version is ex
 | 7 | `a sameAs: b` → `a asLowercase = b asLowercase` (characters) | GemStone has no `Character >> sameAs:`. This is what case-insensitive matching uses. | 3 |
 | 8 | Remove the `:name:` branch from `RxParser >> atom`. | Upstream, `:isVowel:` meant "a character that answers true to `#isVowel`". Smalltalk selectors are full of colons, so `printOn:` was a syntax error and `at:put:` searched for something else; and the pattern could choose a message to send. A colon is now an ordinary character. `[:alpha:]` inside a character set is parsed elsewhere and still works. | 1 |
 | 9 | Add `RxmBranch class >> new` and `RxmSubstring class >> new`, which send `#initialize`. | Pharo's `new` sends `#initialize`; GemStone's does not, so these came up with unset instance variables and nearly every match failed. | 2 methods |
+| 10 | In `RxMatcher >> isWordChar:`, count `_` as a word character. | It decides where `\<`, `\>`, `\b` and `\B` find a word's edges. Its own comment says "alphanumeric or _", but the code checked letters and digits only, so `\<halt\>` matched inside `_halt:`. Other regex tools, and this library's own `\w`, count `_` as part of a word. | 1 |
 
 ### The tests (`Regex-Tests-Core`)
 
 | # | Change | Why | Sites |
 |---|---|---|---|
-| 10 | The same class renames as change 2. | The tests name the library's classes. | — |
-| 11 | Calls to the `String` methods of change 1, always on string literals, rewritten as the matching `GsRegex` call: `('ab' matchesRegex: 'a*b')` becomes `(GsRegex matches: 'ab' pattern: 'a*b')`. The pattern, the text and the expected result are unchanged. | The `String` methods are not installed. | 76 calls in 29 methods: 27 tests and 2 that upstream disabled by renaming (`toDotest...`, `DoesNotWorktest...`) |
-| 12 | `String cr` → `(String with: Character cr)` | GemStone has no `String class >> cr`. | 4 |
-| 13 | `reversed` → `reverse` | GemStone 3.6.2 has no `String >> reversed`. | 3 |
-| 14 | Delete `RxMatcherTest >> testRegex004`. | It tests the `:name:` syntax that change 8 removes, and expects `y` not to be a vowel, while GemStone's `Character >> isVowel` answers true for `$y`. | 1 method |
+| 11 | The same class renames as change 2. | The tests name the library's classes. | — |
+| 12 | Calls to the `String` methods of change 1, always on string literals, rewritten as the matching `GsRegex` call: `('ab' matchesRegex: 'a*b')` becomes `(GsRegex matches: 'ab' pattern: 'a*b')`. The pattern, the text and the expected result are unchanged. | The `String` methods are not installed. | 76 calls in 29 methods: 27 tests and 2 that upstream disabled by renaming (`toDotest...`, `DoesNotWorktest...`) |
+| 13 | `String cr` → `(String with: Character cr)` | GemStone has no `String class >> cr`. | 4 |
+| 14 | `reversed` → `reverse` | GemStone 3.6.2 has no `String >> reversed`. | 3 |
+| 15 | Delete `RxMatcherTest >> testRegex004`. | It tests the `:name:` syntax that change 8 removes, and expects `y` not to be a vowel, while GemStone's `Character >> isVowel` answers true for `$y`. | 1 method |
 
 With these changes every remaining vendored test passes on GemStone 3.6.2 and 3.7.6: 172 in `GsRxMatcherTest` and 15 in `GsRxParserTest`. `client/src/regex/__tests__/regexLibrarySuite.integration.test.ts` checks those exact counts.
 

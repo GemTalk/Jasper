@@ -32,7 +32,7 @@ m add: (Array with: 'GsRxsPredicate' with: 29).
 m add: (Array with: 'GsRxsRange' with: 4).
 m add: (Array with: 'GsRxsRegex' with: 5).
 m add: (Array with: 'GsRegex' with: 24).
-m add: (Array with: 'GsRegexSourceSearch' with: 14).
+m add: (Array with: 'GsRegexSourceSearch' with: 18).
 GsRegexLibrary at: #GsRegexManifest put: m.
 true.
 %

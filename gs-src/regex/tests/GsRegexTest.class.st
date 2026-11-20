@@ -35,6 +35,19 @@ GsRegexTest >> testNamedClassesInSetsStillWork [
 	self deny: (GsRegex matches: 'a1' pattern: '[[:alpha:]]+')
 ]
 
+{ #category : 'words' }
+GsRegexTest >> testUnderscoreIsPartOfAWord [
+	"As in other regex tools, and as \w already has it. Upstream, \<halt\> matched inside _halt:."
+
+	self assert: (GsRegex search: 'self halt' pattern: '\<halt\>').
+	self assert: (GsRegex search: 'self halt: ''x''' pattern: '\<halt\>').
+	self deny: (GsRegex search: 'self _halt: ''x''' pattern: '\<halt\>').
+	self deny: (GsRegex search: 'halt_now' pattern: '\<halt\>').
+	self deny: (GsRegex search: 'my_foo' pattern: '\bfoo').
+	self assert: (GsRegex search: 'my_foo' pattern: '\Bfoo').
+	self assert: (GsRegex matches: 'my_var' pattern: '\w+')
+]
+
 { #category : 'unsupported' }
 GsRegexTest >> testCountedRepetitionIsRefused [
 	#('a{3}' 'a{3,}' 'a{2,5}' 'x(ab){2}') do: [:p |
