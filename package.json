@@ -1860,6 +1860,11 @@
         "category": "GemStone"
       },
       {
+        "command": "gemstone.explorer.dictClicked",
+        "title": "Dictionary Clicked",
+        "category": "GemStone"
+      },
+      {
         "command": "gemstone.generateGrailStub",
         "title": "Generate Grail .py Stub…",
         "category": "GemStone",
@@ -2353,6 +2358,10 @@
         },
         {
           "command": "gemstone.explorer.classClicked",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.dictClicked",
           "when": "false"
         },
         {

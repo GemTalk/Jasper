@@ -345,6 +345,10 @@ export class DictItem extends vscode.TreeItem {
     this.iconPath = new vscode.ThemeIcon('symbol-namespace');
     // Hosts the row's context menu (e.g. Remove Dictionary).
     this.contextValue = 'explorerDict';
+    // Fires on every click, including one on the row already highlighted, which
+    // onDidChangeSelection misses: a click refused with no dictionary selected leaves its
+    // row highlighted, and clicking it again must still select it.
+    this.command = { command: 'gemstone.explorer.dictClicked', title: '', arguments: [this] };
   }
 }
 
@@ -9526,6 +9530,7 @@ export function registerGemStoneExplorer(
   commitFilterOnRowSelection(ctl, dictView, categoryView, classView, hierarchyView, methodView);
 
   dictView.onDidChangeSelection((e) => {
+    // The row's dictClicked command reports the same click; selectDictFromTree reads it once.
     const node = e.selection[0];
     if (node instanceof DictItem) void ctl.selectDictFromTree(node);
   });
@@ -9853,6 +9858,9 @@ export function registerGemStoneExplorer(
     // Per-click hook powering double-click-to-open-definition.
     vscode.commands.registerCommand('gemstone.explorer.classClicked', (className?: string) => {
       if (typeof className === 'string') ctl.handleClassClick(className);
+    }),
+    vscode.commands.registerCommand('gemstone.explorer.dictClicked', (item?: DictItem) => {
+      if (item instanceof DictItem) void ctl.selectDictFromTree(item);
     }),
     // Per-click hook powering double-click-to-promote-the-preview-tab.
     vscode.commands.registerCommand('gemstone.explorer.methodClicked', (node?: MethodItem) => {
