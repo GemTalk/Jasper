@@ -33,12 +33,24 @@ import {
 } from '../smalltalkNotebookController';
 import { GEMSTONE_NOTEBOOK_TYPE } from '../gemstoneNotebookKernel';
 import { MAX_CELL_RESULT } from '../notebookCellResult';
-import { NbCancelledError, runNbCall, type NbRunOptions } from '../nbRunner';
+import {
+  NbCancelledError,
+  forgetSession,
+  runNbCall,
+  setRunInProgressHandler,
+  setStillRunningHandler,
+  type NbRunOptions,
+} from '../nbRunner';
+import { SESSION_BUSY_MESSAGE } from '../gciLibraryError';
 import { SessionManager } from '../sessionManager';
 import { SMALLTALK_LANGUAGE } from '../languageIds';
 import { DebuggerPanel } from '../debugger/debuggerPanel';
 import { resolveBreakpointStop } from '../debugger/conditionalBreakpoints';
-import { GCI_PERFORM_FLAG_ENABLE_DEBUG, GCI_PERFORM_FLAG_INTERPRETED } from '../gciConstants';
+import {
+  GCI_ERR_OP_IN_PROGRESS,
+  GCI_PERFORM_FLAG_ENABLE_DEBUG,
+  GCI_PERFORM_FLAG_INTERPRETED,
+} from '../gciConstants';
 import {
   _resetAutoCommitStateForTests,
   registerSessionAutoCommit,
@@ -547,18 +559,98 @@ describe('SmalltalkNotebookController', () => {
     ctrl.dispose();
   });
 
-  it('reports a busy session as a cell error without starting the execute', async () => {
-    const gci = makeGci();
-    const session = makeSession(gci);
-    startNonBlockingCall(session);
-    vi.mocked(gci.GciTsNbExecute).mockClear();
-    const ctrl = new SmalltalkNotebookController(makeSessionManager(session));
+  describe('Run All on a busy session', () => {
+    const stillRunning = vi.fn();
+    const runInProgress = vi.fn();
+    beforeEach(() => {
+      setStillRunningHandler(stillRunning);
+      setRunInProgressHandler(runInProgress);
+      onTestFinished(() => {
+        setStillRunningHandler(undefined);
+        setRunInProgressHandler(undefined);
+        forgetSession(1);
+      });
+    });
 
-    await runCells([makeCell('3 + 4')]);
+    const cells = () => [makeCell('3 + 4'), makeCell('5 + 6'), makeCell('7 + 8')];
 
-    expect(gci.GciTsNbExecute).not.toHaveBeenCalled();
-    expect(executionAt(0).end).toHaveBeenCalledWith(false, expect.any(Number));
-    ctrl.dispose();
+    function expectOnlyTheFirstCellRefused(gci: ReturnType<typeof makeGci>) {
+      expect(lastController().createNotebookCellExecution).toHaveBeenCalledTimes(1);
+      expect(gci.GciTsNbExecute).not.toHaveBeenCalled();
+      expect(executionAt(0).end).toHaveBeenCalledWith(false, expect.any(Number));
+    }
+
+    it('stops at the first cell while a call nothing polls still holds the session, and offers to stop it', async () => {
+      const gci = makeGci();
+      const session = makeSession(gci);
+      startNonBlockingCall(session);
+      vi.mocked(gci.GciTsNbExecute).mockClear();
+      const ctrl = new SmalltalkNotebookController(makeSessionManager(session));
+
+      await runCells(cells());
+
+      expectOnlyTheFirstCellRefused(gci);
+      expect(stillRunning).toHaveBeenCalledWith(session);
+      ctrl.dispose();
+    });
+
+    it('stops at the first cell while another run is still going, and offers to stop it', async () => {
+      const gci = makeGci({
+        GciTsNbPoll: vi.fn(() => ({ result: 0, err: { number: 0 } })),
+        GciTsCallInProgress: vi.fn(() => ({ result: 0, err: { number: 0 } })),
+      });
+      const session = makeSession(gci);
+      let cancelOther: (() => void) | undefined;
+      const other = runNbCall(
+        session,
+        () => session.GciTsNbExecute('nil', 0n, 0n, 0n, 0, 0),
+        () => 'done',
+        { suppressNotification: true, onStart: (c) => (cancelOther = c) },
+      ).catch(() => undefined);
+      vi.mocked(gci.GciTsNbExecute).mockClear();
+      vi.mocked(runNbCall).mockClear();
+      const ctrl = new SmalltalkNotebookController(makeSessionManager(session));
+
+      await runCells(cells());
+
+      expectOnlyTheFirstCellRefused(gci);
+      expect(runInProgress).toHaveBeenCalledWith(session);
+      cancelOther?.();
+      vi.mocked(gci.GciTsNbPoll).mockReturnValue({ result: 1, err: { number: 0 } });
+      await other;
+      ctrl.dispose();
+    });
+
+    it('stops at the first cell while a call on a worker thread holds the session', async () => {
+      const gci = makeGci();
+      const session = makeSession(gci);
+      vi.spyOn(session, 'isBusy').mockReturnValue(true);
+      const ctrl = new SmalltalkNotebookController(makeSessionManager(session));
+
+      await runCells(cells());
+
+      expectOnlyTheFirstCellRefused(gci);
+      ctrl.dispose();
+    });
+
+    it('stops at the first cell when GemStone itself refuses the start as busy', async () => {
+      const gci = makeGci({
+        GciTsNbExecute: vi.fn(() => ({
+          success: false,
+          err: { number: GCI_ERR_OP_IN_PROGRESS, message: 'operation in progress' },
+        })),
+      });
+      const session = makeSession(gci);
+      const ctrl = new SmalltalkNotebookController(makeSessionManager(session));
+
+      await runCells(cells());
+
+      expect(lastController().createNotebookCellExecution).toHaveBeenCalledTimes(1);
+      expect(gci.GciTsNbExecute).toHaveBeenCalledTimes(1);
+      const item = executionAt(0).replaceOutput.mock.calls[0][0][0].items[0];
+      expect(JSON.parse(new TextDecoder().decode(item.data)).message).toBe(SESSION_BUSY_MESSAGE);
+      ctrl.dispose();
+    });
   });
 
   it('fails the cell without executing when no session is active', async () => {

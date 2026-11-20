@@ -4,7 +4,14 @@ import { logError } from './gciLog';
 import { drainTranscript } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
 import { describeSession, onDidChangeActiveSession } from './activeSessionDisplay';
-import { NbCancelledError, NbRunOptions } from './nbRunner';
+import { NbCancelledError, NbRunOptions, NbSessionBusyError } from './nbRunner';
+import { GciLibraryError } from './gciLibraryError';
+import { GCI_ERR_OP_IN_PROGRESS } from './gciConstants';
+import {
+  ABORT_ERR_LOST_OT_ROOT,
+  ERR_GEM_AUTO_ABORT,
+  ERR_GEM_AUTO_LOST_OT,
+} from './queries/transactionMode';
 
 // Shared base for GemStone-backed notebook kernels. VS Code's built-in ipynb
 // support owns the `jupyter-notebook` notebook type (Microsoft's Jupyter
@@ -17,6 +24,28 @@ import { NbCancelledError, NbRunOptions } from './nbRunner';
 // source is evaluated.
 
 export const GEMSTONE_NOTEBOOK_TYPE = 'jupyter-notebook';
+
+type CellOutcome = 'ran' | 'stopped' | 'refused';
+
+/**
+ * GemStone errors, besides its fatal ones, after which the cells queued behind a
+ * cell shouldn't run: the session is busy, so they would be refused too, or the
+ * gem aborted instead of running the cell, so they would run without it. A
+ * Smalltalk cell doesn't see an automatic abort yet (#972).
+ */
+const REFUSALS = new Set([
+  GCI_ERR_OP_IN_PROGRESS,
+  ERR_GEM_AUTO_ABORT,
+  ERR_GEM_AUTO_LOST_OT,
+  ABORT_ERR_LOST_OT_ROOT,
+]);
+
+function isSessionRefusal(e: unknown): boolean {
+  if (e instanceof NbSessionBusyError) return true;
+  if (!(e instanceof GciLibraryError) || e.number === undefined) return false;
+  // gcierr.ht's FATAL category: the session is gone, so every later cell would fail too.
+  return Math.floor(e.number / 1000) === 4 || REFUSALS.has(e.number);
+}
 
 export interface NotebookKernelSpec {
   id: string;
@@ -195,15 +224,19 @@ export class GemStoneNotebookKernel {
   }
 
   // Cells run one after another: they share one session, which runs one call at
-  // a time. A stopped cell stops the cells queued after it too, as in Jupyter.
+  // a time. A stopped cell stops the cells queued after it too, as in Jupyter, and
+  // so does a cell the session refused (see REFUSALS).
   private async executeCells(cells: vscode.NotebookCell[]): Promise<void> {
     for (const cell of cells) {
-      if ((await this.executeCell(cell)) === 'stopped') return;
+      if ((await this.executeCell(cell)) !== 'ran') return;
     }
   }
 
-  /** Answers 'stopped' when the user stopped the cell. */
-  private async executeCell(cell: vscode.NotebookCell): Promise<'ran' | 'stopped'> {
+  /**
+   * Answers 'stopped' when the user stopped the cell, and 'refused' when there
+   * was no session to run it, or the session refused it.
+   */
+  private async executeCell(cell: vscode.NotebookCell): Promise<CellOutcome> {
     const execution = this.controller.createNotebookCellExecution(cell);
     execution.executionOrder = ++this.executionOrder;
     execution.start(Date.now());
@@ -226,7 +259,7 @@ export class GemStoneNotebookKernel {
   private async runCell(
     cell: vscode.NotebookCell,
     execution: vscode.NotebookCellExecution,
-  ): Promise<'ran' | 'stopped'> {
+  ): Promise<CellOutcome> {
     const { token } = execution;
     if (token.isCancellationRequested) return 'stopped';
 
@@ -248,13 +281,14 @@ export class GemStoneNotebookKernel {
           ? 'No GemStone session is active. Log in from the GemStone Logins view, then re-run the cell.'
           : `Session ${this.sessionId} has logged out. Pick another kernel, then re-run the cell.`,
       );
-      return 'ran';
+      return 'refused';
     }
 
     let cancel: (() => void) | undefined;
     let stopRequested = (): boolean => false;
     const onStop = token.onCancellationRequested(() => cancel?.());
     let result: NotebookCellResult;
+    let refused = false;
     try {
       const scopeId = cell.notebook.uri.toString();
       result = classifyCellResult(
@@ -269,12 +303,14 @@ export class GemStoneNotebookKernel {
       const msg = e instanceof Error ? e.message : String(e);
       logError(session.id, `Notebook cell failed: ${msg}`);
       await this.endWithError(execution, msg);
-      return 'ran';
+      refused = isSessionRefusal(e);
+      return refused ? 'refused' : 'ran';
     } finally {
       onStop.dispose();
       // Show Transcript output the cell buffered server-side: Grail Python
       // cells don't stream it live. For Smalltalk cells this drains nothing.
-      appendTranscriptOutput(drainTranscript(session));
+      // Not from a session that refused the cell: the drain would fail the same way.
+      if (!refused) appendTranscriptOutput(drainTranscript(session));
     }
 
     // The cell's error guard turns the gem's answer to a stop into an ordinary
