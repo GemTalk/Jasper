@@ -19,7 +19,7 @@
 // a test worker made before then, already gone by the watcher's first look,
 // goes unseen.
 // The bookkeeping is in sessionGateLedger.ts; this is its sockets and watcher.
-import { writeFileSync, rmSync } from 'node:fs';
+import { renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -46,8 +46,7 @@ export default async function setup(project: TestProject) {
   const teardown = await startGate(
     socketPath,
     (onSample, onFail) => startGciWatcher(env, onSample, onFail),
-    undefined,
-    lookPath,
+    { lookPath },
   );
   project.provide('sessionGateSocket', socketPath);
   project.provide('sessionGateLook', lookPath);
@@ -78,8 +77,7 @@ export type StartWatcher = (
 export async function startGate(
   socketPath: string,
   startWatcher: StartWatcher,
-  capacity?: number,
-  lookPath?: string,
+  { capacity, lookPath }: { capacity?: number; lookPath?: string } = {},
 ): Promise<() => Promise<void>> {
   const ledger = new SessionLedger<Socket>(capacity ?? 0);
   const waitTimers = new Map<Socket, NodeJS.Timeout>();
@@ -211,11 +209,12 @@ export async function startGate(
   const onSample = (sessions: Map<string, number>, at = Date.now()) => {
     const leftOver = ledger.sample(sessions);
     if (lookPath) {
-      // A reader that catches it mid-write only waits for the next look.
+      // Renamed into place, so a reader never sees half a look.
       try {
-        writeFileSync(lookPath, JSON.stringify({ at, serials: [...sessions.keys()] }));
+        writeFileSync(`${lookPath}.tmp`, JSON.stringify({ at, serials: [...sessions.keys()] }));
+        renameSync(`${lookPath}.tmp`, lookPath);
       } catch {
-        // Nor does a look that failed to write hold anything up but a waiting login.
+        // A look that failed to write holds up nothing but a waiting login, until the next.
       }
     }
     if (leftOver && leftOver.size > 0) {
@@ -229,7 +228,10 @@ export async function startGate(
 
   return async () => {
     watcher?.stop();
-    if (lookPath) rmSync(lookPath, { force: true });
+    if (lookPath) {
+      rmSync(lookPath, { force: true });
+      rmSync(`${lookPath}.tmp`, { force: true });
+    }
     // Files still connected are given their answer before the server closes.
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (watcherFailure) throw new Error(`session gate: ${watcherFailure}`);

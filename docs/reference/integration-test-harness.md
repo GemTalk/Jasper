@@ -57,7 +57,7 @@ For that, the gate has to know which sessions on the stone are whose, so **every
 
 A reported session's serial is kept: `reportedSerialOf(own)` answers it without asking the stone again.
 
-The harness's own `login()` and `withTransientSession`, `reportedTransientLogin` and `reportingLoginsOf` report, and wait for room, for you.
+The harness's own `login()`, `withTransientSession`, `reportedTransientLogin` and `reportingLoginsOf` report each login, and wait for room, for you.
 
 ## The commit invariant
 

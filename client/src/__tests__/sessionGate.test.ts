@@ -12,6 +12,7 @@ import {
   deniedByStone,
   reportedSerialOf,
   reportLogin,
+  noteLoggedOut,
   roomToLogIn,
   type Booking,
 } from './sessionGateClient';
@@ -377,6 +378,23 @@ describe("a test file's side of the session gate", () => {
       roomToLogIn(booking, { at: 200, serials: ['10'] });
 
       expect([...booking.mine.keys()]).toEqual(['10']);
+    });
+
+    it('ignores a logout reported after a look showed its gem gone', () => {
+      const booking: Booking = { ...fullWithOneLeaving(), closed: new Set() };
+      roomToLogIn(booking, { at: 200, serials: ['11'] });
+
+      noteLoggedOut(booking, '10');
+
+      expect([...booking.closed]).toEqual([]);
+    });
+
+    it('waits on a logout reported while its gem is still known', () => {
+      const booking: Booking = { ...fullWithOneLeaving(), closed: new Set() };
+
+      noteLoggedOut(booking, '10');
+
+      expect([...booking.closed]).toEqual(['10']);
     });
   });
 });

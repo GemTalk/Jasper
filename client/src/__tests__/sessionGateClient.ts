@@ -67,7 +67,7 @@ const ROOM_WAIT_LIMIT_MS = 10_000;
 /** A look at the stone: when it began (`Date.now()`), and the login serials it saw. */
 export type Look = { at: number; serials: string[] };
 
-/** The watcher's latest look, as the gate publishes it; undefined while the file is missing or mid-write. */
+/** The watcher's latest look, as the gate publishes it; undefined while the file is missing. */
 function latestLook(path: string): Look | undefined {
   try {
     return JSON.parse(readFileSync(path, 'utf8')) as Look;
@@ -138,8 +138,17 @@ export function reportSession(serial: string | bigint, socket = held.at(-1)): vo
  * against this file's booking until it leaves (see {@link waitForRoomToLogIn}).
  */
 export function reportSessionClosed(serial: string | bigint, socket = held.at(-1)): void {
-  if (socket) bookings.get(socket)?.closed.add(String(serial));
+  const booking = socket && bookings.get(socket);
+  if (booking) noteLoggedOut(booking, String(serial));
   socket?.write(JSON.stringify({ op: 'closed', serial: String(serial) }) + '\n');
+}
+
+/**
+ * Adds `serial` to the gems `booking` waits on, unless a look has already shown
+ * it gone: added then, nothing would ever take it off again.
+ */
+export function noteLoggedOut(booking: Booking, serial: string): void {
+  if (booking.mine.has(serial)) booking.closed.add(serial);
 }
 
 /**
