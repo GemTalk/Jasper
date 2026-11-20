@@ -283,6 +283,7 @@ export class OmniSearchPanel {
         pinned: this.pinned,
         excludedFromAll: st.excludedFromAll,
         matchMode: st.matchMode,
+        term: st.term,
       }),
     );
   }
@@ -399,7 +400,7 @@ export class OmniSearchPanel {
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
       this.deps.onError?.(message);
-      this.panel.webview.postMessage({ command: 'error', message });
+      this.panel.webview.postMessage({ command: 'error', message, failed: m.command });
     }
   }
 
