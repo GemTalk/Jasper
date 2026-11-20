@@ -34,7 +34,13 @@ import {
   sayStillRunningUnlessItEnds,
   sayWhatHolds,
 } from '../nbRunner';
-import { OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
+import {
+  GCI_ERR_BAD_SESSION_ID,
+  GCI_ERR_OP_IN_PROGRESS,
+  OOP_ILLEGAL,
+  OOP_NIL,
+} from '../gciConstants';
+import { GciLibraryError, SESSION_BUSY_MESSAGE } from '../gciLibraryError';
 import { fakeActiveSession } from './fakeActiveSession';
 import { sameObject } from './support/sameObject';
 
@@ -88,6 +94,25 @@ describe('runNbCall', () => {
       ),
     ).rejects.toThrow('boom');
     expect(onReady).not.toHaveBeenCalled();
+  });
+
+  it('rejects a start GemStone refuses as busy with an error that says so and keeps its number', async () => {
+    const { session } = makeSession([{ result: 1 }]);
+
+    const refused = runNbCall(
+      session,
+      () => ({
+        success: false,
+        err: { number: GCI_ERR_OP_IN_PROGRESS, message: 'operation in progress' } as never,
+      }),
+      vi.fn(),
+    );
+
+    await expect(refused).rejects.toBeInstanceOf(GciLibraryError);
+    await expect(refused).rejects.toMatchObject({
+      number: GCI_ERR_OP_IN_PROGRESS,
+      message: SESSION_BUSY_MESSAGE,
+    });
   });
 
   it('calls onReady and resolves with its value once the poll reports ready', async () => {
@@ -2452,6 +2477,66 @@ describe('stopping while the result is being read', () => {
 });
 
 describe('a session that goes away mid-call', () => {
+  it("rejects with GemStone's number when the poll reports the connection lost", async () => {
+    const { session } = makeSession([
+      { result: -1, err: { number: 4137, message: 'socket read EOF' } },
+    ]);
+
+    const run = runNbCall(
+      session,
+      () => ({ success: true, err: noErr as never }),
+      () => 'never',
+      {
+        suppressNotification: true,
+      },
+    );
+
+    await expect(run).rejects.toBeInstanceOf(GciLibraryError);
+    await expect(run).rejects.toMatchObject({ number: 4137, message: 'socket read EOF' });
+  });
+
+  it("rejects with GemStone's number when the session has gone", async () => {
+    const { session, gci } = makeSession([{ result: 0 }]);
+    (gci.GciTsCallInProgress as ReturnType<typeof vi.fn>).mockReturnValue({
+      result: -1,
+      err: { number: 4100, message: 'session not logged in' },
+    });
+
+    const run = runNbCall(
+      session,
+      () => ({ success: true, err: noErr as never }),
+      () => 'never',
+      {
+        suppressNotification: true,
+      },
+    );
+
+    await expect(run).rejects.toBeInstanceOf(GciLibraryError);
+    await expect(run).rejects.toMatchObject({ number: 4100 });
+  });
+
+  it('rejects as a session that is no longer known when the session has gone without a number', async () => {
+    const { session, gci } = makeSession([{ result: 0 }]);
+    (gci.GciTsCallInProgress as ReturnType<typeof vi.fn>).mockReturnValue({
+      result: -1,
+      err: noErr,
+    });
+
+    const run = runNbCall(
+      session,
+      () => ({ success: true, err: noErr as never }),
+      () => 'never',
+      {
+        suppressNotification: true,
+      },
+    );
+
+    await expect(run).rejects.toMatchObject({
+      number: GCI_ERR_BAD_SESSION_ID,
+      message: 'The GemStone session ended while this call was still running.',
+    });
+  });
+
   it('settles instead of polling forever', async () => {
     // A logout (or a lost connection) while a call is outstanding used to leave the
     // poll reporting "not ready" for good: the progress notification sat there
