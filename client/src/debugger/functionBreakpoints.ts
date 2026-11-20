@@ -6,6 +6,7 @@ import { MethodSearchResult } from '../browserQueries';
 import { buildLineStarts, lineOfOffset } from './stepPointModel';
 import { describeMethodResult } from '../methodResultsPicker';
 import { logInfo } from '../gciLog';
+import { parseMethodReference } from '../methodReference';
 
 /** A method name typed into the Breakpoints panel, taken apart. */
 export interface ParsedFunctionName {
@@ -19,11 +20,11 @@ export interface ParsedFunctionName {
  * Read a name typed into VS Code's Breakpoints panel as Smalltalk method
  * coordinates.
  *
- * Accepts what a Smalltalker would actually type: `Account>>balance`,
- * `Account class>>new`, either with a `#` on the selector, and a bare `balance`
- * meaning "whoever implements it". The selector half is taken verbatim rather
- * than pattern-matched, because binary selectors (`+`, `,`, `//`) and keyword
- * selectors (`at:put:`) are all legal and none of them look like an identifier.
+ * Accepts a qualified name in any form `parseMethodReference` reads
+ * (`Account>>balance`, `Account class>>new`, a pasted GsNMethod or debugger
+ * frame label), and a bare `balance` meaning "whoever implements it". A bare
+ * selector is taken verbatim: binary (`+`, `//`) and keyword (`at:put:`)
+ * selectors are legal and none of them look like an identifier.
  *
  * Returns null for something that can't be a method name at all.
  */
@@ -31,16 +32,11 @@ export function parseFunctionName(raw: string): ParsedFunctionName | null {
   const name = raw.trim();
   if (name.length === 0) return null;
 
-  // `Account class >> new` — metaclass first, since its class name half would
-  // otherwise match the instance-side pattern with 'Account class' left over.
-  const meta = name.match(/^([A-Za-z_]\w*)\s+class\s*>>\s*#?\s*(.+)$/);
-  if (meta) return { className: meta[1], isMeta: true, selector: meta[2].trim() };
-
-  const inst = name.match(/^([A-Za-z_]\w*)\s*>>\s*#?\s*(.+)$/);
-  if (inst) return { className: inst[1], isMeta: false, selector: inst[2].trim() };
+  const ref = parseMethodReference(name);
+  if (ref) return { className: ref.className, isMeta: ref.isMeta, selector: ref.selector };
 
   // A bare selector. Reject anything holding '>>', which was a qualified name
-  // the patterns above failed on — a malformed class half, most likely.
+  // the parser rejected — a malformed class half, most likely.
   if (name.includes('>>')) return null;
   return { isMeta: false, selector: name.replace(/^#\s*/, '') };
 }
