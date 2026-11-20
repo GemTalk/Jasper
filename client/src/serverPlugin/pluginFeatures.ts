@@ -1,6 +1,7 @@
 /**
  * Single source of truth for the plugin features the Jasper Server Plugin
- * files into a stone — today the refactoring engine and the Enhanced Inspector.
+ * files into a stone — today the refactoring engine, the Enhanced Inspector and
+ * regex support.
  *
  * Each entry answers the questions every consumer needs: which feature is
  * this (`id`/`label`), where does its payload live (`payloadSubdir`, relative to
@@ -36,6 +37,10 @@ import {
   supportsEnhancedInspector,
 } from '../enhancedInspector/enhancedInspectorInstall';
 import { uninstallEnhancedInspectorSupport } from '../enhancedInspector/enhancedInspectorUninstall';
+import { checkRegexSupportAvailable } from '../browserQueries';
+import { installRegexSupport } from '../regex/regexInstall';
+import { uninstallRegexSupport } from '../regex/regexUninstall';
+import { REGEX_RECEIPT } from '../regex/regexPayload';
 
 /** Reports incremental progress: a message plus a 0–100 increment for this step. */
 export type ProgressReporter = (message: string, increment: number) => void;
@@ -47,8 +52,8 @@ export interface PluginInstallResult {
   success: boolean;
   /** Human-readable summary, suitable for a notification. */
   message: string;
-  /** A report to surface, when the installer produced one: the refactoring
-   *  loader's completeness report, or the Enhanced Inspector's list of kept
+  /** A report to surface, when the installer produced one: the refactoring or
+   *  regex loader's completeness report, or the Enhanced Inspector's list of kept
    *  stone methods whose source differs from the payload's. */
   report?: string;
 }
@@ -71,7 +76,8 @@ export interface PluginFeature {
    *  `resources/refactoring`), readable by the gem (a local stone). */
   payloadSubdir: string;
   /** Does this stone's version support the feature at all? (The refactoring
-   *  engine loads on every release; the Enhanced Inspector needs 3.7.5+.) */
+   *  engine and regex support load on every release; the Enhanced Inspector
+   *  needs 3.7.5+.) */
   isApplicable(stoneVersion: string | undefined): boolean;
   /** Live presence check against the session — a fresh answer, not a cached flag. */
   probe(session: ActiveSession): boolean;
@@ -137,6 +143,24 @@ export const pluginFeatures = {
     },
     uninstall: async (session: ActiveSession, onProgress?: ProgressReporter) => {
       const r = await uninstallEnhancedInspectorSupport(session, onProgress);
+      return { success: r.success, message: r.message };
+    },
+  },
+  regex: {
+    id: 'regex',
+    label: 'Regex support',
+    payloadSubdir: path.join('resources', 'regex'),
+    // Loads on every release; see refactoring.isApplicable for why the parameter is declared.
+    isApplicable: (_stoneVersion: string | undefined) => true,
+    probe: checkRegexSupportAvailable,
+    isAvailable: (session: ActiveSession) => session.regexSupportAvailable === true,
+    receipt: REGEX_RECEIPT,
+    install: async (session: ActiveSession, payloadDir: string, onProgress?: ProgressReporter) => {
+      const r = await installRegexSupport(session, payloadDir, onProgress);
+      return { success: r.success, message: r.message, report: r.report };
+    },
+    uninstall: async (session: ActiveSession, onProgress?: ProgressReporter) => {
+      const r = await uninstallRegexSupport(session, onProgress);
       return { success: r.success, message: r.message };
     },
   },

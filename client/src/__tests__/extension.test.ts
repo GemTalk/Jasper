@@ -25,6 +25,7 @@ vi.mock('../browserQueries', () => ({
   },
   compileMethod: vi.fn(() => 'Compiled: Array >> foo'),
   checkRefactoringSupportAvailable: vi.fn(() => false),
+  checkRegexSupportAvailable: vi.fn(() => false),
 }));
 
 import * as vscode from 'vscode';

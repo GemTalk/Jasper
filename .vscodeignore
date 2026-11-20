@@ -55,16 +55,19 @@ docs/**
 vendor/**
 
 # Server-side Smalltalk source: the refactoring engine (vendored AST, tests, and
-# build tooling) and the Enhanced Inspector build tooling. This is source-of-truth,
-# not runtime: the extension files the *generated* payloads under
-# resources/refactoring/ (ast-core.gs, compat.gs, engine.gs, manifest.gs,
-# refactoring-loader.gs) and resources/enhancedInspector/ (*.gs) into a stone and
-# never reads gs-src/ itself. Mirrors how client/src, server/src, etc. are excluded.
+# build tooling), regex support (vendored library, tests and build tooling) and the
+# Enhanced Inspector build tooling. This is source-of-truth, not runtime: the
+# extension files the *generated* payloads under resources/refactoring/ (ast-core.gs,
+# compat.gs, engine.gs, manifest.gs, refactoring-loader.gs), resources/regex/
+# (regex-loader.gs, regex-core.gs, engine.gs, manifest.gs) and
+# resources/enhancedInspector/ (*.gs) into a stone and never reads gs-src/ itself.
+# Mirrors how client/src, server/src, etc. are excluded.
 gs-src/**
 
-# The engine's GS SUnit tests, built for the automatic GCI test to file in from
-# the repo (dev/CI). Test-only — never shipped in the .vsix.
+# The GS SUnit tests, built for the automatic GCI tests to file in from the repo
+# (dev/CI). Test-only — never shipped in the .vsix.
 resources/refactoring/engine-tests.gs
+resources/regex/regex-tests.gs
 
 node_modules/**
 client/node_modules/**

@@ -186,3 +186,102 @@ SOFTWARE.
 >   held at the time, so provenance here is repo-level only. Recording the
 >   upstream commit for each file on the next re-vendor would make this section
 >   exact.
+
+---
+
+## Regular Expression Matcher (Vassili Bykov), via GLASS
+
+- **What:** the regular-expression library behind the server plugin's regex
+  support (regex search in GemStone Search's Source scope): a parser, a
+  matcher and their tests, written in Smalltalk.
+- **Where in this repo:** `gs-src/regex/vendor/glass-regex/` (verbatim
+  filetree); built into `resources/regex/regex-core.gs` (shipped in the VSIX)
+  and `resources/regex/regex-tests.gs` (tests only, not shipped) by
+  `gs-src/regex/build/build-regex.sh`. Installed into a stone in the dedicated
+  `GsRegexLibrary` dictionary by the extension's "Install Server Support"
+  command.
+- **Original:** the Regular Expression Matcher v 1.1, Copyright (C) 1996, 1999
+  Vassili Bykov, under his own license, reproduced in full below.
+- **Obtained via:** GLASS, <https://github.com/glassdb/glass>, packages
+  `Regex-Core` and `Regex-Tests-Core` at commit
+  `fddbc3b6f17179b328f52dd3466c48c3738db0ef`. GLASS is MIT, Copyright (c) 2012
+  VMware, Inc. and (c) 2013 GemTalk Systems, reproduced in full below.
+- **Modifications:** this is a **modified version**, not the original
+  software. The vendored files are untouched; the build renames every class
+  with a `Gs` prefix (in code only, so the library's documentation keeps its
+  original names), leaves out the 12 methods the library adds to `String`,
+  removes the `:name:` pattern syntax so a colon is an ordinary character,
+  counts `_` as part of a word for word boundaries (as the library's own
+  comment says it should), ports five Pharo idioms to GemStone, makes two classes' `new` send
+  `initialize`, and in the tests rewrites calls to the `String` methods as
+  calls to Jasper's `GsRegex` and removes one test. Every change, with its
+  reason and count, is in `gs-src/regex/vendor/glass-regex/PROVENANCE.md`,
+  which also says how Jasper meets each of the original license's conditions.
+- **License:** two licenses apply: the original author's to the library, and
+  MIT to GLASS's packaging of it.
+
+### Regular Expression Matcher license (Vassili Bykov)
+
+Kept in the library itself, in the class-side method `RxParser class >>
+f:boringStuff:`, which ships unchanged:
+
+```
+The Regular Expression Matcher (``The Software'') 
+is Copyright (C) 1996, 1999 Vassili Bykov.  
+It is provided to the Smalltalk community in hope it will be useful.
+
+1. This license applies to the package as a whole, as well as to any
+   component of it. By performing any of the activities described
+   below, you accept the terms of this agreement.
+
+2. The software is provided free of charge, and ``as is'', in hope
+   that it will be useful, with ABSOLUTELY NO WARRANTY. The entire
+   risk and all responsibility for the use of the software is with
+   you.  Under no circumstances the author may be held responsible for
+   loss of data, loss of profit, or any other damage resulting
+   directly or indirectly from the use of the software, even if the
+   damage is caused by defects in the software.
+
+3. You may use this software in any applications you build.
+
+4. You may distribute this software provided that the software
+   documentation and copyright notices are included and intact.
+
+5. You may create and distribute modified versions of the software,
+   such as ports to other Smalltalk dialects or derived work, provided
+   that: 
+
+   a. any modified version is expressly marked as such and is not
+   misrepresented as the original software; 
+
+   b. credit is given to the original software in the source code and
+   documentation of the derived work; 
+
+   c. the copyright notice at the top of this document accompanies
+   copyright notices of any modified version.
+```
+
+### GLASS MIT License
+
+```
+Copyright (c) 2012 VMware, Inc. All Rights Reserved.
+Copyright (c) 2013 GemTalkSystems All Rights Reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

@@ -26,5 +26,13 @@ This product includes vendored third-party software:
     (the GemStone port of STON, platforms/gemstone/projects/STON/)
   Location in this repo: resources/enhancedInspector/*.gs.
 
+- A modified version of the Regular Expression Matcher v 1.1,
+  Copyright (C) 1996, 1999 Vassili Bykov, under its own license, obtained via
+  GLASS (MIT License; Copyright (c) 2012 VMware, Inc.; Copyright (c) 2013
+  GemTalk Systems), packages Regex-Core and Regex-Tests-Core:
+  https://github.com/glassdb/glass
+  Location in this repo: gs-src/regex/vendor/glass-regex/ (the original,
+  unmodified); resources/regex/ (the modified version Jasper builds from it).
+
 See THIRD-PARTY.md for full attribution, license texts, and the list of
 modifications.

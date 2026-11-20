@@ -20,6 +20,9 @@ export class ActiveSession {
    *  context key and the Explorer's rename-instance-variable command. Latched at
    *  login (and re-probed after an install) — see refactoringAvailability.ts. */
   rbSupportAvailable?: boolean;
+  /** Whether the server plugin's regex support (GsRegexSourceSearch) is resolvable in this
+   *  session's stone. Latched at login and after an install — see regexAvailability.ts. */
+  regexSupportAvailable?: boolean;
   /** `System myUserProfile symbolList`, memoized on first use — see
    *  `sessionSymbolListOop` in debugQueries.ts, which owns this field. */
   symbolListOop?: bigint;
