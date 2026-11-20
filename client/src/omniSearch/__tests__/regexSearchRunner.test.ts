@@ -8,6 +8,12 @@ vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 const mocks = vi.hoisted(() => ({
   executeFetchStringAsync: vi.fn(),
+  stoppedRunHolds: vi.fn(() => false),
+}));
+
+vi.mock('../../nbRunner', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../nbRunner')>()),
+  stoppedRunHolds: mocks.stoppedRunHolds,
 }));
 
 vi.mock('../../browserQueries', async (importOriginal) => ({
@@ -26,6 +32,7 @@ const ROW = 'UserGlobals\tFoo\t0\tbar\tfixture\t0';
 
 beforeEach(() => {
   mocks.executeFetchStringAsync.mockReset();
+  mocks.stoppedRunHolds.mockReset().mockReturnValue(false);
 });
 
 describe('regexSearchUsing', () => {
@@ -121,7 +128,7 @@ describe('regexSearchUsing', () => {
     const run = regexSearchUsing(session)('(a+)+b', false, 200);
     await vi.waitFor(() => expect(mocks.executeFetchStringAsync).toHaveBeenCalled());
 
-    run.cancel();
+    void run.cancel();
     finish('0\t0\t1\t0\n\n');
 
     expect(stopThisCall).toHaveBeenCalledTimes(1);
@@ -132,7 +139,7 @@ describe('regexSearchUsing', () => {
     mocks.executeFetchStringAsync.mockResolvedValue('0\t0\t1\t0\n\n');
     const run = regexSearchUsing(session)('a', false, 200);
 
-    run.cancel();
+    void run.cancel();
 
     expect(await run.outcome).toEqual({ kind: 'cancelled' });
     expect(mocks.executeFetchStringAsync).not.toHaveBeenCalled();
@@ -149,7 +156,7 @@ describe('regexSearchUsing', () => {
     const first = search('(a+)+b', false, 200);
     await vi.waitFor(() => expect(mocks.executeFetchStringAsync).toHaveBeenCalledTimes(1));
 
-    first.cancel();
+    void first.cancel();
     const second = search('b', false, 200);
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(mocks.executeFetchStringAsync).toHaveBeenCalledTimes(1);
@@ -157,5 +164,29 @@ describe('regexSearchUsing', () => {
     finishFirst('0\t0\t1\t0\n\n');
     expect(await second.outcome).toMatchObject({ kind: 'results' });
     expect(mocks.executeFetchStringAsync).toHaveBeenCalledTimes(2);
+  });
+
+  // Turning .* off runs a plain search on the same session straight after: it must not be refused as
+  // busy by the regex search it just stopped.
+  it('settles a cancel only once the stone has let go of the session', async () => {
+    let finish!: (s: string) => void;
+    mocks.executeFetchStringAsync.mockImplementation(
+      (_s: unknown, _code: string, _title: string, onStart: (c: () => void) => void) => {
+        onStart(() => finish('0\t0\t1\t0\n\n'));
+        return new Promise<string>((resolve) => (finish = resolve));
+      },
+    );
+    const run = regexSearchUsing(session)('(a+)+b', false, 200);
+    await vi.waitFor(() => expect(mocks.executeFetchStringAsync).toHaveBeenCalled());
+    mocks.stoppedRunHolds.mockReturnValue(true);
+
+    let settled = false;
+    const stopping = Promise.resolve(run.cancel()).then(() => (settled = true));
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(settled).toBe(false);
+
+    mocks.stoppedRunHolds.mockReturnValue(false);
+    await stopping;
+    expect(settled).toBe(true);
   });
 });

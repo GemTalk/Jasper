@@ -12,6 +12,7 @@ import {
   createOmniEngine,
   OmniEngineDeps,
   REGEX_PENDING_NOTICE,
+  REGEX_STOPPED_NOTICE,
   regexOutcomeNotice,
 } from '../omniEngine';
 import { OMNI_DEFAULTS, readOmniConfig } from '../omniConfig';
@@ -372,6 +373,38 @@ describe('searching with regex on', () => {
 
     expect((await engine.search('x+y'))?.regexPending).toBe(true);
     expect((await engine.search('x+'))?.regexPending).toBeUndefined();
+  });
+
+  it('turning .* off waits for the stopped search to let go of the session before searching', async () => {
+    let letGo!: () => void;
+    const { engine, classes } = engineWith({
+      regexSearch: () => ({
+        outcome: new Promise<RegexSearchOutcome>(() => {}),
+        cancel: () => new Promise<void>((resolve) => (letGo = resolve)),
+      }),
+    });
+    await engine.toggleRegex();
+    await engine.search('Arr');
+    void engine.submit('Arr');
+
+    const off = engine.toggleRegex();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(classes.terms).toEqual([]);
+
+    letGo();
+    await off;
+    expect(classes.terms).toEqual(['Arr']);
+  });
+
+  it('says the search stopped, and waits for Enter, when it is cancelled from its progress notice', async () => {
+    const { engine, runs } = engineWith();
+    await engine.toggleRegex();
+    const pending = engine.submit('(=+)+x');
+
+    runs[0].resolve({ kind: 'cancelled' });
+    const view = await pending;
+
+    expect(view).toMatchObject({ rows: [], notice: REGEX_STOPPED_NOTICE, regexPending: true });
   });
 
   it('stops a search still running on the stone when the pattern is edited', async () => {

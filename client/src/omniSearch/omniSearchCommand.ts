@@ -167,6 +167,14 @@ export const REGEX_STOP_WAIT_MS = 20_000;
  *  Each search waits for the one before it to finish stopping. Replacing a search cancels it, but
  *  the stone keeps the session until it has answered the soft break, so a search started at once
  *  was refused as busy by the search it had just replaced. */
+/** Wait, up to REGEX_STOP_WAIT_MS, for a stopped run to let go of the session. */
+async function stoneLetsGo(session: ActiveSession): Promise<void> {
+  for (const since = Date.now(); stoppedRunHolds(session);) {
+    if (Date.now() - since > REGEX_STOP_WAIT_MS) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
 export function regexSearchUsing(session: ActiveSession): RegexSearchRunner {
   let previous: Promise<unknown> = Promise.resolve();
   return (pattern, ignoreCase, limit) => {
@@ -176,10 +184,7 @@ export function regexSearchUsing(session: ActiveSession): RegexSearchRunner {
     const outcome = (async (): Promise<RegexSearchOutcome> => {
       try {
         await prior.catch(() => undefined);
-        for (const since = Date.now(); stoppedRunHolds(session);) {
-          if (Date.now() - since > REGEX_STOP_WAIT_MS) break;
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
+        await stoneLetsGo(session);
         if (cancelled) return { kind: 'cancelled' };
         const answer = await searchMethodSourceRegexAsync(
           (code) =>
@@ -224,9 +229,11 @@ export function regexSearchUsing(session: ActiveSession): RegexSearchRunner {
     previous = outcome;
     return {
       outcome,
-      cancel: () => {
+      cancel: async () => {
         cancelled = true;
         cancelThisCall?.();
+        await outcome.catch(() => undefined);
+        await stoneLetsGo(session);
       },
     };
   };

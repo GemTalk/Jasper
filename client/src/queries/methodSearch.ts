@@ -46,7 +46,8 @@ export function dedupeMethodResults(results: MethodSearchResult[]): MethodSearch
   });
 }
 
-export function methodSerialization(envId: number): string {
+/** Smalltalk that writes the first `rowLimit` of `methods` as rows for `parseMethodSearchResults`. */
+export function methodSerialization(envId: number, rowLimit = METHOD_SEARCH_RESULT_LIMIT): string {
   return `sl := System myUserProfile symbolList.
 classDict := IdentityDictionary new.
 sl do: [:dict |
@@ -58,7 +59,7 @@ sl do: [:dict |
     (v isBehavior and: [(classDict includesKey: v) not and: [k = v name asSymbol]])
       ifTrue: [classDict at: v put: dict name]]].
 stream := WriteStream on: Unicode7 new.
-limit := methods size min: ${METHOD_SEARCH_RESULT_LIMIT}.
+limit := methods size min: ${rowLimit}.
 1 to: limit do: [:i |
   | each cls baseClass |
   each := methods at: i.

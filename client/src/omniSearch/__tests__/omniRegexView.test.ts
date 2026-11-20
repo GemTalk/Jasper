@@ -282,6 +282,16 @@ describe('the notice line', () => {
     expect(notice().textContent).toBe('Press Enter to search.');
   });
 
+  it('drops the running line when the search fails', () => {
+    const { view } = mount({ regex: true });
+    field().value = 'x';
+    pressEnter();
+
+    view.onMessage({ data: { command: 'error', message: 'This session is busy' } });
+
+    expect(notice().style.display).toBe('none');
+  });
+
   it('drops the running line when the search stops without an answer', () => {
     const { view } = mount({ regex: true });
     field().value = 'x';

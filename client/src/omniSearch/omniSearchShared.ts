@@ -135,7 +135,14 @@ export function resultsMessage(
 export function configMessage(
   config: OmniConfig,
   pinned: boolean,
-  engineState: { scopeId: OmniCategoryId | null; regex: boolean; regexAvailable: boolean },
+  engineState: {
+    scopeId: OmniCategoryId | null;
+    regex: boolean;
+    regexAvailable: boolean;
+    caseSensitive: boolean;
+    matchMode: MatchMode;
+    excludedFromAll: OmniCategoryId[];
+  },
 ): Record<string, unknown> {
   return {
     command: 'config',
@@ -144,13 +151,15 @@ export function configMessage(
     // Engine-owned: a session without regex support starts with .* off whatever the setting says.
     regex: engineState.regex,
     regexAvailable: engineState.regexAvailable,
-    caseSensitive: config.caseSensitive,
+    // The engine's, not the setting's: an engine rebuilt after a settings change keeps what the user
+    // had toggled (carriedEngineState), and the buttons must show what the search will use.
+    caseSensitive: engineState.caseSensitive,
     pinned,
     referencesInPreview: config.referencesInPreview,
-    // Starting values for the two in-panel controls; both are owned by the session afterwards.
+    // The preview pane's starting value, owned by the session afterwards.
     previewPane: config.previewPane,
-    excludedFromAll: config.excludedFromAll,
-    matchMode: config.matchMode,
+    excludedFromAll: engineState.excludedFromAll,
+    matchMode: engineState.matchMode,
     // How long the field waits after a keystroke before searching. The webview owns the timer (it is
     // the only side that sees keystrokes); the host just forwards the configured value, so a settings
     // edit takes effect on the next config push like every other field here.

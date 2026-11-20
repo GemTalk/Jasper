@@ -456,6 +456,10 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
       const message = e instanceof Error ? e.message : String(e);
       this.deps?.onError?.(message);
       this.post({ command: 'error', message });
+      // The op may have changed the engine before it failed (.* turned off, then the search it ran
+      // was refused): the buttons must show the engine as it is now.
+      if (this.engine && this.deps)
+        this.post(configMessage(this.deps.config, false, this.engine.state()));
     }
   }
 }

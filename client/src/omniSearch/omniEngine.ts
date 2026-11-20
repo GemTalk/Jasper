@@ -116,6 +116,9 @@ export interface OmniViewData {
  *  half-typed pattern is often not a valid one. */
 export const REGEX_PENDING_NOTICE = 'Press Enter to search.';
 
+/** Shown when a regex search was stopped (Cancel on its progress notice) and nothing replaced it. */
+export const REGEX_STOPPED_NOTICE = 'Search stopped. Press Enter to search again.';
+
 /** Carried beside the pivot breadcrumb (as `OmniViewData.pivotHint`) so the way OUT of a references
  *  view is discoverable. The pivot replaces the whole result list and offers no visible exit
  *  affordance, so a user who does not already know the gesture has to guess — clearing the box looks
@@ -512,13 +515,15 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
   // without a new search.
   let regexAnswer: { key: string; results: OmniResult[]; meta: RegexAnswerMeta } | null = null;
   // The regex search still running on the stone, so anything that replaces it can stop it there.
-  let regexInFlight: { cancel: () => void } | null = null;
+  let regexInFlight: { cancel: () => void | Promise<void> } | null = null;
 
   const regexKey = (term: string): string => `${caseSensitive ? 'C' : 'c'}:${term}`;
 
-  const stopRegexSearch = (): void => {
-    regexInFlight?.cancel();
+  /** Settles once the stopped search has let go of the session (see RegexSearchRunner's cancel). */
+  const stopRegexSearch = (): Promise<void> => {
+    const run = regexInFlight;
     regexInFlight = null;
+    return Promise.resolve(run?.cancel());
   };
 
   const effectiveConfig = (): OmniConfig => ({
@@ -612,7 +617,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
 
   /** Run the regex search for `term` on the stone, replacing any still running. */
   async function runRegexSearch(term: string): Promise<OmniViewData | null> {
-    stopRegexSearch();
+    void stopRegexSearch();
     const gen = ++generation;
     const key = regexKey(term);
     // The same setting that caps the Methods tab's fetch from the stone.
@@ -622,7 +627,24 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     let results: OmniResult[] = [];
     try {
       const outcome = await run.outcome;
-      if (outcome.kind === 'cancelled') return null;
+      if (outcome.kind === 'cancelled') {
+        // Superseded (a new search, Aa, .* off): whatever replaced it answers the panel.
+        if (gen !== generation) return null;
+        // Stopped from its progress notice: the panel is still showing "Searching…" and needs an answer.
+        current = [];
+        return buildView(
+          [],
+          {
+            hasMore: false,
+            exact: false,
+            truncations: [],
+            pivot: false,
+            notice: REGEX_STOPPED_NOTICE,
+            regexPending: true,
+          },
+          referenceInfo,
+        );
+      }
       if (outcome.kind === 'refused') {
         meta = { exact: false, notice: outcome.message, noticeIsError: true };
       } else {
@@ -665,7 +687,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       if (opts.runRegex && term.length > 0) return await runRegexSearch(term);
       // Anything else (a keystroke, a case change, a commit) leaves the stone alone: the pattern in the
       // box is no longer the one being searched for, so a search still running for it is stopped.
-      if (regexAnswer?.key !== regexKey(term)) stopRegexSearch();
+      if (regexAnswer?.key !== regexKey(term)) void stopRegexSearch();
       ++generation;
       return regexView(term);
     }
@@ -843,7 +865,11 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
         scopeBeforeRegex = scopeId;
         scopeId = CATEGORY_BY_ID.source.id;
       } else {
-        stopRegexSearch();
+        // The plain search that follows runs on the same session, so it waits for the stone to let go
+        // of a stopped regex search rather than being refused as busy. Bumping the generation first
+        // keeps the stopped search from answering the panel meanwhile.
+        ++generation;
+        await stopRegexSearch();
         regex = false;
         scopeId = scopeBeforeRegex;
         scopeBeforeRegex = null;

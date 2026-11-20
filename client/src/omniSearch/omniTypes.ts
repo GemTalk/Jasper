@@ -254,4 +254,9 @@ export type RegexSearchRunner = (
   pattern: string,
   ignoreCase: boolean,
   limit: number,
-) => { outcome: Promise<RegexSearchOutcome>; cancel: () => void };
+) => {
+  outcome: Promise<RegexSearchOutcome>;
+  /** Stops the search; the promise, when there is one, settles once the stone has let go of the
+   *  session, so whatever runs next is not refused as busy. */
+  cancel: () => void | Promise<void>;
+};

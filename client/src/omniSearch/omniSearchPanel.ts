@@ -407,6 +407,11 @@ export class OmniSearchPanel {
       const message = e instanceof Error ? e.message : String(e);
       this.deps.onError?.(message);
       this.panel.webview.postMessage({ command: 'error', message });
+      // As in the docked panel: the op may have changed the engine before it failed.
+      if (this.engine)
+        this.panel.webview.postMessage(
+          configMessage(this.deps.config, this.pinned, this.engine.state()),
+        );
     }
   }
 

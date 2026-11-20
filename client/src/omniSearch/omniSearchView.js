@@ -734,6 +734,7 @@
         case 'error':
           setError(msg.message || '');
           setBusy(false);
+          if (noticeEl && noticeEl.textContent === REGEX_SEARCHING_NOTICE) setNotice('');
           break;
         case 'focusInput':
           inputEl.focus();

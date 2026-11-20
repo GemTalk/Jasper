@@ -511,6 +511,37 @@ describe('GemStone Search docked panel — the refresh button', () => {
   });
 });
 
+describe('GemStone Search docked panel — an operation that fails part way', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('redraws the buttons from the engine, so a .* turned off before the search failed shows off', async () => {
+    const provider = new OmniSearchViewProvider(vi.fn(async () => fakeContext()));
+    const { view, on } = fakeView(true);
+    provider.resolveWebviewView(view as never);
+    await on.message({ command: 'ready' });
+    const engine = vi.mocked(createOmniEngine).mock.results[0].value;
+    engine.toggleRegex = vi.fn(async () => {
+      throw new Error('This session is busy');
+    });
+    engine.state = () => ({
+      scopeId: null,
+      caseSensitive: false,
+      matchMode: 'fuzzy',
+      excludedFromAll: [],
+      regex: false,
+      regexAvailable: true,
+    });
+    view.webview.postMessage.mockClear();
+
+    await on.message({ command: 'toggleRegex' });
+    await settle();
+
+    const posted = view.webview.postMessage.mock.calls.map((c) => c[0]);
+    expect(posted).toContainEqual({ command: 'error', message: 'This session is busy' });
+    expect(posted.find((m) => m.command === 'config')).toMatchObject({ regex: false });
+  });
+});
+
 describe('GemStone Search docked panel — reopening the view', () => {
   beforeEach(() => vi.clearAllMocks());
 

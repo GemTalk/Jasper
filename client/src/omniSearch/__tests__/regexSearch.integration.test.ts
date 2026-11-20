@@ -138,8 +138,10 @@ cls compileMethod: 'beta', lf, '  ^#rgxPanelBeta', lf, '    at: 1', lf, '    put
     await new Promise((resolve) => setTimeout(resolve, 3000));
     await engine.toggleRegex();
 
+    // Turning .* off returns only once the stone has let go, so the plain search it runs is not
+    // refused as busy.
+    expect(stoppedRunHolds(transient)).toBe(false);
     expect(await runaway).toBeNull();
-    await vi.waitFor(() => expect(stoppedRunHolds(transient)).toBe(false), { timeout: 20_000 });
     expect(q.executeFetchString(transient, '(3 + 4) printString').trim()).toBe('7');
   }, 90_000);
 

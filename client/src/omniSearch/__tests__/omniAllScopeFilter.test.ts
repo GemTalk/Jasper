@@ -223,8 +223,32 @@ describe('webview message payloads (#40 / #41)', () => {
       scopeId: null,
       regex: false,
       regexAvailable: false,
+      caseSensitive: false,
+      matchMode: 'fuzzy',
+      excludedFromAll: ['methods'],
     });
     expect(msg.previewPane).toBe(false);
     expect(msg.excludedFromAll).toEqual(['methods']);
+  });
+
+  it("the config message shows the engine's Aa, match algorithm and exclusions, not the settings'", () => {
+    // An engine rebuilt after a settings change keeps the user's toggles; the buttons must agree.
+    const msg = configMessage(
+      cfg({ caseSensitive: false, matchMode: 'fuzzy', excludedFromAll: [] }),
+      false,
+      {
+        scopeId: null,
+        regex: false,
+        regexAvailable: false,
+        caseSensitive: true,
+        matchMode: 'prefix',
+        excludedFromAll: ['methods'],
+      },
+    );
+    expect(msg).toMatchObject({
+      caseSensitive: true,
+      matchMode: 'prefix',
+      excludedFromAll: ['methods'],
+    });
   });
 });

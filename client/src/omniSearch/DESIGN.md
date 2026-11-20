@@ -368,9 +368,12 @@ plugin, on a session without it. Availability is read from the session each time
    which would stop someone else's run). The runner (`regexSearchUsing`) starts each search only after
    the one it replaced has let go of the session: the stone keeps the session until it has answered
    the soft break, and a search started at once was refused as busy by the search it had just replaced.
+   Turning `.*` off waits the same way (the runner's `cancel` settles once the session is free)
+   before the plain search it runs, which would otherwise be refused as busy too.
 4. **What the user is told.** One line above the rows (`OmniViewData.notice`): "Press Enter to
    search.", "Searching…" from Enter until the answer (set by the webview, cleared by a bare
-   `busy: false` when the search stops without one), "No methods match.", a refused pattern's
+   `busy: false` or an error), "Search stopped. Press Enter to search again." after Cancel on its
+   progress notice, "No methods match.", a refused pattern's
    reason (as an error), a busy session, the methods skipped because
    they were too long to match as a whole, and the cap on how many methods the stone keeps, which also makes the count read `200+ shown`
    (`moreMatch`). The cap is `gemstone.omniSearch.maxServerScan`, the setting that caps the Methods
