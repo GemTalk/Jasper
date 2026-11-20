@@ -279,7 +279,7 @@ tmps := SessionTemps current.
     // so this goes red for ANY future change that pushes resumes back onto the
     // main thread, not only for the proxy that did it the first time.
     //
-    // Same 1s delay and 800ms floor as gciLibrary.test.ts's two responsiveness
+    // Same 1s delay and 800ms floor as gciLibrary.integration.test.ts's two responsiveness
     // tests: 20% headroom over a whole second, measured as elapsed time between
     // samples rather than a count of them, so a loaded machine still passes.
     const chunks: string[] = [];

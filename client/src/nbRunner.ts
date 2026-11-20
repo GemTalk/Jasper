@@ -3,7 +3,8 @@ import { ActiveSession } from './sessionManager';
 import { GciError } from './gciLibrary';
 import { pollReadable } from './socketPoll';
 import { logInfo } from './gciLog';
-import { OOP_ILLEGAL, OOP_NIL, SOFT_BREAK_ERROR } from './gciConstants';
+import { GciLibraryError } from './gciLibraryError';
+import { GCI_ERR_BAD_SESSION_ID, OOP_ILLEGAL, OOP_NIL, SOFT_BREAK_ERROR } from './gciConstants';
 
 /**
  * Shared non-blocking GCI call runner.
@@ -550,6 +551,11 @@ function collectLate(
   timer = setTimeout(() => tick(1), LATE_COLLECT_INTERVAL_MS);
 }
 
+/** Why a call was refused while a run nobody has stopped holds its session. */
+export const RUN_IN_PROGRESS_MESSAGE =
+  'Another run is still in progress on this session. Wait for it to finish, or stop it, ' +
+  'before starting another.';
+
 /**
  * Make sure the session has no call left on it before starting another: collect
  * a stopped call whose result is in, or throw {@link NbSessionBusyError} while
@@ -561,10 +567,7 @@ export function ensureSessionFree(session: ActiveSession): void {
   const running = live.get(session.id);
   if (running && !running.stopRequested()) {
     sayRunInProgress(session);
-    throw new NbSessionBusyError(
-      'Another run is still in progress on this session. Wait for it to finish, or stop ' +
-        'it, before starting another.',
-    );
+    throw new NbSessionBusyError(RUN_IN_PROGRESS_MESSAGE);
   }
   if (stoppedRunHolds(session)) {
     sayStillRunning(session);
@@ -575,6 +578,18 @@ export function ensureSessionFree(session: ActiveSession): void {
         )
       : new NbSessionBusyError();
   }
+}
+
+/**
+ * Tell the user what holds a session that refused a call: a stopped run still
+ * finishing (Force Stop), or a run still going (Stop). Says nothing, and answers
+ * false, when the runner knows of neither, since there is nothing to offer to stop.
+ */
+export function sayWhatHolds(session: ActiveSession): boolean {
+  if (abandonedRunHolds(session)) sayStillRunning(session);
+  else if (isRunning(session)) sayRunInProgress(session);
+  else return false;
+  return true;
 }
 
 /**
@@ -1181,7 +1196,14 @@ export function pollNbToCompletion<T>(
           opts.disposableResult === true,
           opts.onAbandonedCollected,
         );
-        settle(() => reject(new Error(pollErr.message || `GemStone poll error ${pollErr.number}`)));
+        settle(() =>
+          reject(
+            GciLibraryError.fromGciError({
+              number: pollErr.number,
+              message: pollErr.message || `GemStone poll error ${pollErr.number}`,
+            }),
+          ),
+        );
         return;
       }
 
@@ -1195,9 +1217,13 @@ export function pollNbToCompletion<T>(
       if (alive === -1) {
         settle(() =>
           reject(
-            new Error(
-              aliveErr?.message || 'The GemStone session ended while this call was still running.',
-            ),
+            GciLibraryError.fromGciError({
+              // Without a number of its own it is still a session that's gone.
+              number: aliveErr?.number || GCI_ERR_BAD_SESSION_ID,
+              message:
+                aliveErr?.message ||
+                'The GemStone session ended while this call was still running.',
+            }),
           ),
         );
         return;
@@ -1252,7 +1278,8 @@ export function pollNbToCompletion<T>(
  * Start a non-blocking GemStone call and poll it to completion.
  *
  * @param start issues the `GciTsNb…` call; returns `{ success, err }`. A failed
- *              start rejects without polling.
+ *              start rejects without polling, with a {@link GciLibraryError}
+ *              that carries GemStone's error number.
  * @param onReady see {@link pollNbToCompletion}.
  */
 export async function runNbCall<T>(
@@ -1279,7 +1306,13 @@ function beginNbCall<T>(
 ): Promise<T> {
   const { success, err } = start();
   if (!success) {
-    return Promise.reject(new Error(err.message || `GemStone error ${err.number}`));
+    // Carries the number, so a caller can tell GemStone's busy refusal from a failure.
+    return Promise.reject(
+      GciLibraryError.fromGciError({
+        number: err.number,
+        message: err.message || `GemStone error ${err.number}`,
+      }),
+    );
   }
   return pollNbToCompletion(session, onReady, opts);
 }

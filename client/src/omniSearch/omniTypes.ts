@@ -104,6 +104,8 @@ export interface OmniResult {
   score: number;
   /** Matched ranges in `label` (for future highlighting). */
   ranges: Array<[number, number]>;
+  /** The row IS what was typed (a pasted `Class>>selector`), so it ranks above every scored match. */
+  exact?: boolean;
   action: OmniAction;
 }
 
@@ -113,7 +115,8 @@ export interface OmniConfig {
   enabledCategories: OmniCategoryId[];
   maxResultsPerCategory: number;
   debounceMs: number;
-  /** Methods hit the stone per keystroke, so don't search until the term is at least this long. */
+  /** Methods scan the stone per keystroke, so don't scan until the term is at least this long. A
+   *  pasted `Class>>selector` is one lookup, not a scan, and ignores it. */
   methodMinQueryLength: number;
   /** How many matches a scope's server-side scan collects before stopping. Bounds the results, not
    *  just the cost: no display cap can reach past it, so the UI reports when a scan stops here. */
@@ -215,6 +218,9 @@ export interface OmniProvider {
    *  the corpus actually changed (a new or removed name), so the caller can decide whether to
    *  re-render. Only providers with a granular local signal (classes) implement it. */
   applyChange?(change: OmniCorpusChange, token: OmniCancel): Promise<boolean> | boolean;
+  /** True when `query` costs this provider so little that leaving its category out of "All" should
+   *  not hide it: the hold-back guards against stone work on every keystroke. Absent means never. */
+  runsWhenHeldBack?(query: string): boolean;
   /** Ranked, already-limited results for `query` (the raw, trimmed search term). A provider whose
    *  server fetch is bounded calls `reportTruncated` to say whether that bound cut the results off. */
   search(

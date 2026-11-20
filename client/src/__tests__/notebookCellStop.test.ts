@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../gciLog', () => ({ logError: vi.fn(), logInfo: vi.fn() }));
@@ -6,7 +6,20 @@ vi.mock('../transcriptSink', () => ({ drainTranscript: vi.fn(() => '') }));
 
 import { notebooks } from '../__mocks__/vscode';
 import { GemStoneNotebookKernel, NotebookKernelSpec } from '../gemstoneNotebookKernel';
-import { NbCancelledError } from '../nbRunner';
+import { NbCancelledError, NbSessionBusyError } from '../nbRunner';
+import { GciLibraryError } from '../gciLibraryError';
+import {
+  GCI_ERR_BAD_SESSION_ID,
+  GCI_ERR_OP_IN_PROGRESS,
+  GS_ERR_SESSION_SHUTDOWN,
+  NET_ERROR,
+} from '../gciConstants';
+import {
+  ABORT_ERR_LOST_OT_ROOT,
+  ERR_GEM_AUTO_ABORT,
+  ERR_GEM_AUTO_LOST_OT,
+} from '../queries/transactionMode';
+import { drainTranscript } from '../transcriptSink';
 import type { SessionManager } from '../sessionManager';
 
 const SESSION = { id: 1, login: { gs_user: 'DataCurator', stone: 'gs64stone' } };
@@ -32,13 +45,14 @@ type Execution = {
   replaceOutput: ReturnType<typeof vi.fn>;
 };
 
-function kernel(evaluate: NotebookKernelSpec['evaluate']): Controller {
+function kernel(evaluate: NotebookKernelSpec['evaluate'], sessionId?: number): Controller {
   new GemStoneNotebookKernel(manager, {
     id: 'k',
     label: 'K',
     description: '',
     supportedLanguages: ['x'],
     evaluate,
+    sessionId,
   });
   return vi.mocked(notebooks.createNotebookController).mock.results.at(-1)!.value as Controller;
 }
@@ -166,5 +180,127 @@ describe("a notebook cell's stop button", () => {
     await controller.executeHandler([cell('1/0')]);
 
     expect(execution(controller).end).toHaveBeenCalledWith(false, expect.any(Number));
+  });
+});
+
+describe('a cell the session refuses', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const gemstoneError = (number: number, message: string) => () =>
+    GciLibraryError.fromGciError({ number, message });
+
+  // Each of these fails every cell after it the same way, or (a refreshed view)
+  // leaves the cell unrun, so a later cell would run without it.
+  const refusals: [string, () => Error][] = [
+    [
+      'a run Jasper knows holds the session',
+      () => new NbSessionBusyError('Another run is still in progress on this session.'),
+    ],
+    [
+      'GemStone refuses the call as busy',
+      gemstoneError(GCI_ERR_OP_IN_PROGRESS, 'session has a GciTsNb operation in progress'),
+    ],
+    [
+      "the gem refreshed the session's view instead of running the cell",
+      gemstoneError(ERR_GEM_AUTO_ABORT, 'a TransactionBacklog occurred'),
+    ],
+    [
+      "the gem lost the session's object table instead of running the cell",
+      gemstoneError(ERR_GEM_AUTO_LOST_OT, 'a LostOtRoot occurred'),
+    ],
+    [
+      'the stone stopped the session',
+      gemstoneError(GS_ERR_SESSION_SHUTDOWN, 'Your session has been forcibly terminated'),
+    ],
+    ['the session is no longer known', gemstoneError(GCI_ERR_BAD_SESSION_ID, 'invalid session')],
+    ['the connection to the gem is gone', gemstoneError(NET_ERROR, 'socket read EOF')],
+    // Any of GemStone's fatal errors (4001-4999) ends the session.
+    ['the stone is shutting down', gemstoneError(4057, 'stone shutdown')],
+    [
+      "the stone revoked an idle session's object table",
+      gemstoneError(ABORT_ERR_LOST_OT_ROOT, 'lost object table root'),
+    ],
+  ];
+
+  it.each(refusals)(
+    'fails the cell and runs none of the cells queued after it, when %s',
+    async (_why, refusal) => {
+      const evaluate = vi.fn(async () => {
+        throw refusal();
+      });
+      const controller = kernel(evaluate);
+
+      await controller.executeHandler([cell('3 + 4'), cell('5 + 6'), cell('7 + 8')]);
+
+      expect(evaluate).toHaveBeenCalledTimes(1);
+      expect(controller.createNotebookCellExecution).toHaveBeenCalledTimes(1);
+      expect(execution(controller).end).toHaveBeenCalledWith(false, expect.any(Number));
+      expect(JSON.parse(outputText(execution(controller))).message).toBe(refusal().message);
+    },
+  );
+
+  it('runs none of the cells after the first when no session is logged in', async () => {
+    const evaluate = vi.fn(async () => '7');
+    vi.mocked(manager.resolveSession).mockResolvedValue(undefined);
+    onTestFinished(() => {
+      vi.mocked(manager.resolveSession).mockResolvedValue(SESSION as never);
+    });
+    const controller = kernel(evaluate);
+
+    await controller.executeHandler([cell('3 + 4'), cell('5 + 6'), cell('7 + 8')]);
+
+    expect(manager.resolveSession).toHaveBeenCalledTimes(1);
+    expect(controller.createNotebookCellExecution).toHaveBeenCalledTimes(1);
+    expect(execution(controller).end).toHaveBeenCalledWith(false, expect.any(Number));
+    expect(evaluate).not.toHaveBeenCalled();
+  });
+
+  it("runs none of the cells after the first when the kernel's session has logged out", async () => {
+    const evaluate = vi.fn(async () => '7');
+    const getSession = vi.spyOn(manager, 'getSession').mockReturnValue(undefined);
+    onTestFinished(() => getSession.mockRestore());
+    const controller = kernel(evaluate, 1);
+
+    await controller.executeHandler([cell('3 + 4'), cell('5 + 6'), cell('7 + 8')]);
+
+    expect(controller.createNotebookCellExecution).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(outputText(execution(controller))).message).toMatch(/has logged out/);
+    expect(evaluate).not.toHaveBeenCalled();
+  });
+
+  it("doesn't drain the Transcript of a session that refused the cell", async () => {
+    const evaluate = vi.fn(async () => {
+      throw gemstoneError(NET_ERROR, 'socket read EOF')();
+    });
+    const controller = kernel(evaluate);
+
+    await controller.executeHandler([cell('3 + 4')]);
+
+    expect(drainTranscript).not.toHaveBeenCalled();
+  });
+
+  it('still runs the next cell after a GemStone error that leaves the session usable', async () => {
+    const evaluate = vi
+      .fn()
+      .mockRejectedValueOnce(gemstoneError(2010, 'a MessageNotUnderstood occurred')())
+      .mockResolvedValueOnce('11');
+    const controller = kernel(evaluate);
+
+    await controller.executeHandler([cell('3 + 4'), cell('5 + 6')]);
+
+    expect(evaluate).toHaveBeenCalledTimes(2);
+    expect(drainTranscript).toHaveBeenCalledTimes(2);
+  });
+
+  it('still runs the next cell after a cell that failed for any other reason', async () => {
+    const evaluate = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('a ZeroDivide occurred'))
+      .mockResolvedValueOnce('11');
+    const controller = kernel(evaluate);
+
+    await controller.executeHandler([cell('3 + 4'), cell('5 + 6')]);
+
+    expect(evaluate).toHaveBeenCalledTimes(2);
   });
 });

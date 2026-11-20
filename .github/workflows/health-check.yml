@@ -502,7 +502,12 @@ jobs:
       - name: Run tests (with server plugin)
         env:
           VITEST_JSON_OUTPUT: ${{ env.SKIP_REPORT_PLUGIN_PATH }}
-        run: npm test
+        # The plugin lives in the stone, so it can change only the results of
+        # tests that log into it: the client's *.integration.test.ts files.
+        # Everything else, the server and mcp-server workspaces included (the
+        # MCP tests mock the GCI), already ran in the step above with the
+        # same result.
+        run: npm run test:stone
       - name: Relativize skip report paths (with server plugin)
         env:
           SKIP_REPORT_PATH: ${{ env.SKIP_REPORT_PLUGIN_PATH }}
