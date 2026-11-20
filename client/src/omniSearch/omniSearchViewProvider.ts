@@ -12,7 +12,9 @@
  * The cached engine also captures the `gemstone.omniSearch` settings that were live when it was built,
  * so the command layer calls `onConfigChanged()` (from an `onDidChangeConfiguration` listener) to drop
  * the engine when those settings change — otherwise a settings edit made while the panel is open would
- * be silently ignored until the session changed or the window reloaded. Switching the SELECTED session
+ * be silently ignored until the session changed or the window reloaded. The new engine keeps the old
+ * one's toggles (.*, Aa, match algorithm, scope) except one whose own setting changed
+ * (`carriedEngineState`). Switching the SELECTED session
  * calls `onSessionSelectionChanged()` for the same reason, and additionally wipes the webview: the
  * engine is rebuilt lazily either way, but until it is, everything on screen — query, results, pivot,
  * preview — belongs to a session the user has left (issue #517).
@@ -24,7 +26,14 @@
  * never on the hidden path itself.
  */
 import * as vscode from 'vscode';
-import { createOmniEngine, OmniEngine, OmniViewData } from './omniEngine';
+import { codePointMatchesToUtf16 } from '../matchOffsets';
+import {
+  CarriedEngineState,
+  carriedEngineState,
+  createOmniEngine,
+  OmniEngine,
+  OmniViewData,
+} from './omniEngine';
 import { OmniPanelDeps } from './omniSearchPanel';
 import { revealTestForResult } from './omniActions';
 import {
@@ -56,6 +65,8 @@ type PanelInbound = CommonInbound & { id?: number; side?: boolean; refId?: numbe
 export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
   private engine: OmniEngine | undefined;
+  /** Toggles to keep in the engine built after a settings change (`onConfigChanged`). */
+  private carryOver: CarriedEngineState | undefined;
   private deps: OmniPanelDeps | undefined;
   private builtForSession: number | undefined;
   // A focus() that arrives before the webview has loaded can't deliver `focusInput`; remember it and
@@ -101,7 +112,9 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
   /** A `gemstone.omniSearch` setting changed: drop the cached engine (which baked in the old config)
    *  so it's rebuilt with the fresh config. If the view is visible, rebuild now so the change shows up
    *  live (scope tabs, case flag, limits); otherwise the next webview message rebuilds it lazily. */
-  onConfigChanged(): void {
+  onConfigChanged(changed: (key: string) => boolean = () => false): void {
+    // The engine is rebuilt from the settings; keep what the user had toggled (.*, Aa, the scope).
+    if (this.engine) this.carryOver = carriedEngineState(this.engine.state(), changed);
     this.engine = undefined;
     this.deps = undefined;
     this.builtForSession = undefined;
@@ -306,11 +319,12 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     }
     if (this.engine && this.builtForSession === ctx.sessionId) return true;
     this.deps = ctx.deps;
-    this.engine = createOmniEngine(ctx.deps);
+    this.engine = createOmniEngine({ ...ctx.deps, carryOver: this.carryOver });
+    this.carryOver = undefined;
     this.builtForSession = ctx.sessionId;
     this.syncPending = false; // a brand-new engine primes below, so there is no stale corpus to catch up
     this.post({ command: 'error', message: '' }); // clear any prior "log in" notice
-    this.post(configMessage(ctx.deps.config, false));
+    this.post(configMessage(ctx.deps.config, false, this.engine.state()));
     this.webviewNeedsConfig = false; // just pushed it
     await this.engine.prime(ctx.deps.onError);
     return true;
@@ -327,6 +341,8 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
         pinned: false,
         excludedFromAll: st.excludedFromAll,
         matchMode: st.matchMode,
+        regex: st.regex,
+        regexAvailable: st.regexAvailable,
         term: st.term,
       }),
     );
@@ -339,9 +355,9 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
         // A reopen reaches here with an engine that ensureEngine had no reason to rebuild, so the
         // config it would have pushed never went out. Push it now, or the fresh webview runs with an
         // empty tab row and a zero debounce until the first search happens to refill them.
-        if (this.webviewNeedsConfig && this.deps) {
+        if (this.webviewNeedsConfig && this.deps && this.engine) {
           this.webviewNeedsConfig = false;
-          this.post(configMessage(this.deps.config, false));
+          this.post(configMessage(this.deps.config, false, this.engine.state()));
         }
         await this.flushDeferred();
         this.deliverFocus(); // a focus() that raced the webview load lands the cursor now
@@ -386,7 +402,17 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
           } catch {
             source = '';
           }
-          this.post({ command: 'preview', id: m.id, source, title: result.label });
+          this.post({
+            command: 'preview',
+            id: m.id,
+            source,
+            title: result.label,
+            // Counted as the stone counts characters; the preview places them on a JS string.
+            matches:
+              result.action.kind === 'openMethod' && result.action.matches
+                ? codePointMatchesToUtf16(source, result.action.matches)
+                : undefined,
+          });
           return;
         }
         case 'referencesInline': {
@@ -436,6 +462,10 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
       const message = e instanceof Error ? e.message : String(e);
       this.deps?.onError?.(message);
       this.post({ command: 'error', message, failed: m.command });
+      // The op may have changed the engine before it failed (.* turned off, then the search it ran
+      // was refused): the buttons must show the engine as it is now.
+      if (this.engine && this.deps)
+        this.post(configMessage(this.deps.config, false, this.engine.state()));
     }
   }
 }

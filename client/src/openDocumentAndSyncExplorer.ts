@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import { logWarning } from './gciLog';
+import { firstMatchSelection, MatchOffsets, showMatches } from './matchHighlights';
+import { withGemstoneLanguage } from './languageIds';
 
 /** The Explorer calls an open needs; see ExplorerController for each. */
 export interface OpenDocumentExplorer {
@@ -14,6 +16,8 @@ export interface OpenDocumentOptions {
   preserveFocus?: boolean;
   /** false → a regular, persistent editor rather than a preview tab. */
   preview?: boolean;
+  /** A regex search hit's matches: the first is selected and revealed, every one marked. */
+  matches?: MatchOffsets[];
 }
 
 /** Open a gemstone:// document and bring the Explorer to it — the `gemstone.openDocument` command. */
@@ -27,12 +31,16 @@ export async function openDocumentAndSyncExplorer(
   explorer.markAttributedOpen(uri);
   try {
     const before = vscode.window.activeTextEditor;
-    const doc = await vscode.workspace.openTextDocument(uri);
+    // Set the language before showing, as the Explorer does: set afterwards (onDidOpenTextDocument),
+    // VS Code rebuilds the editor, which drops a regex hit's selection and marks on the first open.
+    const doc = await withGemstoneLanguage(await vscode.workspace.openTextDocument(uri));
     const shown = await vscode.window.showTextDocument(doc, {
       preview: opts?.preview ?? true,
       viewColumn: opts?.viewColumn,
       preserveFocus: opts?.preserveFocus,
+      selection: firstMatchSelection(doc, opts?.matches),
     });
+    if (opts?.matches) showMatches(shown, opts.matches);
     // Re-showing the active editor fires no editor change, so the Explorer's usual sync never
     // runs and it stays wherever the user had browsed to since.
     if (shown === before && !opts?.preserveFocus) {

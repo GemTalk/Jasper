@@ -24,6 +24,7 @@ import {
   OmniResult,
   OmniTruncation,
   OmniTruncationSink,
+  RegexSearchRunner,
   changeCategoryId,
 } from './omniTypes';
 import { match, compareMatches, MatchMode } from './omniMatch';
@@ -99,7 +100,24 @@ export interface OmniViewData {
    *  host whose own chrome already shows an exit can simply ignore the field. Set only while pivoted;
    *  the wording is `PIVOT_EXIT_HINT`. */
   pivotHint?: string;
+  /** One line for the user above the rows: why there are none, what was left out, or what to do next.
+   *  Set only for a regex search today. `noticeIsError` marks a refused pattern or a failed search. */
+  notice?: string;
+  noticeIsError?: boolean;
+  /** True while regex is on and the rows shown are not for the pattern in the box (it changed since
+   *  the last search, or none has run). Enter then searches rather than opening a row. */
+  regexPending?: boolean;
+  /** True when a regex search stopped at its limit with more methods matching, so the count is a floor. */
+  moreMatch?: boolean;
 }
+
+/** Shown while regex is on and the pattern has not been searched for yet. Regex searches run only on
+ *  Enter: one with no plain text to pre-filter on reads every method on the stone (1-3 s), and a
+ *  half-typed pattern is often not a valid one. */
+export const REGEX_PENDING_NOTICE = 'Press Enter to search.';
+
+/** Shown when a regex search was stopped (Cancel on its progress notice) and nothing replaced it. */
+export const REGEX_STOPPED_NOTICE = 'Search stopped. Press Enter to search again.';
 
 /** Carried beside the pivot breadcrumb (as `OmniViewData.pivotHint`) so the way OUT of a references
  *  view is discoverable. The pivot replaces the whole result list and offers no visible exit
@@ -148,6 +166,49 @@ export interface OmniEngineDeps {
   config: OmniConfig;
   /** Load the references/senders of a result. Omit to disable the pivot. Null = not referenceable. */
   resolveReferences?: (result: OmniResult) => Promise<ReferenceView | null> | ReferenceView | null;
+  /** Search method source by regular expression on the stone. Omit to leave the .* button off. */
+  regexSearch?: RegexSearchRunner;
+  /** Whether the session has the server plugin's regex support right now. Asked each time it matters,
+   *  so an install during the session makes .* available. Omitted = available when `regexSearch` is. */
+  regexAvailable?: () => boolean;
+  /** Re-check the stone for regex support, updating what `regexAvailable` answers. Run when the engine
+   *  is built and on every resync and refresh: a session only sees support installed by another
+   *  session (the install's SystemUser login) after its next commit or abort, and the check made at
+   *  login, or right after an install, can come too early. */
+  refreshRegexAvailable?: () => void;
+  /** The live toggles of the engine this one replaces after a settings change, so editing one setting
+   *  does not turn off `.*` or undo Aa. Each overrides the setting it started from; leave out any whose
+   *  own setting was the one changed (`carriedEngineState`). */
+  carryOver?: CarriedEngineState;
+}
+
+/** The part of an engine's live state worth keeping across a rebuild. */
+export interface CarriedEngineState {
+  scopeId?: OmniCategoryId | null;
+  scopeBeforeRegex?: OmniCategoryId | null;
+  caseSensitive?: boolean;
+  matchMode?: MatchMode;
+  excludedFromAll?: OmniCategoryId[];
+  regex?: boolean;
+}
+
+/** What to carry from `state` into the engine built after a settings change. `changed` says whether
+ *  a `gemstone.omniSearch.<key>` setting changed: a toggle whose own setting changed takes the new
+ *  setting instead (with `.*`, the scope goes with it). */
+export function carriedEngineState(
+  state: ReturnType<OmniEngine['state']>,
+  changed: (key: string) => boolean,
+): CarriedEngineState {
+  const carry: CarriedEngineState = {};
+  if (!changed('caseSensitive')) carry.caseSensitive = state.caseSensitive;
+  if (!changed('matchMode')) carry.matchMode = state.matchMode;
+  if (!changed('excludeFromAll')) carry.excludedFromAll = state.excludedFromAll;
+  if (!changed('regex')) {
+    carry.regex = state.regex;
+    carry.scopeId = state.scopeId;
+    carry.scopeBeforeRegex = state.scopeBeforeRegex;
+  }
+  return carry;
 }
 
 // "Load all" jumps the display cap here — big enough to mean "everything" in practice; the true
@@ -326,6 +387,12 @@ export interface OmniEngine {
   setScope(scopeId: OmniCategoryId | null): Promise<OmniViewData | null>;
   /** Toggle case-sensitive matching; re-runs the current term. */
   toggleCase(): Promise<OmniViewData | null>;
+  /** Turn regex search on (moving to the Source scope, the only one it searches) or off (back to the
+   *  scope the user was on). Turning it on searches nothing until Enter; see `submit`. */
+  toggleRegex(): Promise<OmniViewData | null>;
+  /** Enter in the search field while regex is on: run the regex search for `rawValue`. Answers the
+   *  current view, unchanged, when regex is off. */
+  submit(rawValue: string): Promise<OmniViewData | null>;
   /** Switch the match algorithm for this session; re-runs the current term. */
   setMatchMode(mode: MatchMode): Promise<OmniViewData | null>;
   /** Grow the result cap by one page; re-runs the current term. */
@@ -355,9 +422,42 @@ export interface OmniEngine {
     pivot: boolean;
     excludedFromAll: OmniCategoryId[];
     matchMode: MatchMode;
+    regex: boolean;
+    /** The scope to go back to when `.*` is turned off. */
+    scopeBeforeRegex: OmniCategoryId | null;
+    /** Whether this session can search by regex at all (the server plugin's regex support). */
+    regexAvailable: boolean;
     /** The search term the current rows answer, as typed. */
     term: string;
   };
+}
+
+/** The footer fields a regex search's answer sets. */
+type RegexAnswerMeta = Pick<OmniViewData, 'exact' | 'notice' | 'noticeIsError' | 'moreMatch'>;
+
+/** What a regex search found nothing of, or left out, in words; undefined when there is nothing to say. */
+export function regexOutcomeNotice(outcome: {
+  results: readonly unknown[];
+  skipped: number;
+  failed?: number;
+  truncated: boolean;
+}): string | undefined {
+  const parts: string[] = [];
+  if (outcome.results.length === 0) parts.push('No methods match.');
+  if (outcome.truncated)
+    parts.push(
+      `Showing the first ${outcome.results.length} matching methods; more match. Narrow the pattern, or raise gemstone.omniSearch.maxServerScan, to see them.`,
+    );
+  if (outcome.skipped > 0)
+    parts.push(
+      `${outcome.skipped} ${outcome.skipped === 1 ? 'method was' : 'methods were'} too long to search and ${outcome.skipped === 1 ? 'was' : 'were'} skipped.`,
+    );
+  const failed = outcome.failed ?? 0;
+  if (failed > 0)
+    parts.push(
+      `${failed} ${failed === 1 ? 'method' : 'methods'} could not be searched because of an error on the stone.`,
+    );
+  return parts.length > 0 ? parts.join(' ') : undefined;
 }
 
 export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
@@ -393,6 +493,55 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
   // cancelled by one. All it has to supersede is an earlier reference load, whose slower resolve would
   // otherwise land in `referenceRows` after a newer row's — see the guard in `referencesFor`.
   let referenceGeneration = 0;
+  // Regex search. Only Source can be searched by regex, so turning it on moves to that scope and
+  // remembers where the user was, to go back when it is turned off.
+  const regexAvailable = (): boolean =>
+    deps.regexSearch !== undefined && (deps.regexAvailable?.() ?? true);
+  const recheckRegexAvailable = (): void => {
+    try {
+      deps.refreshRegexAvailable?.();
+    } catch {
+      // A check that cannot ask the stone leaves the last answer standing (the probe answers "could not
+      // ask" rather than "absent", and the latch keeps its value); the next sync asks again.
+    }
+  };
+  recheckRegexAvailable();
+  let regex = regexAvailable() && config.regex;
+  let scopeBeforeRegex: OmniCategoryId | null = null;
+  if (regex) scopeId = CATEGORY_BY_ID.source.id;
+  const carry = deps.carryOver;
+  if (carry) {
+    const enabled = (id: OmniCategoryId | null | undefined): id is OmniCategoryId | null =>
+      id === null || (id !== undefined && config.enabledCategories.includes(id));
+    if (carry.caseSensitive !== undefined) caseSensitive = carry.caseSensitive;
+    if (carry.matchMode !== undefined) matchMode = carry.matchMode;
+    if (carry.excludedFromAll) excludedFromAll = new Set(carry.excludedFromAll);
+    if (carry.regex !== undefined) {
+      regex = carry.regex && regexAvailable();
+      if (regex) {
+        scopeId = CATEGORY_BY_ID.source.id;
+        scopeBeforeRegex = enabled(carry.scopeBeforeRegex) ? carry.scopeBeforeRegex : null;
+      } else {
+        scopeId = enabled(carry.scopeId) ? carry.scopeId : null;
+      }
+    }
+  }
+  // The last regex search: what it searched for (pattern + case), and what it answered. Kept apart
+  // from `current` so returning from a pivot, or typing back to the same pattern, shows its rows again
+  // without a new search.
+  let regexAnswer: { key: string; results: OmniResult[]; meta: RegexAnswerMeta } | null = null;
+  // The regex search still running on the stone, and what it is searching for (pattern + case), so
+  // anything that replaces it can stop it there.
+  let regexInFlight: { key: string; cancel: () => void | Promise<void> } | null = null;
+
+  const regexKey = (term: string): string => `${caseSensitive ? 'C' : 'c'}:${term}`;
+
+  /** Settles once the stopped search has let go of the session (see RegexSearchRunner's cancel). */
+  const stopRegexSearch = (): Promise<void> => {
+    const run = regexInFlight;
+    regexInFlight = null;
+    return Promise.resolve(run?.cancel());
+  };
 
   const effectiveConfig = (): OmniConfig => ({
     ...config,
@@ -455,13 +604,111 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     );
   }
 
-  async function runSearch(rawValue: string): Promise<OmniViewData | null> {
+  /** The view for a regex search's answer, or for the pending state when `answer` is not for `term`. */
+  function regexView(term: string): OmniViewData {
+    const answered = regexAnswer !== null && regexAnswer.key === regexKey(term);
+    current = answered ? regexAnswer!.results : [];
+    if (term.length === 0)
+      return buildView([], { hasMore: false, exact: false, truncations: [], pivot: false }, () => ({
+        referenceable: false,
+      }));
+    if (!answered)
+      return buildView(
+        [],
+        {
+          hasMore: false,
+          exact: false,
+          truncations: [],
+          pivot: false,
+          notice: REGEX_PENDING_NOTICE,
+          regexPending: true,
+        },
+        referenceInfo,
+      );
+    return buildView(
+      current,
+      { hasMore: false, truncations: [], pivot: false, ...regexAnswer!.meta },
+      referenceInfo,
+    );
+  }
+
+  /** Run the regex search for `term` on the stone, replacing any still running. */
+  async function runRegexSearch(term: string): Promise<OmniViewData | null> {
+    void stopRegexSearch();
+    const gen = ++generation;
+    const key = regexKey(term);
+    // The same setting that caps the Methods tab's fetch from the stone.
+    const run = deps.regexSearch!(term, !caseSensitive, config.maxServerScan);
+    const inFlight = { key, cancel: run.cancel };
+    regexInFlight = inFlight;
+    let meta: RegexAnswerMeta;
+    let results: OmniResult[] = [];
+    try {
+      const outcome = await run.outcome;
+      if (outcome.kind === 'cancelled') {
+        // Superseded (a new search, Aa, .* off): whatever replaced it answers the panel.
+        if (gen !== generation) return null;
+        // Stopped from its progress notice: the panel is still showing "Searching…" and needs an answer.
+        current = [];
+        return buildView(
+          [],
+          {
+            hasMore: false,
+            exact: false,
+            truncations: [],
+            pivot: false,
+            notice: REGEX_STOPPED_NOTICE,
+            regexPending: true,
+          },
+          referenceInfo,
+        );
+      }
+      if (outcome.kind === 'refused') {
+        meta = { exact: false, notice: outcome.message, noticeIsError: true };
+      } else {
+        results = [...outcome.results].sort(compareMethodRows);
+        meta = {
+          exact: !outcome.truncated,
+          notice: regexOutcomeNotice(outcome),
+          moreMatch: outcome.truncated || undefined,
+        };
+      }
+    } catch (e: unknown) {
+      meta = {
+        exact: false,
+        notice: `Regex search failed: ${e instanceof Error ? e.message : String(e)}`,
+        noticeIsError: true,
+      };
+    } finally {
+      if (regexInFlight === inFlight) regexInFlight = null;
+    }
+    if (gen !== generation) return null; // superseded while it ran
+    regexAnswer = { key, results, meta };
+    return regexView(term);
+  }
+
+  async function runSearch(
+    rawValue: string,
+    opts: { runRegex?: boolean } = {},
+  ): Promise<OmniViewData | null> {
     // In the reference view, typing filters the loaded rows client-side (no provider fan-out); don't
     // touch `lastRawValue` (it holds the search to restore when the pivot is dismissed).
     if (pivot) {
       pivotFilter = rawValue.trim();
       current = filterPivot(pivot.results, pivotFilter);
       return pivotView();
+    }
+    if (regex) {
+      ++referenceGeneration;
+      lastRawValue = rawValue;
+      const term = rawValue.trim();
+      if (opts.runRegex && term.length > 0) return await runRegexSearch(term);
+      // Anything else (a keystroke, a case change, a commit) starts no search. A search still running
+      // for some other pattern (or case) than the box's is stopped, even when the box is back on a
+      // pattern already answered: otherwise it would keep the session busy for nothing.
+      if (regexInFlight && regexInFlight.key !== regexKey(term)) void stopRegexSearch();
+      ++generation;
+      return regexView(term);
     }
     // A new search supersedes any reference load already in flight: otherwise its rows would land in
     // this search's preview under a row id that now points at a different result (ids are array
@@ -546,7 +793,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       }
       // The caches are now current regardless; the question is only whether the CURRENT view needs
       // redrawing. Never mid-pivot, never on an empty box (shows nothing).
-      if (pivot) return null;
+      if (pivot || regex) return null;
       const term = lastRawValue.trim();
       if (term.length === 0) return null;
 
@@ -567,13 +814,17 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       return null;
     },
     async resync(onError) {
+      recheckRegexAvailable();
       await reprimeAll(onError);
       // Don't disturb a pivot; otherwise re-run the current term against the rebuilt corpora.
       if (pivot) return null;
       return await runSearch(lastRawValue);
     },
     async refresh(onError) {
+      recheckRegexAvailable();
       await reprimeAll(onError);
+      // A refresh is the user asking for fresh answers, so a regex search that had run runs again.
+      if (regex && !pivot) return await runSearch(lastRawValue, { runRegex: regexAnswer !== null });
       if (!pivot || !pivotSource || !deps.resolveReferences) return await runSearch(lastRawValue);
       // Re-ask the stone who references the row this pivot was taken from. Superseding in-flight work
       // the way `pivot` does, and for the same reason: resolving senders of a common selector is slow,
@@ -595,6 +846,8 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     },
     search: (rawValue) => runSearch(rawValue),
     async setScope(newScope) {
+      // Regex searches Source only; the panel greys the other scopes out, so this is a stale click.
+      if (regex && newScope !== CATEGORY_BY_ID.source.id) return await runSearch(lastRawValue);
       scopeId = newScope;
       scopeLimit = config.maxResultsPerCategory; // a fresh scope starts at the base cap
       // A scope belongs to the SEARCH, not to a references view, so picking one LEAVES the pivot.
@@ -609,8 +862,44 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       return await runSearch(lastRawValue);
     },
     async toggleCase() {
+      // A regex search showing (or running) for the pattern in the box runs again under the new case;
+      // the user already asked for it. A pattern not yet searched stays waiting for Enter.
+      const term = lastRawValue.trim();
+      const searched =
+        regex &&
+        !pivot &&
+        term.length > 0 &&
+        (regexAnswer?.key === regexKey(term) || regexInFlight?.key === regexKey(term));
       caseSensitive = !caseSensitive;
+      return await runSearch(lastRawValue, { runRegex: searched });
+    },
+    async toggleRegex() {
+      // Turning it off is always allowed: the support may have been uninstalled while it was on.
+      if (!regex && !regexAvailable()) return await runSearch(lastRawValue);
+      pivot = null;
+      pivotSource = null;
+      pivotFilter = '';
+      if (!regex) {
+        regex = true;
+        scopeBeforeRegex = scopeId;
+        scopeId = CATEGORY_BY_ID.source.id;
+      } else {
+        // The plain search that follows runs on the same session, so it waits for the stone to let go
+        // of a stopped regex search rather than being refused as busy. Bumping the generation first
+        // keeps the stopped search from answering the panel meanwhile.
+        ++generation;
+        await stopRegexSearch();
+        regex = false;
+        scopeId = scopeBeforeRegex;
+        scopeBeforeRegex = null;
+      }
+      regexAnswer = null;
+      scopeLimit = config.maxResultsPerCategory;
       return await runSearch(lastRawValue);
+    },
+    async submit(rawValue) {
+      if (!regex || pivot) return await runSearch(rawValue);
+      return await runSearch(rawValue, { runRegex: true });
     },
     async setMatchMode(mode) {
       matchMode = mode;
@@ -689,6 +978,9 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       pivot: pivot !== null,
       excludedFromAll: [...excludedFromAll],
       matchMode,
+      regex,
+      scopeBeforeRegex,
+      regexAvailable: regexAvailable(),
       term: lastRawValue,
     }),
   };

@@ -481,6 +481,9 @@ export async function executeFetchStringAsync(
   session: ActiveSession,
   code: string,
   title = 'GemStone: Running query…',
+  // Handed this call's own canceller once it starts, for a caller that stops the query from its own
+  // UI. Use it rather than `cancelRunOn`, which stops whatever is running on the session.
+  onStart?: NbRunOptions['onStart'],
 ): Promise<string> {
   try {
     return await runNbCall(
@@ -524,7 +527,7 @@ export async function executeFetchStringAsync(
           );
         }
       },
-      { title, disposableProcess: true, disposableResult: true },
+      { title, disposableProcess: true, disposableResult: true, onStart },
     );
   } catch (e) {
     // nbRunner has already told the user what holds the session.
