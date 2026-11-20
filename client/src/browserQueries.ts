@@ -3,15 +3,12 @@ import { GCI_ERR_OP_IN_PROGRESS, OOP_ILLEGAL, OOP_NIL } from './gciConstants';
 import { explainGciError, GciLibraryError, SESSION_BUSY_MESSAGE } from './gciLibraryError';
 import { logError, logInfo } from './gciLog';
 import {
-  abandonedRunHolds,
   discardStoppedProcess,
-  isRunning,
   NbCancelledError,
   NbSessionBusyError,
   runNbCall,
   NbRunOptions,
-  sayRunInProgress,
-  sayStillRunning,
+  sayWhatHolds,
 } from './nbRunner';
 import { autoCommitAfterWrite } from './autoCommit/autoCommitRunner';
 
@@ -450,10 +447,7 @@ export function quietly<T>(query: () => T): T {
  */
 function refusedAsBusy(session: ActiveSession): BrowserQueryError {
   logError(session.id, SESSION_BUSY_MESSAGE);
-  if (!quiet) {
-    if (abandonedRunHolds(session)) sayStillRunning(session);
-    else if (isRunning(session)) sayRunInProgress(session);
-  }
+  if (!quiet) sayWhatHolds(session);
   return new BrowserQueryError(SESSION_BUSY_MESSAGE, GCI_ERR_OP_IN_PROGRESS);
 }
 

@@ -342,6 +342,7 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
         matchMode: st.matchMode,
         regex: st.regex,
         regexAvailable: st.regexAvailable,
+        term: st.term,
       }),
     );
   }
@@ -455,7 +456,7 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
       this.deps?.onError?.(message);
-      this.post({ command: 'error', message });
+      this.post({ command: 'error', message, failed: m.command });
       // The op may have changed the engine before it failed (.* turned off, then the search it ran
       // was refused): the buttons must show the engine as it is now.
       if (this.engine && this.deps)

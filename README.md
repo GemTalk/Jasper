@@ -294,6 +294,7 @@ Installing the support does not by itself change what **Inspect It** opens. The 
 - **Implementors Of** — find all implementations of a selector
 - **Browse References** — find methods referencing a dictionary or class
 - **Search Method Source** — full-text search across method source code
+- **GemStone Search** — paste a method name (`Object>>printString`, `String class>>new`, a GsNMethod's print string, or a frame copied from the debugger) to go straight to that method, or to the class it inherits it from
 - **Class Hierarchy** — view superclass chain and subclasses
 - **Workspace Symbol** (Cmd+T / Ctrl+T) — search classes and methods across both local files and the active GemStone session
 - **Go to Definition** (Cmd+Click / Ctrl+Click / F12) — jump to implementors of a selector or a class definition
@@ -493,7 +494,8 @@ the thing it was set in goes away:
 - **Break on entry by name** — the `+` button in VS Code's Breakpoints panel
   takes a method name instead of a location. Type a selector (`balance`) and
   Jasper finds the implementors, asking which class you meant when there is more
-  than one; or qualify it yourself (`Account>>balance`, `Account class>>new`).
+  than one; or qualify it yourself (`Account>>balance`, `Account class>>new`, or a
+  frame name copied from the debugger).
   The name is then replaced by an ordinary breakpoint on the method's first step
   point, so it gets a real location, a red dot, and everything else breakpoints
   do — handy for stopping in a method without going to find it first
@@ -557,7 +559,7 @@ A Smalltalk cell that calls a method with a breakpoint in it, or runs `self halt
 - **GemStone: Reset Grail Notebook Scope** (command palette) clears the active notebook's globals — the equivalent of restarting a kernel.
 - Without Grail in the stone, running a cell reports "Grail (GemStone-Python) not detected".
 
-In either language, a cell's own stop button stops it, the same way Cancel stops Execute It. The cell then says "Stopped.", and any cells queued after it don't run. A cell that keeps going gets the same **Force Stop** notice as the rest of Jasper, and VS Code stays usable while any cell runs.
+In either language, a cell's own stop button stops it, the same way Cancel stops Execute It. The cell then says "Stopped.", and any cells queued after it don't run. The same goes for a cell the session can't run: busy with another run, logged out, stopped by an administrator, or no longer connected. The cell shows why, and the cells after it don't run. When Jasper knows which run holds the session, a notice also offers to stop it. A cell that keeps going gets the same **Force Stop** notice as the rest of Jasper, and VS Code stays usable while any cell runs.
 
 ### Class Sync (File Export)
 

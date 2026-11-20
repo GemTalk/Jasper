@@ -12,6 +12,7 @@ const chrome = {
   matchMode: OMNI_DEFAULTS.matchMode,
   regex: false,
   regexAvailable: true,
+  term: 'Object>>printString',
 };
 
 /**
@@ -49,6 +50,10 @@ function viewData(over: Partial<OmniViewData> = {}): Required<OmniViewData> {
 }
 
 describe('resultsMessage', () => {
+  it('carries the term the rows answer, so an early Enter can wait for them', () => {
+    expect(resultsMessage(viewData(), chrome).term).toBe('Object>>printString');
+  });
+
   it('carries the pivot target, which the preview needs to mark the send', () => {
     // Without it the preview pane falls back to marking the TYPED term, and a keyword selector never
     // appears in source as one token — so a pivot on `on:do:` would highlight nothing at all.

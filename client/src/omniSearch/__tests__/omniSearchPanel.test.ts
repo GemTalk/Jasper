@@ -206,3 +206,30 @@ describe('OmniSearchPanel refresh', () => {
     );
   });
 });
+
+describe('OmniSearchPanel failed actions', () => {
+  let panel: ReturnType<typeof open> | undefined;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    panel = undefined;
+  });
+  afterEach(() => panel?.dispose());
+
+  it('names the action that failed, so the view can tell a failed search from the rest', async () => {
+    const p = (panel = open(1));
+    const engines = vi.mocked(createOmniEngine).mock.results;
+    const engine = engines[engines.length - 1].value;
+    engine.search.mockRejectedValueOnce(new Error('session busy'));
+
+    messagesTo(p)({ command: 'query', value: 'Object>>printString' });
+
+    await vi.waitFor(() =>
+      expect(p.webview.postMessage).toHaveBeenCalledWith({
+        command: 'error',
+        message: 'session busy',
+        failed: 'query',
+      }),
+    );
+  });
+});

@@ -537,7 +537,11 @@ describe('GemStone Search docked panel — an operation that fails part way', ()
     await settle();
 
     const posted = view.webview.postMessage.mock.calls.map((c) => c[0]);
-    expect(posted).toContainEqual({ command: 'error', message: 'This session is busy' });
+    expect(posted).toContainEqual({
+      command: 'error',
+      message: 'This session is busy',
+      failed: 'toggleRegex',
+    });
     expect(posted.find((m) => m.command === 'config')).toMatchObject({ regex: false });
   });
 });
@@ -569,5 +573,29 @@ describe('GemStone Search docked panel — reopening the view', () => {
       ).toBe(true),
     );
     expect(createOmniEngine).toHaveBeenCalledTimes(1); // and without paying for a rebuild
+  });
+});
+
+describe('GemStone Search docked panel — failed actions', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('names the action that failed, so the view can tell a failed search from the rest', async () => {
+    const provider = new OmniSearchViewProvider(vi.fn(async () => fakeContext(1)));
+    const { view, on } = fakeView(true);
+    provider.resolveWebviewView(view as never);
+    await on.message({ command: 'ready' });
+    const engines = vi.mocked(createOmniEngine).mock.results;
+    const engine = engines[engines.length - 1].value;
+    engine.search.mockRejectedValueOnce(new Error('session busy'));
+
+    void on.message({ command: 'query', value: 'Object>>printString' });
+
+    await vi.waitFor(() =>
+      expect(view.webview.postMessage).toHaveBeenCalledWith({
+        command: 'error',
+        message: 'session busy',
+        failed: 'query',
+      }),
+    );
   });
 });

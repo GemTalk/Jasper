@@ -17,7 +17,7 @@ Node version is pinned in `.nvmrc` (`nvm use` before anything else).
 ```sh
 nvm use                  # activate pinned Node version
 npm install              # install all workspace dependencies
-npm run lint             # ESLint over all workspaces 
+npm run lint             # ESLint over all workspaces
 npm run lint:fix         # ESLint with --fix
 npm run format           # Prettier --write over all workspaces
 npm run format:check     # Prettier --check (no writes)
@@ -31,6 +31,7 @@ npm run test:server:start  # install GemStone (if needed), start a fresh test st
 npm run test:server:stop   # stop the test stone's Stone and NetLDI processes
 npm run test:server:list   # list running GemStone processes for the test stone
 npm run test:gci           # deep GCI binding tests (requires a running stone)
+npm run test:stone         # only the client tests that log into the stone (*.integration.test.ts)
 npm run package          # produce .vsix package
 
 # Dev helpers (human-driven GUI launchers — not agent-runnable; can't verify a change)

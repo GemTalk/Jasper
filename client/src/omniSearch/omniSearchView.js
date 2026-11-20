@@ -63,6 +63,15 @@
     // had no consumer at all once the Quick Pick (its only reader) was removed.
     var queryTimer = null;
     var debounceMs = 0;
+    // The term the rows on screen answer, as the host echoes it (undefined until the first results),
+    // and whether a search sent since is still unanswered.
+    var shownTerm;
+    var queryOut = false;
+    // An Enter pressed before its term's results arrived — a paste then Enter beats the debounce and
+    // the stone. Opening the active row then would open nothing, or a row left over from the previous
+    // term, so it waits here for the matching results instead. Typing again, or leaving the panel,
+    // cancels it.
+    var pendingEnter = null;
     // When true, the references/senders gesture fills the preview pane with a sticky list (instead of
     // pivoting the left list). Pushed from the host config; false = the classic pivot.
     var referencesInPreview = false;
@@ -133,15 +142,46 @@
     function sendQueryDebounced(value) {
       cancelPendingQuery();
       if (!debounceMs) {
-        setBusy(true);
-        post('query', { value: value });
+        sendQuery(value);
         return;
       }
       queryTimer = setTimeout(function () {
         queryTimer = null;
-        setBusy(true);
-        post('query', { value: value });
+        sendQuery(value);
       }, debounceMs);
+    }
+
+    function sendQuery(value) {
+      setBusy(true);
+      queryOut = true;
+      post('query', { value: value });
+    }
+
+    /** Send a keystroke search still waiting out the debounce now, rather than after the delay. */
+    function flushPendingQuery() {
+      if (!queryTimer) return;
+      cancelPendingQuery();
+      sendQuery(inputEl.value);
+    }
+
+    // The references list filters on the client and keeps the term that found its row in the field,
+    // so it never waits.
+    function answersField(term) {
+      if (inPivot) return true;
+      return (typeof term === 'string' ? term : '').trim() === inputEl.value.trim();
+    }
+
+    /** Plain or Ctrl/Cmd+Enter: open the active row once the rows answer what is in the field. */
+    function activateWhenAnswered(side) {
+      // Not in a references list: the host would filter it before the activate arrived, so the
+      // highlighted row's id would point into a different list.
+      if (!inPivot) flushPendingQuery();
+      if (queryOut && !answersField(shownTerm)) {
+        pendingEnter = { side: side };
+        return;
+      }
+      var id = activeRowId();
+      if (id !== null) post('activate', { id: id, side: side });
     }
 
     // ── Highlighting ────────────────────────────────────────────────
@@ -381,6 +421,7 @@
         setActive(idx);
       });
       li.addEventListener('dblclick', function () {
+        pendingEnter = null;
         post('activate', { id: row.id, side: false });
       });
       rows.push(li);
@@ -704,6 +745,14 @@
           pivotHighlightTerm = msg.pivot ? msg.pivotTarget || '' : '';
           renderResults(msg);
           setBusy(false);
+          shownTerm = msg.term;
+          if (answersField(shownTerm)) queryOut = false;
+          if (pendingEnter && answersField(shownTerm)) {
+            var waiting = pendingEnter;
+            pendingEnter = null;
+            var answeredId = activeRowId();
+            if (answeredId !== null) post('activate', { id: answeredId, side: waiting.side });
+          }
           break;
         case 'pinned':
           setPin(msg.pinned);
@@ -735,6 +784,13 @@
           setError(msg.message || '');
           setBusy(false);
           if (noticeEl && noticeEl.textContent === REGEX_SEARCHING_NOTICE) setNotice('');
+          // Only a failure that means no results are coming ends the wait: not a notice being cleared
+          // (empty message), and not another action failing (`failed` names it) while the search
+          // is still out.
+          if (msg.message && (!msg.failed || msg.failed === 'query')) {
+            pendingEnter = null;
+            queryOut = false;
+          }
           break;
         case 'focusInput':
           inputEl.focus();
@@ -1172,6 +1228,7 @@
           toggleExpand(refId);
         });
         header.addEventListener('dblclick', function () {
+          pendingEnter = null;
           post('openReference', { refId: refId });
         });
       })(row.id);
@@ -1339,6 +1396,11 @@
      */
     function resetView() {
       cancelPendingQuery();
+      // Nothing from the session just left is still coming, and an Enter meant for it must not open
+      // whatever the new session shows first.
+      pendingEnter = null;
+      queryOut = false;
+      shownTerm = undefined;
       if (previewTimer) {
         clearTimeout(previewTimer);
         previewTimer = null;
@@ -1508,6 +1570,7 @@
       // debounced reply would leave it a keystroke behind.
       updateScopeHint();
       rehighlightSourcePreview(); // clear/refresh the stale blue match marks now, not on the fetch
+      pendingEnter = null;
       sendQueryDebounced(inputEl.value);
     });
 
@@ -1516,6 +1579,10 @@
     // to the input would then go silent while the mouse-driven buttons kept working. At the document
     // level the shortcuts fire whenever the panel has focus, wherever it sits.
     doc.addEventListener('keydown', function (ev) {
+      // Any other way of leaving or acting replaces an Enter still waiting for its results.
+      if (ev.key === 'Escape' || (ev.key === 'Enter' && (ev.altKey || ev.shiftKey))) {
+        pendingEnter = null;
+      }
       // An open scope menu takes Escape first: closing the menu must not also close the panel (or,
       // in the docked host, throw focus back to the editor) — one Escape, one dismissal.
       if (ev.key === 'Escape' && scopeMenuOpen()) {
@@ -1589,15 +1656,19 @@
             post('submit', { value: inputEl.value });
             break;
           }
-          var id = activeRowId();
-          if (id === null) break;
-          ev.preventDefault();
           // Ctrl/Cmd+Enter opens beside (keeps the Spotter visible); Alt+Enter shows references (in
           // the preview pane, or — flag off — as the classic list pivot); Shift+Enter selects the
           // result in the Testing view, for a test class or test method.
+          if (!ev.altKey && !ev.shiftKey) {
+            ev.preventDefault();
+            activateWhenAnswered(ev.ctrlKey || ev.metaKey);
+            break;
+          }
+          var id = activeRowId();
+          if (id === null) break;
+          ev.preventDefault();
           if (ev.altKey) requestReferences(id);
-          else if (ev.shiftKey) post('revealTest', { id: id });
-          else post('activate', { id: id, side: ev.ctrlKey || ev.metaKey });
+          else post('revealTest', { id: id });
           break;
         }
         case 'ArrowLeft':
@@ -1650,7 +1721,8 @@
         // single decisive gesture, not typing, so making the user wait for a timer would feel broken —
         // and a keystroke queued a moment earlier must not land after the clear and refill the list.
         cancelPendingQuery();
-        post('query', { value: '' });
+        pendingEnter = null;
+        sendQuery('');
         inputEl.focus();
       });
     }
@@ -1764,6 +1836,11 @@
     });
 
     doc.defaultView.addEventListener('message', onMessage);
+    // Leaving the panel gives up a waiting Enter, so late results don't open a row and pull focus
+    // back from wherever the user went.
+    doc.defaultView.addEventListener('blur', function () {
+      pendingEnter = null;
+    });
 
     post('ready');
     inputEl.focus();

@@ -1153,3 +1153,308 @@ describe('search field debounce', () => {
     }
   });
 });
+
+describe('Enter before the results arrive (paste, then Enter)', () => {
+  function mountWithDebounce(debounceMs: number) {
+    const m = mount();
+    m.handle.onMessage({ data: { command: 'config', categories: [], scopeId: null, debounceMs } });
+    m.vscode.postMessage.mockClear();
+    return m;
+  }
+
+  function type(text: string) {
+    const input = document.getElementById('query') as HTMLInputElement;
+    input.value = text;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  function enter(over: Partial<KeyboardEventInit> = {}) {
+    document
+      .getElementById('query')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ...over, bubbles: true }));
+  }
+
+  function enterKey(key: string) {
+    document
+      .getElementById('query')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+  }
+
+  function posted(vscode: { postMessage: ReturnType<typeof vi.fn> }, command: string) {
+    return vscode.postMessage.mock.calls
+      .map((c) => c[0] as Record<string, unknown>)
+      .filter((m) => m.command === command);
+  }
+
+  it('sends the pending search at once, then opens its top row when it answers', () => {
+    vi.useFakeTimers();
+    try {
+      const { handle, vscode } = mountWithDebounce(120);
+      // Rows still on screen from the previous term must not be what Enter opens.
+      handle.onMessage({
+        data: resultsMsg({ rows: [row(7, 'Stale')], shownCount: 1, term: 'Obj' }),
+      });
+      type('Object>>printString');
+      enter();
+      expect(posted(vscode, 'query').map((m) => m.value)).toEqual(['Object>>printString']);
+      expect(posted(vscode, 'activate')).toEqual([]);
+
+      handle.onMessage({
+        data: resultsMsg({
+          rows: [row(0, 'Object>>printString')],
+          shownCount: 1,
+          term: 'Object>>printString',
+        }),
+      });
+      expect(posted(vscode, 'activate')).toEqual([{ command: 'activate', id: 0, side: false }]);
+
+      vi.advanceTimersByTime(500); // the flushed search does not fire a second time
+      expect(posted(vscode, 'query')).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('waits while a sent search is still out to the stone', () => {
+    const { handle, vscode } = mountWithDebounce(0);
+    type('Object>>printString'); // sent immediately, not yet answered
+    enter({ ctrlKey: true });
+    expect(posted(vscode, 'activate')).toEqual([]);
+    handle.onMessage({
+      data: resultsMsg({
+        rows: [row(3, 'Object>>printString')],
+        shownCount: 1,
+        term: 'Object>>printString',
+      }),
+    });
+    expect(posted(vscode, 'activate')).toEqual([{ command: 'activate', id: 3, side: true }]);
+  });
+
+  it('ignores results for an earlier term, and opens on the matching ones', () => {
+    const { handle, vscode } = mountWithDebounce(0);
+    type('Object>>printString');
+    enter();
+    handle.onMessage({
+      data: resultsMsg({ rows: [row(1, 'Obj')], shownCount: 1, term: 'Object>>print' }),
+    });
+    expect(posted(vscode, 'activate')).toEqual([]);
+    handle.onMessage({
+      data: resultsMsg({
+        rows: [row(2, 'Object>>printString')],
+        shownCount: 1,
+        term: 'Object>>printString',
+      }),
+    });
+    expect(posted(vscode, 'activate')).toEqual([{ command: 'activate', id: 2, side: false }]);
+  });
+
+  it('opens nothing when the search finds nothing, and does not open a later search', () => {
+    const { handle, vscode } = mountWithDebounce(0);
+    type('Object>>noSuchSelector');
+    enter();
+    handle.onMessage({
+      data: resultsMsg({ rows: [], shownCount: 0, term: 'Object>>noSuchSelector' }),
+    });
+    type('Object>>printString');
+    handle.onMessage({
+      data: resultsMsg({
+        rows: [row(0, 'Object>>printString')],
+        shownCount: 1,
+        term: 'Object>>printString',
+      }),
+    });
+    expect(posted(vscode, 'activate')).toEqual([]);
+  });
+
+  it('typing again cancels the waiting Enter', () => {
+    const { handle, vscode } = mountWithDebounce(0);
+    type('Object>>printString');
+    enter();
+    type('Object>>printStringOn:');
+    handle.onMessage({
+      data: resultsMsg({
+        rows: [row(0, 'Object>>printString')],
+        shownCount: 1,
+        term: 'Object>>printString',
+      }),
+    });
+    expect(posted(vscode, 'activate')).toEqual([]);
+  });
+
+  it('does not wait when no search is out, even if the field and the rows disagree', () => {
+    // Leaving a references list re-runs the original search while the field can still hold the
+    // filter typed into the list; nothing more is coming, so Enter must act on what is shown.
+    const { handle, vscode } = mountWithDebounce(0);
+    handle.onMessage({
+      data: resultsMsg({
+        rows: [row(4, 'Object>>printString')],
+        shownCount: 1,
+        term: 'printString',
+      }),
+    });
+    (document.getElementById('query') as HTMLInputElement).value = 'filter';
+    enter();
+    expect(posted(vscode, 'activate')).toEqual([{ command: 'activate', id: 4, side: false }]);
+  });
+
+  it('an error drops the waiting Enter, so a later answer for that term opens nothing', () => {
+    const { handle, vscode } = mountWithDebounce(0);
+    type('Object>>printString');
+    enter();
+    handle.onMessage({ data: { command: 'error', message: 'session busy' } });
+    handle.onMessage({
+      data: resultsMsg({
+        rows: [row(0, 'Object>>printString')],
+        shownCount: 1,
+        term: 'Object>>printString',
+      }),
+    });
+    expect(posted(vscode, 'activate')).toEqual([]);
+  });
+
+  it('a session reset drops the waiting Enter, so the new session opens nothing by itself', () => {
+    const { handle, vscode } = mountWithDebounce(0);
+    type('Object>>printString');
+    enter();
+    handle.onMessage({ data: { command: 'reset' } });
+    handle.onMessage({ data: resultsMsg({ rows: [row(0, 'Globals')], shownCount: 1, term: '' }) });
+    expect(posted(vscode, 'activate')).toEqual([]);
+  });
+
+  it('after a session reset, Enter acts on what is shown rather than waiting', () => {
+    const { handle, vscode } = mountWithDebounce(0);
+    type('Object>>printString'); // out to the stone when the session changes
+    handle.onMessage({ data: { command: 'reset' } });
+    handle.onMessage({
+      data: resultsMsg({ rows: [row(5, 'Object')], shownCount: 1, term: 'Object' }),
+    });
+    enter();
+    expect(posted(vscode, 'activate')).toEqual([{ command: 'activate', id: 5, side: false }]);
+  });
+
+  it('leaving the panel drops the waiting Enter, so late results do not take focus back', () => {
+    const { handle, vscode } = mountWithDebounce(0);
+    type('Object>>printString');
+    enter();
+    window.dispatchEvent(new Event('blur'));
+    handle.onMessage({
+      data: resultsMsg({
+        rows: [row(0, 'Object>>printString')],
+        shownCount: 1,
+        term: 'Object>>printString',
+      }),
+    });
+    expect(posted(vscode, 'activate')).toEqual([]);
+  });
+
+  it('the clear button drops the waiting Enter', () => {
+    const { handle, vscode } = mountWithDebounce(0);
+    type('Object>>printString');
+    enter();
+    (document.getElementById('clear') as HTMLButtonElement).click();
+    handle.onMessage({ data: resultsMsg({ rows: [row(0, 'Globals')], shownCount: 1, term: '' }) });
+    expect(posted(vscode, 'activate')).toEqual([]);
+  });
+
+  it('a failed action other than the search leaves the waiting Enter in place', () => {
+    const { handle, vscode } = mountWithDebounce(0);
+    type('Object>>printString');
+    enter();
+    handle.onMessage({ data: { command: 'error', message: 'busy', failed: 'references' } });
+    handle.onMessage({ data: { command: 'error', message: '' } }); // a notice being cleared
+    handle.onMessage({
+      data: resultsMsg({
+        rows: [row(0, 'Object>>printString')],
+        shownCount: 1,
+        term: 'Object>>printString',
+      }),
+    });
+    expect(posted(vscode, 'activate')).toEqual([{ command: 'activate', id: 0, side: false }]);
+  });
+
+  it('a failed action other than the search does not make Enter act on stale rows', () => {
+    const { handle, vscode } = mountWithDebounce(0);
+    handle.onMessage({ data: resultsMsg({ rows: [row(7, 'Stale')], shownCount: 1, term: 'Obj' }) });
+    type('Object>>printString'); // out to the stone
+    handle.onMessage({ data: { command: 'error', message: 'busy', failed: 'references' } });
+    enter();
+    expect(posted(vscode, 'activate')).toEqual([]);
+  });
+
+  for (const [gesture, act] of [
+    ['Escape', () => enterKey('Escape')],
+    ['Alt+Enter', () => enter({ altKey: true })],
+    ['Shift+Enter', () => enter({ shiftKey: true })],
+  ] as const) {
+    it(`${gesture} drops the waiting Enter`, () => {
+      const { handle, vscode } = mountWithDebounce(0);
+      type('Object>>printString');
+      enter();
+      act();
+      handle.onMessage({
+        data: resultsMsg({
+          rows: [row(0, 'Object>>printString')],
+          shownCount: 1,
+          term: 'Object>>printString',
+        }),
+      });
+      expect(posted(vscode, 'activate')).toEqual([]);
+    });
+  }
+
+  it('double-clicking a row drops the waiting Enter, so only that row opens', () => {
+    const { handle, vscode } = mountWithDebounce(0);
+    handle.onMessage({ data: resultsMsg({ rows: [row(7, 'Stale')], shownCount: 1, term: 'Obj' }) });
+    type('Object>>printString');
+    enter();
+    document
+      .querySelector('#results li')!
+      .dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    handle.onMessage({
+      data: resultsMsg({
+        rows: [row(0, 'Object>>printString')],
+        shownCount: 1,
+        term: 'Object>>printString',
+      }),
+    });
+    expect(posted(vscode, 'activate')).toEqual([{ command: 'activate', id: 7, side: false }]);
+  });
+
+  it('in a references list, Enter opens the highlighted row without first sending the filter', () => {
+    vi.useFakeTimers();
+    try {
+      const { handle, vscode } = mountWithDebounce(120);
+      handle.onMessage({
+        data: resultsMsg({
+          rows: [row(0, 'A'), row(1, 'B'), row(2, 'C')],
+          shownCount: 3,
+          term: 'at:',
+          pivot: true,
+        }),
+      });
+      document
+        .getElementById('query')!
+        .dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      type('C');
+      enter();
+      expect(posted(vscode, 'query')).toEqual([]);
+      expect(posted(vscode, 'activate')).toEqual([{ command: 'activate', id: 1, side: false }]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('opens at once when the results on screen already answer the term', () => {
+    const { handle, vscode } = mountWithDebounce(0);
+    type('Object>>printString');
+    handle.onMessage({
+      data: resultsMsg({
+        rows: [row(0, 'Object>>printString')],
+        shownCount: 1,
+        term: 'Object>>printString',
+      }),
+    });
+    enter();
+    expect(posted(vscode, 'activate')).toEqual([{ command: 'activate', id: 0, side: false }]);
+  });
+});

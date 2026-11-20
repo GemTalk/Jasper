@@ -23,7 +23,6 @@ import {
 } from './gciConstants';
 import { SMALLTALK_LANGUAGE } from './languageIds';
 import { sessionKernelId } from './sessionKernels';
-import { SESSION_BUSY_MESSAGE } from './gciLibraryError';
 import {
   BREAKPOINT_ERROR,
   CONTINUE_FLAGS,
@@ -148,10 +147,6 @@ async function runCell(
   source: string,
   onStart: NbRunOptions['onStart'],
 ): Promise<string | CellStop> {
-  if (session.isBusy()) {
-    throw new Error(SESSION_BUSY_MESSAGE);
-  }
-
   const code = wrapCellCode(source);
   // Before clearing a process too: a clean-up that writes to the Transcript
   // while clientForwarder mode is on stops at that write. A refused end (the

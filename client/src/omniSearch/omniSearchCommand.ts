@@ -26,6 +26,7 @@ import { getAllGlobalNames } from '../queries/getAllGlobalNames';
 import { getAllClassCategories } from '../queries/getAllClassCategories';
 import { getDictionaryNames } from '../queries/getDictionaryNames';
 import { searchSelectors } from '../queries/searchSelectors';
+import { lookupMethod } from './queries/lookupMethod';
 import {
   searchMethodSource,
   literalSymbolReferences,
@@ -53,20 +54,13 @@ import { ReferenceView } from './omniEngine';
 import { referenceRequestFor, methodRowsToResults } from './references';
 import { OmniSearchPanel, OmniPanelDeps } from './omniSearchPanel';
 import { OmniSearchViewProvider, OmniViewContext, OMNI_VIEW_ID } from './omniSearchViewProvider';
+import type { OpenDocumentOptions } from '../openDocumentAndSyncExplorer';
 
 /** Where a result should open. The docked panel view passes nothing (open in the active group — the
  *  editor area sits above the panel, so there is nothing to open beside); the Spotter passes `Beside`
  *  + a `preserveFocus` flag so a result opens beside the panel — optionally without stealing focus
  *  from the search field. */
-export interface OmniOpenOptions {
-  viewColumn?: vscode.ViewColumn;
-  preserveFocus?: boolean;
-  /** false → open a regular, persistent editor (not a throwaway preview tab). */
-  preview?: boolean;
-  /** Matches to show on opening, as 0-based offsets into the document, `end` exclusive: the first is
-   *  selected and revealed, and all are marked. */
-  matches?: Array<{ start: number; end: number }>;
-}
+export type OmniOpenOptions = OpenDocumentOptions;
 
 /** Open a result's document with the GemStone Explorer showing.
  *
@@ -283,8 +277,10 @@ export function buildProviders(session: ActiveSession, enabled: readonly string[
       () => getAllClassNames(exec),
       (name) => getClassNameEntriesFor(exec, name),
     ),
-    createMethodsProvider(session.id, (term, limit, ignoreCase) =>
-      searchSelectors(exec, term, { limit, ignoreCase }),
+    createMethodsProvider(
+      session.id,
+      (term, limit, ignoreCase) => searchSelectors(exec, term, { limit, ignoreCase }),
+      (className, isMeta, selector) => lookupMethod(exec, className, isMeta, selector),
     ),
     createDictionariesProvider(session.id, () => getDictionaryNames(exec)),
     createGlobalsProvider(session.id, () => getAllGlobalNames(exec)),
