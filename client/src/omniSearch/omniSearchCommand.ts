@@ -204,6 +204,7 @@ export function regexSearchUsing(session: ActiveSession): RegexSearchRunner {
             return result;
           }),
           skipped: answer.skipped,
+          failed: answer.failed,
           truncated: answer.truncated,
           wholeMethods: answer.wholeMethods,
         };

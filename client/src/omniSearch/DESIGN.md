@@ -385,7 +385,7 @@ plugin, on a session without it. Availability is read from the session each time
    search.", "Searching…" from Enter until the answer (set by the webview, cleared by a bare
    `busy: false` or an error), "Search stopped. Press Enter to search again." after Cancel on its
    progress notice, "No methods match.", a refused pattern's reason (as an error), a busy session,
-   the methods skipped because they were too long to match as a whole, and the cap on how many
+   the methods skipped because they were too long to match, those that could not be searched because of an error on the stone (counted apart, so a fault never reads as "too long"), and the cap on how many
    methods the stone keeps, which also makes the count read `200+ shown` (`moreMatch`). The cap is
    `gemstone.omniSearch.maxServerScan`, the setting that caps the Methods tab's fetch, so one setting
    governs both searches that stop early on the stone. There is no Load more: the cap is the

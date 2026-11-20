@@ -232,12 +232,10 @@ describe('the notice line', () => {
   it('shows what the engine says, plainly', () => {
     const { view } = mount({ regex: true });
 
-    results(view, { notice: '3 methods were too long to search as a whole and were skipped.' });
+    results(view, { notice: '3 methods were too long to search and were skipped.' });
 
     expect(notice().style.display).toBe('block');
-    expect(notice().textContent).toBe(
-      '3 methods were too long to search as a whole and were skipped.',
-    );
+    expect(notice().textContent).toBe('3 methods were too long to search and were skipped.');
     expect(notice().classList.contains('error')).toBe(false);
   });
 

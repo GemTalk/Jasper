@@ -106,6 +106,7 @@ const answer = (rows: OmniResult[], over: Partial<RegexSearchOutcome> = {}): Reg
     kind: 'results',
     results: rows,
     skipped: 0,
+    failed: 0,
     truncated: false,
     wholeMethods: false,
     ...over,
@@ -521,7 +522,7 @@ describe('searching with regex on', () => {
     expect(view?.moreMatch).toBe(true);
     expect(view?.notice).toBe(
       'Showing the first 1 matching methods; more match. Narrow the pattern, or raise gemstone.omniSearch.maxServerScan, to see them. ' +
-        '3 methods were too long to search as a whole and were skipped.',
+        '3 methods were too long to search and were skipped.',
     );
     expect(view?.noticeIsError).toBeUndefined();
   });
@@ -589,13 +590,24 @@ describe('regexOutcomeNotice', () => {
 
   it('uses the singular for one skipped method', () => {
     expect(regexOutcomeNotice({ results: [1], skipped: 1, truncated: false })).toBe(
-      '1 method was too long to search as a whole and was skipped.',
+      '1 method was too long to search and was skipped.',
+    );
+  });
+
+  // A fault on the stone is not a method being too long, and must not read as one.
+  it('says apart how many methods could not be searched because of an error', () => {
+    expect(regexOutcomeNotice({ results: [1], skipped: 1, failed: 2, truncated: false })).toBe(
+      '1 method was too long to search and was skipped. ' +
+        '2 methods could not be searched because of an error on the stone.',
+    );
+    expect(regexOutcomeNotice({ results: [1], skipped: 0, failed: 1, truncated: false })).toBe(
+      '1 method could not be searched because of an error on the stone.',
     );
   });
 
   it('says nothing matched and that some methods were skipped', () => {
     expect(regexOutcomeNotice({ results: [], skipped: 2, truncated: false })).toBe(
-      'No methods match. 2 methods were too long to search as a whole and were skipped.',
+      'No methods match. 2 methods were too long to search and were skipped.',
     );
   });
 });

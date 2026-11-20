@@ -243,8 +243,10 @@ export type RegexSearchOutcome =
   | {
       kind: 'results';
       results: OmniResult[];
-      /** Methods too long for the matcher to finish, so not searched (whole-method mode only). */
+      /** Methods the matcher ran out of stack on (too long to match), so not searched. */
       skipped: number;
+      /** Methods the matcher failed on for any other reason, so not searched. */
+      failed: number;
       /** More methods matched than were returned. */
       truncated: boolean;
       /** The pattern asked for a line break, so whole methods were matched. */

@@ -656,7 +656,7 @@
     var REGEX_HELP_ON =
       'Regular expression search over method source: ON. Press Enter to search. ' +
       'May take a while on a large image; Cancel on the progress notice stops it. ' +
-      'Matches one line at a time; use \\n or \\r to match across lines, ' +
+      'Matches one line at a time; use \\n or \\r to match across lines (\\s does not), ' +
       'which skips methods too long to search that way. Click to turn off.';
     var REGEX_HELP_OFF =
       'Regular expression search over method source: OFF. Click to turn on, type a pattern, ' +

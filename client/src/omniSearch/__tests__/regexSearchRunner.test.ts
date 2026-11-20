@@ -37,13 +37,14 @@ beforeEach(() => {
 
 describe('regexSearchUsing', () => {
   it('answers the rows as Source results of this session', async () => {
-    mocks.executeFetchStringAsync.mockResolvedValue(`0\t2\t900\t1\n3-5,8-9\n${ROW}\n`);
+    mocks.executeFetchStringAsync.mockResolvedValue(`0\t2\t900\t1\t4\n3-5,8-9\n${ROW}\n`);
 
     const outcome = await regexSearchUsing(session)('ba.', true, 200).outcome;
 
     expect(outcome).toMatchObject({
       kind: 'results',
       skipped: 2,
+      failed: 4,
       truncated: true,
       wholeMethods: false,
     });
@@ -66,7 +67,7 @@ describe('regexSearchUsing', () => {
   });
 
   it('sends the pattern, Aa and the limit to the stone without blocking, with a title for the progress notice', async () => {
-    mocks.executeFetchStringAsync.mockResolvedValue('0\t0\t1\t0\n\n');
+    mocks.executeFetchStringAsync.mockResolvedValue('0\t0\t1\t0\t0\n\n');
 
     await regexSearchUsing(session)('printOn:', false, 1234).outcome;
 
@@ -129,14 +130,14 @@ describe('regexSearchUsing', () => {
     await vi.waitFor(() => expect(mocks.executeFetchStringAsync).toHaveBeenCalled());
 
     void run.cancel();
-    finish('0\t0\t1\t0\n\n');
+    finish('0\t0\t1\t0\t0\n\n');
 
     expect(stopThisCall).toHaveBeenCalledTimes(1);
     expect(await run.outcome).toEqual({ kind: 'cancelled' });
   });
 
   it('never reaches the stone when cancelled before it started', async () => {
-    mocks.executeFetchStringAsync.mockResolvedValue('0\t0\t1\t0\n\n');
+    mocks.executeFetchStringAsync.mockResolvedValue('0\t0\t1\t0\t0\n\n');
     const run = regexSearchUsing(session)('a', false, 200);
 
     void run.cancel();
@@ -151,7 +152,7 @@ describe('regexSearchUsing', () => {
     let finishFirst!: (s: string) => void;
     mocks.executeFetchStringAsync
       .mockImplementationOnce(() => new Promise<string>((resolve) => (finishFirst = resolve)))
-      .mockResolvedValueOnce('0\t0\t1\t0\n\n');
+      .mockResolvedValueOnce('0\t0\t1\t0\t0\n\n');
     const search = regexSearchUsing(session);
     const first = search('(a+)+b', false, 200);
     await vi.waitFor(() => expect(mocks.executeFetchStringAsync).toHaveBeenCalledTimes(1));
@@ -161,7 +162,7 @@ describe('regexSearchUsing', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(mocks.executeFetchStringAsync).toHaveBeenCalledTimes(1);
 
-    finishFirst('0\t0\t1\t0\n\n');
+    finishFirst('0\t0\t1\t0\t0\n\n');
     expect(await second.outcome).toMatchObject({ kind: 'results' });
     expect(mocks.executeFetchStringAsync).toHaveBeenCalledTimes(2);
   });
@@ -172,7 +173,7 @@ describe('regexSearchUsing', () => {
     let finish!: (s: string) => void;
     mocks.executeFetchStringAsync.mockImplementation(
       (_s: unknown, _code: string, _title: string, onStart: (c: () => void) => void) => {
-        onStart(() => finish('0\t0\t1\t0\n\n'));
+        onStart(() => finish('0\t0\t1\t0\t0\n\n'));
         return new Promise<string>((resolve) => (finish = resolve));
       },
     );

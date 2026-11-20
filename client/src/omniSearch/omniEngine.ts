@@ -439,6 +439,7 @@ type RegexAnswerMeta = Pick<OmniViewData, 'exact' | 'notice' | 'noticeIsError' |
 export function regexOutcomeNotice(outcome: {
   results: readonly unknown[];
   skipped: number;
+  failed?: number;
   truncated: boolean;
 }): string | undefined {
   const parts: string[] = [];
@@ -449,7 +450,12 @@ export function regexOutcomeNotice(outcome: {
     );
   if (outcome.skipped > 0)
     parts.push(
-      `${outcome.skipped} ${outcome.skipped === 1 ? 'method was' : 'methods were'} too long to search as a whole and ${outcome.skipped === 1 ? 'was' : 'were'} skipped.`,
+      `${outcome.skipped} ${outcome.skipped === 1 ? 'method was' : 'methods were'} too long to search and ${outcome.skipped === 1 ? 'was' : 'were'} skipped.`,
+    );
+  const failed = outcome.failed ?? 0;
+  if (failed > 0)
+    parts.push(
+      `${failed} ${failed === 1 ? 'method' : 'methods'} could not be searched because of an error on the stone.`,
     );
   return parts.length > 0 ? parts.join(' ') : undefined;
 }
@@ -495,7 +501,8 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     try {
       deps.refreshRegexAvailable?.();
     } catch {
-      // A failed check leaves the last answer standing; the next sync asks again.
+      // A check that cannot ask the stone leaves the last answer standing (the probe answers "could not
+      // ask" rather than "absent", and the latch keeps its value); the next sync asks again.
     }
   };
   recheckRegexAvailable();
