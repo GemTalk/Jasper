@@ -22,8 +22,15 @@ describe('regexSourceSearchCode', () => {
     expect(regexSourceSearchCode('x', false)).toContain('ignoreCase: false');
   });
 
-  it('asks for no more rows than every other method search returns', () => {
+  it('asks for no more rows than every other method search returns, by default', () => {
     expect(regexSourceSearchCode('x', false)).toContain(`limit: ${METHOD_SEARCH_RESULT_LIMIT}`);
+  });
+
+  it('keeps and writes out as many methods as the caller asks for', () => {
+    const code = regexSourceSearchCode('x', false, 1000);
+
+    expect(code).toContain('limit: 1000.');
+    expect(code).toContain('limit := methods size min: 1000.');
   });
 
   // A soft break (Stop) is not a GsRegexError, so a handler naming Error or Exception

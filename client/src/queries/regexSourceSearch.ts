@@ -61,7 +61,7 @@ export function regexSourceSearchCode(
 search := GsRegexSourceSearch pattern: '${escapeString(pattern)}' ignoreCase: ${ignoreCase} limit: ${limit}.
 [search run] on: GsRegexError do: [:e | ^'#error', (String with: Character tab), e messageText].
 methods := search methods.
-${methodSerialization(0)}.
+${methodSerialization(0, limit)}.
 search summaryLine, (String with: Character lf), search rangesLine, (String with: Character lf), stream contents`;
 }
 
