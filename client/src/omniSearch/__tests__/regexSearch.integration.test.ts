@@ -13,6 +13,7 @@ import { stoppedRunHolds } from '../../nbRunner';
 import { createOmniEngine } from '../omniEngine';
 import { OMNI_DEFAULTS } from '../omniConfig';
 import { regexSearchUsing } from '../omniSearchCommand';
+import { buildMethodUri, parseUri } from '../../gemstoneFileSystemProvider';
 
 /**
  * GemStone Search's regex search end to end: the panel's engine with the real runner, against the
@@ -52,6 +53,8 @@ cls compileMethod: 'alpha', lf, '  ^#rgxPanelAlpha at: 1 put: 2'
 cls compileMethod: 'equals', lf, '  "', ((String new: 40) atAllPut: $=; yourself), '"'
   dictionaries: System myUserProfile symbolList category: 'fixture'.
 cls compileMethod: 'beta', lf, '  ^#rgxPanelBeta', lf, '    at: 1', lf, '    put: #rgxPanelBeta'
+  dictionaries: System myUserProfile symbolList category: 'fixture'.
+cls class compileMethod: 'alpha', lf, '  ^#rgxPanelClassSide'
   dictionaries: System myUserProfile symbolList category: 'fixture'.
 'ok'`,
     );
@@ -97,6 +100,31 @@ cls compileMethod: 'beta', lf, '  ^#rgxPanelBeta', lf, '    at: 1', lf, '    put
     expect(exactCase?.regexPending).toBeUndefined();
     expect(exactCase?.rows.map((r) => r.label)).not.toContain(label);
     expect(exactCase?.notice).toBe('No methods match.');
+  }, 60_000);
+
+  it('opens a class-side hit on the class side, not the instance method with the same selector', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.regex, ctx, session());
+    const engine = engineOn(fixtureSession());
+    await engine.toggleRegex();
+
+    const view = await engine.submit('rgxPanelClassSide');
+
+    const rows = view?.rows.filter((r) => r.label.startsWith(FIXTURE)) ?? [];
+    expect(rows.map((r) => r.label)).toEqual([`${FIXTURE} class>>alpha`]);
+    const action = engine.resultFor(rows[0].id)?.action;
+    if (action?.kind !== 'openMethod') throw new Error('expected a method hit');
+    expect(action.isMeta).toBe(true);
+    const uri = buildMethodUri({
+      kind: 'method',
+      sessionId: action.sessionId,
+      dictName: action.dictName,
+      className: action.className,
+      isMeta: action.isMeta,
+      category: action.category,
+      selector: action.selector,
+      environmentId: action.environmentId,
+    });
+    expect(parseUri(uri)).toMatchObject({ kind: 'method', isMeta: true, selector: 'alpha' });
   }, 60_000);
 
   it("shows the stone's reason for a pattern it cannot use", async (ctx) => {

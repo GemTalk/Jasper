@@ -418,6 +418,45 @@ describe('searching with regex on', () => {
     expect(await first).toBeNull();
   });
 
+  it('stops a newer search still running when the box goes back to a pattern already answered', async () => {
+    const { engine, runs } = engineWith();
+    await engine.toggleRegex();
+    const first = engine.submit('a');
+    runs[0].resolve(answer([sourceRow('A', 'a')]));
+    await first;
+    void engine.submit('(a+)+b');
+
+    const view = await engine.search('a');
+
+    expect(runs[1].cancel).toHaveBeenCalled();
+    expect(view?.rows.map((r) => r.label)).toEqual(['A>>a']);
+  });
+
+  it('leaves a search running for the pattern in the box alone when the box is unchanged', async () => {
+    const { engine, runs } = engineWith();
+    await engine.toggleRegex();
+    void engine.submit('(a+)+b');
+
+    await engine.search('(a+)+b');
+
+    expect(runs[0].cancel).not.toHaveBeenCalled();
+  });
+
+  it('Aa does not search a pattern that was never searched, whatever else ran before', async () => {
+    const { engine, runs } = engineWith();
+    await engine.toggleRegex();
+    const first = engine.submit('a');
+    runs[0].resolve(answer([sourceRow('A', 'a')]));
+    await first;
+    void engine.submit('(a+)+b');
+    await engine.search('c');
+
+    const view = await engine.toggleCase();
+
+    expect(runs).toHaveLength(2);
+    expect(view?.regexPending).toBe(true);
+  });
+
   it('stops the previous search when Enter starts a new one, and shows only the new answer', async () => {
     const { engine, runs } = engineWith();
     await engine.toggleRegex();

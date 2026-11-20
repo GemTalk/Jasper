@@ -523,8 +523,9 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
   // from `current` so returning from a pivot, or typing back to the same pattern, shows its rows again
   // without a new search.
   let regexAnswer: { key: string; results: OmniResult[]; meta: RegexAnswerMeta } | null = null;
-  // The regex search still running on the stone, so anything that replaces it can stop it there.
-  let regexInFlight: { cancel: () => void | Promise<void> } | null = null;
+  // The regex search still running on the stone, and what it is searching for (pattern + case), so
+  // anything that replaces it can stop it there.
+  let regexInFlight: { key: string; cancel: () => void | Promise<void> } | null = null;
 
   const regexKey = (term: string): string => `${caseSensitive ? 'C' : 'c'}:${term}`;
 
@@ -631,7 +632,8 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     const key = regexKey(term);
     // The same setting that caps the Methods tab's fetch from the stone.
     const run = deps.regexSearch!(term, !caseSensitive, config.maxServerScan);
-    regexInFlight = run;
+    const inFlight = { key, cancel: run.cancel };
+    regexInFlight = inFlight;
     let meta: RegexAnswerMeta;
     let results: OmniResult[] = [];
     try {
@@ -671,7 +673,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
         noticeIsError: true,
       };
     } finally {
-      if (regexInFlight === run) regexInFlight = null;
+      if (regexInFlight === inFlight) regexInFlight = null;
     }
     if (gen !== generation) return null; // superseded while it ran
     regexAnswer = { key, results, meta };
@@ -694,9 +696,10 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       lastRawValue = rawValue;
       const term = rawValue.trim();
       if (opts.runRegex && term.length > 0) return await runRegexSearch(term);
-      // Anything else (a keystroke, a case change, a commit) leaves the stone alone: the pattern in the
-      // box is no longer the one being searched for, so a search still running for it is stopped.
-      if (regexAnswer?.key !== regexKey(term)) void stopRegexSearch();
+      // Anything else (a keystroke, a case change, a commit) starts no search. A search still running
+      // for some other pattern (or case) than the box's is stopped, even when the box is back on a
+      // pattern already answered: otherwise it would keep the session busy for nothing.
+      if (regexInFlight && regexInFlight.key !== regexKey(term)) void stopRegexSearch();
       ++generation;
       return regexView(term);
     }
@@ -859,7 +862,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
         regex &&
         !pivot &&
         term.length > 0 &&
-        (regexAnswer?.key === regexKey(term) || regexInFlight !== null);
+        (regexAnswer?.key === regexKey(term) || regexInFlight?.key === regexKey(term));
       caseSensitive = !caseSensitive;
       return await runSearch(lastRawValue, { runRegex: searched });
     },

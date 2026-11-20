@@ -13,6 +13,7 @@
  * is built by `omniSearchCommand.ts` and injected, so this file needs no stone session directly.
  */
 import * as vscode from 'vscode';
+import { codePointMatchesToUtf16 } from '../matchOffsets';
 import { SessionPanelTitle } from '../activeSessionDisplay';
 import { OmniConfig, OmniResult } from './omniTypes';
 import { createOmniEngine, OmniEngineDeps, OmniViewData } from './omniEngine';
@@ -356,7 +357,11 @@ export class OmniSearchPanel {
             id: m.id,
             source,
             title: result.label,
-            matches: result.action.kind === 'openMethod' ? result.action.matches : undefined,
+            // Counted as the stone counts characters; the preview places them on a JS string.
+            matches:
+              result.action.kind === 'openMethod' && result.action.matches
+                ? codePointMatchesToUtf16(source, result.action.matches)
+                : undefined,
           });
           return;
         }

@@ -26,6 +26,7 @@
  * never on the hidden path itself.
  */
 import * as vscode from 'vscode';
+import { codePointMatchesToUtf16 } from '../matchOffsets';
 import {
   CarriedEngineState,
   carriedEngineState,
@@ -406,7 +407,11 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
             id: m.id,
             source,
             title: result.label,
-            matches: result.action.kind === 'openMethod' ? result.action.matches : undefined,
+            // Counted as the stone counts characters; the preview places them on a JS string.
+            matches:
+              result.action.kind === 'openMethod' && result.action.matches
+                ? codePointMatchesToUtf16(source, result.action.matches)
+                : undefined,
           });
           return;
         }

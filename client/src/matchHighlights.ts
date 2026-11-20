@@ -9,42 +9,52 @@
  * position). `showMatches` therefore applies them again to any editor of the same method shown
  * within `RESHOW_WINDOW_MS`, matching the method rather than the URI.
  *
- * Matches are 0-based offsets into the document, `end` exclusive. A method edited since the search
- * may be shorter than they assume; a match that no longer fits is dropped rather than marking
- * whatever text is there now.
+ * Matches are 0-based offsets into the document, `end` exclusive, counted in characters as the stone
+ * counts them (see matchOffsets.ts for the conversion). A method edited since the search may be
+ * shorter than they assume; a match that no longer fits is dropped rather than marking whatever
+ * text is there now.
+ *
+ * A match can be empty (a pattern like `^` or `x*`): it is not marked, but if it is the first match
+ * the cursor is put there.
  */
 import * as vscode from 'vscode';
 import { parseUri } from './gemstoneFileSystemProvider';
+import { codePointMatchesToUtf16 } from './matchOffsets';
 
 export interface MatchOffsets {
   start: number;
   end: number;
 }
 
-/** The matches that still fit `doc`, in order, with empty ones and overlaps dropped. */
+/** The matches that still fit `doc`, as offsets into its text, in order, with empty ones and
+ *  overlaps dropped: the ones worth a mark. */
 export function fittingMatches(
   doc: vscode.TextDocument,
   matches: readonly MatchOffsets[] | undefined,
 ): MatchOffsets[] {
   if (!matches) return [];
-  const length = doc.getText().length;
+  const text = doc.getText();
   const out: MatchOffsets[] = [];
   let pos = 0;
-  for (const m of matches) {
-    if (m.start < pos || m.end <= m.start || m.end > length) continue;
+  for (const m of codePointMatchesToUtf16(text, matches)) {
+    if (m.start < pos || m.end <= m.start || m.end > text.length) continue;
     out.push(m);
     pos = m.end;
   }
   return out;
 }
 
-/** The selection for the first match that fits `doc`, or undefined when none does. */
+/** The selection for the first match, or undefined when it does not fit `doc`. An empty first match
+ *  (a pattern like `^`) gives an empty selection: the cursor, placed where it matched. */
 export function firstMatchSelection(
   doc: vscode.TextDocument,
   matches: readonly MatchOffsets[] | undefined,
 ): vscode.Selection | undefined {
-  const [first] = fittingMatches(doc, matches);
-  return first && new vscode.Selection(doc.positionAt(first.start), doc.positionAt(first.end));
+  if (!matches || matches.length === 0) return undefined;
+  const text = doc.getText();
+  const [first] = codePointMatchesToUtf16(text, [matches[0]]);
+  if (first.start < 0 || first.end < first.start || first.end > text.length) return undefined;
+  return new vscode.Selection(doc.positionAt(first.start), doc.positionAt(first.end));
 }
 
 let decoration: vscode.TextEditorDecorationType | undefined;
@@ -67,8 +77,9 @@ function matchDecoration(): vscode.TextEditorDecorationType {
 /** How long after an open an editor of the same method gets its matches again. */
 export const RESHOW_WINDOW_MS = 3000;
 
-/** Recent opens at their matches, by `methodKey`, until when a re-show is caught. */
-const recent = new Map<
+/** Recent opens at their matches, by `methodKey`, until when a re-show is caught. Exported for its
+ *  test only. */
+export const recent = new Map<
   string,
   { matches: readonly MatchOffsets[]; until: number; editor: vscode.TextEditor }
 >();
@@ -111,6 +122,10 @@ function applyMatches(editor: vscode.TextEditor, matches: readonly MatchOffsets[
  */
 export function showMatches(editor: vscode.TextEditor, matches: readonly MatchOffsets[]): void {
   applyMatches(editor, matches);
+  // An entry is otherwise dropped only when its method is shown again, so opens nobody re-shows
+  // would pile up for the life of the window.
+  const now = Date.now();
+  for (const [key, entry] of recent) if (now > entry.until) recent.delete(key);
   recent.set(methodKey(editor.document.uri), {
     matches,
     until: Date.now() + RESHOW_WINDOW_MS,

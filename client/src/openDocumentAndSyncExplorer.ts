@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { logWarning } from './gciLog';
 import { firstMatchSelection, MatchOffsets, showMatches } from './matchHighlights';
-import { gemstoneDocumentLanguage } from './languageIds';
+import { withGemstoneLanguage } from './languageIds';
 
 /** The Explorer calls an open needs; see ExplorerController for each. */
 export interface OpenDocumentExplorer {
@@ -31,12 +31,9 @@ export async function openDocumentAndSyncExplorer(
   explorer.markAttributedOpen(uri);
   try {
     const before = vscode.window.activeTextEditor;
-    let doc = await vscode.workspace.openTextDocument(uri);
     // Set the language before showing, as the Explorer does: set afterwards (onDidOpenTextDocument),
     // VS Code rebuilds the editor, which drops a regex hit's selection and marks on the first open.
-    const language = gemstoneDocumentLanguage(uri);
-    if (doc.languageId !== language)
-      doc = await vscode.languages.setTextDocumentLanguage(doc, language);
+    const doc = await withGemstoneLanguage(await vscode.workspace.openTextDocument(uri));
     const shown = await vscode.window.showTextDocument(doc, {
       preview: opts?.preview ?? true,
       viewColumn: opts?.viewColumn,

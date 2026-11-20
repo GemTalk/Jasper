@@ -88,6 +88,26 @@ describe('firstMatchSelection', () => {
     expect([sel?.end.line, sel?.end.character]).toEqual([2, 8]);
   });
 
+  it('puts the cursor at an empty first match (a pattern like ^)', () => {
+    const sel = firstMatchSelection(doc(SOURCE), [
+      { start: AT, end: AT },
+      { start: AT, end: AT + 3 },
+    ]);
+
+    expect([sel?.start.line, sel?.start.character, sel?.end.line, sel?.end.character]).toEqual([
+      1, 8, 1, 8,
+    ]);
+  });
+
+  it("counts the stone's character offsets past an emoji correctly", () => {
+    const text = '"😀"\n  at: 1';
+    const atChars = [...text.slice(0, text.indexOf('at:'))].length;
+
+    const sel = firstMatchSelection(doc(text), [{ start: atChars, end: atChars + 3 }]);
+
+    expect([sel?.start.line, sel?.start.character, sel?.end.character]).toEqual([1, 2, 5]);
+  });
+
   it('selects nothing when no match fits', () => {
     expect(firstMatchSelection(doc(SOURCE), [{ start: 0, end: 999 }])).toBeUndefined();
     expect(firstMatchSelection(doc(SOURCE), undefined)).toBeUndefined();
@@ -95,6 +115,17 @@ describe('firstMatchSelection', () => {
 });
 
 describe('markMatches', () => {
+  it('does not mark an empty match', () => {
+    const { editor, setDecorations } = editorOn(doc(SOURCE));
+
+    markMatches(editor, [
+      { start: 0, end: 0 },
+      { start: 0, end: 3 },
+    ]);
+
+    expect((setDecorations.mock.calls[0][1] as vscode.Range[]).length).toBe(1);
+  });
+
   it('marks every match, including one across a line break', () => {
     const { editor, setDecorations } = editorOn(doc(SOURCE));
 
@@ -210,6 +241,21 @@ describe('showMatches', () => {
     (visible.mock.calls[before][0] as unknown as (eds: vscode.TextEditor[]) => void)([replacement]);
 
     expect(sel(replacement)).toEqual([0, 0, 0, 3]);
+  });
+
+  it('forgets an open whose window has passed when the next one is shown', async () => {
+    vi.useFakeTimers();
+    try {
+      const { fresh } = await freshWithListener();
+      fresh.showMatches(editorOn(doc(SOURCE, 'gemstone://1/old')).editor, [{ start: 0, end: 3 }]);
+      vi.advanceTimersByTime(fresh.RESHOW_WINDOW_MS + 1);
+
+      fresh.showMatches(editorOn(doc(SOURCE, 'gemstone://1/new')).editor, [{ start: 0, end: 3 }]);
+
+      expect([...fresh.recent.keys()]).toEqual(['gemstone://1/new']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('leaves another document, and a re-show after the window, alone', async () => {

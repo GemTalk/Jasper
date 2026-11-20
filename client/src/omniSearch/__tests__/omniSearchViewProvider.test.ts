@@ -546,6 +546,35 @@ describe('GemStone Search docked panel — an operation that fails part way', ()
   });
 });
 
+describe('GemStone Search docked panel — previewing a regex hit', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("sends the hit's matches as offsets into the source it sends, past an emoji included", async () => {
+    const source = 'bar\n  "😀" ^self at: 1 put: 2';
+    const ctx = fakeContext();
+    (ctx.deps as unknown as { previewSource: () => string }).previewSource = () => source;
+    const provider = new OmniSearchViewProvider(vi.fn(async () => ctx));
+    const { view, on } = fakeView(true);
+    provider.resolveWebviewView(view as never);
+    await on.message({ command: 'ready' });
+    const engine = vi.mocked(createOmniEngine).mock.results[0].value;
+    // Where the stone puts `at: 1 put:`: counted in characters, so the emoji counts once.
+    const start = [...source.slice(0, source.indexOf('at: 1'))].length;
+    engine.resultFor = () => ({
+      label: 'Foo>>bar',
+      action: { kind: 'openMethod', matches: [{ start, end: start + 10 }] },
+    });
+
+    await on.message({ command: 'preview', id: 0 });
+    await settle();
+
+    const posted = view.webview.postMessage.mock.calls.map((c) => c[0]);
+    const preview = posted.find((m) => m.command === 'preview');
+    const [m] = preview.matches as Array<{ start: number; end: number }>;
+    expect(source.slice(m.start, m.end)).toBe('at: 1 put:');
+  });
+});
+
 describe('GemStone Search docked panel — reopening the view', () => {
   beforeEach(() => vi.clearAllMocks());
 

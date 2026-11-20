@@ -56,7 +56,7 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
    and drive the same `omniEngine.ts`.
 
 2. **Provider-per-category model** (mirrors Spotter processors). `OmniProvider` = `{ category,
-prime?, search(query, cfg, token) }`. Providers in the default fan-out: **Classes, Methods,
+   prime?, search(query, cfg, token) }`. Providers in the default fan-out: **Classes, Methods,
    Dictionaries, Globals**; plus the **explicit-only** **Source, Literals, Class Categories** (see #3).
    Adding a category is a new provider — no engine change. (An Open Editors provider shipped initially
    but was **dropped** — the open-tab list is tiny and VS Code's own Open Editors view covers it.)
@@ -71,13 +71,13 @@ prime?, search(query, cfg, token) }`. Providers in the default fan-out: **Classe
      gate `onConfigChanged` uses. A visible panel still refreshes live.
    - Keeping those cached corpora honest between primes — **who announces what**:
 
-     | Change in the image                                 | Hook                                                                                                | Cost                                                                                                                                                |
-     | --------------------------------------------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-     | A class compiled locally                            | `notifyClassCompiled` → `applyChange`                                                               | re-fetch that ONE class name                                                                                                                        |
-     | A class removed (Explorer → Remove Class)           | `notifyClassRemoved` → `applyChange`, fired **once per class** because the delete takes the subtree | re-fetch per name; the lookup comes back empty and the entry drops                                                                                  |
-     | Dictionary add / remove / rename                    | `onSymbolListChanged` → `notifySessionSynced`                                                       | full `resync`                                                                                                                                       |
-     | Commit / abort / file-in                            | `notifySessionSynced`                                                                               | full `resync`, deferred while hidden                                                                                                                |
-     | The user presses ⟳ / runs `gemstone.search.refresh` | `refresh`                                                                                           | the session's cached `ClassOrganizer` is dropped first, then a full reload + the references list; deferred only while the docked panel is collapsed |
+     | Change in the image | Hook | Cost |
+     | --- | --- | --- |
+     | A class compiled locally | `notifyClassCompiled` → `applyChange` | re-fetch that ONE class name |
+     | A class removed (Explorer → Remove Class) | `notifyClassRemoved` → `applyChange`, fired **once per class** because the delete takes the subtree | re-fetch per name; the lookup comes back empty and the entry drops |
+     | Dictionary add / remove / rename | `onSymbolListChanged` → `notifySessionSynced` | full `resync` |
+     | Commit / abort / file-in | `notifySessionSynced` | full `resync`, deferred while hidden |
+     | The user presses ⟳ / runs `gemstone.search.refresh` | `refresh` | the session's cached `ClassOrganizer` is dropped first, then a full reload + the references list; deferred only while the docked panel is collapsed |
 
      Everything else — a global created by evaluating code, a class or method compiled by a workspace
      doit, a class removed by another session — announces nothing this panel can listen for, so short of
@@ -103,7 +103,6 @@ prime?, search(query, cfg, token) }`. Providers in the default fan-out: **Classe
      `refresh` re-asks the stone who references the row the pivot was taken from (keeping whatever
      filter is typed into it), and if that row is gone — its method or class deleted — it leaves the
      pivot rather than keep showing senders of nothing.
-
    - _Methods_: the selector space is too large to preload, so this provider queries the stone
      **per search term** (debounced, min query length `methodMinQueryLength`), reusing the
      `searchSelectors` machinery. That scan is **bounded and ranked**: it walks every selector of every
@@ -138,7 +137,7 @@ prime?, search(query, cfg, token) }`. Providers in the default fan-out: **Classe
      - _Class Categories_ — class-category names; a whole-image scan (`getAllClassCategories`) so it
        **lazy-loads on first search**, not on open. (Tab label "Class Categories"; scope id
        `categories`, kept because it is a value in users' `settings.json`. The in-code
-       `OMNI_CATEGORIES` array holds _all_ scopes, not just this one — a known name collision left
+       `OMNI_CATEGORIES` array holds *all* scopes, not just this one — a known name collision left
        as-is rather than renamed, since the scope id is the part that cannot safely move.)
 
      ⚠️ Being excluded from the all-scope fan-out has a UX cost that has to be paid for explicitly: an
@@ -192,52 +191,52 @@ prime?, search(query, cfg, token) }`. Providers in the default fan-out: **Classe
    bar the eye has already stopped scanning.
 
 6b. **The expanded source marks the SEND, not the characters.** A reference row expands to show its
-source, and what is marked in it is where the searched symbol is actually sent. A literal
-substring search cannot express that: a keyword selector is never one token in source (`on:do:`
-is written `on: Error do: [...]`), a one-keyword selector is a substring of a longer one (`at:`
-inside `at:put:`), and any selector is a substring of a longer identifier (`printString` inside
-`printStringLimitedTo:`). So `sendRanges` (`omniSearchView.js`) lexes the source as Smalltalk and
-groups the keyword tokens at one bracket depth — uninterrupted by a statement end or a cascade —
-into one send, marking a run only when it spells the whole selector. Comments, strings, symbols
-and literal arrays are single tokens and so never match, and the method's own pattern is skipped
-so opening an implementor does not mark its signature as a call to itself. It is a scan, not a
-parse: the vendored AST is not available in the webview, and source that will not lex degrades to
-fewer marks rather than an error. A term that is neither a selector nor a global name falls back
-to the plain substring highlight, which is still right for a free-text Source preview.
+   source, and what is marked in it is where the searched symbol is actually sent. A literal
+   substring search cannot express that: a keyword selector is never one token in source (`on:do:`
+   is written `on: Error do: [...]`), a one-keyword selector is a substring of a longer one (`at:`
+   inside `at:put:`), and any selector is a substring of a longer identifier (`printString` inside
+   `printStringLimitedTo:`). So `sendRanges` (`omniSearchView.js`) lexes the source as Smalltalk and
+   groups the keyword tokens at one bracket depth — uninterrupted by a statement end or a cascade —
+   into one send, marking a run only when it spells the whole selector. Comments, strings, symbols
+   and literal arrays are single tokens and so never match, and the method's own pattern is skipped
+   so opening an implementor does not mark its signature as a call to itself. It is a scan, not a
+   parse: the vendored AST is not available in the webview, and source that will not lex degrades to
+   fewer marks rather than an error. A term that is neither a selector nor a global name falls back
+   to the plain substring highlight, which is still right for a free-text Source preview.
 
-**Both ways of looking at references go through it**, which is not one code path. In the sticky
-list the marks are laid down by `fillReferenceSource`, using the `highlightTerm` that rides on the
-`refPreview` message. The classic pivot has no such message — its preview pane is the ORDINARY
-source preview (`showPreview`), which marks the typed query — so the pivot's target travels on the
-`results` message as `pivotTarget` and `showPreview` marks the send while a pivot is up. Without
-it the pivot marked the typed text, and in a pivot the typed text is the selector spelled as a
-selector (`on:do:`), which no source spells that way: the pane highlighted nothing at all, in the
-one mode where the whole list is senders. An ordinary search still highlights literally, because
-"where does what I typed appear" is a different question with a different right answer.
+   **Both ways of looking at references go through it**, which is not one code path. In the sticky
+   list the marks are laid down by `fillReferenceSource`, using the `highlightTerm` that rides on the
+   `refPreview` message. The classic pivot has no such message — its preview pane is the ORDINARY
+   source preview (`showPreview`), which marks the typed query — so the pivot's target travels on the
+   `results` message as `pivotTarget` and `showPreview` marks the send while a pivot is up. Without
+   it the pivot marked the typed text, and in a pivot the typed text is the selector spelled as a
+   selector (`on:do:`), which no source spells that way: the pane highlighted nothing at all, in the
+   one mode where the whole list is senders. An ordinary search still highlights literally, because
+   "where does what I typed appear" is a different question with a different right answer.
 
 6a. **A scope belongs to the search, not to a references view.** The pivot is not a search: it
-is a fixed list of rows already fetched from the stone, and **every one of them is a method**
-(`methodRowsToResults`), so a Classes/Globals/Dictionaries filter has nothing meaningful to do to
-them. Picking a scope while pivoted therefore **leaves the pivot** and applies that scope to the
-restored search. The rejected alternatives, for the record: _filtering the pivot rows by scope_
-(meaningless — one category, so every tab is either a no-op or empties the list) and _making the
-tabs inert while pivoted_ (honest, but it hides a control rather than giving it a meaning, and it
-lives in the webview rather than the engine). What must never happen again is the original
-behaviour: the tab lit up as active while the list was left untouched, so the chrome advertised a
-filter that was never applied — and the scope then took effect **invisibly** when the pivot was
-dismissed, narrowing a search the user never asked to narrow.
-**The pivot names its own exit.** Its only ways out are `Esc` and `←` (the latter only with the
-caret at the start of the field), neither of them visible, and clearing the box does _not_ escape —
-an empty filter matches every reference row, so clearing widens the list instead. Rather than
-overload the clear gesture, the breadcrumb carries the exit: `PIVOT_EXIT_HINT` ("Esc to go back")
-travels as its own field, **`OmniViewData.pivotHint`**, beside the plain `pivotTitle` — _not_
-concatenated into it. That keeps the wording and the styling a **view** decision: the webview renders
-the hint as a quieter aside (`.crumb-hint`) next to the title, and a host whose own chrome already
-shows a way out ignores the field instead of having to split a string on its separator. It is
-deliberately **not** added to `ReferencePreview.title` — in `referencesInPreview` mode there is no
-pivot and `Esc` closes the panel, so the same words there would be false. The hint is only as visible
-as the breadcrumb, which needs the _explicit_ `display: block` that `setBreadcrumb` sets — clearing
-the inline style falls back to the stylesheet's `display: none` and the whole breadcrumb disappears.
+   is a fixed list of rows already fetched from the stone, and **every one of them is a method**
+   (`methodRowsToResults`), so a Classes/Globals/Dictionaries filter has nothing meaningful to do to
+   them. Picking a scope while pivoted therefore **leaves the pivot** and applies that scope to the
+   restored search. The rejected alternatives, for the record: *filtering the pivot rows by scope*
+   (meaningless — one category, so every tab is either a no-op or empties the list) and *making the
+   tabs inert while pivoted* (honest, but it hides a control rather than giving it a meaning, and it
+   lives in the webview rather than the engine). What must never happen again is the original
+   behaviour: the tab lit up as active while the list was left untouched, so the chrome advertised a
+   filter that was never applied — and the scope then took effect **invisibly** when the pivot was
+   dismissed, narrowing a search the user never asked to narrow.
+   **The pivot names its own exit.** Its only ways out are `Esc` and `←` (the latter only with the
+   caret at the start of the field), neither of them visible, and clearing the box does *not* escape —
+   an empty filter matches every reference row, so clearing widens the list instead. Rather than
+   overload the clear gesture, the breadcrumb carries the exit: `PIVOT_EXIT_HINT` ("Esc to go back")
+   travels as its own field, **`OmniViewData.pivotHint`**, beside the plain `pivotTitle` — *not*
+   concatenated into it. That keeps the wording and the styling a **view** decision: the webview renders
+   the hint as a quieter aside (`.crumb-hint`) next to the title, and a host whose own chrome already
+   shows a way out ignores the field instead of having to split a string on its separator. It is
+   deliberately **not** added to `ReferencePreview.title` — in `referencesInPreview` mode there is no
+   pivot and `Esc` closes the panel, so the same words there would be false. The hint is only as visible
+   as the breadcrumb, which needs the *explicit* `display: block` that `setBreadcrumb` sets — clearing
+   the inline style falls back to the stylesheet's `display: none` and the whole breadcrumb disappears.
 
 7. **Scope filtering** ("filter buttons on top", per the issue). The webview renders one **labeled tab**
    per enabled category plus an "All" tab; picking one narrows the search to that category and re-runs
@@ -278,27 +277,27 @@ the inline style falls back to the stylesheet's `display: none` and the whole br
 
 ## Module map (`client/src/omniSearch/`)
 
-| File                                | Responsibility                                                                   | Stone?    | Tested             |
-| ----------------------------------- | -------------------------------------------------------------------------------- | --------- | ------------------ |
-| `omniTypes.ts`                      | `OmniProvider`, `OmniResult`, `OmniCategory`, config types                       | no        | —                  |
-| `omniConfig.ts`                     | read `gemstone.omniSearch.*` → typed `OmniConfig`                                | no        | ✅                 |
-| `omniMatch.ts`                      | pure matcher/ranker (modes, score, ranges)                                       | no        | ✅                 |
-| `rank.ts`                           | shared provider helpers: match → sort → cap; method-row order                    | no        | ✅ (via providers) |
-| `omniActions.ts`                    | dispatch an `OmniAction` to injected handlers (open / reveal)                    | no        | ✅                 |
-| `references.ts`                     | pure glue: `OmniResult` → reference/senders query request                        | no        | ✅                 |
-| `omniEngine.ts`                     | the search engine: scope, case, load-more/all, count, ref pivot → `OmniViewData` | no        | ✅                 |
-| `omniSearchShared.ts`               | shared webview chrome (HTML, tabs, placeholder) + engine-message pump            | no        | ✅                 |
-| `omniSearchView.js`                 | webview DOM (tabs, ranked rows, `<mark>` highlights, preview pane)               | no        | ✅ (jsdom)         |
-| `omniSearchViewProvider.ts`         | host for `ui: "panel"` — the docked bottom-panel view                            | no        | ✅                 |
-| `omniSearchPanel.ts`                | host for `ui: "spotter"` — the editor-tab webview                                | no        | thin               |
-| `omniSearchCommand.ts`              | entry: read config, resolve session, wire providers, open the chosen UI          | no        | ✅                 |
-| `providers/classesProvider.ts`      | classes (load-once + match)                                                      | preload   | ✅                 |
-| `providers/dictionariesProvider.ts` | dictionaries (load-once + match)                                                 | preload   | ✅                 |
-| `providers/globalsProvider.ts`      | non-class globals (load-once + match)                                            | preload   | ✅                 |
-| `providers/methodsProvider.ts`      | selector search (per-query); direct `Class>>selector` lookup                     | per-query | ✅                 |
-| `providers/sourceProvider.ts`       | method-source substring (explicit-only, per-query)                               | per-query | ✅                 |
-| `providers/literalsProvider.ts`     | symbol/string literal references (explicit-only)                                 | per-query | ✅                 |
-| `providers/categoriesProvider.ts`   | class-category names (explicit-only, lazy-loaded)                                | lazy      | ✅                 |
+| File                         | Responsibility                                                        | Stone?    | Tested                 |
+| ---------------------------- | -------------------------------------------------------------------- | --------- | ---------------------- |
+| `omniTypes.ts`               | `OmniProvider`, `OmniResult`, `OmniCategory`, config types            | no        | —                      |
+| `omniConfig.ts`              | read `gemstone.omniSearch.*` → typed `OmniConfig`                     | no        | ✅                     |
+| `omniMatch.ts`               | pure matcher/ranker (modes, score, ranges)                           | no        | ✅                     |
+| `rank.ts`                    | shared provider helpers: match → sort → cap; method-row order        | no        | ✅ (via providers)     |
+| `omniActions.ts`             | dispatch an `OmniAction` to injected handlers (open / reveal)        | no        | ✅                     |
+| `references.ts`              | pure glue: `OmniResult` → reference/senders query request           | no        | ✅                     |
+| `omniEngine.ts`              | the search engine: scope, case, load-more/all, count, ref pivot → `OmniViewData` | no | ✅            |
+| `omniSearchShared.ts`        | shared webview chrome (HTML, tabs, placeholder) + engine-message pump | no       | ✅                     |
+| `omniSearchView.js`          | webview DOM (tabs, ranked rows, `<mark>` highlights, preview pane)   | no        | ✅ (jsdom)             |
+| `omniSearchViewProvider.ts`  | host for `ui: "panel"` — the docked bottom-panel view                | no        | ✅                     |
+| `omniSearchPanel.ts`         | host for `ui: "spotter"` — the editor-tab webview                    | no        | thin                   |
+| `omniSearchCommand.ts`       | entry: read config, resolve session, wire providers, open the chosen UI | no     | ✅                     |
+| `providers/classesProvider.ts`      | classes (load-once + match)                                  | preload   | ✅                     |
+| `providers/dictionariesProvider.ts` | dictionaries (load-once + match)                             | preload   | ✅                     |
+| `providers/globalsProvider.ts`      | non-class globals (load-once + match)                        | preload   | ✅                     |
+| `providers/methodsProvider.ts`      | selector search (per-query); direct `Class>>selector` lookup | per-query | ✅                     |
+| `providers/sourceProvider.ts`       | method-source substring (explicit-only, per-query)          | per-query | ✅                     |
+| `providers/literalsProvider.ts`     | symbol/string literal references (explicit-only)            | per-query | ✅                     |
+| `providers/categoriesProvider.ts`   | class-category names (explicit-only, lazy-loaded)           | lazy      | ✅                     |
 
 New shared query (if needed) lives under `client/src/queries/` per repo convention.
 
@@ -326,8 +325,7 @@ Both hosts render the same DOM (`omniSearchView.js`, read at runtime and jsdom-t
 
 - labeled scope **tabs**, a **flat relevance-ranked** row list (see below), OUR case-correct
   **highlighting** (`<mark>`), an always-on **case indicator** chip, a **`.*` regex** toggle beside it,
-  a **source-preview pane** (fills
-  as the active row moves), a **clear (×)** button, and an elegant footer **count + Load more/all**.
+  a **source-preview pane** (fills as the active row moves), a **clear (×)** button, and an elegant footer **count + Load more/all**.
 - `omniSearchViewProvider.ts` (`ui: "panel"`) is a docked tool: no pin, no auto-close, no open-beside.
 - `omniSearchPanel.ts` (`ui: "spotter"`) behaves like a dialog: unpinned it closes on focus-out and on
   picking a result; the **📌 pin** keeps it open and switches activation to open-beside.
@@ -386,19 +384,21 @@ plugin, on a session without it. Availability is read from the session each time
 4. **What the user is told.** One line above the rows (`OmniViewData.notice`): "Press Enter to
    search.", "Searching…" from Enter until the answer (set by the webview, cleared by a bare
    `busy: false` or an error), "Search stopped. Press Enter to search again." after Cancel on its
-   progress notice, "No methods match.", a refused pattern's
-   reason (as an error), a busy session, the methods skipped because
-   they were too long to match as a whole, and the cap on how many methods the stone keeps, which also makes the count read `200+ shown`
-   (`moreMatch`). The cap is `gemstone.omniSearch.maxServerScan`, the setting that caps the Methods
-   tab's fetch, so one setting governs both searches that stop early on the stone. There is no Load
-   more: the cap is the
+   progress notice, "No methods match.", a refused pattern's reason (as an error), a busy session,
+   the methods skipped because they were too long to match as a whole, and the cap on how many
+   methods the stone keeps, which also makes the count read `200+ shown` (`moreMatch`). The cap is
+   `gemstone.omniSearch.maxServerScan`, the setting that caps the Methods tab's fetch, so one setting
+   governs both searches that stop early on the stone. There is no Load more: the cap is the
    server's, and a narrower pattern is the way to see past it.
 5. **The matches are shown, not the pattern.** The stone records where each hit's matches are (at
    most 100 per method; `GsRegexSourceSearch>>ranges`), and the result carries them
    (`openMethod.matches`). The preview marks them all, a match across lines as one mark. Opening the
    method selects the first and marks the rest in the editor's find-highlight colours
    (`matchHighlights.ts`); the marks clear on the first edit, which moves the text under them. The
-   typed pattern itself is never marked: it is not text to look for. Two things replace the editor
+   typed pattern itself is never marked: it is not text to look for. The stone counts characters
+   and a JS string counts UTF-16 units, so the matches are converted against the text they land on
+   (`matchOffsets.ts`) before the preview or the editor uses them. An empty match (`^`, `x*`) is
+   never marked, but an empty first match still places the cursor. Two things replace the editor
    just after the open, losing both: setting the document's language after it is shown (so the open
    sets it first, as the Explorer does), and the Explorer opening the method itself when it follows
    the open to a method it was not showing, under its own form of the URI. `showMatches` applies
@@ -435,10 +435,10 @@ report). The engine collects those into `OmniViewData.truncations`:
 
 - **display cap reached** → `hasMore`; more rows are one Load-more away → `N+ shown` + the Load buttons.
 - **fetch ceiling reached** → a `truncations` entry; that scope's rows are a floor and raising the cap
-  cannot reveal more _of it_ → `N+ shown` **and a visible note beside the count** naming the scope and
+  cannot reveal more *of it* → `N+ shown` **and a visible note beside the count** naming the scope and
   its limit: `⚠ Methods scan capped at 200 — narrow the search for the rest`. The Load buttons are
   **not** hidden — `updateFooter` keys them off `hasMore && !exact` alone, deliberately: they raise the
-  display cap for the whole view, which still widens any _other_ in-scope provider that has more to
+  display cap for the whole view, which still widens any *other* in-scope provider that has more to
   show; only the capped scope can't grow, and the note (not a vanished button) is what says so.
 - **neither** → `exact`; `shownCount` is the real total → `N results`.
 
@@ -512,7 +512,7 @@ that persisted itself would pay a stone round-trip for a cosmetic change.
   ⚠️ **The chip is global, so a scope that ignores it tells the user something untrue.** Every
   name-based scope takes it through `rankAndLimit`, and Methods applies it to the selector. **Source**
   applies it too, but cannot take the name-oriented meanings literally: its target is a whole method
-  body, so `Prefix` means _the match starts at a word boundary_ rather than "the body starts with the
+  body, so `Prefix` means *the match starts at a word boundary* rather than "the body starts with the
   query", and it is narrowed server-side (`searchMethodSource`) because the rows carry no source text
   to test on the client and the result cap is server-side. That boundary is a strict `\b` — NOT
   `omniMatch`'s `isWordStart`, which counts a camelCase hump and so would keep `doFooling` as a hit
@@ -529,7 +529,7 @@ that persisted itself would pay a stone round-trip for a cosmetic change.
 
   ⚠️ **A term that cannot be an identifier falls back to substring** (`effectiveScanMode`). The
   fuzzy scan advances its needle only across identifier characters and resets at anything else, so
-  `printOn:`, `at:put:` or a phrase like `no such element` would match _no method at all_ — silently,
+  `printOn:`, `at:put:` or a phrase like `no such element` would match *no method at all* — silently,
   which reads as "the text is not in the image" rather than "that mode cannot express this". Nor
   does stripping the term rescue it: the source token is broken at the colon too, so `atput` cannot
   span `at:put:`. The per-identifier reading simply does not apply, so those terms run as substring

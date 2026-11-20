@@ -184,7 +184,7 @@ import {
   GCI_PROVIDER_SELECTORS,
   METHOD_LANGUAGE,
   SMALLTALK_LANGUAGE,
-  gemstoneDocumentLanguage,
+  withGemstoneLanguage,
 } from './languageIds';
 import { provideDocumentFormattingEdits } from './formattingMiddleware';
 import { openWorkspace } from './workspace';
@@ -1239,8 +1239,9 @@ export function activate(context: vscode.ExtensionContext) {
       // gemstone-class-comment and word-wraps (see configurationDefaults); the
       // source of a compiled method gets gemstone-method, the one language
       // `contributes.breakpoints` names; everything else is plain Smalltalk
-      // source. See gemstoneDocumentLanguage for the rule and why it exists.
-      vscode.languages.setTextDocumentLanguage(doc, gemstoneDocumentLanguage(doc.uri));
+      // source. See gemstoneDocumentLanguage for the rule and why it exists. A document opened
+      // with its language already set (gemstone.openDocument, the Explorer) is left alone.
+      void withGemstoneLanguage(doc);
     }),
   );
 
