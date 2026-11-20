@@ -246,8 +246,9 @@ GsRegexLoader >> resolve: aSymbol [
 
 { #category : 'verifying' }
 GsRegexLoader >> checkInitializers [
-	"The parser's escape tables are set by class-side initializers, which topaz file-in
-	 does not run by itself; the payload runs them. \e and \w need both tables."
+	"The library's tables are set by class-side initializers, which topaz file-in does not
+	 run by itself; the payload runs them. \e and \w need the parser's, [\w] the character
+	 set predicates', and ^ after a carriage return the matcher's."
 
 	| ok detail |
 	ok := true.
@@ -255,8 +256,10 @@ GsRegexLoader >> checkInitializers [
 	[ | regex |
 	  regex := self resolve: #GsRegex.
 	  ((regex matches: (String with: Character esc) pattern: '\e')
-		and: [ regex matches: 'word' pattern: '\w+' ])
-			ifFalse: [ ok := false. detail := '\e or \w did not match' ] ]
+		and: [ (regex matches: 'word' pattern: '\w+')
+		and: [ (regex matches: 'w' pattern: '[\w]')
+		and: [ regex search: 'a', (String with: Character cr), 'b' pattern: '^b' ] ] ])
+			ifFalse: [ ok := false. detail := '\e, \w, [\w] or ^ after a line break did not match' ] ]
 		on: Error do: [:e | ok := false. detail := e messageText ].
 	self note: 'Initializers ran' ok: ok detail: detail
 ]
@@ -290,7 +293,8 @@ GsRegexLoader >> runSmoke [
 		dictionaries: System myUserProfile symbolList
 		category: 'smoke'.
 	  search := ((self resolve: #GsRegexSourceSearch)
-		pattern: 'gsRegexSmoke\w+' ignoreCase: false limit: 10) run; yourself.
+		pattern: 'gsRegexSmoke\w+' ignoreCase: false limit: 10)
+			classes: (Array with: fixture); run; yourself.
 	  found := search methods anySatisfy: [:m | m inClass == fixture ] ]
 		ensure: [ self dictionary removeKey: #GsRegexSmokeFixture ifAbsent: [nil] ].
 	found ifFalse: [ ^self error: 'the source search did not find the fixture method' ]

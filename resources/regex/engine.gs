@@ -36,7 +36,7 @@ removeallclassmethods GsRegex
 doit
 | cls |
 cls := Object subclass: 'GsRegexSourceSearch'
-  instVarNames: #('pattern' 'ignoreCase' 'limit' 'matcher' 'literal' 'wholeMethods' 'methods' 'ranges' 'skipped' 'scanned' 'truncated')
+  instVarNames: #('pattern' 'ignoreCase' 'limit' 'matcher' 'literal' 'wholeMethods' 'methods' 'ranges' 'skipped' 'failed' 'scanned' 'truncated' 'classes')
   classVars: #()
   classInstVars: #()
   poolDictionaries: #()
@@ -50,9 +50,13 @@ It matches one line at a time, unless the pattern asks for a line break (\n or \
 in which case it matches each method as a whole. The reason is the library''s
 matcher: it recurses once per character it consumes, so a pattern such as `a.*b`
 run over a long method overflows the stack (measured: methods longer than about
-1,500 characters). A line is short enough; a whole method may not be, so in that
-mode a method the matcher cannot finish is counted in #skipped instead of failing
-the search.
+1,500 characters). A line is short enough; a whole method may not be, so a method
+the matcher runs out of stack on is counted in #skipped instead of failing the
+search (a very long single line can do it in line mode too). Only a literal \n or
+\r in the pattern switches to whole methods; \s does not.
+
+Any other error while matching a method is counted in #failed, apart from #skipped,
+so a fault in the matcher is not reported as a method being too long.
 
 When every match must contain some plain text (GsRegex class>>requiredLiteralIn:),
 a method without that text is skipped with a substring test, which is about a
@@ -178,8 +182,11 @@ checkSupported: aString
 	"Signal GsRegexSyntaxError for a construct the library would misread, rather than let it.
 	 A counted repetition such as a{3} is not supported, and the library would quietly
 	 treat it as the literal text a{3}; a (?...) group is not supported either, and the
-	 library's own error for it ('nullable closure') does not say why. Inside [...] and
-	 after a backslash these characters are ordinary, as they are to the library."
+	 library's own error for it ('nullable closure') does not say why. Nor is a lazy or
+	 possessive quantifier (*? +? ??), which fails the same unhelpful way. A backslash
+	 before a letter or digit the library does not know (\1, \x, \A, \p) would quietly
+	 match that letter or digit itself, so it is refused too. Inside [...] and after a
+	 backslash these characters are ordinary, as they are to the library."
 
 	| i size |
 	aString isEmpty ifTrue: [ ^GsRegexSyntaxError new signal: 'the pattern is empty' ].
@@ -188,16 +195,33 @@ checkSupported: aString
 	[ i <= size ] whileTrue: [ | ch |
 		ch := aString at: i.
 		ch = $\
-			ifTrue: [ i := i + 2 ]
+			ifTrue: [
+				i < size ifTrue: [ self checkEscape: (aString at: i + 1) ].
+				i := i + 2 ]
 			ifFalse: [
 				ch = $[
 					ifTrue: [ i := self indexAfterSetIn: aString at: i ]
 					ifFalse: [
 						(ch = $( and: [ i < size and: [ (aString at: i + 1) = $? ] ])
 							ifTrue: [ ^GsRegexSyntaxError new signal: '(?...) groups are not supported' ].
+						(('*+?' includes: ch) and: [ i < size and: [ '*+?' includes: (aString at: i + 1) ] ])
+							ifTrue: [ ^GsRegexSyntaxError new signal: 'lazy and possessive quantifiers such as *? and +? are not supported; * + ? always match as much as they can' ].
 						(ch = ${ and: [ self isCountedRepetitionIn: aString at: i ])
 							ifTrue: [ ^GsRegexSyntaxError new signal: 'counted repetition such as {3} is not supported; write the repeated text out, or use * + ?' ].
 						i := i + 1 ] ] ]
+%
+
+category: 'checking'
+classmethod: GsRegex
+checkEscape: aCharacter
+	"Signal GsRegexSyntaxError when backslash + aCharacter is a letter or digit escape the
+	 library does not know: it would match aCharacter itself, which is never what was meant."
+
+	(aCharacter isLetter or: [ aCharacter isDigit ]) ifFalse: [ ^self ].
+	('enrftwWsSdDbB' includes: aCharacter) ifTrue: [ ^self ].
+	aCharacter isDigit
+		ifTrue: [ ^GsRegexSyntaxError new signal: '\', (String with: aCharacter), ' is not supported: there are no back-references' ].
+	^GsRegexSyntaxError new signal: '\', (String with: aCharacter), ' is not supported; the escapes are \w \W \s \S \d \D \b \B \< \> \n \r \t \f \e'
 %
 
 category: 'checking'
@@ -220,36 +244,36 @@ isCountedRepetitionIn: aString at: anIndex
 category: 'checking'
 classmethod: GsRegex
 indexAfterSetIn: aString at: anIndex
-	"The index just past the character set that opens with [ at anIndex. Follows the
-	 library's rules (GsRxParser>>characterSet): a ] right after [ or [^ is a member,
-	 and [:name:] is a named class. An unclosed set answers the index past the end."
+	"The index just past the character set that opens with [ at anIndex, read exactly as the
+	 library reads it (GsRxParser>>characterSet, inputUpTo:nestedOn:): every [ inside the set
+	 needs its own ], a backslash is not special, and a ] right after [ or [^ is a member.
+	 An unclosed set answers the index past the end."
 
-	| i size |
-	size := aString size.
-	i := anIndex + 1.
-	(i <= size and: [ (aString at: i) = $^ ]) ifTrue: [ i := i + 1 ].
-	(i <= size and: [ (aString at: i) = $] ]) ifTrue: [ i := i + 1 ].
-	[ i <= size ] whileTrue: [ | ch |
-		ch := aString at: i.
-		ch = $] ifTrue: [ ^i + 1 ].
-		(ch = $[ and: [ i < size and: [ (aString at: i + 1) = $: ] ])
-			ifTrue: [ i := self indexAfterNamedClassIn: aString at: i ]
-			ifFalse: [ i := i + 1 ] ].
-	^size + 1
+	| close |
+	close := self indexOfSetCloseIn: aString from: anIndex + 1.
+	(close <= aString size
+		and: [ close = (anIndex + 1)
+			or: [ close = (anIndex + 2) and: [ (aString at: anIndex + 1) = $^ ] ] ])
+		ifTrue: [ close := self indexOfSetCloseIn: aString from: close + 1 ].
+	^close > aString size ifTrue: [ aString size + 1 ] ifFalse: [ close + 1 ]
 %
 
 category: 'checking'
 classmethod: GsRegex
-indexAfterNamedClassIn: aString at: anIndex
-	"The index just past a [:name:] that starts at anIndex, or past its [ if it never closes."
+indexOfSetCloseIn: aString from: start
+	"The index of the ] that closes a set whose text begins at start, counting nested [ ]
+	 pairs as the library does; past the end when there is none."
 
-	| i size |
-	size := aString size.
-	i := anIndex + 2.
-	[ i < size ] whileTrue: [
-		((aString at: i) = $: and: [ (aString at: i + 1) = $] ]) ifTrue: [ ^i + 2 ].
+	| depth i |
+	depth := 0.
+	i := start.
+	[ i <= aString size ] whileTrue: [ | ch |
+		ch := aString at: i.
+		(ch = $] and: [ depth = 0 ]) ifTrue: [ ^i ].
+		ch = $[ ifTrue: [ depth := depth + 1 ].
+		ch = $] ifTrue: [ depth := depth - 1 ].
 		i := i + 1 ].
-	^anIndex + 1
+	^aString size + 1
 %
 
 category: 'analysing'
@@ -365,6 +389,7 @@ setPattern: aString ignoreCase: aBoolean limit: anInteger
 	methods := OrderedCollection new.
 	ranges := OrderedCollection new.
 	skipped := 0.
+	failed := 0.
 	scanned := 0.
 	truncated := false
 %
@@ -388,12 +413,23 @@ run
 					ranges add: found ] ] ] ]
 %
 
+category: 'initialization'
+method: GsRegexSourceSearch
+classes: aCollection
+	"Search only these classes (each with its metaclass) rather than the whole symbol list."
+
+	classes := aCollection
+%
+
 category: 'running'
 method: GsRegexSourceSearch
 behaviorsDo: aBlock
-	"Each class in the user's symbol list once, then its metaclass."
+	"Each class in the user's symbol list once (or each of #classes:, when given), then its
+	 metaclass."
 
 	| seen |
+	classes ifNotNil: [
+		^classes do: [:cls | aBlock value: cls. aBlock value: cls class ] ].
 	seen := IdentitySet new.
 	System myUserProfile symbolList do: [:dict |
 		dict valuesDo: [:v |
@@ -416,7 +452,8 @@ category: 'running'
 method: GsRegexSourceSearch
 matchesIn: aMethod
 	"Where the matches in aMethod's source are, each #(start stop) indexing the whole source, in
-	 order; nil when there are none. A method the matcher cannot finish counts as skipped."
+	 order; nil when there are none. A method the matcher runs out of stack on counts as
+	 skipped, and one it fails on for any other reason as failed."
 
 	| src found |
 	src := [ aMethod sourceString ] on: Error do: [:e | nil ].
@@ -431,8 +468,24 @@ matchesIn: aMethod
 				found size >= self maxRangesPerMethod ifFalse: [
 					self collect: line after: offset into: found ] ] ] ]
 		on: AlmostOutOfStack, Error
-		do: [:e | skipped := skipped + 1. ^nil ].
+		do: [:e |
+			(self isStackExhaustion: e)
+				ifTrue: [ skipped := skipped + 1 ]
+				ifFalse: [ failed := failed + 1 ].
+			^nil ].
 	^found isEmpty ifTrue: [ nil ] ifFalse: [ found asArray ]
+%
+
+category: 'running'
+method: GsRegexSourceSearch
+isStackExhaustion: anException
+	"True when anException means the matcher ran out of stack: AlmostOutOfStack, or the hard
+	 stack-overflow error GemStone raises if the stack is exhausted again before that
+	 notification is re-armed."
+
+	(anException isKindOf: AlmostOutOfStack) ifTrue: [ ^true ].
+	^(anException messageText ifNil: [ '' ]) asLowercase
+		includesString: 'stack'
 %
 
 category: 'running'
@@ -512,9 +565,18 @@ rangesLine
 category: 'results'
 method: GsRegexSourceSearch
 skipped
-	"How many methods the matcher could not finish (too long to match as a whole)."
+	"How many methods the matcher ran out of stack on: too long to match (as a whole, or one
+	 very long line)."
 
 	^skipped
+%
+
+category: 'results'
+method: GsRegexSourceSearch
+failed
+	"How many methods the matcher failed on for a reason other than running out of stack."
+
+	^failed
 %
 
 category: 'results'
@@ -552,7 +614,8 @@ requiredLiteral
 category: 'results'
 method: GsRegexSourceSearch
 summaryLine
-	"One tab-separated line for the client: wholeMethods (0/1), skipped, scanned, truncated (0/1)."
+	"One tab-separated line for the client: wholeMethods (0/1), skipped, scanned, truncated (0/1),
+	 failed."
 
 	| ws |
 	ws := WriteStream on: String new.
@@ -560,7 +623,8 @@ summaryLine
 		nextPutAll: (wholeMethods ifTrue: [ '1' ] ifFalse: [ '0' ]); tab;
 		print: skipped; tab;
 		print: scanned; tab;
-		nextPutAll: (truncated ifTrue: [ '1' ] ifFalse: [ '0' ]).
+		nextPutAll: (truncated ifTrue: [ '1' ] ifFalse: [ '0' ]); tab;
+		print: failed.
 	^ws contents
 %
 

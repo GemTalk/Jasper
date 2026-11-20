@@ -12,6 +12,7 @@ import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
 import { pluginStatus, readJasperVersion } from '../../serverPlugin/pluginFingerprint';
 import { toLocalGemPath, gsStringLiteral } from '../../serverPlugin/installHelpers';
 import { installRegexSupport } from '../regexInstall';
+import { refreshRegexSupportAvailable } from '../regexAvailability';
 import { REGEX_RECEIPT } from '../regexPayload';
 
 /**
@@ -32,7 +33,7 @@ describe('regex support install (integration)', () => {
       login = testContext.login;
     },
     // login() keeps the session before it, so each test's SystemUser login adds one.
-    { allowedCommits: 2, sessions: 8 },
+    { allowedCommits: 2, sessions: 9 },
   );
   const session = (): ActiveSession => testActiveSession(gci, handle);
   const exec = (code: string): string => q.executeFetchString(session(), code).trim();
@@ -62,6 +63,19 @@ describe('regex support install (integration)', () => {
     expect(result.report).toContain('SUCCESS');
     expect(result.report).not.toContain('[FAIL]');
     expect(q.checkRegexSupportAvailable(session())).toBe(true);
+  }, 180_000);
+
+  // GemStone Search's .* reads this latch; an install must turn it on without a new login.
+  it("turns the session's cached availability on once installed", async (ctx) => {
+    asSystemUser(ctx);
+    const s = session();
+    expect(refreshRegexSupportAvailable(s)).toBe(false);
+
+    const result = await installRegexSupport(s, payloadDir);
+    expect(result.success, result.report).toBe(true);
+
+    expect(refreshRegexSupportAvailable(s)).toBe(true);
+    expect(s.regexSupportAvailable).toBe(true);
   }, 180_000);
 
   it('puts every class in its own GsRegexLibrary dictionary, at the end of the symbol list', async (ctx) => {

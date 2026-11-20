@@ -108,8 +108,11 @@ GsRegex class >> checkSupported: aString [
 	"Signal GsRegexSyntaxError for a construct the library would misread, rather than let it.
 	 A counted repetition such as a{3} is not supported, and the library would quietly
 	 treat it as the literal text a{3}; a (?...) group is not supported either, and the
-	 library's own error for it ('nullable closure') does not say why. Inside [...] and
-	 after a backslash these characters are ordinary, as they are to the library."
+	 library's own error for it ('nullable closure') does not say why. Nor is a lazy or
+	 possessive quantifier (*? +? ??), which fails the same unhelpful way. A backslash
+	 before a letter or digit the library does not know (\1, \x, \A, \p) would quietly
+	 match that letter or digit itself, so it is refused too. Inside [...] and after a
+	 backslash these characters are ordinary, as they are to the library."
 
 	| i size |
 	aString isEmpty ifTrue: [ ^GsRegexSyntaxError new signal: 'the pattern is empty' ].
@@ -118,16 +121,32 @@ GsRegex class >> checkSupported: aString [
 	[ i <= size ] whileTrue: [ | ch |
 		ch := aString at: i.
 		ch = $\
-			ifTrue: [ i := i + 2 ]
+			ifTrue: [
+				i < size ifTrue: [ self checkEscape: (aString at: i + 1) ].
+				i := i + 2 ]
 			ifFalse: [
 				ch = $[
 					ifTrue: [ i := self indexAfterSetIn: aString at: i ]
 					ifFalse: [
 						(ch = $( and: [ i < size and: [ (aString at: i + 1) = $? ] ])
 							ifTrue: [ ^GsRegexSyntaxError new signal: '(?...) groups are not supported' ].
+						(('*+?' includes: ch) and: [ i < size and: [ '*+?' includes: (aString at: i + 1) ] ])
+							ifTrue: [ ^GsRegexSyntaxError new signal: 'lazy and possessive quantifiers such as *? and +? are not supported; * + ? always match as much as they can' ].
 						(ch = ${ and: [ self isCountedRepetitionIn: aString at: i ])
 							ifTrue: [ ^GsRegexSyntaxError new signal: 'counted repetition such as {3} is not supported; write the repeated text out, or use * + ?' ].
 						i := i + 1 ] ] ]
+]
+
+{ #category : 'checking' }
+GsRegex class >> checkEscape: aCharacter [
+	"Signal GsRegexSyntaxError when backslash + aCharacter is a letter or digit escape the
+	 library does not know: it would match aCharacter itself, which is never what was meant."
+
+	(aCharacter isLetter or: [ aCharacter isDigit ]) ifFalse: [ ^self ].
+	('enrftwWsSdDbB' includes: aCharacter) ifTrue: [ ^self ].
+	aCharacter isDigit
+		ifTrue: [ ^GsRegexSyntaxError new signal: '\', (String with: aCharacter), ' is not supported: there are no back-references' ].
+	^GsRegexSyntaxError new signal: '\', (String with: aCharacter), ' is not supported; the escapes are \w \W \s \S \d \D \b \B \< \> \n \r \t \f \e'
 ]
 
 { #category : 'checking' }
@@ -148,35 +167,35 @@ GsRegex class >> isCountedRepetitionIn: aString at: anIndex [
 
 { #category : 'checking' }
 GsRegex class >> indexAfterSetIn: aString at: anIndex [
-	"The index just past the character set that opens with [ at anIndex. Follows the
-	 library's rules (GsRxParser>>characterSet): a ] right after [ or [^ is a member,
-	 and [:name:] is a named class. An unclosed set answers the index past the end."
+	"The index just past the character set that opens with [ at anIndex, read exactly as the
+	 library reads it (GsRxParser>>characterSet, inputUpTo:nestedOn:): every [ inside the set
+	 needs its own ], a backslash is not special, and a ] right after [ or [^ is a member.
+	 An unclosed set answers the index past the end."
 
-	| i size |
-	size := aString size.
-	i := anIndex + 1.
-	(i <= size and: [ (aString at: i) = $^ ]) ifTrue: [ i := i + 1 ].
-	(i <= size and: [ (aString at: i) = $] ]) ifTrue: [ i := i + 1 ].
-	[ i <= size ] whileTrue: [ | ch |
-		ch := aString at: i.
-		ch = $] ifTrue: [ ^i + 1 ].
-		(ch = $[ and: [ i < size and: [ (aString at: i + 1) = $: ] ])
-			ifTrue: [ i := self indexAfterNamedClassIn: aString at: i ]
-			ifFalse: [ i := i + 1 ] ].
-	^size + 1
+	| close |
+	close := self indexOfSetCloseIn: aString from: anIndex + 1.
+	(close <= aString size
+		and: [ close = (anIndex + 1)
+			or: [ close = (anIndex + 2) and: [ (aString at: anIndex + 1) = $^ ] ] ])
+		ifTrue: [ close := self indexOfSetCloseIn: aString from: close + 1 ].
+	^close > aString size ifTrue: [ aString size + 1 ] ifFalse: [ close + 1 ]
 ]
 
 { #category : 'checking' }
-GsRegex class >> indexAfterNamedClassIn: aString at: anIndex [
-	"The index just past a [:name:] that starts at anIndex, or past its [ if it never closes."
+GsRegex class >> indexOfSetCloseIn: aString from: start [
+	"The index of the ] that closes a set whose text begins at start, counting nested [ ]
+	 pairs as the library does; past the end when there is none."
 
-	| i size |
-	size := aString size.
-	i := anIndex + 2.
-	[ i < size ] whileTrue: [
-		((aString at: i) = $: and: [ (aString at: i + 1) = $] ]) ifTrue: [ ^i + 2 ].
+	| depth i |
+	depth := 0.
+	i := start.
+	[ i <= aString size ] whileTrue: [ | ch |
+		ch := aString at: i.
+		(ch = $] and: [ depth = 0 ]) ifTrue: [ ^i ].
+		ch = $[ ifTrue: [ depth := depth + 1 ].
+		ch = $] ifTrue: [ depth := depth - 1 ].
 		i := i + 1 ].
-	^anIndex + 1
+	^aString size + 1
 ]
 
 { #category : 'analysing' }

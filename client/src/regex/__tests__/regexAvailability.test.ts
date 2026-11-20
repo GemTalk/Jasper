@@ -80,6 +80,35 @@ describe('refreshRegexSupportAvailable', () => {
     expect(refreshRegexSupportAvailable(session)).toBe(false);
     expect(session.regexSupportAvailable).toBe(false);
   });
+
+  // A busy session must not turn installed support into "not installed" and grey out .*.
+  it.each([
+    ['a failed call', () => createThrowingSession()],
+    ['an unexpected answer', () => createMockSession('maybe')],
+  ])('leaves the latch as it was after %s', (_what, make) => {
+    const session = make();
+    session.regexSupportAvailable = true;
+
+    expect(refreshRegexSupportAvailable(session)).toBe(true);
+    expect(session.regexSupportAvailable).toBe(true);
+  });
+});
+
+function createThrowingSession(): ActiveSession {
+  const gci = createMockGci('');
+  gci.executeAndFetchString.mockImplementation(() => {
+    throw new Error('GciTsNbExecute: a call is already in progress');
+  });
+  return sessionOn(gci);
+}
+
+describe('probeRegexSupport', () => {
+  it('answers true, false, or undefined when the stone could not be asked', () => {
+    expect(queries.probeRegexSupport(createMockSession('true'))).toBe(true);
+    expect(queries.probeRegexSupport(createMockSession('false'))).toBe(false);
+    expect(queries.probeRegexSupport(createMockSession('maybe'))).toBeUndefined();
+    expect(queries.probeRegexSupport(createThrowingSession())).toBeUndefined();
+  });
 });
 
 describe('pluginFeatures.regex', () => {

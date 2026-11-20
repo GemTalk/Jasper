@@ -5,10 +5,13 @@
  * release (3.6.2 and later).
  */
 import { ActiveSession } from '../sessionManager';
-import { checkRegexSupportAvailable } from '../browserQueries';
+import { probeRegexSupport } from '../browserQueries';
 
-/** Re-probe the session, cache the answer on it, and return it. */
+/** Re-probe the session, cache the answer on it, and return it. A probe that could not ask
+ *  the stone (a busy session) leaves the cached answer as it was: it must not turn an
+ *  installed support into "not installed" and grey out GemStone Search's `.*`. */
 export function refreshRegexSupportAvailable(session: ActiveSession): boolean {
-  session.regexSupportAvailable = checkRegexSupportAvailable(session);
-  return session.regexSupportAvailable;
+  const found = probeRegexSupport(session);
+  if (found !== undefined) session.regexSupportAvailable = found;
+  return session.regexSupportAvailable === true;
 }

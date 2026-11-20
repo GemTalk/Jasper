@@ -27,8 +27,8 @@ const EXPECTED: Record<string, number> = {
   GsRxMatcherTest: 172,
   GsRxParserTest: 15,
   // Jasper's.
-  GsRegexTest: 17,
-  GsRegexSourceSearchTest: 18,
+  GsRegexTest: 21,
+  GsRegexSourceSearchTest: 24,
 };
 
 describe("the regex library's test suite (integration)", () => {
