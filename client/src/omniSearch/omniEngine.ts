@@ -107,6 +107,8 @@ export interface OmniViewData {
   /** True while regex is on and the rows shown are not for the pattern in the box (it changed since
    *  the last search, or none has run). Enter then searches rather than opening a row. */
   regexPending?: boolean;
+  /** True when a regex search stopped at its limit with more methods matching, so the count is a floor. */
+  moreMatch?: boolean;
 }
 
 /** Shown while regex is on and the pattern has not been searched for yet. Regex searches run only on
@@ -384,15 +386,16 @@ export interface OmniEngine {
 }
 
 /** The footer fields a regex search's answer sets. */
-type RegexAnswerMeta = Pick<OmniViewData, 'exact' | 'notice' | 'noticeIsError'>;
+type RegexAnswerMeta = Pick<OmniViewData, 'exact' | 'notice' | 'noticeIsError' | 'moreMatch'>;
 
-/** What a regex search's answer left out, in words, or undefined when nothing was. */
+/** What a regex search found nothing of, or left out, in words; undefined when there is nothing to say. */
 export function regexOutcomeNotice(outcome: {
   results: readonly unknown[];
   skipped: number;
   truncated: boolean;
 }): string | undefined {
   const parts: string[] = [];
+  if (outcome.results.length === 0) parts.push('No methods match.');
   if (outcome.truncated)
     parts.push(
       `Showing the first ${outcome.results.length} matching methods; more match. Narrow the pattern to see them.`,
@@ -571,7 +574,11 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
         meta = { exact: false, notice: outcome.message, noticeIsError: true };
       } else {
         results = [...outcome.results].sort(compareMethodRows);
-        meta = { exact: !outcome.truncated, notice: regexOutcomeNotice(outcome) };
+        meta = {
+          exact: !outcome.truncated,
+          notice: regexOutcomeNotice(outcome),
+          moreMatch: outcome.truncated || undefined,
+        };
       }
     } catch (e: unknown) {
       meta = {
@@ -761,8 +768,16 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       return await runSearch(lastRawValue);
     },
     async toggleCase() {
+      // A regex search showing (or running) for the pattern in the box runs again under the new case;
+      // the user already asked for it. A pattern not yet searched stays waiting for Enter.
+      const term = lastRawValue.trim();
+      const searched =
+        regex &&
+        !pivot &&
+        term.length > 0 &&
+        (regexAnswer?.key === regexKey(term) || regexInFlight !== null);
       caseSensitive = !caseSensitive;
-      return await runSearch(lastRawValue);
+      return await runSearch(lastRawValue, { runRegex: searched });
     },
     async toggleRegex() {
       // Turning it off is always allowed: the support may have been uninstalled while it was on.

@@ -69,6 +69,7 @@ import {
   maybeOfferServerSupport,
   runInstallServerSupport,
   runUninstallServerSupport,
+  updateServerSupport,
 } from '../optionalSupportOffer';
 
 const AUTO_INSTALL_KEY = 'serverSupport.autoInstall';
@@ -353,6 +354,54 @@ describe('runInstallServerSupport', () => {
     expect(mocks.installRB).toHaveBeenCalledTimes(1);
     expect(mocks.installRX).toHaveBeenCalledTimes(1);
     expect(mocks.installEI).not.toHaveBeenCalled();
+  });
+});
+
+describe('updateServerSupport', () => {
+  const installed = () =>
+    baseSession({
+      enhancedInspectorAvailable: true,
+      rbSupportAvailable: true,
+      regexSupportAvailable: true,
+    });
+
+  it('replaces only the named supports, without asking', async () => {
+    await updateServerSupport(installed(), sessionManager, EXTENSION_PATH, ['regex']);
+
+    expect(mocks.installRX).toHaveBeenCalledWith(
+      expect.anything(),
+      sessionManager,
+      EXTENSION_PATH,
+      false,
+    );
+    expect(mocks.installRB).not.toHaveBeenCalled();
+    expect(mocks.installEI).not.toHaveBeenCalled();
+  });
+
+  it('says what it replaced on which stone, and why', async () => {
+    await updateServerSupport(installed(), sessionManager, EXTENSION_PATH, [
+      'refactoring',
+      'regex',
+    ]);
+
+    expect(mocks.showInformationMessage).toHaveBeenCalledWith(
+      'Updated the server support on "demo" (Refactoring engine and Regex support) to the one this ' +
+        'Jasper ships, because gemstone.serverSupport.autoInstall is "always".',
+    );
+  });
+
+  it('says nothing of an update when the install failed', async () => {
+    mocks.installRX.mockResolvedValueOnce(false);
+
+    await updateServerSupport(installed(), sessionManager, EXTENSION_PATH, ['regex']);
+
+    expect(mocks.showInformationMessage).not.toHaveBeenCalled();
+  });
+
+  it('tells GemStone Search afterwards, as an install does', async () => {
+    await updateServerSupport(installed(), sessionManager, EXTENSION_PATH, ['regex']);
+
+    expect(mocks.executeCommand).toHaveBeenCalledWith('gemstone.omniSearch.resync', 1);
   });
 });
 

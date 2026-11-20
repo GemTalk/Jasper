@@ -405,7 +405,7 @@
       // neither-flag branch used to read "200 results", the one thing we know it isn't).
       if (n === 0) text = inPivot ? 'No references' : '';
       else if (view.exact) text = n + (n === 1 ? ' result' : ' results');
-      else if (view.hasMore || capped.length) text = n + '+ shown';
+      else if (view.hasMore || capped.length || view.moreMatch) text = n + '+ shown';
       else text = n + (n === 1 ? ' result' : ' results');
       countEl.textContent = text;
       // The "+" above covers EVERY truncation (results are incomplete either way), but the note is
@@ -641,6 +641,8 @@
       setMatchMode(matchMode); // the chip is greyed out while regex is on
     }
 
+    var REGEX_SEARCHING_NOTICE = 'Searching…';
+
     function setNotice(text, isError) {
       if (!noticeEl) return;
       noticeEl.textContent = text || '';
@@ -708,6 +710,8 @@
           break;
         case 'busy':
           setBusy(!!msg.on);
+          // A search stopped without an answer (superseded or cancelled) must not leave this showing.
+          if (!msg.on && noticeEl && noticeEl.textContent === REGEX_SEARCHING_NOTICE) setNotice('');
           break;
         case 'reset':
           resetView();
@@ -1580,6 +1584,7 @@
             if (!inputEl.value.trim()) break;
             scrollResetPending = true;
             setBusy(true);
+            setNotice(REGEX_SEARCHING_NOTICE, false);
             post('submit', { value: inputEl.value });
             break;
           }
@@ -1651,6 +1656,11 @@
 
     caseEl.addEventListener('click', function () {
       scrollResetPending = true;
+      // The engine runs a regex search that was showing again under the new case.
+      if (regexOn && !regexPending && inputEl.value.trim()) {
+        setBusy(true);
+        setNotice(REGEX_SEARCHING_NOTICE, false);
+      }
       post('toggleCase');
       inputEl.focus();
     });

@@ -274,15 +274,54 @@ describe('searching with regex on', () => {
   it('searches on Enter, honouring Aa', async () => {
     const { engine, runs } = engineWith();
     await engine.toggleRegex();
+    await engine.search('Ordered\\w+');
 
-    void engine.submit('Ordered\\w+');
     await engine.toggleCase();
     void engine.submit('Ordered\\w+');
+
+    expect(runs.map((r) => [r.pattern, r.ignoreCase])).toEqual([['Ordered\\w+', false]]);
+  });
+
+  it('searches again under the new case when Aa is clicked over an answer', async () => {
+    const { engine, runs } = engineWith();
+    await engine.toggleRegex();
+    const first = engine.submit('Ordered\\w+');
+    runs[0].resolve(answer([sourceRow('A', 'a')]));
+    await first;
+
+    const again = engine.toggleCase();
+    runs[1].resolve(answer([sourceRow('B', 'b')]));
+    const view = await again;
 
     expect(runs.map((r) => [r.pattern, r.ignoreCase])).toEqual([
       ['Ordered\\w+', true],
       ['Ordered\\w+', false],
     ]);
+    expect(view?.rows.map((r) => r.label)).toEqual(['B>>b']);
+    expect(view?.regexPending).toBeUndefined();
+  });
+
+  it('replaces a search still running when Aa is clicked, rather than waiting for it', async () => {
+    const { engine, runs } = engineWith();
+    await engine.toggleRegex();
+    const first = engine.submit('(a+)+b');
+
+    void engine.toggleCase();
+
+    expect(runs[0].cancel).toHaveBeenCalled();
+    expect(await first).toBeNull();
+    expect(runs.map((r) => r.ignoreCase)).toEqual([true, false]);
+  });
+
+  it('leaves a pattern not yet searched waiting for Enter when Aa is clicked', async () => {
+    const { engine, runs } = engineWith();
+    await engine.toggleRegex();
+    await engine.search('x+');
+
+    const view = await engine.toggleCase();
+
+    expect(runs).toHaveLength(0);
+    expect(view?.regexPending).toBe(true);
   });
 
   it('shows the answer in method order, not the order the stone found it', async () => {
@@ -297,6 +336,7 @@ describe('searching with regex on', () => {
     expect(view?.regexPending).toBeUndefined();
     expect(view?.notice).toBeUndefined();
     expect(view?.exact).toBe(true);
+    expect(view?.moreMatch).toBeUndefined();
   });
 
   it('keeps the answer while the box still holds its pattern', async () => {
@@ -312,7 +352,7 @@ describe('searching with regex on', () => {
     expect(view?.rows).toHaveLength(1);
   });
 
-  it('marks the rows stale once the pattern changes, and Aa counts as a change', async () => {
+  it('marks the rows stale once the pattern changes', async () => {
     const { engine, runs } = engineWith();
     await engine.toggleRegex();
     const pending = engine.submit('x+');
@@ -321,7 +361,6 @@ describe('searching with regex on', () => {
 
     expect((await engine.search('x+y'))?.regexPending).toBe(true);
     expect((await engine.search('x+'))?.regexPending).toBeUndefined();
-    expect((await engine.toggleCase())?.regexPending).toBe(true);
   });
 
   it('stops a search still running on the stone when the pattern is edited', async () => {
@@ -396,6 +435,7 @@ describe('searching with regex on', () => {
     const view = await pending;
 
     expect(view?.exact).toBe(false);
+    expect(view?.moreMatch).toBe(true);
     expect(view?.notice).toBe(
       'Showing the first 1 matching methods; more match. Narrow the pattern to see them. ' +
         '3 methods were too long to search as a whole and were skipped.',
@@ -458,9 +498,21 @@ describe('regexOutcomeNotice', () => {
     expect(regexOutcomeNotice({ results: [1], skipped: 0, truncated: false })).toBeUndefined();
   });
 
+  it('says so when nothing matched', () => {
+    expect(regexOutcomeNotice({ results: [], skipped: 0, truncated: false })).toBe(
+      'No methods match.',
+    );
+  });
+
   it('uses the singular for one skipped method', () => {
-    expect(regexOutcomeNotice({ results: [], skipped: 1, truncated: false })).toBe(
+    expect(regexOutcomeNotice({ results: [1], skipped: 1, truncated: false })).toBe(
       '1 method was too long to search as a whole and was skipped.',
+    );
+  });
+
+  it('says nothing matched and that some methods were skipped', () => {
+    expect(regexOutcomeNotice({ results: [], skipped: 2, truncated: false })).toBe(
+      'No methods match. 2 methods were too long to search as a whole and were skipped.',
     );
   });
 });

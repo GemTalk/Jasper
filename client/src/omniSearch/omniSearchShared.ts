@@ -114,6 +114,7 @@ export function resultsMessage(
     notice: view.notice,
     noticeIsError: view.noticeIsError,
     regexPending: view.regexPending,
+    moreMatch: view.moreMatch,
     categories: tabCategoriesFrom(chrome.config.enabledCategories),
     scopeId: chrome.scopeId,
     caseSensitive: chrome.caseSensitive,

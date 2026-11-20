@@ -360,15 +360,19 @@ plugin, on a session without it. Availability is read from the session each time
 2. **On Enter, not as you type.** A pattern with no plain text to pre-filter on reads every method on
    the stone (1–3 s on a base image), and a half-typed pattern is often invalid. So typing only marks
    the rows stale (`regexPending`), and Enter in the field searches. Once the rows answer the pattern
-   in the box, Enter opens the active row as usual. `Aa` counts as a change of pattern.
-3. **One search at a time, stopped on the stone.** Editing the pattern, pressing Enter again, or
+   in the box, Enter opens the active row as usual. `Aa` over a pattern already searched (answered
+   or still running) searches again at once, since the user has already asked for that pattern;
+   over a pattern not yet searched it only changes the case Enter will use.
+3. **One search at a time, stopped on the stone.** Editing the pattern, pressing Enter again, `Aa`, or
    turning `.*` off cancels a running search through that call's own canceller (never `cancelRunOn`,
    which would stop someone else's run). The runner (`regexSearchUsing`) starts each search only after
    the one it replaced has let go of the session: the stone keeps the session until it has answered
    the soft break, and a search started at once was refused as busy by the search it had just replaced.
 4. **What the user is told.** One line above the rows (`OmniViewData.notice`): "Press Enter to
-   search.", a refused pattern's reason (as an error), a busy session, the methods skipped because
-   they were too long to match as a whole, and the 500-row cap. There is no Load more: the cap is the
+   search.", "Searching…" from Enter until the answer (set by the webview, cleared by a bare
+   `busy: false` when the search stops without one), "No methods match.", a refused pattern's
+   reason (as an error), a busy session, the methods skipped because
+   they were too long to match as a whole, and the 500-row cap, which also makes the count read `500+ shown` (`moreMatch`). There is no Load more: the cap is the
    server's, and a narrower pattern is the way to see past it.
 5. **The matches are shown, not the pattern.** The stone records where each hit's matches are (at
    most 100 per method; `GsRegexSourceSearch>>ranges`), and the result carries them

@@ -43,6 +43,7 @@ function viewData(over: Partial<OmniViewData> = {}): Required<OmniViewData> {
     notice: 'Press Enter to search.',
     noticeIsError: false,
     regexPending: true,
+    moreMatch: false,
     ...over,
   };
 }
@@ -53,6 +54,10 @@ describe('resultsMessage', () => {
     // appears in source as one token — so a pivot on `on:do:` would highlight nothing at all.
     const msg = resultsMessage(viewData({ pivot: true, pivotTarget: 'on:do:' }), chrome);
     expect(msg.pivotTarget).toBe('on:do:');
+  });
+
+  it('carries whether a regex search stopped with more matching, which the count needs', () => {
+    expect(resultsMessage(viewData({ moreMatch: true }), chrome).moreMatch).toBe(true);
   });
 
   it('carries the truncation list to the webview', () => {

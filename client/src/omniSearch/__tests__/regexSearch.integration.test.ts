@@ -84,6 +84,21 @@ cls compileMethod: 'beta', lf, '  ^#rgxPanelBeta', lf, '    at: 1', lf, '    put
     ]);
   }, 60_000);
 
+  it('searches again on the stone when Aa is clicked over an answer', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.regex, ctx, session());
+    const engine = engineOn(fixtureSession());
+    await engine.toggleRegex();
+    const label = `${FIXTURE}>>alpha`;
+
+    const ignoringCase = await engine.submit('RGXPANELALPHA');
+    const exactCase = await engine.toggleCase();
+
+    expect(ignoringCase?.rows.map((r) => r.label)).toContain(label);
+    expect(exactCase?.regexPending).toBeUndefined();
+    expect(exactCase?.rows.map((r) => r.label)).not.toContain(label);
+    expect(exactCase?.notice).toBe('No methods match.');
+  }, 60_000);
+
   it("shows the stone's reason for a pattern it cannot use", async (ctx) => {
     requireServerPluginFeature(pluginFeatures.regex, ctx, session());
     const engine = engineOn(fixtureSession());

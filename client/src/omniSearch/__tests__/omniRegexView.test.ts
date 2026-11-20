@@ -207,6 +207,27 @@ describe('Enter while regex is on', () => {
   });
 });
 
+describe('the count under the results', () => {
+  const rows = (n: number) => Array.from({ length: n }, (_, i) => row(i, `A>>m${i}`));
+  const count = () => document.getElementById('count')!.textContent;
+
+  it('says the count is a floor when the stone stopped at its limit with more matching', () => {
+    const { view } = mount({ regex: true });
+
+    results(view, { rows: rows(3), shownCount: 3, exact: false, moreMatch: true });
+
+    expect(count()).toBe('3+ shown');
+  });
+
+  it('gives the plain total when the stone found them all', () => {
+    const { view } = mount({ regex: true });
+
+    results(view, { rows: rows(3), shownCount: 3, exact: true });
+
+    expect(count()).toBe('3 results');
+  });
+});
+
 describe('the notice line', () => {
   it('shows what the engine says, plainly', () => {
     const { view } = mount({ regex: true });
@@ -226,6 +247,49 @@ describe('the notice line', () => {
     results(view, { notice: "This pattern can't be used: …", noticeIsError: true });
 
     expect(notice().classList.contains('error')).toBe(true);
+  });
+
+  it('says the search is running from Enter until the answer arrives', () => {
+    const { view } = mount({ regex: true });
+    field().value = 'x';
+
+    pressEnter();
+    expect(notice().textContent).toBe('Searching…');
+    expect(notice().style.display).toBe('block');
+
+    results(view, { notice: 'No methods match.' });
+    expect(notice().textContent).toBe('No methods match.');
+  });
+
+  it('says the search is running again when Aa is clicked over an answer', () => {
+    const { view, posted } = mount({ regex: true });
+    field().value = 'x';
+    results(view, { rows: [row(0, 'A>>a')], regexPending: false });
+
+    (document.getElementById('case') as HTMLButtonElement).click();
+
+    expect(posted.at(-1)).toEqual({ command: 'toggleCase' });
+    expect(notice().textContent).toBe('Searching…');
+  });
+
+  it('does not claim a search when Aa is clicked over a pattern waiting for Enter', () => {
+    const { view } = mount({ regex: true });
+    field().value = 'x';
+    results(view, { regexPending: true, notice: 'Press Enter to search.' });
+
+    (document.getElementById('case') as HTMLButtonElement).click();
+
+    expect(notice().textContent).toBe('Press Enter to search.');
+  });
+
+  it('drops the running line when the search stops without an answer', () => {
+    const { view } = mount({ regex: true });
+    field().value = 'x';
+    pressEnter();
+
+    view.onMessage({ data: { command: 'busy', on: false } });
+
+    expect(notice().style.display).toBe('none');
   });
 
   it('is hidden when there is nothing to say', () => {
