@@ -169,7 +169,7 @@ export const REGEX_STOP_WAIT_MS = 20_000;
  *  was refused as busy by the search it had just replaced. */
 export function regexSearchUsing(session: ActiveSession): RegexSearchRunner {
   let previous: Promise<unknown> = Promise.resolve();
-  return (pattern, ignoreCase) => {
+  return (pattern, ignoreCase, limit) => {
     let cancelled = false;
     let cancelThisCall: (() => void) | undefined;
     const prior = previous;
@@ -194,6 +194,7 @@ export function regexSearchUsing(session: ActiveSession): RegexSearchRunner {
             ),
           pattern,
           ignoreCase,
+          limit,
         );
         if (cancelled) return { kind: 'cancelled' };
         return {
@@ -549,7 +550,8 @@ export function registerOmniSearch(
     // The docked panel caches a session-bound engine that also baked in the settings live at build
     // time; drop it when any `gemstone.omniSearch` setting changes so the edit takes effect at once.
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('gemstone.omniSearch')) viewProvider.onConfigChanged();
+      if (e.affectsConfiguration('gemstone.omniSearch'))
+        viewProvider.onConfigChanged((key) => e.affectsConfiguration(`gemstone.omniSearch.${key}`));
     }),
     vscode.window.registerWebviewViewProvider(OMNI_VIEW_ID, viewProvider, {
       webviewOptions: { retainContextWhenHidden: true },

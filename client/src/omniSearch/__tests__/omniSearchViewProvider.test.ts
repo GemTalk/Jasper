@@ -3,7 +3,8 @@ vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 // The engine is expensive and session-bound; stub it so we can count how often the provider (re)builds
 // one. Each build reflects a fresh read of the live config, which is exactly what these tests assert.
-vi.mock('../omniEngine', () => ({
+vi.mock('../omniEngine', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../omniEngine')>()),
   createOmniEngine: vi.fn(() => ({
     prime: vi.fn(async () => {}),
     applyChange: vi.fn(async () => null),
@@ -76,6 +77,35 @@ describe('GemStone Search docked panel — reacting to settings changes', () => 
     provider.onConfigChanged();
 
     await vi.waitFor(() => expect(createOmniEngine).toHaveBeenCalledTimes(2));
+  });
+
+  it('builds the new engine with the toggles the old one had, except one whose setting changed', async () => {
+    const provider = new OmniSearchViewProvider(vi.fn(async () => fakeContext()));
+    const { view, on } = fakeView(true);
+    provider.resolveWebviewView(view as never);
+    await on.message({ command: 'ready' });
+    const live = {
+      scopeId: 'source',
+      scopeBeforeRegex: 'classes',
+      caseSensitive: true,
+      matchMode: 'prefix',
+      excludedFromAll: [],
+      regex: true,
+      pivot: false,
+      regexAvailable: true,
+    };
+    vi.mocked(createOmniEngine).mock.results[0].value.state = () => live;
+
+    provider.onConfigChanged((key) => key === 'caseSensitive');
+
+    await vi.waitFor(() => expect(createOmniEngine).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(createOmniEngine).mock.calls[1][0].carryOver).toEqual({
+      scopeId: 'source',
+      scopeBeforeRegex: 'classes',
+      matchMode: 'prefix',
+      excludedFromAll: [],
+      regex: true,
+    });
   });
 
   it('defers the rebuild to the next interaction when the panel is hidden', async () => {

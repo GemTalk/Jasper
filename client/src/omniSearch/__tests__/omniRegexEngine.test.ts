@@ -8,6 +8,7 @@ import { describe, it, expect, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
+  carriedEngineState,
   createOmniEngine,
   OmniEngineDeps,
   REGEX_PENDING_NOTICE,
@@ -62,6 +63,7 @@ function spyProvider(id: 'classes' | 'source') {
 interface FakeRun {
   pattern: string;
   ignoreCase: boolean;
+  limit: number;
   resolve: (o: RegexSearchOutcome) => void;
   reject: (e: unknown) => void;
   cancel: ReturnType<typeof vi.fn>;
@@ -71,7 +73,7 @@ interface FakeRun {
  *  the real runner does once the stone lets go. */
 function fakeRunner() {
   const runs: FakeRun[] = [];
-  const runner: RegexSearchRunner = (pattern, ignoreCase) => {
+  const runner: RegexSearchRunner = (pattern, ignoreCase, limit) => {
     let resolve!: (o: RegexSearchOutcome) => void;
     let reject!: (e: unknown) => void;
     const outcome = new Promise<RegexSearchOutcome>((res, rej) => {
@@ -79,7 +81,7 @@ function fakeRunner() {
       reject = rej;
     });
     const cancel = vi.fn(() => resolve({ kind: 'cancelled' }));
-    runs.push({ pattern, ignoreCase, resolve, reject, cancel });
+    runs.push({ pattern, ignoreCase, limit, resolve, reject, cancel });
     return { outcome, cancel };
   };
   return { runner, runs };
@@ -324,6 +326,15 @@ describe('searching with regex on', () => {
     expect(view?.regexPending).toBe(true);
   });
 
+  it("asks the stone for at most maxServerScan methods, the Methods tab's limit", async () => {
+    const { engine, runs } = engineWith({}, { maxServerScan: 750 });
+    await engine.toggleRegex();
+
+    void engine.submit('x');
+
+    expect(runs[0].limit).toBe(750);
+  });
+
   it('shows the answer in method order, not the order the stone found it', async () => {
     const { engine, runs } = engineWith();
     await engine.toggleRegex();
@@ -437,7 +448,7 @@ describe('searching with regex on', () => {
     expect(view?.exact).toBe(false);
     expect(view?.moreMatch).toBe(true);
     expect(view?.notice).toBe(
-      'Showing the first 1 matching methods; more match. Narrow the pattern to see them. ' +
+      'Showing the first 1 matching methods; more match. Narrow the pattern, or raise gemstone.omniSearch.maxServerScan, to see them. ' +
         '3 methods were too long to search as a whole and were skipped.',
     );
     expect(view?.noticeIsError).toBeUndefined();
@@ -537,5 +548,64 @@ describe('the gemstone.omniSearch.regex setting', () => {
       ...pkg.contributes.configuration.map((s: { properties?: object }) => s.properties ?? {}),
     );
     expect(props['gemstone.omniSearch.regex']).toMatchObject({ type: 'boolean', default: false });
+  });
+});
+
+describe('after a settings change rebuilds the engine', () => {
+  it('keeps .* on, on the Source tab, with the scope to go back to', async () => {
+    const { engine: before } = engineWith();
+    await before.setScope('classes');
+    await before.toggleRegex();
+
+    const { engine } = engineWith({ carryOver: carriedEngineState(before.state(), () => false) });
+
+    expect(engine.state()).toMatchObject({ regex: true, scopeId: 'source' });
+    await engine.toggleRegex();
+    expect(engine.state()).toMatchObject({ regex: false, scopeId: 'classes' });
+  });
+
+  it('keeps Aa and the match algorithm', async () => {
+    const { engine: before } = engineWith();
+    await before.toggleCase();
+    await before.setMatchMode('prefix');
+
+    const { engine } = engineWith({ carryOver: carriedEngineState(before.state(), () => false) });
+
+    expect(engine.state()).toMatchObject({ caseSensitive: true, matchMode: 'prefix' });
+  });
+
+  it('takes the new setting for a toggle whose own setting changed', async () => {
+    const { engine: before } = engineWith();
+    await before.toggleCase();
+    await before.toggleRegex();
+    const carry = carriedEngineState(before.state(), (k) => k === 'caseSensitive' || k === 'regex');
+
+    const { engine } = engineWith({ carryOver: carry }, { caseSensitive: false, regex: false });
+
+    expect(engine.state()).toMatchObject({ caseSensitive: false, regex: false, scopeId: null });
+  });
+
+  it('leaves .* off when the session lost regex support meanwhile', async () => {
+    const { engine: before } = engineWith();
+    await before.toggleRegex();
+
+    const { engine } = engineWith({
+      carryOver: carriedEngineState(before.state(), () => false),
+      regexAvailable: () => false,
+    });
+
+    expect(engine.state()).toMatchObject({ regex: false });
+  });
+
+  it('drops a carried scope that is no longer enabled', async () => {
+    const { engine: before } = engineWith();
+    await before.setScope('classes');
+
+    const { engine } = engineWith(
+      { carryOver: carriedEngineState(before.state(), () => false) },
+      { enabledCategories: ['methods', 'source'] },
+    );
+
+    expect(engine.state().scopeId).toBeNull();
   });
 });

@@ -15,7 +15,8 @@ import {
  * The search matches one line at a time unless the pattern contains `\n` or `\r`,
  * when it matches whole methods and counts the ones too long to match as
  * `skipped`. Rows are the same as every other method search (environment 0, like
- * the plain Source search), at most `METHOD_SEARCH_RESULT_LIMIT` of them.
+ * the plain Source search), at most `limit` of them (GemStone Search passes
+ * `gemstone.omniSearch.maxServerScan`; other callers get `METHOD_SEARCH_RESULT_LIMIT`).
  */
 /** Where a match is in a method's source: 0-based, `end` exclusive, as in a JS string. */
 export interface RegexMatchRange {
@@ -48,12 +49,16 @@ export class RegexPatternError extends Error {
 
 const ERROR_MARK = '#error\t';
 
-export function regexSourceSearchCode(pattern: string, ignoreCase: boolean): string {
+export function regexSourceSearchCode(
+  pattern: string,
+  ignoreCase: boolean,
+  limit = METHOD_SEARCH_RESULT_LIMIT,
+): string {
   // A pattern error comes back as a value, not a GemStone error, so it reaches the user
   // as "Invalid pattern: ..." and leaves the session clean. Only GsRegexError is caught:
   // a soft break (Stop) must still end a long search.
   return `| search methods stream limit classDict sl |
-search := GsRegexSourceSearch pattern: '${escapeString(pattern)}' ignoreCase: ${ignoreCase} limit: ${METHOD_SEARCH_RESULT_LIMIT}.
+search := GsRegexSourceSearch pattern: '${escapeString(pattern)}' ignoreCase: ${ignoreCase} limit: ${limit}.
 [search run] on: GsRegexError do: [:e | ^'#error', (String with: Character tab), e messageText].
 methods := search methods.
 ${methodSerialization(0)}.
@@ -105,14 +110,16 @@ export function searchMethodSourceRegex(
   execute: QueryExecutor,
   pattern: string,
   ignoreCase: boolean,
+  limit?: number,
 ): RegexSourceSearchResult {
-  return parseRegexSourceSearch(execute(regexSourceSearchCode(pattern, ignoreCase)));
+  return parseRegexSourceSearch(execute(regexSourceSearchCode(pattern, ignoreCase, limit)));
 }
 
 export async function searchMethodSourceRegexAsync(
   execute: NbQueryExecutor,
   pattern: string,
   ignoreCase: boolean,
+  limit?: number,
 ): Promise<RegexSourceSearchResult> {
-  return parseRegexSourceSearch(await execute(regexSourceSearchCode(pattern, ignoreCase)));
+  return parseRegexSourceSearch(await execute(regexSourceSearchCode(pattern, ignoreCase, limit)));
 }

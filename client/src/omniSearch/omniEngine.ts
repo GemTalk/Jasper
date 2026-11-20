@@ -173,6 +173,39 @@ export interface OmniEngineDeps {
    *  session (the install's SystemUser login) after its next commit or abort, and the check made at
    *  login, or right after an install, can come too early. */
   refreshRegexAvailable?: () => void;
+  /** The live toggles of the engine this one replaces after a settings change, so editing one setting
+   *  does not turn off `.*` or undo Aa. Each overrides the setting it started from; leave out any whose
+   *  own setting was the one changed (`carriedEngineState`). */
+  carryOver?: CarriedEngineState;
+}
+
+/** The part of an engine's live state worth keeping across a rebuild. */
+export interface CarriedEngineState {
+  scopeId?: OmniCategoryId | null;
+  scopeBeforeRegex?: OmniCategoryId | null;
+  caseSensitive?: boolean;
+  matchMode?: MatchMode;
+  excludedFromAll?: OmniCategoryId[];
+  regex?: boolean;
+}
+
+/** What to carry from `state` into the engine built after a settings change. `changed` says whether
+ *  a `gemstone.omniSearch.<key>` setting changed: a toggle whose own setting changed takes the new
+ *  setting instead (with `.*`, the scope goes with it). */
+export function carriedEngineState(
+  state: ReturnType<OmniEngine['state']>,
+  changed: (key: string) => boolean,
+): CarriedEngineState {
+  const carry: CarriedEngineState = {};
+  if (!changed('caseSensitive')) carry.caseSensitive = state.caseSensitive;
+  if (!changed('matchMode')) carry.matchMode = state.matchMode;
+  if (!changed('excludeFromAll')) carry.excludedFromAll = state.excludedFromAll;
+  if (!changed('regex')) {
+    carry.regex = state.regex;
+    carry.scopeId = state.scopeId;
+    carry.scopeBeforeRegex = state.scopeBeforeRegex;
+  }
+  return carry;
 }
 
 // "Load all" jumps the display cap here — big enough to mean "everything" in practice; the true
@@ -380,6 +413,8 @@ export interface OmniEngine {
     excludedFromAll: OmniCategoryId[];
     matchMode: MatchMode;
     regex: boolean;
+    /** The scope to go back to when `.*` is turned off. */
+    scopeBeforeRegex: OmniCategoryId | null;
     /** Whether this session can search by regex at all (the server plugin's regex support). */
     regexAvailable: boolean;
   };
@@ -398,7 +433,7 @@ export function regexOutcomeNotice(outcome: {
   if (outcome.results.length === 0) parts.push('No methods match.');
   if (outcome.truncated)
     parts.push(
-      `Showing the first ${outcome.results.length} matching methods; more match. Narrow the pattern to see them.`,
+      `Showing the first ${outcome.results.length} matching methods; more match. Narrow the pattern, or raise gemstone.omniSearch.maxServerScan, to see them.`,
     );
   if (outcome.skipped > 0)
     parts.push(
@@ -455,6 +490,23 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
   let regex = regexAvailable() && config.regex;
   let scopeBeforeRegex: OmniCategoryId | null = null;
   if (regex) scopeId = CATEGORY_BY_ID.source.id;
+  const carry = deps.carryOver;
+  if (carry) {
+    const enabled = (id: OmniCategoryId | null | undefined): id is OmniCategoryId | null =>
+      id === null || (id !== undefined && config.enabledCategories.includes(id));
+    if (carry.caseSensitive !== undefined) caseSensitive = carry.caseSensitive;
+    if (carry.matchMode !== undefined) matchMode = carry.matchMode;
+    if (carry.excludedFromAll) excludedFromAll = new Set(carry.excludedFromAll);
+    if (carry.regex !== undefined) {
+      regex = carry.regex && regexAvailable();
+      if (regex) {
+        scopeId = CATEGORY_BY_ID.source.id;
+        scopeBeforeRegex = enabled(carry.scopeBeforeRegex) ? carry.scopeBeforeRegex : null;
+      } else {
+        scopeId = enabled(carry.scopeId) ? carry.scopeId : null;
+      }
+    }
+  }
   // The last regex search: what it searched for (pattern + case), and what it answered. Kept apart
   // from `current` so returning from a pivot, or typing back to the same pattern, shows its rows again
   // without a new search.
@@ -563,7 +615,8 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     stopRegexSearch();
     const gen = ++generation;
     const key = regexKey(term);
-    const run = deps.regexSearch!(term, !caseSensitive);
+    // The same setting that caps the Methods tab's fetch from the stone.
+    const run = deps.regexSearch!(term, !caseSensitive, config.maxServerScan);
     regexInFlight = run;
     let meta: RegexAnswerMeta;
     let results: OmniResult[] = [];
@@ -881,6 +934,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       excludedFromAll: [...excludedFromAll],
       matchMode,
       regex,
+      scopeBeforeRegex,
       regexAvailable: regexAvailable(),
     }),
   };

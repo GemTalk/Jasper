@@ -247,9 +247,11 @@ export type RegexSearchOutcome =
   | { kind: 'refused'; message: string }
   | { kind: 'cancelled' };
 
-/** Starts a regex search over method source on the stone. `cancel` stops it there, not just here:
- *  a pattern can run for minutes, and the session stays busy until the stone lets go of it. */
+/** Starts a regex search over method source on the stone, keeping at most `limit` methods. `cancel`
+ *  stops it there, not just here: a pattern can run for minutes, and the session stays busy until the
+ *  stone lets go of it. */
 export type RegexSearchRunner = (
   pattern: string,
   ignoreCase: boolean,
+  limit: number,
 ) => { outcome: Promise<RegexSearchOutcome>; cancel: () => void };

@@ -281,3 +281,35 @@ describe('registerOmniSearch: keeping the search bound to the current session', 
     disposable.dispose();
   });
 });
+
+describe('registerOmniSearch: a GemStone Search setting changes', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('rebuilds the docked panel, telling it which setting changed so it keeps the other toggles', () => {
+    const onConfigChanged = vi
+      .spyOn(OmniSearchViewProvider.prototype, 'onConfigChanged')
+      .mockImplementation(() => {});
+    const sessionManager = {
+      getSessions: () => [],
+      getSelectedSession: () => undefined,
+      onDidChangeSelection: () => ({ dispose: () => {} }),
+    };
+    const disposable = registerOmniSearch(sessionManager as never);
+    const listener = vi
+      .mocked(vscode.workspace.onDidChangeConfiguration)
+      .mock.calls.at(-1)![0] as (e: { affectsConfiguration: (section: string) => boolean }) => void;
+    const changed = ['gemstone.omniSearch', 'gemstone.omniSearch.maxServerScan'];
+
+    listener({ affectsConfiguration: (s) => changed.includes(s) });
+
+    expect(onConfigChanged).toHaveBeenCalledOnce();
+    const which = onConfigChanged.mock.calls[0][0]!;
+    expect(which('maxServerScan')).toBe(true);
+    expect(which('regex')).toBe(false);
+
+    listener({ affectsConfiguration: (s) => s === 'editor.fontSize' });
+    expect(onConfigChanged).toHaveBeenCalledOnce();
+    disposable.dispose();
+    onConfigChanged.mockRestore();
+  });
+});
