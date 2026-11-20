@@ -398,7 +398,11 @@ plugin, on a session without it. Availability is read from the session each time
    (`openMethod.matches`). The preview marks them all, a match across lines as one mark. Opening the
    method selects the first and marks the rest in the editor's find-highlight colours
    (`matchHighlights.ts`); the marks clear on the first edit, which moves the text under them. The
-   typed pattern itself is never marked: it is not text to look for.
+   typed pattern itself is never marked: it is not text to look for. Two things replace the editor
+   just after the open, losing both: setting the document's language after it is shown (so the open
+   sets it first, as the Explorer does), and the Explorer opening the method itself when it follows
+   the open to a method it was not showing, under its own form of the URI. `showMatches` applies
+   them again to any new editor of the same method (`methodKey`, not the URI) for three seconds.
 
 The rows are ordinary Source rows (`methodRowsToResults`), so opening, the references pivot and the
 preview behave as they do for a plain Source search.

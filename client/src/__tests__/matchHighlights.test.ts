@@ -13,7 +13,7 @@ import { firstMatchSelection, fittingMatches, markMatches } from '../matchHighli
 /** A document over `text` whose positionAt maps offsets to line/character as VS Code does. */
 function doc(text: string, uri = 'gemstone://1/UserGlobals/Foo/instance/x/bar') {
   return {
-    uri: { toString: () => uri },
+    uri: vscode.Uri.parse(uri),
     getText: () => text,
     positionAt(offset: number) {
       const before = text.slice(0, offset);
@@ -26,7 +26,12 @@ function doc(text: string, uri = 'gemstone://1/UserGlobals/Foo/instance/x/bar') 
 function editorOn(d: vscode.TextDocument) {
   const setDecorations = vi.fn();
   return {
-    editor: { document: d, setDecorations } as unknown as vscode.TextEditor,
+    editor: {
+      document: d,
+      setDecorations,
+      selection: undefined,
+      revealRange: vi.fn(),
+    } as unknown as vscode.TextEditor,
     setDecorations,
   };
 }
@@ -129,5 +134,114 @@ describe('markMatches', () => {
 
     listener({ document: d, contentChanges: [{}] });
     expect(setDecorations).toHaveBeenCalledWith(expect.anything(), []);
+  });
+});
+
+describe('showMatches', () => {
+  /** A fresh module, so its once-per-session re-show listener is registered by this test. */
+  async function freshWithListener() {
+    vi.resetModules();
+    const fresh = await import('../matchHighlights.js');
+    const registered = vi.mocked(vscode.window.onDidChangeActiveTextEditor);
+    const before = registered.mock.calls.length;
+    return {
+      fresh,
+      reshow: (ed: vscode.TextEditor) =>
+        (registered.mock.calls[before][0] as unknown as (e: vscode.TextEditor) => void)(ed),
+    };
+  }
+  const sel = (ed: vscode.TextEditor) => {
+    const s = ed.selection as vscode.Selection | undefined;
+    return s && [s.start.line, s.start.character, s.end.line, s.end.character];
+  };
+
+  it('selects and reveals the first match, and marks them all', async () => {
+    const { fresh } = await freshWithListener();
+    const { editor, setDecorations } = editorOn(doc(SOURCE));
+
+    fresh.showMatches(editor, [{ start: AT, end: PUT_END }]);
+
+    expect(sel(editor)).toEqual([1, 8, 2, 8]);
+    expect(vi.mocked(editor.revealRange)).toHaveBeenCalled();
+    expect(setDecorations).toHaveBeenCalled();
+  });
+
+  // The GemStone Explorer, following the open to a method it was not showing, opens that method
+  // itself, and VS Code hands the document a new editor with neither.
+  it('applies them again when the document is re-shown in a new editor soon after', async () => {
+    const { fresh, reshow } = await freshWithListener();
+    const d = doc(SOURCE, 'gemstone://1/reshown');
+    fresh.showMatches(editorOn(d).editor, [{ start: AT, end: PUT_END }]);
+    const { editor: replacement, setDecorations } = editorOn(d);
+
+    reshow(replacement);
+
+    expect(sel(replacement)).toEqual([1, 8, 2, 8]);
+    expect(setDecorations).toHaveBeenCalled();
+  });
+
+  // The Explorer reopens the method under its own form of the URI, with the dictionary's position,
+  // so the replacement is a different document of the same method.
+  it('applies them again to the same method reopened under another form of its URI', async () => {
+    const { fresh, reshow } = await freshWithListener();
+    const fromSearch = 'gemstone://1/Globals/Foo/class/Cache%20Stats/bar';
+    fresh.showMatches(editorOn(doc(SOURCE, fromSearch)).editor, [{ start: 0, end: 3 }]);
+    const fromExplorer = editorOn(doc(SOURCE, `${fromSearch}?dict=2`)).editor;
+    const otherMethod = editorOn(
+      doc(SOURCE, 'gemstone://1/Globals/Foo/class/Cache%20Stats/baz'),
+    ).editor;
+
+    reshow(otherMethod);
+    reshow(fromExplorer);
+
+    expect(otherMethod.selection).toBeUndefined();
+    expect(sel(fromExplorer)).toEqual([0, 0, 0, 3]);
+  });
+
+  it('applies them to a new editor that only becomes visible, not active', async () => {
+    vi.resetModules();
+    const fresh = await import('../matchHighlights.js');
+    const visible = vi.mocked(vscode.window.onDidChangeVisibleTextEditors);
+    const before = visible.mock.calls.length;
+    const d = doc(SOURCE, 'gemstone://1/visible');
+    fresh.showMatches(editorOn(d).editor, [{ start: 0, end: 3 }]);
+    const replacement = editorOn(d).editor;
+
+    (visible.mock.calls[before][0] as unknown as (eds: vscode.TextEditor[]) => void)([replacement]);
+
+    expect(sel(replacement)).toEqual([0, 0, 0, 3]);
+  });
+
+  it('leaves another document, and a re-show after the window, alone', async () => {
+    vi.useFakeTimers();
+    try {
+      const { fresh, reshow } = await freshWithListener();
+      const d = doc(SOURCE, 'gemstone://1/late');
+      fresh.showMatches(editorOn(d).editor, [{ start: 0, end: 3 }]);
+      const other = editorOn(doc(SOURCE, 'gemstone://1/other')).editor;
+      reshow(other);
+      expect(other.selection).toBeUndefined();
+
+      vi.advanceTimersByTime(fresh.RESHOW_WINDOW_MS + 1);
+      const late = editorOn(d).editor;
+      reshow(late);
+      expect(late.selection).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('methodKey', () => {
+  const key = (u: string) => {
+    return import('../matchHighlights.js').then((m) => m.methodKey(vscode.Uri.parse(u)));
+  };
+
+  it('is the same for one method whatever form its URI takes, and differs between methods', async () => {
+    const base = 'gemstone://1/Globals/Foo/instance/accessing/bar';
+    expect(await key(`${base}?dict=2`)).toBe(await key(base));
+    expect(await key('gemstone://1/Globals/Foo/class/accessing/bar')).not.toBe(await key(base));
+    expect(await key('gemstone://1/Globals/Foo/instance/accessing/baz')).not.toBe(await key(base));
+    expect(await key('gemstone://2/Globals/Foo/instance/accessing/bar')).not.toBe(await key(base));
   });
 });
