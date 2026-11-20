@@ -40,8 +40,13 @@ describe('regex source search (integration)', () => {
     return transient;
   }
   const exec = (code: string): string => q.executeFetchString(session(), code).trim();
-  const search = (pattern: string, ignoreCase = false) =>
-    searchMethodSourceRegex((code) => q.executeFetchString(session(), code), pattern, ignoreCase);
+  const search = (pattern: string, ignoreCase = false, limit?: number) =>
+    searchMethodSourceRegex(
+      (code) => q.executeFetchString(session(), code),
+      pattern,
+      ignoreCase,
+      limit,
+    );
 
   const FIXTURE = 'JasperRegexSearchFixture';
   const compileFixture = (run: (code: string) => string) =>
@@ -112,6 +117,16 @@ cls compileMethod: 'equals', lf, '  "', ((String new: 40) atAllPut: $=; yourself
 
     expect(result.truncated).toBe(true);
     expect(result.methods.length).toBe(500);
+  }, 120_000);
+
+  it('returns every method up to a limit the caller sets above 500, not only the first 500', (ctx) => {
+    requireServerPluginFeature(pluginFeatures.regex, ctx, session());
+
+    const result = search('[a-z]+:', false, 750);
+
+    expect(result.truncated).toBe(true);
+    expect(result.methods.length).toBe(750);
+    expect(result.methods.every((m) => (m.matches?.length ?? 0) > 0)).toBe(true);
   }, 120_000);
 
   it('a soft break stops a search that would run for minutes, and the session is usable after', async (ctx) => {
