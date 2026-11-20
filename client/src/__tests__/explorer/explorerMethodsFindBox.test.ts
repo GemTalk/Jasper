@@ -5,6 +5,7 @@ import * as path from 'path';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', () => ({
   getDictionaryNames: vi.fn(() => ['UserGlobals', 'Globals']),
+  getMethodInstVarAccess: vi.fn(() => []),
 }));
 
 import * as vscode from '../../__mocks__/vscode';
