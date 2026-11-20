@@ -453,6 +453,9 @@ describe('CodeExecutor', () => {
 
       expect(lastDiagCollection().set).not.toHaveBeenCalled();
       expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining('has not finished yet'),
+      );
     });
 
     it('lets the next run start after GemStone refuses one because the session is busy', async () => {
@@ -1418,7 +1421,7 @@ describe('CodeExecutor', () => {
     );
 
     it.each(['executeIt', 'displayIt', 'inspectIt'] as const)(
-      '%s starts nothing while an Execute It waits on its error prompt, with nothing to offer to stop',
+      '%s starts nothing while an Execute It waits on its error prompt, saying so without offering Stop',
       async (command) => {
         setActiveEditor(makeEditor('3 + 4'));
         const notice = vi.fn();
@@ -1431,6 +1434,9 @@ describe('CodeExecutor', () => {
 
         expect(gci.GciTsNbExecute).toHaveBeenCalledOnce();
         expect(notice).not.toHaveBeenCalled();
+        expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+          expect.stringContaining('has not finished yet'),
+        );
         prompt.close();
         await first;
       },
@@ -2128,6 +2134,9 @@ describe('CodeExecutor', () => {
 
       await expect(run).rejects.toBeInstanceOf(NbSessionBusyError);
       expect(gci.GciTsNbExecute).toHaveBeenCalledOnce();
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining('has not finished yet'),
+      );
       prompt.close();
       await executeIt;
     });

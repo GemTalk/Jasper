@@ -42,6 +42,7 @@ afterEach(async () => {
   if (session) await stopCallsOn(session);
   session = undefined;
   setRunInProgressHandler(undefined);
+  setBreakpointRuleSource(undefined);
 });
 
 /** A session on which the long Execute It never finishes and every test passes at once. */

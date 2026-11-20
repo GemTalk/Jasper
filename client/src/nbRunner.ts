@@ -550,6 +550,11 @@ function collectLate(
   timer = setTimeout(() => tick(1), LATE_COLLECT_INTERVAL_MS);
 }
 
+/** Why a call was refused while a run nobody has stopped holds its session. */
+export const RUN_IN_PROGRESS_MESSAGE =
+  'Another run is still in progress on this session. Wait for it to finish, or stop it, ' +
+  'before starting another.';
+
 /**
  * Make sure the session has no call left on it before starting another: collect
  * a stopped call whose result is in, or throw {@link NbSessionBusyError} while
@@ -561,10 +566,7 @@ export function ensureSessionFree(session: ActiveSession): void {
   const running = live.get(session.id);
   if (running && !running.stopRequested()) {
     sayRunInProgress(session);
-    throw new NbSessionBusyError(
-      'Another run is still in progress on this session. Wait for it to finish, or stop ' +
-        'it, before starting another.',
-    );
+    throw new NbSessionBusyError(RUN_IN_PROGRESS_MESSAGE);
   }
   if (stoppedRunHolds(session)) {
     sayStillRunning(session);
@@ -579,12 +581,14 @@ export function ensureSessionFree(session: ActiveSession): void {
 
 /**
  * Tell the user what holds a session that refused a call: a stopped run still
- * finishing (Force Stop), or a run still going (Stop). Says nothing when the
- * runner knows of neither, since there is nothing to offer to stop.
+ * finishing (Force Stop), or a run still going (Stop). Says nothing, and answers
+ * false, when the runner knows of neither, since there is nothing to offer to stop.
  */
-export function sayWhatHolds(session: ActiveSession): void {
+export function sayWhatHolds(session: ActiveSession): boolean {
   if (abandonedRunHolds(session)) sayStillRunning(session);
   else if (isRunning(session)) sayRunInProgress(session);
+  else return false;
+  return true;
 }
 
 /**

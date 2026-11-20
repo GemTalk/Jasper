@@ -2222,7 +2222,7 @@ describe('saying what holds a busy session', () => {
     ).catch(() => {});
     listen();
 
-    sayWhatHolds(session);
+    expect(sayWhatHolds(session)).toBe(true);
 
     expect(offeredStop).toHaveBeenCalledWith(session);
     expect(offeredForceStop).not.toHaveBeenCalled();
@@ -2236,17 +2236,17 @@ describe('saying what holds a busy session', () => {
     await vi.advanceTimersByTimeAsync(PAST_DRAIN_BUDGET_MS);
     listen();
 
-    sayWhatHolds(session);
+    expect(sayWhatHolds(session)).toBe(true);
 
     expect(offeredForceStop).toHaveBeenCalledWith(session);
     expect(offeredStop).not.toHaveBeenCalled();
   });
 
-  it('says nothing when no run holds the session', () => {
+  it('says nothing, and answers false, when no run holds the session', () => {
     const { session } = makeSession([{ result: 0 }]);
     listen();
 
-    sayWhatHolds(session);
+    expect(sayWhatHolds(session)).toBe(false);
 
     expect(offeredStop).not.toHaveBeenCalled();
     expect(offeredForceStop).not.toHaveBeenCalled();

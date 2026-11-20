@@ -936,7 +936,7 @@ export class SunitTestController implements vscode.Disposable {
    * test — so it leaves no verdict, as a stopped run does.
    */
   private wasRefused(e: unknown): boolean {
-    // Already told: the refusal raises its own notice whenever there is a run to stop.
+    // Already told: the refusal raises its own notice.
     return e instanceof NbSessionBusyError;
   }
 
@@ -1143,9 +1143,9 @@ export class SunitTestController implements vscode.Disposable {
 
       const result = await this.debugSingleTest(session, run, child, className, selector, dictName);
       if (result === 'cancelled') {
-        // Stopped mid-debug on the user's request: leave no class verdict, the
-        // same as a stopped run. The cancelled child already reported skipped;
-        // the ones already run keep their outcome.
+        // Stopped mid-debug, or refused because the session was busy: leave no
+        // class verdict, the same as a stopped run. The child already reported
+        // skipped; the ones already run keep their outcome.
         this.deleteResult(dictName, className);
         return;
       }

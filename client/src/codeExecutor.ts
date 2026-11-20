@@ -28,6 +28,7 @@ import {
   pollNbToCompletion,
   NbCancelledError,
   NbSessionBusyError,
+  RUN_IN_PROGRESS_MESSAGE,
   sayWhatHolds,
   whenSessionFree,
 } from './nbRunner';
@@ -39,13 +40,25 @@ import {
 
 const MAX_RESULT_SIZE = 64 * 1024;
 
+const NOT_FINISHED_MESSAGE =
+  'Another run on this session has not finished yet. Try again once it has.';
+
+/**
+ * Tell the user why `session` refused a run. With no run to offer to stop (an
+ * Execute It still showing its error prompt or result, say), a plain notice and a
+ * log line: a debug run refused this way leaves the rest of its class without
+ * results, and nothing else would say why. Answers whether there was a run to stop.
+ */
+function sayBusy(session: ActiveSession): boolean {
+  if (sayWhatHolds(session)) return true;
+  logInfo(`[Session ${session.id}] Refused a run: ${NOT_FINISHED_MESSAGE}`);
+  vscode.window.showInformationMessage(NOT_FINISHED_MESSAGE);
+  return false;
+}
+
 /** The error for a run refused because `session` is busy, after saying what holds it. */
 function refusedAsBusy(session: ActiveSession): NbSessionBusyError {
-  sayWhatHolds(session);
-  return new NbSessionBusyError(
-    'Another run is still in progress on this session. Wait for it to finish, or stop it, ' +
-      'before starting another.',
-  );
+  return new NbSessionBusyError(sayBusy(session) ? RUN_IN_PROGRESS_MESSAGE : NOT_FINISHED_MESSAGE);
 }
 
 // Decoration type for Display It results.
@@ -237,7 +250,7 @@ export class CodeExecutor {
       );
       if (!success) {
         if (startErr.number === GCI_ERR_OP_IN_PROGRESS) {
-          sayWhatHolds(session);
+          sayBusy(session);
           return;
         }
         const msg = startErr.message || `error ${startErr.number}`;
@@ -767,7 +780,7 @@ export class CodeExecutor {
     try {
       await this.whenNotExecuting(session, start);
     } catch (e) {
-      // Already told: the refusal raises its own notice whenever there is a run to stop.
+      // Already told: the refusal raises its own notice.
       if (!(e instanceof NbSessionBusyError)) throw e;
     }
   }
@@ -919,7 +932,7 @@ export class CodeExecutor {
       );
       if (!success) {
         if (startErr.number === GCI_ERR_OP_IN_PROGRESS) {
-          sayWhatHolds(session);
+          sayBusy(session);
           return;
         }
         const msg = `Execution failed to start: ${startErr.message || `error ${startErr.number}`}`;
