@@ -1323,8 +1323,8 @@ export class ExplorerController {
     }, 1000);
   }
 
-  /** Drop a claim that was never consumed — the open threw, kept focus, or the
-   *  document was already active, so no editor-change fired to spend it. Without
+  /** Drop a claim that was never consumed — the open threw or kept focus, so
+   *  nothing synced the panes to spend it. Without
    *  this the claim lingers and the next genuine Testing-view click on the same
    *  URI is misread as a deliberate navigation. A no-op once syncToEditor has
    *  already consumed the claim. */
@@ -9381,9 +9381,12 @@ export interface ExplorerHandle {
   /** Claim an about-to-happen open so it navigates the panes; see
    *  ExplorerController.markAttributedOpen. */
   markAttributedOpen(uri: vscode.Uri): void;
-  /** Drop a claim whose open never fired an editor-change; see
+  /** Drop a claim no sync spent (the open threw or kept focus); see
    *  ExplorerController.clearAttributedOpen. */
   clearAttributedOpen(uri: vscode.Uri): void;
+  /** Cascade the panes to the editor at `uri`, as an editor change does; see
+   *  ExplorerController.syncToEditor. */
+  syncToEditor(uri: vscode.Uri): Promise<void>;
   /** Navigate the panes to `uri`'s class/method — the explicit Reveal action a
    *  Testing-view row offers, since a plain click deliberately does not. */
   revealDocument(uri: vscode.Uri): Promise<void>;
@@ -10336,6 +10339,7 @@ export function registerGemStoneExplorer(
     onSessionAborted: (sessionId) => ctl.onSessionAborted(sessionId),
     markAttributedOpen: (uri) => ctl.markAttributedOpen(uri),
     clearAttributedOpen: (uri) => ctl.clearAttributedOpen(uri),
+    syncToEditor: (uri) => ctl.syncToEditor(uri),
     revealDocument: (uri) => ctl.revealDocument(uri),
     openMethodHistoryForUri: (uri) => ctl.openMethodHistoryForUri(uri),
   };

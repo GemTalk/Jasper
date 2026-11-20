@@ -157,6 +157,29 @@ const claims: SelectorClaim[] = [
     meta: true,
     selector: 'gemConfigurationAt:',
   },
+
+  // lookupMethod: resolving a pasted `Class>>selector` up the superclass chain, on either side.
+  {
+    label: 'Behavior understands whichClassIncludesSelector:environmentId:',
+    className: 'Behavior',
+    selector: 'whichClassIncludesSelector:environmentId:',
+  },
+  {
+    label: 'Behavior (every class and metaclass) understands theNonMetaClass',
+    className: 'Behavior',
+    selector: 'theNonMetaClass',
+  },
+  {
+    label: 'Behavior understands categoryOfSelector:environmentId:',
+    className: 'Behavior',
+    selector: 'categoryOfSelector:environmentId:',
+  },
+  {
+    label: 'Symbol class understands _existingWithAll: (a lookup that never interns a symbol)',
+    className: 'Symbol',
+    meta: true,
+    selector: '_existingWithAll:',
+  },
 ];
 
 describe('selectors used by shared queries (integration)', () => {

@@ -76,6 +76,60 @@ describe('parseFunctionName', () => {
     expect(parseFunctionName('Dictionary>>at:ifAbsent:')?.selector).toBe('at:ifAbsent:');
   });
 
+  it('reads a debugger frame label, taking the class that defines the method', () => {
+    expect(parseFunctionName('SmallInteger (Integer)>>#factorial')).toEqual({
+      className: 'Integer',
+      isMeta: false,
+      selector: 'factorial',
+    });
+  });
+
+  it("reads a block frame as the method it is in, and Copy Frame's position is ignored", () => {
+    expect(parseFunctionName('[] in Account>>#balance  @2 line 12')).toEqual({
+      className: 'Account',
+      isMeta: false,
+      selector: 'balance',
+    });
+  });
+
+  it("reads a method's print string", () => {
+    expect(parseFunctionName('GsNMethod Account class>>new')).toEqual({
+      className: 'Account',
+      isMeta: true,
+      selector: 'new',
+    });
+  });
+
+  it("reads a breakpoint on GsNMethod's own class side", () => {
+    expect(parseFunctionName('GsNMethod class>>new')).toEqual({
+      className: 'GsNMethod',
+      isMeta: true,
+      selector: 'new',
+    });
+  });
+
+  it('reads a backslash binary selector, bare or qualified', () => {
+    expect(parseFunctionName('Number>>\\\\')).toEqual({
+      className: 'Number',
+      isMeta: false,
+      selector: '\\\\',
+    });
+    expect(parseFunctionName('\\\\')).toEqual({ isMeta: false, selector: '\\\\' });
+  });
+
+  it('reads a binary selector longer than two characters', () => {
+    expect(parseFunctionName('PPParser>>==>')).toEqual({
+      className: 'PPParser',
+      isMeta: false,
+      selector: '==>',
+    });
+    expect(parseFunctionName('PPParser>>>=>')?.selector).toBe('>=>');
+  });
+
+  it('takes the selector of a qualified name as written, leaving the lookup to judge it', () => {
+    expect(parseFunctionName('Account>>foo bar')?.selector).toBe('foo bar');
+  });
+
   it('rejects empty input', () => {
     expect(parseFunctionName('   ')).toBeNull();
   });

@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFile } from 'child_process';
 import * as vscode from 'vscode';
+import { openDocumentAndSyncExplorer, OpenDocumentOptions } from './openDocumentAndSyncExplorer';
 import {
   LanguageClient,
   LanguageClientOptions,
@@ -140,7 +141,6 @@ import { noticeDifferentServerSupport, runShowServerSupportStatus } from './serv
 import { refreshEnhancedInspectorAvailable } from './enhancedInspector/enhancedInspectorAvailability';
 import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAvailability';
 import { refreshRegexSupportAvailable } from './regex/regexAvailability';
-import { firstMatchSelection, markMatches, MatchOffsets } from './matchHighlights';
 import { refreshUndoUi } from './undo/undoUi';
 import { undoLastCommand } from './undo/undoLastCommand';
 import { FS_CHANGED_COMMAND, SEARCH_RESYNC_COMMAND } from './undo/afterUndo';
@@ -2342,41 +2342,8 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand(
       'gemstone.openDocument',
-      async (
-        uri: vscode.Uri,
-        opts?: {
-          viewColumn?: vscode.ViewColumn;
-          preserveFocus?: boolean;
-          preview?: boolean;
-          matches?: MatchOffsets[];
-        },
-      ) => {
-        // Claim the open: without this the Explorer reads an open of a test method's
-        // document as a Testing-view row click and leaves its panes where they were.
-        explorer.markAttributedOpen(uri);
-        try {
-          const doc = await vscode.workspace.openTextDocument(uri);
-          // `opts` is optional and back-compatible: existing callers pass only the uri and get the
-          // prior behavior (preview in the active group). GemStone Search's Spotter passes a column +
-          // preserveFocus so a result opens BESIDE the panel, and (when pinned) preview:false so it's
-          // a regular, persistent source editor rather than a throwaway preview tab.
-          const editor = await vscode.window.showTextDocument(doc, {
-            preview: opts?.preview ?? true,
-            viewColumn: opts?.viewColumn,
-            preserveFocus: opts?.preserveFocus,
-            // A regex search hit: its first match selected and revealed, every match marked.
-            selection: firstMatchSelection(doc, opts?.matches),
-          });
-          if (opts?.matches) markMatches(editor, opts.matches);
-        } finally {
-          // A successful, focus-taking open fires an editor-change that syncToEditor
-          // consumes, making this a no-op. But if the open threw, kept focus
-          // (preserveFocus), or the document was already active, no change fires and
-          // the claim would linger — later hijacking a genuine Testing-view click on
-          // the same method. Drop any unconsumed claim here.
-          explorer.clearAttributedOpen(uri);
-        }
-      },
+      (uri: vscode.Uri, opts?: OpenDocumentOptions) =>
+        openDocumentAndSyncExplorer(explorer, uri, opts),
     ),
 
     vscode.commands.registerCommand('gemstone.addLogin', () => {

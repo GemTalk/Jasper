@@ -1197,3 +1197,82 @@ describe('createOmniEngine — an explicit refresh vs an automatic resync', () =
     expect(refreshed!.rows.map((r) => r.label)).toEqual(['Foo']); // the search is back
   });
 });
+
+describe('createOmniEngine — a pasted method reference', () => {
+  const printString = {
+    dictName: 'Globals',
+    className: 'Object',
+    isMeta: false,
+    selector: 'printString',
+    category: 'printing',
+  };
+
+  function setup(over: Partial<OmniConfig> = {}) {
+    const runSearch = vi.fn((): SelectorSearchResult[] => []);
+    const lookup = vi.fn(() => [printString]);
+    const methods = createMethodsProvider(1, runSearch, lookup);
+    // A class row that matches anything, under a capitalised term — the case where names lead.
+    const classes = fakeProvider('classes', [classResult('ObjectPrinter', 50)]);
+    const engine = createOmniEngine({ providers: [classes, methods], config: cfg(over) });
+    return { engine, runSearch, lookup, classes };
+  }
+
+  it('puts the method first in All, above a name that would otherwise lead', async () => {
+    const { engine } = setup();
+    const view = await engine.search('Object>>printString');
+    expect(view?.rows[0].label).toBe('Object>>printString');
+    expect(view?.rows.map((r) => r.label)).toContain('ObjectPrinter');
+  });
+
+  it('still shows the method when Methods is held back from All', async () => {
+    const { engine, lookup } = setup({ excludedFromAll: ['methods'] });
+    const view = await engine.search('Object>>printString');
+    expect(lookup).toHaveBeenCalled();
+    expect(view?.rows[0].label).toBe('Object>>printString');
+  });
+
+  it('keeps Methods held back for a term that is not a reference', async () => {
+    const { engine, runSearch, lookup } = setup({ excludedFromAll: ['methods'] });
+    await engine.search('printString');
+    expect(runSearch).not.toHaveBeenCalled();
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it('shows the method when scoped to Methods', async () => {
+    const { engine } = setup();
+    await engine.setScope('methods');
+    const view = await engine.search('String class>>new');
+    expect(view?.rows).toHaveLength(1);
+  });
+
+  it('opens the method on activation', async () => {
+    const { engine } = setup();
+    const view = await engine.search('Object>>printString');
+    expect(engine.resultFor(view!.rows[0].id)?.action).toMatchObject({
+      kind: 'openMethod',
+      className: 'Object',
+      selector: 'printString',
+    });
+  });
+
+  it('treats a doit block as an ordinary term: no lookup, no error', async () => {
+    const { engine, lookup } = setup();
+    const view = await engine.search('GsNMethod [] in <nil>>><anonymous>');
+    expect(lookup).not.toHaveBeenCalled();
+    expect(view?.rows.every((r) => r.categoryId !== 'methods')).toBe(true);
+  });
+});
+
+describe('createOmniEngine — the term the current rows answer', () => {
+  it('is the last search, raw, and survives a re-run of it', async () => {
+    const engine = createOmniEngine({
+      providers: [fakeProvider('classes', [classResult('Foo')])],
+      config: cfg(),
+    });
+    expect(engine.state().term).toBe('');
+    await engine.search('Foo ');
+    expect(engine.state().term).toBe('Foo ');
+    await engine.setScope('classes');
+    expect(engine.state().term).toBe('Foo ');
+  });
+});

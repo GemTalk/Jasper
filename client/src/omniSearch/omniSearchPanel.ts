@@ -287,6 +287,7 @@ export class OmniSearchPanel {
         matchMode: st.matchMode,
         regex: st.regex,
         regexAvailable: st.regexAvailable,
+        term: st.term,
       }),
     );
   }
@@ -406,7 +407,7 @@ export class OmniSearchPanel {
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
       this.deps.onError?.(message);
-      this.panel.webview.postMessage({ command: 'error', message });
+      this.panel.webview.postMessage({ command: 'error', message, failed: m.command });
     }
   }
 

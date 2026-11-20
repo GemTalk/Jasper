@@ -48,8 +48,10 @@ class SeededSequencer extends BaseSequencer {
 // Three projects so the VS Code Testing panel discovers every tier from a single
 // config (no second config file, which the extension would also auto-detect and
 // double-count):
-//   - 'default' : the default suite (unit tests + the automatic GCI test that
-//              uses useIntegrationTest). `npm test` runs this and 'supply-chain'.
+//   - 'default' : the default suite (unit tests + the *.integration.test.ts
+//              files, which use useIntegrationTest). `npm test` runs this and
+//              'supply-chain'; `npm run test:stone` runs only its integration
+//              files.
 //   - 'supply-chain' : lintSupplyChain.test.ts, which needs no stone and behaves
 //              the same on every OS and GemStone version. health-check.yml runs
 //              it once in the Linux lint job and sets JASPER_SKIP_SUPPLY_CHAIN_TEST

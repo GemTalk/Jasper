@@ -4,7 +4,7 @@ Background for [the harness reference](../reference/integration-test-harness.md)
 
 ## The setting
 
-Integration tests run against one shared GemStone stone. Test _files_ run in parallel Vitest workers, each with its own login. CI runs the suite twice per matrix cell — bare, then with the Jasper Server Plugin installed — resetting the extent between matrix _cells_, but **not** between those two passes within a cell. Anything that survives the bare pass is still there for the plugin pass.
+Integration tests run against one shared GemStone stone. Test _files_ run in parallel Vitest workers, each with its own login. CI runs the integration tests twice per matrix cell — bare, then with the Jasper Server Plugin installed — resetting the extent between matrix _cells_, but **not** between those two passes within a cell. Anything that survives the bare pass is still there for the plugin pass.
 
 ## Why transaction-abort is the isolation mechanism, and where it's weaker than it reads
 

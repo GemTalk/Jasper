@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { OMNI_DEFAULTS } from '../omniConfig';
 // The cap Load All raises the display limit to — imported rather than hard-coded, so these tests
-// exercise the value the engine really uses on that gesture (triage #14).
+// exercise the value the engine really uses on that gesture.
 import { LOAD_ALL_LIMIT } from '../omniEngine';
-import { NEVER_CANCELLED, OmniConfig } from '../omniTypes';
+import { NEVER_CANCELLED, OmniConfig, OmniResult } from '../omniTypes';
 import { createClassesProvider } from '../providers/classesProvider';
 import { createDictionariesProvider } from '../providers/dictionariesProvider';
 import { createGlobalsProvider } from '../providers/globalsProvider';
@@ -14,6 +14,7 @@ import { createMethodsProvider, SERVER_OVERFETCH } from '../providers/methodsPro
 import { MethodSearchResult } from '../../queries/methodSearch';
 import { ClassNameEntry } from '../../queries/getAllClassNames';
 import { SelectorSearchResult } from '../../queries/searchSelectors';
+import { MethodLookupResult } from '../queries/lookupMethod';
 
 const cfg = (over: Partial<OmniConfig> = {}): OmniConfig => ({ ...OMNI_DEFAULTS, ...over });
 
@@ -422,7 +423,7 @@ describe('methodsProvider', () => {
     });
   });
 
-  // Triage #14: the clamp had no test, and the truncation it causes was invisible to the engine — so
+  // The clamp had no test, and the truncation it causes was invisible to the engine — so
   // the footer reported a cut-off slice as an exact total once "Load all" raised the display cap.
   describe('server scan ceiling (maxServerScan)', () => {
     /** One synthetic row per selector, so a test can ask for any number of matches. */
@@ -600,5 +601,126 @@ describe('methodsProvider', () => {
       void p.search('ad', cfg({ methodMinQueryLength: 3 }), NEVER_CANCELLED, report);
       expect(report).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('methodsProvider — a pasted method reference', () => {
+  const own: MethodLookupResult = {
+    dictName: 'Globals',
+    className: 'Object',
+    isMeta: false,
+    selector: 'printString',
+    category: 'printing',
+  };
+  const inherited: MethodLookupResult = {
+    ...own,
+    className: 'Collection',
+    inheritedBy: 'OrderedCollection',
+  };
+
+  it('asks to run even when Methods is held back from All, but only for a reference it can look up', () => {
+    const withLookup = createMethodsProvider(
+      3,
+      vi.fn(() => []),
+      vi.fn(() => []),
+    );
+    expect(withLookup.runsWhenHeldBack?.(' Object>>printString ')).toBe(true);
+    expect(withLookup.runsWhenHeldBack?.('printString')).toBe(false);
+    expect(
+      createMethodsProvider(
+        3,
+        vi.fn(() => []),
+      ).runsWhenHeldBack?.('Object>>printString'),
+    ).toBe(false);
+  });
+
+  it('looks the method up directly instead of scanning selectors', () => {
+    const runSearch = vi.fn(() => []);
+    const lookup = vi.fn(() => [own]);
+    const p = createMethodsProvider(3, runSearch, lookup);
+    const out = p.search('GsNMethod Object>>printString', cfg(), NEVER_CANCELLED) as OmniResult[];
+    expect(lookup).toHaveBeenCalledWith('Object', false, 'printString');
+    expect(runSearch).not.toHaveBeenCalled();
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      categoryId: 'methods',
+      label: 'Object>>printString',
+      description: 'Globals',
+      ranges: [[0, 'Object>>printString'.length]],
+      action: {
+        kind: 'openMethod',
+        sessionId: 3,
+        dictName: 'Globals',
+        className: 'Object',
+        isMeta: false,
+        category: 'printing',
+        selector: 'printString',
+        environmentId: 0,
+      },
+    });
+  });
+
+  it('labels an inherited method by the class that defines it, and says who inherits it', () => {
+    const p = createMethodsProvider(
+      1,
+      () => [],
+      () => [inherited],
+    );
+    const [row] = p.search(
+      'OrderedCollection>>printString',
+      cfg(),
+      NEVER_CANCELLED,
+    ) as OmniResult[];
+    expect(row.label).toBe('Collection>>printString');
+    expect(row.description).toBe('Globals · inherited by OrderedCollection');
+    expect(row.action).toMatchObject({ className: 'Collection' });
+  });
+
+  it('labels the class side, and passes the side to the lookup', () => {
+    const lookup = vi.fn(() => [{ ...own, className: 'String', isMeta: true, selector: 'new' }]);
+    const p = createMethodsProvider(1, () => [], lookup);
+    const [row] = p.search('String class>>new', cfg(), NEVER_CANCELLED) as OmniResult[];
+    expect(lookup).toHaveBeenCalledWith('String', true, 'new');
+    expect(row.label).toBe('String class>>new');
+    expect(row.action).toMatchObject({ isMeta: true });
+  });
+
+  it('says when the pasted text named a block inside the method', () => {
+    const p = createMethodsProvider(
+      1,
+      () => [],
+      () => [own],
+    );
+    const [row] = p.search('[] in Object>>printString', cfg(), NEVER_CANCELLED) as OmniResult[];
+    expect(row.description).toBe('Globals · contains the block');
+  });
+
+  it('is not held back by methodMinQueryLength', () => {
+    const lookup = vi.fn(() => [own]);
+    const p = createMethodsProvider(1, () => [], lookup);
+    expect(p.search('A>>b', cfg({ methodMinQueryLength: 10 }), NEVER_CANCELLED)).toHaveLength(1);
+  });
+
+  it('looks up with the exact text whatever the case toggle says', () => {
+    const lookup = vi.fn(() => []);
+    const p = createMethodsProvider(1, () => [], lookup);
+    void p.search('object>>printString', cfg({ caseSensitive: false }), NEVER_CANCELLED);
+    expect(lookup).toHaveBeenCalledWith('object', false, 'printString');
+  });
+
+  it('returns nothing, and scans nothing, when the reference names no method', () => {
+    const runSearch = vi.fn(() => []);
+    const p = createMethodsProvider(1, runSearch, () => []);
+    expect(p.search('Object>>noSuchSelector', cfg(), NEVER_CANCELLED)).toEqual([]);
+    expect(runSearch).not.toHaveBeenCalled();
+  });
+
+  it('leaves a term that is not a reference to the selector scan', () => {
+    const lookup = vi.fn(() => []);
+    const runSearch = vi.fn(() => []);
+    const p = createMethodsProvider(1, runSearch, lookup);
+    void p.search('printString', cfg(), NEVER_CANCELLED);
+    expect(lookup).not.toHaveBeenCalled();
+    expect(runSearch).toHaveBeenCalled();
   });
 });

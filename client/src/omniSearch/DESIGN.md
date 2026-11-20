@@ -119,6 +119,14 @@ prime?, search(query, cfg, token) }`. Providers in the default fan-out: **Classe
      FULL exact tier, where nothing later can displace a row. Cost on a 3.6.2 base image: ~27 ms for
      `at:`, against ~2 ms for the old early exit — and a full walk was already the price of every
      precise term, which never reached the old cutoff at all.
+     A term that names ONE method — `Object>>printString`, a pasted GsNMethod print string or a
+     debugger frame (`parseMethodReference` in `client/src/methodReference.ts`) — skips the scan and
+     `methodMinQueryLength`: `lookupMethod` asks the stone for that class's method, exact case,
+     walking up the superclass chain, so `OrderedCollection>>printString` answers the ancestor that
+     defines it ([#677](https://github.com/GemTalk/Jasper/issues/677)). The row is `exact`, so it
+     leads the list, and Methods runs for such a term even when it is held back from "All" (its
+     provider's `runsWhenHeldBack` says so): the hold-back guards against a scan on every keystroke,
+     and this is one cheap lookup.
    - **Explicit-only** categories (`OmniCategory.explicitOnly`) are **excluded from the all-scope
      fan-out** — they run only when the user scopes to them, so heavyweight work never fires on a plain
      search:
@@ -287,7 +295,7 @@ the inline style falls back to the stylesheet's `display: none` and the whole br
 | `providers/classesProvider.ts`      | classes (load-once + match)                                                      | preload   | ✅                 |
 | `providers/dictionariesProvider.ts` | dictionaries (load-once + match)                                                 | preload   | ✅                 |
 | `providers/globalsProvider.ts`      | non-class globals (load-once + match)                                            | preload   | ✅                 |
-| `providers/methodsProvider.ts`      | selector search (per-query)                                                      | per-query | ✅                 |
+| `providers/methodsProvider.ts`      | selector search (per-query); direct `Class>>selector` lookup                     | per-query | ✅                 |
 | `providers/sourceProvider.ts`       | method-source substring (explicit-only, per-query)                               | per-query | ✅                 |
 | `providers/literalsProvider.ts`     | symbol/string literal references (explicit-only)                                 | per-query | ✅                 |
 | `providers/categoriesProvider.ts`   | class-category names (explicit-only, lazy-loaded)                                | lazy      | ✅                 |
@@ -307,7 +315,8 @@ New shared query (if needed) lives under `client/src/queries/` per repo conventi
   **server-side scan** hands back. A different bound from `maxResultsPerCategory`; see
   "Two different limits bound a result set" below.
 - `debounceMs`: number (default `120`).
-- `methodMinQueryLength`: number (default `2`) — min chars before the Methods provider queries the stone.
+- `methodMinQueryLength`: number (default `2`) — min chars before the Methods provider scans the stone.
+  A pasted method reference is one lookup and skips it.
 - `referencesInPreview`: boolean (default `true`) — references as a sticky preview list vs a full-list pivot.
 
 ## The webview UIs
@@ -328,7 +337,7 @@ Behaviour decisions (Eric's review of the first webview cut):
 - **Flat, globally relevance-ranked results — no category grouping.** Typing "foo" should surface the
   closest "foo" first regardless of kind, so `buildView` ranks every result together by match score.
   Each row wears a small **category tag** (Class / Method / Global / …) so you still see what it is.
-- **Ties break by kind.** Below the prefix and first-letter-case rules, method rows (Methods / Source /
+- **Ties break by kind.** An `exact` row (a pasted method reference) leads everything. Below it and the prefix and first-letter-case rules, method rows (Methods / Source /
   Literals) order by **match score first**, then class A→Z, then instance side before class side, then
   selector; everything else orders by the matcher's shorter-then-alphabetical label order. Score leads,
   so for Methods rows — where scores differ — the class/side/selector steps only break a tie beneath
@@ -345,6 +354,10 @@ Behaviour decisions (Eric's review of the first webview cut):
   so a raised "Load all" cap never silently persists into the next search.
 - **Activation:** in the Spotter, unpinned Enter opens in the active group and dismisses it; pinned,
   Enter opens beside and Ctrl+Enter opens beside keeping the field focused. Alt+Enter → references.
+  An Enter that beats its own results (paste, then Enter — inside the debounce or the stone round
+  trip) sends the search at once and opens the top row when results for that term arrive; the host
+  echoes the term on every results message so the webview can tell. Typing again, or leaving the
+  panel, cancels it.
 
 ## Regex search
 
@@ -475,10 +488,12 @@ that persisted itself would pay a stone round-trip for a cosmetic change.
   lets the user put an ordinary category — in practice **Methods**, which queries the stone on every
   keystroke — into that same state. Scoping directly to a category always runs it, so an exclusion
   never makes a scope unreachable. That is precisely what distinguishes it from
-  `gemstone.omniSearch.categories`, which removes the provider AND the tab; conflating the two is
-  the defect #41 reports. The engine owns the set (`setExcludedFromAll` re-runs the term and resets
-  the page cap, as `setScope` does) and echoes it on every results message, so the menu can never
-  drift from what the search actually did.
+  `gemstone.omniSearch.categories`, which removes the provider AND the tab; conflating the two was
+  the original defect. The engine owns the set (`setExcludedFromAll` re-runs the term and resets
+  the page cap, as `setScope` does) and echoes it on every results message, so the menu always shows
+  the user's setting. A provider can still ask to run for a particular term while held back
+  (`OmniProvider.runsWhenHeldBack`): Methods does for a pasted method reference, which is one lookup
+  rather than the scan the hold-back exists to avoid.
 
 - **Match algorithm (the `Fuzzy`/`Substring`/`Prefix` chip, `gemstone.omniSearch.matchMode`).** The
   algorithm was settings-only, so comparing two of them meant leaving the search, editing

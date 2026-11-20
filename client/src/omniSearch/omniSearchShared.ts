@@ -93,6 +93,7 @@ export function resultsMessage(
     matchMode: MatchMode;
     regex: boolean;
     regexAvailable: boolean;
+    term: string;
   },
 ): Record<string, unknown> {
   return {
@@ -127,6 +128,8 @@ export function resultsMessage(
     matchMode: chrome.matchMode,
     regex: chrome.regex,
     regexAvailable: chrome.regexAvailable,
+    // Which search these rows answer: an Enter pressed before they arrived waits for them.
+    term: chrome.term,
     placeholder: placeholderFor(view.pivot ? null : chrome.scopeId),
   };
 }
