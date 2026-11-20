@@ -3,14 +3,14 @@ export function escapeString(s: string): string {
 }
 
 // A selector that is safe to interpolate into a doit as `#'...'`: a unary or
-// keyword selector, or one or two binary characters. `escapeString` doubles the
+// keyword selector, or a run of binary characters. `escapeString` doubles the
 // quotes in a literal but cannot make an arbitrary string a selector, so every
 // caller that builds a `#'...'` from a name it did not itself choose tests it
 // here first and refuses rather than compiling it. Shared by both inspectors'
 // queries: it is one guard against selector injection, so it gets one
 // definition — patched in two places is patched in neither.
 const VALID_SELECTOR =
-  /^[a-zA-Z_][a-zA-Z0-9_]*:?$|^([a-zA-Z_][a-zA-Z0-9_]*:)+$|^[+\-*/<>=~&|@%?,]{1,2}$/;
+  /^[a-zA-Z_][a-zA-Z0-9_]*:?$|^([a-zA-Z_][a-zA-Z0-9_]*:)+$|^[+\-*/\\<>=~&|@%?,]+$/;
 
 export function isValidSelector(selector: string): boolean {
   return VALID_SELECTOR.test(selector);

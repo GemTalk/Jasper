@@ -36,6 +36,10 @@ describe('isValidSelector', () => {
     it('accepts a selector starting with underscore', () => {
       expect(isValidSelector('_objectForOop:')).toBe(true);
     });
+
+    it.each(['\\', '\\\\', '==>', '->>', '<=>'])('accepts the binary selector %s', (selector) => {
+      expect(isValidSelector(selector)).toBe(true);
+    });
   });
 
   describe('invalid selectors', () => {
@@ -57,6 +61,11 @@ describe('isValidSelector', () => {
 
     it('rejects a selector starting with $', () => {
       expect(isValidSelector('$foo')).toBe(false);
+    });
+
+    // Every caller puts the selector inside `#'...'`; none of these may get through.
+    it.each(["=='", '= =', '==.', 'a+', '+a'])('rejects the binary-looking %s', (selector) => {
+      expect(isValidSelector(selector)).toBe(false);
     });
   });
 });

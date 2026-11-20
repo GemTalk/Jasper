@@ -352,6 +352,16 @@ describe('method source', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['\\\\', "sourceCodeAt: #'\\\\'"],
+    ['==>', "sourceCodeAt: #'==>'"],
+  ])('fetches the source of the binary selector %s', (selector, sent) => {
+    const execute = executorAnswering('the source');
+
+    expect(bi.fetchMethodSource(execute, 100n, selector, false)).toBe('the source');
+    expect(execute.mock.calls[0][0]).toContain(sent);
+  });
+
   it('asks the class side for a class-side selector', () => {
     const execute = executorAnswering('new ^super new init');
 
