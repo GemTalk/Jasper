@@ -54,6 +54,7 @@ The hand-off's "Remaining work" list, by its own numbers. Items not listed have 
 
 From the hand-off's "Open issues from this work" list.
 
-| Issue | Fix                                                                                          | PR   |
-| ----- | -------------------------------------------------------------------------------------------- | ---- |
-| #933  | Closing a debugger while another run holds the session clears its process once that run ends | #956 |
+| Issue | Fix                                                                                                                         | PR   |
+| ----- | --------------------------------------------------------------------------------------------------------------------------- | ---- |
+| #933  | Closing a debugger while another run holds the session clears its process once that run ends                                | #956 |
+| #930  | A test refused in a debug run, because an Execute It started between two tests, is skipped rather than reported as an error | #969 |

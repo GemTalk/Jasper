@@ -32,6 +32,7 @@ import {
   stopCallsOn,
   stoppedRunCleared,
   sayStillRunningUnlessItEnds,
+  sayWhatHolds,
 } from '../nbRunner';
 import { OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
 import { fakeActiveSession } from './fakeActiveSession';
@@ -2188,6 +2189,67 @@ describe('ensureSessionFree', () => {
       vi.clearAllTimers();
       vi.useRealTimers();
     }
+  });
+});
+
+describe('saying what holds a busy session', () => {
+  const offeredStop = vi.fn();
+  const offeredForceStop = vi.fn();
+
+  afterEach(() => {
+    setRunInProgressHandler(undefined);
+    setStillRunningHandler(undefined);
+    offeredStop.mockClear();
+    offeredForceStop.mockClear();
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  function listen(): void {
+    setRunInProgressHandler(offeredStop);
+    setStillRunningHandler(offeredForceStop);
+  }
+
+  it('offers to stop a run still going', () => {
+    vi.useFakeTimers();
+    const { session, gci } = makeSession([{ result: 0 }]);
+    gci.GciTsNbPoll.mockReturnValue({ result: 0, err: noErr });
+    runNbCall(
+      session,
+      () => ({ success: true, err: noErr as never }),
+      () => 'done',
+      { suppressNotification: true },
+    ).catch(() => {});
+    listen();
+
+    expect(sayWhatHolds(session)).toBe(true);
+
+    expect(offeredStop).toHaveBeenCalledWith(session);
+    expect(offeredForceStop).not.toHaveBeenCalled();
+  });
+
+  it('offers Force Stop for a stopped run still finishing', async () => {
+    vi.useFakeTimers();
+    const { session, gci } = makeSession([{ result: 0 }]);
+    gci.GciTsNbPoll.mockReturnValue({ result: 0, err: noErr });
+    await stopRun(session);
+    await vi.advanceTimersByTimeAsync(PAST_DRAIN_BUDGET_MS);
+    listen();
+
+    expect(sayWhatHolds(session)).toBe(true);
+
+    expect(offeredForceStop).toHaveBeenCalledWith(session);
+    expect(offeredStop).not.toHaveBeenCalled();
+  });
+
+  it('says nothing, and answers false, when no run holds the session', () => {
+    const { session } = makeSession([{ result: 0 }]);
+    listen();
+
+    expect(sayWhatHolds(session)).toBe(false);
+
+    expect(offeredStop).not.toHaveBeenCalled();
+    expect(offeredForceStop).not.toHaveBeenCalled();
   });
 });
 
