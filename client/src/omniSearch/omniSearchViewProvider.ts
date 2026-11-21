@@ -335,6 +335,9 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
       }
       await engine.toggleRegex();
     }
+    // While a list is up (a reference pivot, or one shown by showMethodList), Enter filters that list
+    // by the box instead of searching, so a pattern submitted now would quietly match nothing.
+    await engine.exitPivot();
     const view = await engine.submit(pattern);
     if (!view) return { error: 'The search was replaced by a newer one before it finished.' };
     this.showOnBehalf(view, pattern);
@@ -357,8 +360,11 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     const results = methods.flatMap((m) =>
       methodRowsToResults([m], sessionId, 'methods', m.environmentId),
     );
+    // Empty the box, and the search behind the list with it, so neither the box nor Esc back out
+    // of the list shows a term these results have nothing to do with.
+    await this.engine!.search('');
     const view = this.engine!.showList({ title, results });
-    this.showOnBehalf(view);
+    this.showOnBehalf(view, '');
     return { shownCount: view.shownCount };
   }
 
