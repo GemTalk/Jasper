@@ -20,6 +20,8 @@ import { VIEW_REFRESH_CODE } from './queries/transactionMode';
 import { commitTransaction } from './queries/commitTransaction';
 import type { MethodSearchResult } from './queries/methodSearch';
 import { methodsFromCode } from './assistant/queries/methodsFromCode';
+import { classesFromCode } from './assistant/queries/classesFromCode';
+import type { ClassNameEntry } from './queries/getAllClassNames';
 
 /**
  * What a tool needs to change what Jasper shows. Each answers a sentence for the model. Optional
@@ -33,6 +35,7 @@ export interface McpUiHooks {
     methods: MethodSearchResult[],
     highlight?: string[],
   ): Promise<string>;
+  showClassList(title: string, classes: ClassNameEntry[]): Promise<string>;
 }
 
 // AI-executed code writes to the Transcript too: the sink buffers those writes
@@ -841,6 +844,34 @@ export function registerMcpTools(
     };
 
   if (ui) {
+    server.tool(
+      'show_classes_in_search',
+      "Show a set of classes in Jasper's GemStone Search pane, as a titled list the user can open. " +
+        'Use this whenever the answer is more than a few classes (classes that implement a ' +
+        'selector, that reference something, that look like they do some job): ' +
+        GUI_RESULT_GUIDANCE +
+        ' `code` is Smalltalk run on the stone as the body of a block: it may declare temporaries, ' +
+        'must not use ^, and its last expression must be a collection of classes (a metaclass ' +
+        'counts as its class). At most 5000 are shown.',
+      {
+        title: z.string().min(1).describe('What the list is, e.g. "Classes that implement size"'),
+        code: z
+          .string()
+          .min(1)
+          .describe('Smalltalk whose last expression is a collection of classes'),
+      },
+      async (args) =>
+        await uiTool(async () => {
+          const session = getSession();
+          if (!session) throw new Error('No active GemStone session. Ask the user to log in.');
+          const classes = classesFromCode((code) => executeString(session, code), args.code);
+          if (classes.length === 0) {
+            return 'The code answered no classes that a dictionary holds, so nothing was shown.';
+          }
+          return await ui.showClassList(args.title, classes);
+        })(),
+    );
+
     server.tool(
       'show_methods_in_search',
       "Show a set of methods in Jasper's GemStone Search pane, as a titled list the user can open. " +

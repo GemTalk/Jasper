@@ -5,7 +5,11 @@
 (function () {
   const TOOL_PREFIX = 'mcp__jasper__';
   // Tools whose result is shown in a Jasper view rather than in the chat.
-  const GUI_TOOLS = new Set(['show_regex_source_search', 'show_methods_in_search']);
+  const GUI_TOOLS = new Set([
+    'show_regex_source_search',
+    'show_methods_in_search',
+    'show_classes_in_search',
+  ]);
 
   function escapeHtml(s) {
     return String(s).replace(

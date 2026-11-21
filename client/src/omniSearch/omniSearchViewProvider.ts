@@ -38,6 +38,8 @@ import { OmniPanelDeps } from './omniSearchPanel';
 import { revealTestForResult } from './omniActions';
 import { methodRowsToResults } from './references';
 import type { MethodSearchResult } from '../queries/methodSearch';
+import type { ClassNameEntry } from '../queries/getAllClassNames';
+import type { OmniResult } from './omniTypes';
 import {
   CommonInbound,
   configMessage,
@@ -352,20 +354,51 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     methods: readonly MethodSearchResult[],
     highlight?: readonly string[],
   ): Promise<{ shownCount: number } | { error: string }> {
+    // Space-separated: no selector or global name contains one (see pivotSendRanges in the webview).
+    const target = highlight?.length ? highlight.join(' ') : undefined;
+    return await this.showListOnBehalf(title, target, (sessionId) =>
+      methods.flatMap((m) => methodRowsToResults([m], sessionId, 'methods', m.environmentId)),
+    );
+  }
+
+  /** Show a list of classes someone else found, as showMethodList does methods. Each row opens its
+   *  class, as a Classes result does. */
+  async showClassList(
+    title: string,
+    classes: readonly ClassNameEntry[],
+  ): Promise<{ shownCount: number } | { error: string }> {
+    return await this.showListOnBehalf(title, undefined, (sessionId) =>
+      classes.map((c) => ({
+        categoryId: 'classes',
+        label: c.className,
+        description: c.dictName,
+        score: 0,
+        ranges: [],
+        action: {
+          kind: 'openClass',
+          sessionId,
+          dictName: c.dictName,
+          className: c.className,
+          dictIndex: c.dictIndex,
+        },
+      })),
+    );
+  }
+
+  private async showListOnBehalf(
+    title: string,
+    target: string | undefined,
+    toResults: (sessionId: number) => OmniResult[],
+  ): Promise<{ shownCount: number } | { error: string }> {
     await this.focus();
     await this.growTo(ASSISTANT_RESULTS_MIN_HEIGHT);
     if (!(await this.ensureEngine()) || this.builtForSession === undefined) {
       return { error: NO_SESSION_MESSAGE };
     }
-    const sessionId = this.builtForSession;
-    const results = methods.flatMap((m) =>
-      methodRowsToResults([m], sessionId, 'methods', m.environmentId),
-    );
+    const results = toResults(this.builtForSession);
     // Empty the box, and the search behind the list with it, so neither the box nor Esc back out
     // of the list shows a term these results have nothing to do with.
     await this.engine!.search('');
-    // Space-separated: no selector or global name contains one (see pivotSendRanges in the webview).
-    const target = highlight?.length ? highlight.join(' ') : undefined;
     const view = this.engine!.showList({ title, target, results });
     this.showOnBehalf(view, '');
     return { shownCount: view.shownCount };

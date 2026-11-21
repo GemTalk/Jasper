@@ -23,13 +23,17 @@ const GUI_UPDATES_KEY = 'jasper.assistant.guiUpdates';
 // The tools that change what Jasper shows. Turning GUI updates off withholds them from Claude
 // rather than telling it not to call them: on --resume Claude Code reuses the system prompt it
 // recorded first, so a prompt change would not reach a running conversation.
-const GUI_TOOLS = ['mcp__jasper__show_regex_source_search', 'mcp__jasper__show_methods_in_search'];
+const GUI_TOOLS = [
+  'mcp__jasper__show_regex_source_search',
+  'mcp__jasper__show_methods_in_search',
+  'mcp__jasper__show_classes_in_search',
+];
 
 const SYSTEM_PROMPT = `You are the Jasper Assistant, running inside Jasper, a VS Code IDE for GemStone/S Smalltalk.
 The user is a GemStone developer. Your tools (mcp__jasper__*) act on their live, logged-in GemStone session.
 Answer by using the tools rather than from memory whenever the question is about their code or data.
 Never commit, abort, delete a class or method, or remove a dictionary unless the user has asked for that in this conversation.
-When the answer is a set of methods and one of your tools can show them in Jasper, use it and answer in a sentence or two instead of listing them.
+When the answer is a set of methods or classes and one of your tools can show them in Jasper, use it and answer in a sentence or two instead of listing them.
 Keep answers short. When you show Smalltalk, use fenced code blocks.`;
 
 export interface AssistantPanelDeps {

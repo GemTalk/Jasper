@@ -284,6 +284,7 @@ import { openMcpInspector } from './openMcpInspector';
 import { McpSocketServer, proxyScriptPath, writeClaudeDesktopMcpConfig } from './mcpSocketServer';
 import { AssistantPanel } from './assistant/assistantPanel';
 import { METHODS_FROM_CODE_LIMIT } from './assistant/queries/methodsFromCode';
+import { CLASSES_FROM_CODE_LIMIT } from './assistant/queries/classesFromCode';
 import type { McpUiHooks } from './mcpTools';
 import { writeClaudeCodeUserMcpConfig } from './claudeCodeUserMcpConfig';
 import { buildRefreshPromptDeps, promptClaudeCodeRefresh } from './claudeCodeRefreshPrompt';
@@ -3724,6 +3725,12 @@ export function activate(context: vscode.ExtensionContext) {
           `Showing ${count} matching methods in the GemStone Search pane.` +
           (outcome.notice ? ` ${outcome.notice}` : '')
         );
+      },
+      showClassList: async (title, classes) => {
+        const outcome = await omniSearch.showClassList(title, classes);
+        if ('error' in outcome) throw new Error(outcome.error);
+        const capped = classes.length >= CLASSES_FROM_CODE_LIMIT ? ' (the most it shows)' : '';
+        return `Showing ${outcome.shownCount} classes${capped} in the GemStone Search pane, titled "${title}".`;
       },
       showMethodList: async (title, methods, highlight) => {
         const outcome = await omniSearch.showMethodList(title, methods, highlight);
