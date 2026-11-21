@@ -28,7 +28,11 @@ import { methodsFromCode } from './assistant/queries/methodsFromCode';
  */
 export interface McpUiHooks {
   showRegexSearch(pattern: string): Promise<string>;
-  showMethodList(title: string, methods: MethodSearchResult[]): Promise<string>;
+  showMethodList(
+    title: string,
+    methods: MethodSearchResult[],
+    highlight?: string[],
+  ): Promise<string>;
 }
 
 // AI-executed code writes to the Transcript too: the sink buffers those writes
@@ -845,7 +849,9 @@ export function registerMcpTools(
         GUI_RESULT_GUIDANCE +
         ' `code` is Smalltalk run on the stone as the body of a block: it may declare temporaries, ' +
         'must not use ^, and its last expression must be a collection of methods (GsNMethod), e.g. ' +
-        'from compiledMethodAt:. At most 5000 are shown.',
+        'from compiledMethodAt:. At most 5000 are shown. When the methods were chosen for sending ' +
+        'or naming something, pass those selectors or names as `highlight` so each is marked in ' +
+        'the source.',
       {
         title: z
           .string()
@@ -855,6 +861,10 @@ export function registerMcpTools(
           .string()
           .min(1)
           .describe('Smalltalk whose last expression is a collection of methods'),
+        highlight: z
+          .array(z.string().min(1))
+          .optional()
+          .describe('Selectors or global names to mark in each method, e.g. ["size", "add:"]'),
       },
       async (args) =>
         await uiTool(async () => {
@@ -864,7 +874,7 @@ export function registerMcpTools(
           if (methods.length === 0) {
             return 'The code answered no methods that a dictionary holds, so nothing was shown.';
           }
-          return await ui.showMethodList(args.title, methods);
+          return await ui.showMethodList(args.title, methods, args.highlight);
         })(),
     );
 

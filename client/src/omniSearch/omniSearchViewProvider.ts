@@ -346,10 +346,11 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
   }
 
   /** Show a list of methods someone else found (the MCP tool the Jasper Assistant uses), under
-   *  `title`, as a reference pivot is shown. */
+   *  `title`, as a reference pivot is shown. The preview marks sends of each `highlight` selector. */
   async showMethodList(
     title: string,
     methods: readonly MethodSearchResult[],
+    highlight?: readonly string[],
   ): Promise<{ shownCount: number } | { error: string }> {
     await this.focus();
     await this.growTo(ASSISTANT_RESULTS_MIN_HEIGHT);
@@ -363,7 +364,9 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     // Empty the box, and the search behind the list with it, so neither the box nor Esc back out
     // of the list shows a term these results have nothing to do with.
     await this.engine!.search('');
-    const view = this.engine!.showList({ title, results });
+    // Space-separated: no selector or global name contains one (see pivotSendRanges in the webview).
+    const target = highlight?.length ? highlight.join(' ') : undefined;
+    const view = this.engine!.showList({ title, target, results });
     this.showOnBehalf(view, '');
     return { shownCount: view.shownCount };
   }

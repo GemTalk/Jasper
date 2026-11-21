@@ -610,7 +610,8 @@ export function registerOmniSearch(
     // empty, and the entry drops out — no full corpus re-enumeration for a delete.
     notifyClassRemoved: (sessionId, className) => foldClassChange(sessionId, className),
     showRegexSearch: (pattern) => viewProvider.showRegexSearch(pattern),
-    showMethodList: (title, methods) => viewProvider.showMethodList(title, methods),
+    showMethodList: (title, methods, highlight) =>
+      viewProvider.showMethodList(title, methods, highlight),
     notifySessionSynced: (sessionId) => {
       void viewProvider.onSessionSynced(sessionId);
       OmniSearchPanel.onSessionSynced(sessionId);

@@ -3725,8 +3725,8 @@ export function activate(context: vscode.ExtensionContext) {
           (outcome.notice ? ` ${outcome.notice}` : '')
         );
       },
-      showMethodList: async (title, methods) => {
-        const outcome = await omniSearch.showMethodList(title, methods);
+      showMethodList: async (title, methods, highlight) => {
+        const outcome = await omniSearch.showMethodList(title, methods, highlight);
         if ('error' in outcome) throw new Error(outcome.error);
         const capped = methods.length >= METHODS_FROM_CODE_LIMIT ? ' (the most it shows)' : '';
         return `Showing ${outcome.shownCount} methods${capped} in the GemStone Search pane, titled "${title}".`;

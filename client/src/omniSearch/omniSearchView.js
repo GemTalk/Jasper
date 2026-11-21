@@ -1044,6 +1044,22 @@
      * matches neither `at:` nor `put:` on its own, while `[...] on: Error do: [...]` is `on:do:` even
      * though its parts sit on different lines.
      */
+    // A pivot's target can name several selectors, space-separated (a list the Jasper Assistant
+    // showed, e.g. methods sending both size and add:). Null when none of them is a selector.
+    function pivotSendRanges(src) {
+      var all = null;
+      var terms = pivotHighlightTerm.split(' ');
+      for (var k = 0; k < terms.length; k++) {
+        var found = terms[k] ? sendRanges(src, terms[k]) : null;
+        if (found) all = (all || []).concat(found);
+      }
+      if (all)
+        all.sort(function (a, b) {
+          return a.start - b.start;
+        });
+      return all;
+    }
+
     function sendRanges(src, term) {
       var kind = termKind(term);
       if (!kind) return null;
@@ -1359,7 +1375,7 @@
       // (`on:do:`), which no source ever spells that way. So while pivoted the pane marks the send,
       // exactly as an expanded row does in the sticky-list mode (see sendRanges).
       var firstHit;
-      var pivotRanges = pivotHighlightTerm ? sendRanges(source, pivotHighlightTerm) : null;
+      var pivotRanges = pivotHighlightTerm ? pivotSendRanges(source) : null;
       if (pivotRanges) firstHit = highlightRanges(pre, source, pivotRanges);
       else if (Array.isArray(matches) && matches.length)
         firstHit = highlightRanges(pre, source, markableRanges(matches, source.length));
