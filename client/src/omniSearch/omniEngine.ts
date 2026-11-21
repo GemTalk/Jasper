@@ -404,6 +404,9 @@ export interface OmniEngine {
   pivot(rowId: number): Promise<OmniViewData | null>;
   /** Leave the reference view and restore the prior search. */
   exitPivot(): Promise<OmniViewData | null>;
+  /** Show a list someone else assembled (the Jasper Assistant) the way a reference pivot is shown:
+   *  under its title, filtered by typing, Esc back to the search. */
+  showList(view: ReferenceView): OmniViewData;
   /** Replace the set of categories held back from the "All" fan-out; re-runs the current term.
    *  `explicitOnly` ids are ignored (they are never in "All" anyway). */
   setExcludedFromAll(ids: readonly OmniCategoryId[]): Promise<OmniViewData | null>;
@@ -930,6 +933,14 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       if (!view) return null; // not referenceable — leave the current list as-is
       pivot = view;
       pivotSource = result;
+      pivotFilter = '';
+      current = view.results;
+      return pivotView();
+    },
+    showList(view) {
+      ++generation; // an in-flight search must not land over this list
+      pivot = view;
+      pivotSource = null; // nothing to re-ask on refresh, which therefore leaves the list
       pivotFilter = '';
       current = view.results;
       return pivotView();

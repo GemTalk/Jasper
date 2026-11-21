@@ -475,6 +475,10 @@ export interface OmniSearchRegistration extends vscode.Disposable {
    *  cached corpus. No `dictName` — the class is gone, so there is no dictionary left to name. */
   notifyClassRemoved(sessionId: number, className: string): void;
   notifySessionSynced(sessionId: number): void;
+  /** Run a regex source search in the docked view; see OmniSearchViewProvider.showRegexSearch. */
+  showRegexSearch: OmniSearchViewProvider['showRegexSearch'];
+  /** Show a list of methods in the docked view; see OmniSearchViewProvider.showMethodList. */
+  showMethodList: OmniSearchViewProvider['showMethodList'];
 }
 
 export function registerOmniSearch(
@@ -605,6 +609,8 @@ export function registerOmniSearch(
     // A removal reuses the compile fold: the provider re-looks-up the name, the lookup comes back
     // empty, and the entry drops out — no full corpus re-enumeration for a delete.
     notifyClassRemoved: (sessionId, className) => foldClassChange(sessionId, className),
+    showRegexSearch: (pattern) => viewProvider.showRegexSearch(pattern),
+    showMethodList: (title, methods) => viewProvider.showMethodList(title, methods),
     notifySessionSynced: (sessionId) => {
       void viewProvider.onSessionSynced(sessionId);
       OmniSearchPanel.onSessionSynced(sessionId);

@@ -8,7 +8,7 @@ import * as path from 'path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ActiveSession } from './sessionManager';
-import { registerMcpTools } from './mcpTools';
+import { McpUiHooks, registerMcpTools } from './mcpTools';
 import { appendSysadmin } from './sysadminChannel';
 import {
   NO_WORKSPACE_RECORDED,
@@ -63,6 +63,8 @@ export interface McpSocketServerOptions {
    *  context keys are not left describing the session as it was before Claude
    *  committed or aborted it. */
   onTransactionStateMayHaveMoved?: (sessionId: number) => void;
+  /** Backs the tools that show results in Jasper's views; see registerMcpTools. */
+  ui?: McpUiHooks;
   /**
    * Override the socket path. Production code should let this default to
    * {@link defaultSocketPath}; tests use it to avoid the shared global path.
@@ -238,6 +240,7 @@ export class McpSocketServer {
       mcpServer,
       this.options.getSession,
       this.options.onTransactionStateMayHaveMoved,
+      this.options.ui,
     );
 
     const transport = new StdioServerTransport(socket, socket);

@@ -91,6 +91,7 @@ client/src/**
 !client/src/methodListView.js
 !client/src/configuration/configurationView.js
 !client/src/manager/databasesView.js
+!client/src/assistant/assistantView.js
 
 # The Databases & Versions panel draws its glyphs with the codicon webfont, so the
 # font and its stylesheet have to survive the node_modules exclusion above.

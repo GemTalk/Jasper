@@ -796,6 +796,11 @@
           inputEl.focus();
           inputEl.select();
           break;
+        case 'setInput':
+          // A search run from outside the view (the Jasper Assistant); the results follow.
+          inputEl.value = msg.value || '';
+          updateClearVisibility();
+          break;
       }
     }
 
@@ -1843,6 +1848,12 @@
     });
 
     post('ready');
+    // The host grows the panel to fit results it shows on another's behalf (the Jasper Assistant),
+    // and can only tell how tall the pane is from here.
+    post('viewHeight', { px: doc.defaultView.innerHeight });
+    doc.defaultView.addEventListener('resize', function () {
+      post('viewHeight', { px: doc.defaultView.innerHeight });
+    });
     inputEl.focus();
 
     return {

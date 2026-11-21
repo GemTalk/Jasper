@@ -281,7 +281,10 @@ import { hasFileControlPrivilege, serverBackupFilePaths } from './queries/backup
 import { backupFolderInServer } from './queries/extentBackup';
 import { ProcessManager } from './manager/processManager';
 import { openMcpInspector } from './openMcpInspector';
-import { McpSocketServer, writeClaudeDesktopMcpConfig } from './mcpSocketServer';
+import { McpSocketServer, proxyScriptPath, writeClaudeDesktopMcpConfig } from './mcpSocketServer';
+import { AssistantPanel } from './assistant/assistantPanel';
+import { METHODS_FROM_CODE_LIMIT } from './assistant/queries/methodsFromCode';
+import type { McpUiHooks } from './mcpTools';
 import { writeClaudeCodeUserMcpConfig } from './claudeCodeUserMcpConfig';
 import { buildRefreshPromptDeps, promptClaudeCodeRefresh } from './claudeCodeRefreshPrompt';
 import { McpOwnership, McpServerTreeDeps, resolveOwnership } from './mcpServerTreeProvider';
@@ -1061,6 +1064,7 @@ export function activate(context: vscode.ExtensionContext) {
       databases.view.description = mcpReport(mcpOwnership()).headline;
     }
     McpPanel.refreshIfOpen();
+    AssistantPanel.refreshIfOpen();
   };
   // Claim, Stop and the release request, as the MCP Server tab calls them.
   // Replaced by the MCP block when the surface is running; until then they
@@ -3711,9 +3715,27 @@ export function activate(context: vscode.ExtensionContext) {
     // Only labels this window for the others; without a folder the sidecar
     // records NO_WORKSPACE_RECORDED.
     const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const mcpUi: McpUiHooks = {
+      showRegexSearch: async (pattern) => {
+        const outcome = await omniSearch.showRegexSearch(pattern);
+        if ('error' in outcome) throw new Error(outcome.error);
+        const count = outcome.exact ? `${outcome.shownCount}` : `at least ${outcome.shownCount}`;
+        return (
+          `Showing ${count} matching methods in the GemStone Search pane.` +
+          (outcome.notice ? ` ${outcome.notice}` : '')
+        );
+      },
+      showMethodList: async (title, methods) => {
+        const outcome = await omniSearch.showMethodList(title, methods);
+        if ('error' in outcome) throw new Error(outcome.error);
+        const capped = methods.length >= METHODS_FROM_CODE_LIMIT ? ' (the most it shows)' : '';
+        return `Showing ${outcome.shownCount} methods${capped} in the GemStone Search pane, titled "${title}".`;
+      },
+    };
     const mcpSocketServer = new McpSocketServer({
       getSession: () => sessionManager.getSelectedSession(),
       onTransactionStateMayHaveMoved: (id) => sessionManager.refreshTransactionState(id),
+      ui: mcpUi,
       getSessionLabel: () => {
         const session = sessionManager.getSelectedSession();
         return session ? `${loginLabel(session.login)} (id ${session.id})` : undefined;
@@ -3832,6 +3854,7 @@ export function activate(context: vscode.ExtensionContext) {
       httpServer = new McpHttpServer({
         getSession: () => sessionManager.getSelectedSession(),
         onTransactionStateMayHaveMoved: (id) => sessionManager.refreshTransactionState(id),
+        ui: mcpUi,
         port: httpPort,
         tls: { cert: tls.cert, key: tls.key },
       });
@@ -3936,6 +3959,15 @@ export function activate(context: vscode.ExtensionContext) {
         await vscode.env.clipboard.writeText(socketPath);
         vscode.window.showInformationMessage(`Copied MCP socket path: ${socketPath}`);
       }),
+      vscode.commands.registerCommand('jasper.openAssistant', () =>
+        AssistantPanel.show({
+          extensionPath: context.extensionPath,
+          socketPath: () => mcpSocketServer.socketPath,
+          proxyScriptPath: proxyScriptPath(context.extensionPath),
+          mcpReport: () => mcpReport(mcpOwnership()),
+          memento: context.globalState,
+        }),
+      ),
       vscode.commands.registerCommand('jasper.installMcpTlsCertificate', async () => {
         if (!certPathForTrust) {
           vscode.window.showWarningMessage(

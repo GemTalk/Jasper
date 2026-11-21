@@ -896,6 +896,11 @@
         "category": "GemStone"
       },
       {
+        "command": "jasper.openAssistant",
+        "title": "Open Jasper Assistant (Experimental)",
+        "category": "GemStone"
+      },
+      {
         "command": "jasper.installMcpTlsCertificate",
         "title": "Install MCP TLS Certificate",
         "category": "GemStone"
@@ -2682,6 +2687,10 @@
         },
         {
           "command": "jasper.copyMcpSocketPath",
+          "when": "jasper.mcpAvailable"
+        },
+        {
+          "command": "jasper.openAssistant",
           "when": "jasper.mcpAvailable"
         },
         {

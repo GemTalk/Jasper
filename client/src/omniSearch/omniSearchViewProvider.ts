@@ -36,6 +36,8 @@ import {
 } from './omniEngine';
 import { OmniPanelDeps } from './omniSearchPanel';
 import { revealTestForResult } from './omniActions';
+import { methodRowsToResults } from './references';
+import type { MethodSearchResult } from '../queries/methodSearch';
 import {
   CommonInbound,
   configMessage,
@@ -46,6 +48,12 @@ import {
 } from './omniSearchShared';
 
 export const OMNI_VIEW_ID = 'gemstoneOmniSearchView';
+
+// How tall `showRegexSearch` makes the pane, in CSS pixels: room for the search chrome plus several
+// result rows. VS Code has no way to set a panel's size, only to resize the active part a step at a
+// time; see growTo.
+const ASSISTANT_RESULTS_MIN_HEIGHT = 320;
+const MAX_GROW_STEPS = 16;
 
 /** How long `focus()` waits for the workbench to instantiate the view before reporting that the reveal
  *  did not land. This is a give-up bound for REPORTING, not an estimate of how long a reveal takes: the
@@ -60,7 +68,7 @@ export interface OmniViewContext {
 }
 
 /** Webview messages this host handles beyond the common engine ones. */
-type PanelInbound = CommonInbound & { id?: number; side?: boolean; refId?: number };
+type PanelInbound = CommonInbound & { id?: number; side?: boolean; refId?: number; px?: number };
 
 export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
@@ -92,12 +100,20 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
   // inspecting `this.view`, which only reports whether the view has EVER been built (it is set once in
   // `resolveWebviewView` and never cleared) and so cannot tell a landed reveal from a lost one.
   private readonly onDidResolveView = new vscode.EventEmitter<void>();
+  // Whether the webview script has said `ready`. A message posted before then is dropped, so
+  // what is shown on another's behalf waits in `replayOnReady` until it is.
+  private webviewReady = false;
+  private replayOnReady: { pattern?: string; view: OmniViewData } | undefined;
+  // The webview's height as it last reported it, and a waiter for the next report.
+  private viewHeight = 0;
+  private onViewHeight: (() => void) | undefined;
 
   constructor(private readonly resolveContext: () => Promise<OmniViewContext | null>) {}
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
     this.webviewNeedsConfig = true; // brand-new webview, whether this is the first open or a reopen
+    this.webviewReady = false;
     view.webview.options = { enableScripts: true, localResourceRoots: [] };
     view.webview.html = renderOmniHtml({ showPin: false });
     view.webview.onDidReceiveMessage((m: PanelInbound) => void this.onMessage(m));
@@ -300,6 +316,95 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     this.view.webview.postMessage({ command: 'focusInput' });
   }
 
+  /** Run a regex source search here as if the user had typed `pattern` and pressed Enter, for a caller
+   *  outside the view (the MCP tool the Jasper Assistant uses). Answers what it showed, or why it
+   *  could not. */
+  async showRegexSearch(
+    pattern: string,
+  ): Promise<{ shownCount: number; exact: boolean; notice?: string } | { error: string }> {
+    await this.focus();
+    await this.growTo(ASSISTANT_RESULTS_MIN_HEIGHT);
+    if (!(await this.ensureEngine())) return { error: NO_SESSION_MESSAGE };
+    const engine = this.engine!;
+    if (!engine.state().regex) {
+      if (!engine.state().regexAvailable) {
+        return {
+          error:
+            'Regex search is not installed on this stone. GemStone: Install Server Support adds it.',
+        };
+      }
+      await engine.toggleRegex();
+    }
+    const view = await engine.submit(pattern);
+    if (!view) return { error: 'The search was replaced by a newer one before it finished.' };
+    this.showOnBehalf(view, pattern);
+    if (view.noticeIsError) return { error: view.notice ?? 'The search failed.' };
+    return { shownCount: view.shownCount, exact: view.exact, notice: view.notice };
+  }
+
+  /** Show a list of methods someone else found (the MCP tool the Jasper Assistant uses), under
+   *  `title`, as a reference pivot is shown. */
+  async showMethodList(
+    title: string,
+    methods: readonly MethodSearchResult[],
+  ): Promise<{ shownCount: number } | { error: string }> {
+    await this.focus();
+    await this.growTo(ASSISTANT_RESULTS_MIN_HEIGHT);
+    if (!(await this.ensureEngine()) || this.builtForSession === undefined) {
+      return { error: NO_SESSION_MESSAGE };
+    }
+    const sessionId = this.builtForSession;
+    const results = methods.flatMap((m) =>
+      methodRowsToResults([m], sessionId, 'methods', m.environmentId),
+    );
+    const view = this.engine!.showList({ title, results });
+    this.showOnBehalf(view);
+    return { shownCount: view.shownCount };
+  }
+
+  /** Put a view up now, or once the webview is ready to take it; `pattern` also goes in the box. */
+  private showOnBehalf(view: OmniViewData, pattern?: string): void {
+    if (!this.webviewReady) {
+      this.replayOnReady = { pattern, view };
+      return;
+    }
+    if (pattern !== undefined) this.post({ command: 'setInput', value: pattern });
+    this.postView(view);
+  }
+
+  /** Grow the panel until the view is at least `minPx` tall. The step commands act on whichever part
+   *  VS Code counts as active, which after a reveal can still be the editor area: there "increase"
+   *  grows the editor and shrinks this panel. So each step is checked, and a step that shrank the
+   *  view switches to the opposite command, which then grows it. Stops when a step changes nothing
+   *  (the panel is as tall as the window lets it be) or no height report comes back. */
+  private async growTo(minPx: number): Promise<void> {
+    if (this.viewHeight === 0) await this.nextViewHeight();
+    let command = 'workbench.action.increaseViewHeight';
+    for (let step = 0; step < MAX_GROW_STEPS && this.viewHeight < minPx; step++) {
+      const before = this.viewHeight;
+      await vscode.commands.executeCommand(command);
+      await this.nextViewHeight();
+      if (this.viewHeight < before && command === 'workbench.action.increaseViewHeight') {
+        command = 'workbench.action.decreaseViewHeight';
+        continue;
+      }
+      if (this.viewHeight <= before) return;
+    }
+  }
+
+  /** Settles on the webview's next height report, or after a short wait if none comes. */
+  private nextViewHeight(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const done = (): void => {
+        clearTimeout(timer);
+        this.onViewHeight = undefined;
+        resolve();
+      };
+      const timer = setTimeout(done, 250);
+      this.onViewHeight = done;
+    });
+  }
+
   private post(msg: Record<string, unknown>): void {
     this.view?.webview.postMessage(msg);
   }
@@ -360,7 +465,18 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
           this.post(configMessage(this.deps.config, false, this.engine.state()));
         }
         await this.flushDeferred();
+        this.webviewReady = true;
+        if (this.replayOnReady) {
+          const { pattern, view } = this.replayOnReady;
+          this.replayOnReady = undefined;
+          this.showOnBehalf(view, pattern);
+        }
         this.deliverFocus(); // a focus() that raced the webview load lands the cursor now
+        return;
+      }
+      if (m.command === 'viewHeight') {
+        this.viewHeight = m.px ?? 0;
+        this.onViewHeight?.();
         return;
       }
       if (!this.engine && !(await this.ensureEngine())) return;

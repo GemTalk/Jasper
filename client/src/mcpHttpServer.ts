@@ -3,7 +3,7 @@ import express from 'express';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { ActiveSession } from './sessionManager';
-import { registerMcpTools } from './mcpTools';
+import { McpUiHooks, registerMcpTools } from './mcpTools';
 import { appendSysadmin } from './sysadminChannel';
 import { MCP_SERVER_NAME } from './mcpSocketServer';
 
@@ -17,6 +17,8 @@ export interface McpHttpServerOptions {
    *  context keys are not left describing the session as it was before Claude
    *  committed or aborted it. */
   onTransactionStateMayHaveMoved?: (sessionId: number) => void;
+  /** Backs the tools that show results in Jasper's views; see registerMcpTools. */
+  ui?: McpUiHooks;
   /** Port to bind on 127.0.0.1. Stable across restarts so the URL pasted
    *  into an MCP client's connector UI stays valid. */
   port: number;
@@ -72,6 +74,7 @@ export class McpHttpServer {
           mcpServer,
           this.options.getSession,
           this.options.onTransactionStateMayHaveMoved,
+          this.options.ui,
         );
         res.on('close', () => {
           transports.delete(transport.sessionId);

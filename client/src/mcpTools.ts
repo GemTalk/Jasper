@@ -18,6 +18,18 @@ import { drainTranscript } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
 import { VIEW_REFRESH_CODE } from './queries/transactionMode';
 import { commitTransaction } from './queries/commitTransaction';
+import type { MethodSearchResult } from './queries/methodSearch';
+import { methodsFromCode } from './assistant/queries/methodsFromCode';
+
+/**
+ * What a tool needs to change what Jasper shows. Each answers a sentence for the model. Optional
+ * in registerMcpTools: without it (tests, a window with no GemStone Search) the tools are not
+ * offered.
+ */
+export interface McpUiHooks {
+  showRegexSearch(pattern: string): Promise<string>;
+  showMethodList(title: string, methods: MethodSearchResult[]): Promise<string>;
+}
 
 // AI-executed code writes to the Transcript too: the sink buffers those writes
 // (MCP tools run on the FetchBytes path, which cannot host clientForwarder
@@ -136,6 +148,7 @@ export function registerMcpTools(
    * stays testable on its own; defaults to doing nothing.
    */
   onTransactionStateMayHaveMoved: (sessionId: number) => void = () => {},
+  ui?: McpUiHooks,
 ): void {
   // Wrap the MCP server so each tool's input shape gets the actionable-error
   // zod error map attached at registration time. Per-schema attachment (not
@@ -806,6 +819,68 @@ export function registerMcpTools(
         return queries.setClassComment(session, a.className, a.comment, a.dictionaryName);
       })(args),
   );
+
+  const GUI_RESULT_GUIDANCE =
+    'it shows them far better than listing them in chat. Afterwards reply with one or two ' +
+    'sentences; do not list the methods again.';
+  const uiTool =
+    (run: () => Promise<string>) =>
+    async (): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> => {
+      try {
+        return { content: [{ type: 'text', text: await run() }] };
+      } catch (err) {
+        return {
+          content: [{ type: 'text', text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        };
+      }
+    };
+
+  if (ui) {
+    server.tool(
+      'show_methods_in_search',
+      "Show a set of methods in Jasper's GemStone Search pane, as a titled list the user can open. " +
+        'Use this whenever the answer is more than a few methods and no source pattern describes ' +
+        'them (use show_regex_source_search when one does): ' +
+        GUI_RESULT_GUIDANCE +
+        ' `code` is Smalltalk run on the stone as the body of a block: it may declare temporaries, ' +
+        'must not use ^, and its last expression must be a collection of methods (GsNMethod), e.g. ' +
+        'from compiledMethodAt:. At most 5000 are shown.',
+      {
+        title: z
+          .string()
+          .min(1)
+          .describe('What the list is, e.g. "Class methods in instance creation"'),
+        code: z
+          .string()
+          .min(1)
+          .describe('Smalltalk whose last expression is a collection of methods'),
+      },
+      async (args) =>
+        await uiTool(async () => {
+          const session = getSession();
+          if (!session) throw new Error('No active GemStone session. Ask the user to log in.');
+          const methods = methodsFromCode((code) => executeString(session, code), args.code);
+          if (methods.length === 0) {
+            return 'The code answered no methods that a dictionary holds, so nothing was shown.';
+          }
+          return await ui.showMethodList(args.title, methods);
+        })(),
+    );
+
+    server.tool(
+      'show_regex_source_search',
+      "Search method source by regular expression in Jasper's GemStone Search pane, where the user " +
+        'sees the matching methods as a list they can open, with each match highlighted. Use this ' +
+        'whenever the answer is a set of methods whose source a pattern describes: ' +
+        GUI_RESULT_GUIDANCE +
+        ' Pattern syntax: \\w \\d \\s ' +
+        '\\b, [classes], * + ? |, and \\n or \\r to match across lines; a colon is plain text. Not ' +
+        'supported: counted repetition a{3}, (?...) groups, lazy quantifiers, backreferences.',
+      { pattern: z.string().min(1).describe('The regular expression to search method source for') },
+      async (args) => await uiTool(() => ui.showRegexSearch(args.pattern))(),
+    );
+  }
 
   server.tool(
     'status',
