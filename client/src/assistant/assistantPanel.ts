@@ -308,7 +308,7 @@ export class AssistantPanel {
   <div id="working" class="working" hidden>
     <span class="spinner"></span><span id="workingLabel"></span><span id="workingTime" class="time"></span>
   </div>
-  <label class="option"><input type="checkbox" id="guiUpdates" checked> Show results in Jasper (opens GemStone Search)</label>
+  <label class="option"><input type="checkbox" id="guiUpdates" checked> Show results in Jasper (if possible)</label>
   <form id="composer" class="composer">
     <textarea id="input" rows="3" placeholder="Ask about your GemStone code. Enter sends, Shift+Enter for a new line."></textarea>
     <div class="buttons">
