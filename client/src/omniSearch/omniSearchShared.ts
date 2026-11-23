@@ -91,6 +91,8 @@ export function resultsMessage(
     pinned: boolean;
     excludedFromAll: OmniCategoryId[];
     matchMode: MatchMode;
+    regex: boolean;
+    regexAvailable: boolean;
     term: string;
   },
 ): Record<string, unknown> {
@@ -110,6 +112,10 @@ export function resultsMessage(
     pivotTitle: view.pivotTitle,
     pivotTarget: view.pivotTarget,
     pivotHint: view.pivotHint,
+    notice: view.notice,
+    noticeIsError: view.noticeIsError,
+    regexPending: view.regexPending,
+    moreMatch: view.moreMatch,
     categories: tabCategoriesFrom(chrome.config.enabledCategories),
     scopeId: chrome.scopeId,
     caseSensitive: chrome.caseSensitive,
@@ -120,6 +126,8 @@ export function resultsMessage(
     excludedFromAll: chrome.excludedFromAll,
     // Engine-owned, like `caseSensitive` — so it IS re-sent every time, unlike `previewPane`.
     matchMode: chrome.matchMode,
+    regex: chrome.regex,
+    regexAvailable: chrome.regexAvailable,
     // Which search these rows answer: an Enter pressed before they arrived waits for them.
     term: chrome.term,
     placeholder: placeholderFor(view.pivot ? null : chrome.scopeId),
@@ -127,23 +135,39 @@ export function resultsMessage(
 }
 
 /** The initial `config` message sent on `ready`. */
-export function configMessage(config: OmniConfig, pinned: boolean): Record<string, unknown> {
+export function configMessage(
+  config: OmniConfig,
+  pinned: boolean,
+  engineState: {
+    scopeId: OmniCategoryId | null;
+    regex: boolean;
+    regexAvailable: boolean;
+    caseSensitive: boolean;
+    matchMode: MatchMode;
+    excludedFromAll: OmniCategoryId[];
+  },
+): Record<string, unknown> {
   return {
     command: 'config',
     categories: tabCategoriesFrom(config.enabledCategories),
-    scopeId: null,
-    caseSensitive: config.caseSensitive,
+    scopeId: engineState.scopeId,
+    // Engine-owned: a session without regex support starts with .* off whatever the setting says.
+    regex: engineState.regex,
+    regexAvailable: engineState.regexAvailable,
+    // The engine's, not the setting's: an engine rebuilt after a settings change keeps what the user
+    // had toggled (carriedEngineState), and the buttons must show what the search will use.
+    caseSensitive: engineState.caseSensitive,
     pinned,
     referencesInPreview: config.referencesInPreview,
-    // Starting values for the two in-panel controls; both are owned by the session afterwards.
+    // The preview pane's starting value, owned by the session afterwards.
     previewPane: config.previewPane,
-    excludedFromAll: config.excludedFromAll,
-    matchMode: config.matchMode,
+    excludedFromAll: engineState.excludedFromAll,
+    matchMode: engineState.matchMode,
     // How long the field waits after a keystroke before searching. The webview owns the timer (it is
     // the only side that sees keystrokes); the host just forwards the configured value, so a settings
     // edit takes effect on the next config push like every other field here.
     debounceMs: config.debounceMs,
-    placeholder: placeholderFor(null),
+    placeholder: placeholderFor(engineState.scopeId),
     keyHint: REFERENCES_KEY_HINT,
   };
 }
@@ -161,8 +185,8 @@ export interface CommonInbound {
 }
 
 /**
- * Run the engine op for a host-independent message (query / setScope / toggleCase / loadMore /
- * loadAll / references / back / setExcludedFromAll / setMatchMode). Returns the fresh view, `null` when superseded,
+ * Run the engine op for a host-independent message (query / setScope / toggleCase / toggleRegex /
+ * submit / loadMore / loadAll / references / back / setExcludedFromAll / setMatchMode). Returns the fresh view, `null` when superseded,
  * or `undefined` when the message isn't one of these (so the host handles it —
  * ready/activate/preview/close/togglePin). The preview-pane toggle is absent on purpose: it never
  * reaches the host at all, since hiding the pane is pure chrome with no engine effect.
@@ -178,6 +202,10 @@ export function dispatchEngineMessage(
       return engine.setScope(m.scopeId ?? null);
     case 'toggleCase':
       return engine.toggleCase();
+    case 'toggleRegex':
+      return engine.toggleRegex();
+    case 'submit':
+      return engine.submit(m.value ?? '');
     case 'loadMore':
       return engine.loadMore();
     case 'loadAll':
@@ -327,6 +355,36 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
       border-color: var(--vscode-button-background);
       opacity: 1;
     }
+    /* The regex toggle is shaped like the case toggle beside it; monospace so .* reads as code. */
+    #regex {
+      flex: 0 0 auto;
+      padding: 5px 9px;
+      border: 1px solid var(--vscode-input-border, transparent);
+      border-radius: 4px;
+      background: transparent;
+      color: var(--vscode-descriptionForeground);
+      cursor: pointer;
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-weight: 600;
+      opacity: 0.65;
+    }
+    #regex.active {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border-color: var(--vscode-button-background);
+      opacity: 1;
+    }
+    /* What regex leaves unusable is greyed out, not hidden, so the panel keeps its shape. */
+    #regex:disabled, #matchMode:disabled, .tab:disabled { opacity: 0.35; cursor: default; }
+    .tab:disabled:hover { background: var(--vscode-button-secondaryBackground, transparent); }
+    /* One line about the regex search above the rows: press Enter, what was left out, or why the
+       pattern was refused. Hidden via an inline style the view sets, as #scopehint is. */
+    #notice {
+      margin-top: var(--omni-gap);
+      font-size: 0.9em;
+      color: var(--vscode-descriptionForeground);
+    }
+    #notice.error { color: var(--vscode-errorForeground); }
     /* References-mode indicator: a chip in the field row, styled like the always-on
        case toggle, that appears (filled/accent) whenever the panel is showing references or senders --
        so it is obvious you are in a references view -- and clicking it exits back to the normal search.
@@ -633,6 +691,7 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
            is what the button does and the second is when to reach for it. -->
       <button id="refresh" title="Rebuild the search lists from the stone&#10;&#10;A class, global or method created by executing code in a workspace announces nothing, so it will not turn up in a search until this is pressed. Changes committed by another session are picked up on your next commit or abort." aria-label="Rebuild the search from the stone">&#10227;</button>
       <button id="case" title="Case sensitivity" aria-pressed="false">Aa</button>
+      <button id="regex" title="Regular expression search" aria-label="Regular expression search" aria-pressed="false" disabled>.*</button>
       <button id="previewToggle" title="Show the source preview" aria-label="Show the source preview" aria-pressed="true">&#9707;</button>
       <span id="scopeFilterWrap">
         <button id="scopeFilter" title="Choose which scopes the All search runs" aria-label="Choose which scopes the All search runs" aria-haspopup="true" aria-expanded="false">Scopes</button>
@@ -642,6 +701,7 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
       ${pinButton}
     </div>
     <div id="scopehint" style="display:none"></div>
+    <div id="notice" style="display:none" role="status"></div>
     <div id="breadcrumb"></div>
     <div id="error"></div>
     <div id="body">

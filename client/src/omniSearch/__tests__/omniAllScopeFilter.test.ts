@@ -210,6 +210,8 @@ describe('webview message payloads', () => {
       pinned: false,
       excludedFromAll: ['methods'],
       matchMode: 'fuzzy',
+      regex: false,
+      regexAvailable: false,
       term: '',
     });
     expect(msg.excludedFromAll).toEqual(['methods']);
@@ -225,14 +227,44 @@ describe('webview message payloads', () => {
       pinned: false,
       excludedFromAll: [],
       matchMode: 'fuzzy',
+      regex: false,
+      regexAvailable: false,
       term: '',
     });
     expect(Object.keys(msg)).not.toContain('previewPane');
   });
 
   it('the config message carries both starting values', () => {
-    const msg = configMessage(cfg({ previewPane: false, excludedFromAll: ['methods'] }), false);
+    const msg = configMessage(cfg({ previewPane: false, excludedFromAll: ['methods'] }), false, {
+      scopeId: null,
+      regex: false,
+      regexAvailable: false,
+      caseSensitive: false,
+      matchMode: 'fuzzy',
+      excludedFromAll: ['methods'],
+    });
     expect(msg.previewPane).toBe(false);
     expect(msg.excludedFromAll).toEqual(['methods']);
+  });
+
+  it("the config message shows the engine's Aa, match algorithm and exclusions, not the settings'", () => {
+    // An engine rebuilt after a settings change keeps the user's toggles; the buttons must agree.
+    const msg = configMessage(
+      cfg({ caseSensitive: false, matchMode: 'fuzzy', excludedFromAll: [] }),
+      false,
+      {
+        scopeId: null,
+        regex: false,
+        regexAvailable: false,
+        caseSensitive: true,
+        matchMode: 'prefix',
+        excludedFromAll: ['methods'],
+      },
+    );
+    expect(msg).toMatchObject({
+      caseSensitive: true,
+      matchMode: 'prefix',
+      excludedFromAll: ['methods'],
+    });
   });
 });

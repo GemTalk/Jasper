@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFile } from 'child_process';
 import * as vscode from 'vscode';
+import { disposeMatchHighlights } from './matchHighlights';
 import { openDocumentAndSyncExplorer, OpenDocumentOptions } from './openDocumentAndSyncExplorer';
 import {
   LanguageClient,
@@ -185,7 +186,7 @@ import {
   GCI_PROVIDER_SELECTORS,
   METHOD_LANGUAGE,
   SMALLTALK_LANGUAGE,
-  gemstoneDocumentLanguage,
+  withGemstoneLanguage,
 } from './languageIds';
 import { provideDocumentFormattingEdits } from './formattingMiddleware';
 import { openWorkspace } from './workspace';
@@ -875,6 +876,8 @@ export function activate(context: vscode.ExtensionContext) {
   // Relays the controller's result changes to the Explorer, which is registered first.
   const sunitResultsChanged = new vscode.EventEmitter<void>();
   context.subscriptions.push(sunitResultsChanged);
+  // Regex search's match marks in the editor: a style and listeners created on first use.
+  context.subscriptions.push({ dispose: disposeMatchHighlights });
   // Create every output channel up front — not lazily on first use — so the
   // full set is discoverable in the Output view's channel dropdown from
   // activation. (The Class Sync channel is created just after ExportManager is
@@ -1240,8 +1243,9 @@ export function activate(context: vscode.ExtensionContext) {
       // gemstone-class-comment and word-wraps (see configurationDefaults); the
       // source of a compiled method gets gemstone-method, the one language
       // `contributes.breakpoints` names; everything else is plain Smalltalk
-      // source. See gemstoneDocumentLanguage for the rule and why it exists.
-      vscode.languages.setTextDocumentLanguage(doc, gemstoneDocumentLanguage(doc.uri));
+      // source. See gemstoneDocumentLanguage for the rule and why it exists. A document opened
+      // with its language already set (gemstone.openDocument, the Explorer) is left alone.
+      void withGemstoneLanguage(doc);
     }),
   );
 

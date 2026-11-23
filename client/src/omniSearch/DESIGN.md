@@ -253,8 +253,9 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
 
    `SessionManager.onDidChangeSelection` now reaches both hosts. Two decisions worth recording:
 
-   - **The webview is wiped, not just the engine.** Dropping the engine is enough for a settings change,
-     because the rows on screen are still true. Here they are not: they came from the old session, yet
+   - **The webview is wiped, not just the engine.** A settings change keeps the rows on screen,
+     because they are still true, and the rebuilt engine runs the same term again so they can still be
+     opened. Here they are not: they came from the old session, yet
      they still look live, and activating one would open a document against the session that is now
      current — a wrong answer presented as a right one. So the query, the results, any references pivot
      and the preview all go, and the scope returns to All (where the replacement engine starts).
@@ -306,6 +307,7 @@ New shared query (if needed) lives under `client/src/queries/` per repo conventi
 - `ui`: `panel` (default) | `spotter` — which webview surface the command opens.
 - `matchMode`: `fuzzy` | `substring` | `prefix` (default `fuzzy`).
 - `caseSensitive`: boolean (default `false`).
+- `regex`: boolean (default `false`) — the starting position of the `.*` button; see "Regex search".
 - `categories`: which providers are enabled (default: all seven —
   `classes, methods, dictionaries, globals, source, literals, categories`).
 - `maxResultsPerCategory`: number (default `20`) — how many rows are **shown** per scope.
@@ -323,8 +325,8 @@ Both hosts render the same DOM (`omniSearchView.js`, read at runtime and jsdom-t
 `*View.js`) and share their chrome + engine plumbing via `omniSearchShared.ts`:
 
 - labeled scope **tabs**, a **flat relevance-ranked** row list (see below), OUR case-correct
-  **highlighting** (`<mark>`), an always-on **case indicator** chip, a **source-preview pane** (fills
-  as the active row moves), a **clear (×)** button, and an elegant footer **count + Load more/all**.
+  **highlighting** (`<mark>`), an always-on **case indicator** chip, a **`.*` regex** toggle beside it,
+  a **source-preview pane** (fills as the active row moves), a **clear (×)** button, and an elegant footer **count + Load more/all**.
 - `omniSearchViewProvider.ts` (`ui: "panel"`) is a docked tool: no pin, no auto-close, no open-beside.
 - `omniSearchPanel.ts` (`ui: "spotter"`) behaves like a dialog: unpinned it closes on focus-out and on
   picking a result; the **📌 pin** keeps it open and switches activation to open-beside.
@@ -355,6 +357,63 @@ Behaviour decisions (Eric's review of the first webview cut):
   trip) sends the search at once and opens the top row when results for that term arrive; the host
   echoes the term on every results message so the webview can tell. Typing again, or leaving the
   panel, cancels it.
+
+## Regex search
+
+The `.*` button beside `Aa` searches method source by regular expression. The search runs on the
+stone, in the server plugin's regex support (`gs-src/regex/README.md` covers the dialect and how a
+search runs), so the button is greyed out, with a tooltip saying to install or update the server
+plugin, on a session without it. Availability is read from the session each time
+(`OmniEngineDeps.regexAvailable`), so an install takes effect without reopening the search.
+
+1. **Source only.** Turning `.*` on moves to the Source tab and greys out every other tab, and the
+   match-algorithm chip, which has no effect on a regex. Turning it off returns to the tab the user
+   was on.
+2. **On Enter, not as you type.** A pattern with no plain text to pre-filter on reads every method on
+   the stone (1–3 s on a base image), and a half-typed pattern is often invalid. So typing only marks
+   the rows stale (`regexPending`), and Enter in the field searches. Once the rows answer the pattern
+   in the box, Enter opens the active row as usual. `Aa` over a pattern already searched (answered
+   or still running) searches again at once, since the user has already asked for that pattern;
+   over a pattern not yet searched it only changes the case Enter will use.
+3. **One search at a time, stopped on the stone.** Editing the pattern, pressing Enter again, `Aa`, or
+   turning `.*` off cancels a running search through that call's own canceller (never `cancelRunOn`,
+   which would stop someone else's run). The runner (`regexSearchUsing`) starts each search only after
+   the one it replaced has let go of the session: the stone keeps the session until it has answered
+   the soft break, and a search started at once was refused as busy by the search it had just replaced.
+   Turning `.*` off waits the same way (the runner's `cancel` settles once the session is free)
+   before the plain search it runs, which would otherwise be refused as busy too. A search waiting
+   for another run's stopped search to let go stops waiting as soon as it is cancelled. Anything
+   that only redraws the view (a trailing space, a click on the active Source tab, a commit) leaves
+   the search for the pattern in the box running, and its answer still lands. An engine thrown away
+   (a settings change, another session, a logout, a closed Spotter) stops its search first, so it
+   never keeps the session busy out of sight. After a settings change the rebuilt engine shows the
+   same pattern again: an answered search carries its rows over (unless the cap it ran under
+   changed), and one still running runs again under the new settings.
+4. **What the user is told.** One line above the rows (`OmniViewData.notice`): "Press Enter to
+   search.", "Searching…" from Enter until the answer (set by the webview, cleared by a bare
+   `busy: false` or an error, and sent by the engine when a redraw finds the search still running), "Search stopped. Press Enter to search again." after Cancel on its
+   progress notice, "No methods match.", a refused pattern's reason (as an error), a busy session,
+   the methods skipped because they were too long to match, those that could not be searched because of an error on the stone (counted apart, so a fault never reads as "too long"), and the cap on how many
+   methods the stone keeps, which also makes the count read `200+ shown` (`moreMatch`). The cap is
+   `gemstone.omniSearch.maxServerScan`, the setting that caps the Methods tab's fetch, so one setting
+   governs both searches that stop early on the stone. There is no Load more: the cap is the
+   server's, and a narrower pattern is the way to see past it.
+5. **The matches are shown, not the pattern.** The stone records where each hit's matches are (at
+   most 100 per method; `GsRegexSourceSearch>>ranges`), and the result carries them
+   (`openMethod.matches`). The preview marks them all, a match across lines as one mark. Opening the
+   method selects the first and marks the rest in the editor's find-highlight colours
+   (`matchHighlights.ts`); the marks clear on the first edit, which moves the text under them. The
+   typed pattern itself is never marked: it is not text to look for. The stone counts characters
+   and a JS string counts UTF-16 units, so the matches are converted against the text they land on
+   (`matchOffsets.ts`) before the preview or the editor uses them. An empty match (`^`, `x*`) is
+   never marked, but an empty first match still places the cursor. Two things replace the editor
+   just after the open, losing both: setting the document's language after it is shown (so the open
+   sets it first, as the Explorer does), and the Explorer opening the method itself when it follows
+   the open to a method it was not showing, under its own form of the URI. `showMatches` applies
+   them again to any new editor of the same method (`methodKey`, not the URI) for three seconds.
+
+The rows are ordinary Source rows (`methodRowsToResults`), so opening, the references pivot and the
+preview behave as they do for a plain Source search.
 
 ## Overlap with #377 / #387 (documented, not silently merged)
 

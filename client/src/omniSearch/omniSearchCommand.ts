@@ -16,6 +16,8 @@ import {
   referencesToObject,
   getMethodSource,
   getClassDefinition,
+  executeFetchStringAsync,
+  BrowserQueryError,
 } from '../browserQueries';
 import { dropCachedClassOrganizer } from '../classOrganizerCache';
 import { clearClassOrganizerCode } from '../queries/classOrganizer';
@@ -35,7 +37,11 @@ import { focusGemStoneExplorer } from '../explorerContainer';
 import { buildMethodUri } from '../gemstoneFileSystemProvider';
 import { readOmniConfig } from './omniConfig';
 import { OMNI_OPEN_KEY_HINT } from './omniSearchShared';
-import { OmniProvider, OmniResult } from './omniTypes';
+import { OmniProvider, OmniResult, RegexSearchOutcome, RegexSearchRunner } from './omniTypes';
+import { RegexPatternError, searchMethodSourceRegexAsync } from '../queries/regexSourceSearch';
+import { NbCancelledError, stoppedRunHolds } from '../nbRunner';
+import { refreshRegexSupportAvailable } from '../regex/regexAvailability';
+import { GCI_ERR_OP_IN_PROGRESS } from '../gciConstants';
 import { runOmniAction, OmniActionHandlers } from './omniActions';
 import { createClassesProvider } from './providers/classesProvider';
 import { createDictionariesProvider } from './providers/dictionariesProvider';
@@ -105,7 +111,11 @@ export function buildOmniHandlers(openOptions?: OmniOpenOptions): OmniActionHand
         // resolves by name (0 would be an invalid 1-based SymbolList index).
         dictIndex: a.dictIndex > 0 ? a.dictIndex : undefined,
       });
-      void openResultDocument(uri, openOptions);
+      // A regex hit opens with its first match selected and scrolled into view, and every match marked.
+      void openResultDocument(
+        uri,
+        a.matches ? { ...openOptions, matches: a.matches } : openOptions,
+      );
     },
     revealDictionary(a) {
       // Cascade the Explorer to the named dictionary and select its row (the command resolves the
@@ -137,6 +147,94 @@ export function buildOmniHandlers(openOptions?: OmniOpenOptions): OmniActionHand
         a.dictIndex,
       );
     },
+  };
+}
+
+/** How long a new regex search waits for the one it replaced to let go of the session. Past it the
+ *  search starts anyway, and nbRunner refuses it as busy with its usual notice (which offers Stop). */
+export const REGEX_STOP_WAIT_MS = 20_000;
+
+/** Wait, up to REGEX_STOP_WAIT_MS, for a stopped run to let go of the session, or until `cancelled`
+ *  answers true: a search stopped while it waits has nothing to wait for. */
+async function stoneLetsGo(
+  session: ActiveSession,
+  cancelled: () => boolean = () => false,
+): Promise<void> {
+  for (const since = Date.now(); stoppedRunHolds(session) && !cancelled();) {
+    if (Date.now() - since > REGEX_STOP_WAIT_MS) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+/** Regex search over method source, run by the server plugin's regex support without blocking
+ *  VS Code. A search that runs past ~2s shows the usual progress notification with Cancel. A busy
+ *  session is refused, with the notice nbRunner shows for that (it offers Stop).
+ *
+ *  Each search waits for the one before it to finish stopping. Replacing a search cancels it, but
+ *  the stone keeps the session until it has answered the soft break, so a search started at once
+ *  was refused as busy by the search it had just replaced. */
+export function regexSearchUsing(session: ActiveSession): RegexSearchRunner {
+  let previous: Promise<unknown> = Promise.resolve();
+  return (pattern, ignoreCase, limit) => {
+    let cancelled = false;
+    let cancelThisCall: (() => void) | undefined;
+    const prior = previous;
+    const outcome = (async (): Promise<RegexSearchOutcome> => {
+      try {
+        await prior.catch(() => undefined);
+        await stoneLetsGo(session, () => cancelled);
+        if (cancelled) return { kind: 'cancelled' };
+        const answer = await searchMethodSourceRegexAsync(
+          (code) =>
+            executeFetchStringAsync(
+              session,
+              code,
+              'GemStone Search: searching method source…',
+              (cancel) => {
+                cancelThisCall = cancel;
+                if (cancelled) cancel();
+              },
+            ),
+          pattern,
+          ignoreCase,
+          limit,
+        );
+        if (cancelled) return { kind: 'cancelled' };
+        return {
+          kind: 'results',
+          results: answer.methods.map((m) => {
+            const [result] = methodRowsToResults([m], session.id, 'source');
+            if (m.matches && result.action.kind === 'openMethod') result.action.matches = m.matches;
+            return result;
+          }),
+          skipped: answer.skipped,
+          failed: answer.failed,
+          truncated: answer.truncated,
+          wholeMethods: answer.wholeMethods,
+        };
+      } catch (e: unknown) {
+        if (cancelled || e instanceof NbCancelledError) return { kind: 'cancelled' };
+        if (e instanceof RegexPatternError)
+          return { kind: 'refused', message: `This pattern can't be used: ${e.message}` };
+        if (e instanceof BrowserQueryError && e.gciErrorNumber === GCI_ERR_OP_IN_PROGRESS)
+          return {
+            kind: 'refused',
+            message:
+              'The session is busy with another run. Wait for it or stop it, then press Enter.',
+          };
+        throw e;
+      }
+    })();
+    previous = outcome;
+    return {
+      outcome,
+      cancel: async () => {
+        cancelled = true;
+        cancelThisCall?.();
+        await outcome.catch(() => undefined);
+        await stoneLetsGo(session);
+      },
+    };
   };
 }
 
@@ -252,6 +350,10 @@ export function buildViewContextResolver(
         providers: buildProviders(session, config.enabledCategories),
         config,
         resolveReferences: resolveReferencesUsing(session),
+        regexSearch: regexSearchUsing(session),
+        // Read live and re-checked on each commit or abort, so an install during the session turns .* on.
+        regexAvailable: () => session.regexSupportAvailable === true,
+        refreshRegexAvailable: () => refreshRegexSupportAvailable(session),
         // The docked panel opens results in the editor area above it (no beside/close). Normally that
         // takes focus (you want to land in what you opened); when opening from the sticky references
         // list we pass preserveFocus so the keyboard stays in the list — honor it here.
@@ -279,6 +381,10 @@ export function buildSpotterDeps(session: ActiveSession): OmniPanelDeps {
     providers: buildProviders(session, config.enabledCategories),
     config,
     resolveReferences: resolveReferencesUsing(session),
+    regexSearch: regexSearchUsing(session),
+    // Read live and re-checked on each commit or abort, so an install during the session turns .* on.
+    regexAvailable: () => session.regexSupportAvailable === true,
+    refreshRegexAvailable: () => refreshRegexSupportAvailable(session),
     // When pinned the Spotter stays open, so results open BESIDE it as a regular (non-preview)
     // source editor (preserveFocus keeps you in the field for Ctrl+Enter); unpinned it behaves like
     // the dialog and opens in the active group (a preview tab is fine — the dialog dismisses).
@@ -452,7 +558,8 @@ export function registerOmniSearch(
     // The docked panel caches a session-bound engine that also baked in the settings live at build
     // time; drop it when any `gemstone.omniSearch` setting changes so the edit takes effect at once.
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('gemstone.omniSearch')) viewProvider.onConfigChanged();
+      if (e.affectsConfiguration('gemstone.omniSearch'))
+        viewProvider.onConfigChanged((key) => e.affectsConfiguration(`gemstone.omniSearch.${key}`));
     }),
     vscode.window.registerWebviewViewProvider(OMNI_VIEW_ID, viewProvider, {
       webviewOptions: { retainContextWhenHidden: true },

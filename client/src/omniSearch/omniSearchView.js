@@ -27,6 +27,8 @@
     var inputEl = doc.getElementById('query');
     var clearEl = doc.getElementById('clear');
     var caseEl = doc.getElementById('case');
+    var regexEl = doc.getElementById('regex');
+    var noticeEl = doc.getElementById('notice');
     var pinEl = doc.getElementById('pin');
     var resultsEl = doc.getElementById('results');
     var previewEl = doc.getElementById('preview');
@@ -103,6 +105,12 @@
     var tabCategories = [];
     // The live match algorithm, mirrored from the engine (which owns it, as it does case-sensitivity).
     var matchMode = 'fuzzy';
+    // Regex search, mirrored from the engine. While it is on only Source can be searched, and the
+    // search runs on Enter, not on each keystroke. `regexPending` is true while the rows shown are not
+    // for the pattern in the box, so Enter searches instead of opening a row.
+    var regexOn = false;
+    var regexAvailable = false;
+    var regexPending = false;
 
     function post(command, extra) {
       var msg = { command: command };
@@ -226,6 +234,10 @@
       if ((scopeId || null) === (d.id || null)) {
         b.classList.add('active');
         b.setAttribute('aria-selected', 'true');
+      }
+      if (regexOn && d.id !== 'source') {
+        b.disabled = true;
+        b.title = 'Regex searches method source only';
       }
       (function (id) {
         b.addEventListener('click', function () {
@@ -434,7 +446,7 @@
       // neither-flag branch used to read "200 results", the one thing we know it isn't).
       if (n === 0) text = inPivot ? 'No references' : '';
       else if (view.exact) text = n + (n === 1 ? ' result' : ' results');
-      else if (view.hasMore || capped.length) text = n + '+ shown';
+      else if (view.hasMore || capped.length || view.moreMatch) text = n + '+ shown';
       else text = n + (n === 1 ? ' result' : ' results');
       countEl.textContent = text;
       // The "+" above covers EVERY truncation (results are incomplete either way), but the note is
@@ -634,7 +646,57 @@
       matchMode = MATCH_MODES.indexOf(mode) >= 0 ? mode : 'fuzzy';
       if (!matchModeEl) return;
       matchModeEl.textContent = MATCH_MODE_LABEL[matchMode];
-      matchModeEl.title = MATCH_MODE_HELP[matchMode] + ' — click to change';
+      matchModeEl.disabled = regexOn;
+      matchModeEl.title = regexOn
+        ? 'Has no effect on a regular expression search'
+        : MATCH_MODE_HELP[matchMode] + ' — click to change';
+    }
+
+    // ── Regular expression search ─────────────────────────────────
+    var REGEX_HELP_ON =
+      'Regular expression search over method source: ON. Press Enter to search. ' +
+      'May take a while on a large image; Cancel on the progress notice stops it. ' +
+      'Matches one line at a time; use \\n or \\r to match across lines (\\s does not), ' +
+      'which skips methods too long to search that way. Click to turn off.';
+    var REGEX_HELP_OFF =
+      'Regular expression search over method source: OFF. Click to turn on, type a pattern, ' +
+      'then press Enter.';
+    var REGEX_HELP_UNAVAILABLE =
+      'Regular expression search needs the server plugin. Install or update the server plugin ' +
+      '(GemStone: Install Server Support) to use it.';
+
+    function setRegex(on, available) {
+      regexOn = !!on;
+      regexAvailable = !!available;
+      if (!regexEl) return;
+      if (regexOn) regexEl.classList.add('active');
+      else regexEl.classList.remove('active');
+      regexEl.setAttribute('aria-pressed', regexOn ? 'true' : 'false');
+      // Always usable while on, so it can be turned off even if the support went away.
+      regexEl.disabled = !regexAvailable && !regexOn;
+      regexEl.title = regexOn
+        ? REGEX_HELP_ON
+        : regexAvailable
+          ? REGEX_HELP_OFF
+          : REGEX_HELP_UNAVAILABLE;
+      setMatchMode(matchMode); // the chip is greyed out while regex is on
+    }
+
+    // Same text as the engine's REGEX_SEARCHING_NOTICE (omniEngine.ts).
+    var REGEX_SEARCHING_NOTICE = 'Searching…';
+
+    function setNotice(text, isError) {
+      if (!noticeEl) return;
+      noticeEl.textContent = text || '';
+      if (isError) noticeEl.classList.add('error');
+      else noticeEl.classList.remove('error');
+      noticeEl.style.display = text ? 'block' : 'none';
+    }
+
+    // The typed text the source preview marks. A regex is not literal text, so in regex mode the
+    // preview marks the matches the stone found instead (showPreview's `matches`).
+    function previewTerm() {
+      return regexOn ? '' : inputEl.value.trim();
     }
 
     function nextMatchMode() {
@@ -654,6 +716,7 @@
           // messages must not carry (and undo) it.
           if (typeof msg.previewPane === 'boolean') setPreviewEnabled(msg.previewPane);
           if (Array.isArray(msg.excludedFromAll)) excludedFromAll = msg.excludedFromAll.slice();
+          setRegex(msg.regex, msg.regexAvailable);
           if (typeof msg.matchMode === 'string') setMatchMode(msg.matchMode);
           if (typeof msg.debounceMs === 'number' && msg.debounceMs >= 0)
             debounceMs = msg.debounceMs;
@@ -668,6 +731,10 @@
         case 'results':
           setError('');
           if (Array.isArray(msg.excludedFromAll)) excludedFromAll = msg.excludedFromAll.slice();
+          setRegex(msg.regex, msg.regexAvailable);
+          // An answer for a pattern the box has since moved on from leaves Enter searching.
+          regexPending = !!msg.regexPending || (regexOn && !answersField(msg.term));
+          setNotice(msg.notice, msg.noticeIsError);
           if (typeof msg.matchMode === 'string') setMatchMode(msg.matchMode);
           tabCategories = msg.categories || [];
           renderTabs(msg.categories, msg.scopeId);
@@ -694,6 +761,8 @@
           break;
         case 'busy':
           setBusy(!!msg.on);
+          // A search stopped without an answer (superseded or cancelled) must not leave this showing.
+          if (!msg.on && noticeEl && noticeEl.textContent === REGEX_SEARCHING_NOTICE) setNotice('');
           break;
         case 'reset':
           resetView();
@@ -702,7 +771,7 @@
           // Ignore a stale preview for a row that's no longer active, or one that arrives while the
           // pane is showing a sticky references list (referencesInPreview mode).
           if (previewMode === 'source' && msg.id === activeRowId())
-            showPreview(msg.source, msg.title);
+            showPreview(msg.source, msg.title, msg.matches);
           break;
         case 'refPreview':
           // Fill the preview pane with the row's references/senders — but only if that row is still
@@ -716,6 +785,7 @@
         case 'error':
           setError(msg.message || '');
           setBusy(false);
+          if (noticeEl && noticeEl.textContent === REGEX_SEARCHING_NOTICE) setNotice('');
           // Only a failure that means no results are coming ends the wait: not a notice being cleared
           // (empty message), and not another action failing (`failed` names it) while the search
           // is still out.
@@ -1021,6 +1091,19 @@
       return ranges;
     }
 
+    // The ranges worth a mark: non-empty, inside the text, and not overlapping the one before.
+    function markableRanges(ranges, length) {
+      var out = [];
+      var pos = 0;
+      for (var i = 0; i < ranges.length; i++) {
+        var r = ranges[i];
+        if (!r || r.start < pos || r.end <= r.start || r.end > length) continue;
+        out.push({ start: r.start, end: r.end });
+        pos = r.end;
+      }
+      return out;
+    }
+
     /** Fill `container` with `text`, wrapping each {start,end} range in <mark>. Ranges must be sorted
      *  and non-overlapping. Returns the first mark (for scroll-into-view) or null. */
     function highlightRanges(container, text, ranges) {
@@ -1249,7 +1332,9 @@
       }
     }
 
-    function showPreview(source, title) {
+    // `matches` are a regex hit's matches ({start, end} into `source`, in order); they are marked
+    // instead of the typed text, which for a regex is not text to look for.
+    function showPreview(source, title, matches) {
       previewMode = 'source';
       refreshRefIndicator();
       previewEl.textContent = '';
@@ -1273,7 +1358,9 @@
       var firstHit;
       var pivotRanges = pivotHighlightTerm ? sendRanges(source, pivotHighlightTerm) : null;
       if (pivotRanges) firstHit = highlightRanges(pre, source, pivotRanges);
-      else firstHit = highlightOccurrences(pre, source, inputEl.value.trim(), caseSensitive);
+      else if (Array.isArray(matches) && matches.length)
+        firstHit = highlightRanges(pre, source, markableRanges(matches, source.length));
+      else firstHit = highlightOccurrences(pre, source, previewTerm(), caseSensitive);
       previewEl.appendChild(pre);
       previewEl.classList.add('has-content');
       // Bring the first match into view so a Source hit deep in a long method is visible without
@@ -1291,12 +1378,13 @@
     // preview's textContent reconstructs the original source (its <mark>s only wrap substrings of it),
     // so we can recompute in place with no state kept.
     function rehighlightSourcePreview() {
-      if (previewMode !== 'source') return;
+      // A regex preview marks the stone's match, not the typed text; typing leaves it as it is.
+      if (previewMode !== 'source' || regexOn) return;
       var pre = previewEl.querySelector('.preview-src');
       if (!pre) return;
       var source = pre.textContent || '';
       pre.textContent = '';
-      highlightOccurrences(pre, source, inputEl.value.trim(), caseSensitive);
+      highlightOccurrences(pre, source, previewTerm(), caseSensitive);
     }
 
     /**
@@ -1322,6 +1410,8 @@
       inputEl.value = '';
       updateClearVisibility();
       setError('');
+      setNotice('');
+      regexPending = false;
       setBreadcrumb('', '');
       refHighlightTerm = '';
       pivotHighlightTerm = '';
@@ -1473,6 +1563,9 @@
     // ── Input + keyboard ────────────────────────────────────────────
     inputEl.addEventListener('input', function () {
       scrollResetPending = true; // a new query starts the list at the top
+      // The rows on screen are no longer for what is in the box. Set here, not when the host replies,
+      // so an Enter typed before that reply searches rather than opening a row of the old pattern.
+      if (regexOn) regexPending = true;
       previewMode = 'source'; // typing dismisses a sticky references list
       updateClearVisibility();
       // Track the field immediately: the hint depends on whether anything is typed, so waiting for the
@@ -1522,6 +1615,8 @@
         ev.target === inputEl &&
         previewMode !== 'refs' &&
         !inPivot &&
+        // Regex leaves only Source to search, so there is nothing to cycle to.
+        !regexOn &&
         !ev.ctrlKey &&
         !ev.altKey &&
         !ev.metaKey
@@ -1543,6 +1638,26 @@
         case 'Enter': {
           // A plain Enter on a focused button is its own click (Load More, case, pin…) — leave it be.
           if (onButton && !ev.altKey && !ev.ctrlKey && !ev.metaKey && !ev.shiftKey) break;
+          // Regex searches run on Enter: in the field, a plain Enter searches unless the rows already
+          // answer the pattern in the box, in which case it opens the active one as usual.
+          if (
+            regexOn &&
+            ev.target === inputEl &&
+            !ev.altKey &&
+            !ev.ctrlKey &&
+            !ev.metaKey &&
+            !ev.shiftKey &&
+            (regexPending || activeRowId() === null)
+          ) {
+            ev.preventDefault();
+            cancelPendingQuery();
+            if (!inputEl.value.trim()) break;
+            scrollResetPending = true;
+            setBusy(true);
+            setNotice(REGEX_SEARCHING_NOTICE, false);
+            post('submit', { value: inputEl.value });
+            break;
+          }
           // Ctrl/Cmd+Enter opens beside (keeps the Spotter visible); Alt+Enter shows references (in
           // the preview pane, or — flag off — as the classic list pivot); Shift+Enter selects the
           // result in the Testing view, for a test class or test method.
@@ -1616,9 +1731,23 @@
 
     caseEl.addEventListener('click', function () {
       scrollResetPending = true;
+      // The engine runs a regex search that was showing again under the new case.
+      if (regexOn && !regexPending && inputEl.value.trim()) {
+        setBusy(true);
+        setNotice(REGEX_SEARCHING_NOTICE, false);
+      }
       post('toggleCase');
       inputEl.focus();
     });
+
+    if (regexEl) {
+      regexEl.addEventListener('click', function () {
+        scrollResetPending = true;
+        cancelPendingQuery();
+        post('toggleRegex');
+        inputEl.focus();
+      });
+    }
 
     if (refreshEl) {
       // An explicit reload of the cached corpora (classes / dictionaries / globals) plus a re-run of

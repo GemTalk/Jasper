@@ -126,6 +126,18 @@ export function gemstoneDocumentLanguage(uri: vscode.Uri): string {
 }
 
 /**
+ * `doc` under its `gemstoneDocumentLanguage`, changing it only when it differs. Changing a
+ * document's language makes VS Code close and reopen it, and rebuild any editor showing it, so a
+ * document that already has the right language is left alone.
+ */
+export async function withGemstoneLanguage(doc: vscode.TextDocument): Promise<vscode.TextDocument> {
+  const language = gemstoneDocumentLanguage(doc.uri);
+  return doc.languageId === language
+    ? doc
+    : await vscode.languages.setTextDocumentLanguage(doc, language);
+}
+
+/**
  * The documents the GCI-backed Definition, Hover and Completion providers are
  * registered for — editors holding GemStone source that a live session can be
  * asked about.

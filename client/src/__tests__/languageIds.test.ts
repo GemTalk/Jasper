@@ -11,7 +11,9 @@ import {
   gemstoneDocumentLanguage,
   isMethodSourceUri,
   methodSourceRef,
+  withGemstoneLanguage,
 } from '../languageIds';
+import * as vscode from 'vscode';
 
 const METHOD = 'gemstone://1/Globals/Array/instance/accessing/at%3A';
 const DEFINITION = 'gemstone://1/Globals/Array/definition';
@@ -145,5 +147,31 @@ describe('BREAKPOINT_GUTTER_LANGUAGES', () => {
     expect(
       others.filter((id) => (BREAKPOINT_GUTTER_LANGUAGES as readonly string[]).includes(id)),
     ).toEqual([]);
+  });
+});
+
+describe('withGemstoneLanguage', () => {
+  const docOf = (uri: string, languageId: string) =>
+    ({ uri: Uri.parse(uri), languageId }) as unknown as vscode.TextDocument;
+
+  // Changing a document's language rebuilds the editor showing it; a document opened with its
+  // language already set must not be rebuilt by the open listener a second time.
+  it('leaves a document that already has its language alone', async () => {
+    const setLanguage = vi.mocked(vscode.languages.setTextDocumentLanguage);
+    setLanguage.mockClear();
+    const doc = docOf(METHOD, METHOD_LANGUAGE);
+
+    expect(await withGemstoneLanguage(doc)).toBe(doc);
+    expect(setLanguage).not.toHaveBeenCalled();
+  });
+
+  it('sets the language of one that does not, and answers the re-languaged document', async () => {
+    const setLanguage = vi.mocked(vscode.languages.setTextDocumentLanguage);
+    setLanguage.mockClear();
+    const relanguaged = docOf(DEFINITION, SMALLTALK_LANGUAGE);
+    setLanguage.mockResolvedValueOnce(relanguaged);
+
+    expect(await withGemstoneLanguage(docOf(DEFINITION, 'plaintext'))).toBe(relanguaged);
+    expect(setLanguage).toHaveBeenCalledWith(expect.anything(), SMALLTALK_LANGUAGE);
   });
 });

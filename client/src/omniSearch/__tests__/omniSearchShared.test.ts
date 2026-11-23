@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest';
-import { resultsMessage } from '../omniSearchShared';
+import { describe, it, expect, vi } from 'vitest';
+import { dispatchEngineMessage, resultsMessage } from '../omniSearchShared';
 import { OMNI_DEFAULTS } from '../omniConfig';
-import { OmniViewData } from '../omniEngine';
+import { OmniEngine, OmniViewData } from '../omniEngine';
 
 const chrome = {
   config: OMNI_DEFAULTS,
@@ -10,6 +10,8 @@ const chrome = {
   pinned: false,
   excludedFromAll: OMNI_DEFAULTS.excludedFromAll,
   matchMode: OMNI_DEFAULTS.matchMode,
+  regex: false,
+  regexAvailable: true,
   term: 'Object>>printString',
 };
 
@@ -39,6 +41,10 @@ function viewData(over: Partial<OmniViewData> = {}): Required<OmniViewData> {
     pivotTitle: 'Senders of foo',
     pivotTarget: 'foo',
     pivotHint: 'Esc to go back',
+    notice: 'Press Enter to search.',
+    noticeIsError: false,
+    regexPending: true,
+    moreMatch: false,
     ...over,
   };
 }
@@ -53,6 +59,10 @@ describe('resultsMessage', () => {
     // appears in source as one token — so a pivot on `on:do:` would highlight nothing at all.
     const msg = resultsMessage(viewData({ pivot: true, pivotTarget: 'on:do:' }), chrome);
     expect(msg.pivotTarget).toBe('on:do:');
+  });
+
+  it('carries whether a regex search stopped with more matching, which the count needs', () => {
+    expect(resultsMessage(viewData({ moreMatch: true }), chrome).moreMatch).toBe(true);
   });
 
   it('carries the truncation list to the webview', () => {
@@ -88,5 +98,37 @@ describe('resultsMessage', () => {
     for (const key of Object.keys(view)) {
       expect(msg, `OmniViewData.${key} is missing from the results message`).toHaveProperty(key);
     }
+  });
+});
+
+describe('dispatchEngineMessage', () => {
+  const engineWith = () => {
+    const submit = vi.fn(async () => null);
+    const toggleRegex = vi.fn(async () => null);
+    return { engine: { submit, toggleRegex } as unknown as OmniEngine, submit, toggleRegex };
+  };
+
+  it("hands Enter's value to the engine as a submit", () => {
+    const { engine, submit } = engineWith();
+
+    void dispatchEngineMessage(engine, { command: 'submit', value: 'foo.*bar' });
+
+    expect(submit).toHaveBeenCalledWith('foo.*bar');
+  });
+
+  it('submits an empty pattern when Enter carries no value', () => {
+    const { engine, submit } = engineWith();
+
+    void dispatchEngineMessage(engine, { command: 'submit' });
+
+    expect(submit).toHaveBeenCalledWith('');
+  });
+
+  it('hands the .* click to the engine', () => {
+    const { engine, toggleRegex } = engineWith();
+
+    void dispatchEngineMessage(engine, { command: 'toggleRegex' });
+
+    expect(toggleRegex).toHaveBeenCalledOnce();
   });
 });

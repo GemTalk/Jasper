@@ -13,6 +13,7 @@
  * is built by `omniSearchCommand.ts` and injected, so this file needs no stone session directly.
  */
 import * as vscode from 'vscode';
+import { codePointMatchesToUtf16 } from '../matchOffsets';
 import { SessionPanelTitle } from '../activeSessionDisplay';
 import { OmniConfig, OmniResult } from './omniTypes';
 import { createOmniEngine, OmniEngineDeps, OmniViewData } from './omniEngine';
@@ -51,6 +52,8 @@ type OmniInbound =
   | { command: 'query'; value: string }
   | { command: 'setScope'; scopeId: OmniConfig['enabledCategories'][number] | null }
   | { command: 'toggleCase' }
+  | { command: 'toggleRegex' }
+  | { command: 'submit'; value: string }
   | { command: 'togglePin' }
   | { command: 'loadMore' }
   | { command: 'loadAll' }
@@ -223,9 +226,10 @@ export class OmniSearchPanel {
   private rebindTo(deps: OmniPanelDeps): void {
     this.deps = deps;
     this.title.setSession(deps.sessionId);
+    this.engine?.dispose();
     this.engine = createOmniEngine(deps);
     this.reset();
-    this.panel.webview.postMessage(configMessage(deps.config, this.pinned));
+    this.panel.webview.postMessage(configMessage(deps.config, this.pinned, this.engine.state()));
     void this.engine.prime(deps.onError);
   }
 
@@ -241,6 +245,7 @@ export class OmniSearchPanel {
    *  very failure this hook exists to prevent, just reached through a logout instead of a switch. So the
    *  engine goes too, and `onMessage` shows the notice until a login rebinds us. */
   private clearSession(): void {
+    this.engine?.dispose();
     this.engine = undefined;
     this.reset();
     this.panel.webview.postMessage({ command: 'error', message: NO_SESSION_MESSAGE });
@@ -283,6 +288,8 @@ export class OmniSearchPanel {
         pinned: this.pinned,
         excludedFromAll: st.excludedFromAll,
         matchMode: st.matchMode,
+        regex: st.regex,
+        regexAvailable: st.regexAvailable,
         term: st.term,
       }),
     );
@@ -305,7 +312,9 @@ export class OmniSearchPanel {
       }
       switch (m.command) {
         case 'ready': {
-          this.panel.webview.postMessage(configMessage(this.deps.config, this.pinned));
+          this.panel.webview.postMessage(
+            configMessage(this.deps.config, this.pinned, engine.state()),
+          );
           await engine.prime(this.deps.onError);
           return;
         }
@@ -350,6 +359,11 @@ export class OmniSearchPanel {
             id: m.id,
             source,
             title: result.label,
+            // Counted as the stone counts characters; the preview places them on a JS string.
+            matches:
+              result.action.kind === 'openMethod' && result.action.matches
+                ? codePointMatchesToUtf16(source, result.action.matches)
+                : undefined,
           });
           return;
         }
@@ -401,6 +415,11 @@ export class OmniSearchPanel {
       const message = e instanceof Error ? e.message : String(e);
       this.deps.onError?.(message);
       this.panel.webview.postMessage({ command: 'error', message, failed: m.command });
+      // As in the docked panel: the op may have changed the engine before it failed.
+      if (this.engine)
+        this.panel.webview.postMessage(
+          configMessage(this.deps.config, this.pinned, this.engine.state()),
+        );
     }
   }
 
@@ -412,6 +431,7 @@ export class OmniSearchPanel {
 
   private dispose(): void {
     if (OmniSearchPanel.current === this) OmniSearchPanel.current = undefined;
+    this.engine?.dispose();
     this.panel.dispose();
     for (const d of this.disposables) d.dispose();
   }
