@@ -355,6 +355,7 @@ describe('method source', () => {
   it.each([
     ['\\\\', "sourceCodeAt: #'\\\\'"],
     ['==>', "sourceCodeAt: #'==>'"],
+    ['!=', "sourceCodeAt: #'!='"],
   ])('fetches the source of the binary selector %s', (selector, sent) => {
     const execute = executorAnswering('the source');
 
