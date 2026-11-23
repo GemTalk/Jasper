@@ -5,25 +5,14 @@
  * byte-identical copies); each module re-exports these for its own importers.
  */
 
-/**
- * The GemStone binary-selector characters. Mirrors the server lexer's
- * `SELECTOR_CHARS` set (`server/src/lexer/lexer.ts`) — note it INCLUDES backslash
- * (`\`), a valid binary character (e.g. `\\`, integer remainder). Keep the two in
- * sync; the client and server are separate workspaces, so they can't share the
- * literal directly.
- */
-export const BINARY_SELECTOR_CHARS = '-+*/\\~<>=&|@%,?!';
+import { isBinarySelector } from '../queries/util';
 
-const BINARY_SELECTOR_RE = /^[-+*/\\~<>=&|@%,?!]+$/;
+// Defined once in queries/util.ts, which the inspectors' selector check also uses.
+export { isBinarySelector };
 
 /** True if the selector is a keyword selector (contains a colon). */
 export function isKeywordSelector(selector: string): boolean {
   return selector.includes(':');
-}
-
-/** True if the selector is a binary selector (one or more binary characters). */
-export function isBinarySelector(selector: string): boolean {
-  return BINARY_SELECTOR_RE.test(selector);
 }
 
 /**

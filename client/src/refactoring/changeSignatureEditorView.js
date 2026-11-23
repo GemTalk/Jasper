@@ -92,7 +92,7 @@
       const anyKeyword = p.some(function (s) {
         return s.charAt(s.length - 1) === ':';
       });
-      // Binary-selector chars incl. backslash — mirrors selectorShape.ts / the host's
+      // Binary-selector chars incl. backslash — mirrors queries/util.ts / the host's
       // validateSignatureParts. Kept inline because the webview script can't import.
       const isBinaryPart = function (s) {
         return /^[-+*/\\~<>=&|@%,?!]+$/.test(s);
