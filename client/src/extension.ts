@@ -283,8 +283,8 @@ import { ProcessManager } from './manager/processManager';
 import { openMcpInspector } from './openMcpInspector';
 import { McpSocketServer, proxyScriptPath, writeClaudeDesktopMcpConfig } from './mcpSocketServer';
 import { AssistantPanel } from './assistant/assistantPanel';
-import { METHODS_FROM_CODE_LIMIT } from './assistant/queries/methodsFromCode';
 import { CLASSES_FROM_CODE_LIMIT } from './assistant/queries/classesFromCode';
+import { readOmniConfig } from './omniSearch/omniConfig';
 import type { McpUiHooks } from './mcpTools';
 import { writeClaudeCodeUserMcpConfig } from './claudeCodeUserMcpConfig';
 import { buildRefreshPromptDeps, promptClaudeCodeRefresh } from './claudeCodeRefreshPrompt';
@@ -3735,9 +3735,10 @@ export function activate(context: vscode.ExtensionContext) {
       showMethodList: async (title, methods, highlight) => {
         const outcome = await omniSearch.showMethodList(title, methods, highlight);
         if ('error' in outcome) throw new Error(outcome.error);
-        const capped = methods.length >= METHODS_FROM_CODE_LIMIT ? ' (the most it shows)' : '';
-        return `Showing ${outcome.shownCount} methods${capped} in the GemStone Search pane, titled "${title}".`;
+        return `Showing ${outcome.shownCount} methods in the GemStone Search pane, titled "${title}".`;
       },
+      maxMethods: () =>
+        readOmniConfig(vscode.workspace.getConfiguration('gemstone.omniSearch')).maxServerScan,
     };
     const mcpSocketServer = new McpSocketServer({
       getSession: () => sessionManager.getSelectedSession(),

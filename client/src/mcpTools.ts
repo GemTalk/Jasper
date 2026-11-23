@@ -36,6 +36,8 @@ export interface McpUiHooks {
     highlight?: string[],
   ): Promise<string>;
   showClassList(title: string, classes: ClassNameEntry[]): Promise<string>;
+  /** The most methods a method list shows: GemStone Search's `maxServerScan` setting. */
+  maxMethods(): number;
 }
 
 // AI-executed code writes to the Transcript too: the sink buffers those writes
@@ -880,7 +882,8 @@ export function registerMcpTools(
         GUI_RESULT_GUIDANCE +
         ' `code` is Smalltalk run on the stone as the body of a block: it may declare temporaries, ' +
         'must not use ^, and its last expression must be a collection of methods (GsNMethod), e.g. ' +
-        'from compiledMethodAt:. At most 5000 are shown. When the methods were chosen for sending ' +
+        'from compiledMethodAt:. Only the first gemstone.omniSearch.maxServerScan (200 by default) are ' +
+        'shown, so prefer code that answers a focused set. When the methods were chosen for sending ' +
         'or naming something, pass those selectors or names as `highlight` so each is marked in ' +
         'the source.',
       {
@@ -901,11 +904,20 @@ export function registerMcpTools(
         await uiTool(async () => {
           const session = getSession();
           if (!session) throw new Error('No active GemStone session. Ask the user to log in.');
-          const methods = methodsFromCode((code) => executeString(session, code), args.code);
+          const limit = ui.maxMethods();
+          const { methods, more } = methodsFromCode(
+            (code) => executeString(session, code),
+            args.code,
+            limit,
+          );
           if (methods.length === 0) {
             return 'The code answered no methods that a dictionary holds, so nothing was shown.';
           }
-          return await ui.showMethodList(args.title, methods, args.highlight);
+          const shown = await ui.showMethodList(args.title, methods, args.highlight);
+          return more
+            ? `${shown} These are only the first ${limit}; more match. Narrow the code, or the ` +
+                'user can raise gemstone.omniSearch.maxServerScan, to see the rest.'
+            : shown;
         })(),
     );
 
