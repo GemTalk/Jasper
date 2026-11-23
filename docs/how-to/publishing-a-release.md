@@ -24,7 +24,7 @@ npm version <X.Y.Z> --no-git-tag-version
 
 This bumps `package.json`'s `version` and `package-lock.json`'s two root fields (`version` and `packages."".version`) atomically. Don't hand-edit these or find-and-replace the version string across the lockfile: the version can collide with an unrelated dependency's own version elsewhere in `package-lock.json` (e.g. `1.8.11` matches `typed-rest-client@1.8.11`), corrupting that entry. `--no-git-tag-version` skips npm's own commit and tag; the workflow owns the tag.
 
-npm owns `package.json`'s formatting, and the file is currently in npm's own style, so this rewrites only the version line. Confirm that with `git diff package.json` before committing — `npm run format` globs only `*.{ts,mts,cts,js,mjs,cjs}`, so `format:check` will not catch stray churn here.
+npm also rewrites `package.json`'s escaped characters, such as `—` and `…` in setting descriptions and command titles, as the literal characters. Check `git diff package.json` before committing and undo every change but the version line (`git checkout package.json`, then change only that line by hand). `npm run format` globs only `*.{ts,mts,cts,js,mjs,cjs}`, so `format:check` will not catch this churn.
 
 Then promote the `[Unreleased]` section in `CHANGELOG.md` to a new dated `[X.Y.Z]` heading. The date and the exact `## [X.Y.Z] - YYYY-MM-DD` shape matter: the workflow refuses to publish a version that has no dated section, and it uses that section as the GitHub Release notes.
 
