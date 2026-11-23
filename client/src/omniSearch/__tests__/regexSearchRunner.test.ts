@@ -21,7 +21,7 @@ vi.mock('../../browserQueries', async (importOriginal) => ({
   executeFetchStringAsync: mocks.executeFetchStringAsync,
 }));
 
-import { regexSearchUsing } from '../omniSearchCommand';
+import { REGEX_STOP_WAIT_MS, regexSearchUsing } from '../omniSearchCommand';
 import { BrowserQueryError } from '../../browserQueries';
 import { NbCancelledError } from '../../nbRunner';
 import { GCI_ERR_OP_IN_PROGRESS } from '../../gciConstants';
@@ -189,5 +189,79 @@ describe('regexSearchUsing', () => {
     mocks.stoppedRunHolds.mockReturnValue(false);
     await stopping;
     expect(settled).toBe(true);
+  });
+
+  it("stops waiting for another run's stopped search to let go as soon as it is cancelled", async () => {
+    mocks.stoppedRunHolds.mockReturnValue(true);
+    const run = regexSearchUsing(session)('(a+)+b', false, 200);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    void run.cancel();
+    const outcome = await Promise.race([
+      run.outcome,
+      new Promise((resolve) => setTimeout(() => resolve('still waiting'), 1000)),
+    ]);
+
+    expect(outcome).toEqual({ kind: 'cancelled' });
+    expect(mocks.executeFetchStringAsync).not.toHaveBeenCalled();
+  });
+
+  it('starts anyway once the stopped run has held the session for REGEX_STOP_WAIT_MS', async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.stoppedRunHolds.mockReturnValue(true);
+      mocks.executeFetchStringAsync.mockResolvedValue('0\t0\t1\t0\t0\n\n');
+      const run = regexSearchUsing(session)('a', false, 200);
+
+      await vi.advanceTimersByTimeAsync(REGEX_STOP_WAIT_MS - 500);
+      expect(mocks.executeFetchStringAsync).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(mocks.executeFetchStringAsync).toHaveBeenCalled();
+      await run.outcome;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('starts the next search even when the one before it failed', async () => {
+    mocks.executeFetchStringAsync
+      .mockRejectedValueOnce(new Error('lost the stone'))
+      .mockResolvedValueOnce('0\t0\t1\t0\t0\n\n');
+    const runner = regexSearchUsing(session);
+    const first = runner('a', false, 200);
+    const second = runner('b', false, 200);
+
+    await expect(first.outcome).rejects.toThrow('lost the stone');
+    expect(await second.outcome).toMatchObject({ kind: 'results' });
+  });
+
+  it('stops its call on the stone at once when cancelled while the call was starting', async () => {
+    const stopCall = vi.fn();
+    let started!: () => void;
+    const gate = new Promise<void>((resolve) => (started = resolve));
+    mocks.executeFetchStringAsync.mockImplementation(
+      async (_s: unknown, _code: string, _title: string, onStart: (c: () => void) => void) => {
+        await gate;
+        onStart(stopCall);
+        throw new NbCancelledError();
+      },
+    );
+    const run = regexSearchUsing(session)('(a+)+b', false, 200);
+    await vi.waitFor(() => expect(mocks.executeFetchStringAsync).toHaveBeenCalled());
+
+    void run.cancel();
+    started();
+
+    expect(await run.outcome).toEqual({ kind: 'cancelled' });
+    expect(stopCall).toHaveBeenCalledOnce();
+  });
+
+  it('settles a cancel even when its search had already failed', async () => {
+    mocks.executeFetchStringAsync.mockRejectedValue(new Error('lost the stone'));
+    const run = regexSearchUsing(session)('a', false, 200);
+    await expect(run.outcome).rejects.toThrow('lost the stone');
+
+    await expect(run.cancel()).resolves.toBeUndefined();
   });
 });

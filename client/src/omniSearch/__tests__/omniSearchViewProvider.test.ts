@@ -12,6 +12,9 @@ vi.mock('../omniEngine', async (importOriginal) => ({
     refresh: vi.fn(async () => null),
     search: vi.fn(async () => null),
     state: () => ({ scopeId: null, caseSensitive: false }),
+    submit: vi.fn(async () => null),
+    lastRegexAnswer: vi.fn(() => null),
+    dispose: vi.fn(() => false),
   })),
 }));
 
@@ -99,6 +102,8 @@ describe('GemStone Search docked panel — reacting to settings changes', () => 
     provider.onConfigChanged((key) => key === 'caseSensitive');
 
     await vi.waitFor(() => expect(createOmniEngine).toHaveBeenCalledTimes(2));
+    // The old engine's regex search would otherwise keep the session busy out of sight.
+    expect(vi.mocked(createOmniEngine).mock.results[0].value.dispose).toHaveBeenCalled();
     expect(vi.mocked(createOmniEngine).mock.calls[1][0].carryOver).toEqual({
       scopeId: 'source',
       scopeBeforeRegex: 'classes',
@@ -106,6 +111,124 @@ describe('GemStone Search docked panel — reacting to settings changes', () => 
       excludedFromAll: [],
       regex: true,
     });
+  });
+
+  it('runs a regex search the rebuild stopped again on the new engine, and shows its answer', async () => {
+    const provider = new OmniSearchViewProvider(vi.fn(async () => fakeContext()));
+    const { view, on } = fakeView(true);
+    provider.resolveWebviewView(view as never);
+    await on.message({ command: 'ready' });
+    const old = vi.mocked(createOmniEngine).mock.results[0].value;
+    old.state = () => ({ scopeId: 'source', caseSensitive: false, regex: true, term: 'foo.*bar' });
+    old.dispose.mockReturnValue(true);
+    const rebuilt = {
+      prime: vi.fn(async () => {}),
+      state: () => ({ scopeId: 'source', caseSensitive: false, regex: true, term: 'foo.*bar' }),
+      submit: vi.fn(async () => ({ rows: [], hasMore: false, exact: true, truncations: [] })),
+      dispose: vi.fn(() => false),
+    };
+    vi.mocked(createOmniEngine).mockReturnValueOnce(rebuilt as never);
+
+    provider.onConfigChanged((key) => key === 'maxServerScan');
+
+    await vi.waitFor(() => expect(rebuilt.submit).toHaveBeenCalledWith('foo.*bar'));
+    await vi.waitFor(() =>
+      expect(view.webview.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ command: 'results', term: 'foo.*bar' }),
+      ),
+    );
+  });
+
+  it.each([
+    ['fails', () => Promise.reject(new Error('stone went away')), 'stone went away'],
+    ['fails with something other than an Error', () => Promise.reject('hung up'), 'hung up'],
+    ['is superseded', () => Promise.resolve(null), undefined],
+  ])('takes the spinner off when the search it runs again %s', async (_what, outcome, error) => {
+    const ctx = fakeContext();
+    const provider = new OmniSearchViewProvider(vi.fn(async () => ctx));
+    const { view, on } = fakeView(true);
+    provider.resolveWebviewView(view as never);
+    await on.message({ command: 'ready' });
+    const old = vi.mocked(createOmniEngine).mock.results[0].value;
+    old.state = () => ({ scopeId: 'source', caseSensitive: false, regex: true, term: 'a' });
+    old.dispose.mockReturnValue(true);
+    const rebuilt = {
+      prime: vi.fn(async () => {}),
+      state: () => ({ scopeId: 'source', caseSensitive: false, regex: true, term: 'a' }),
+      submit: vi.fn(outcome),
+      dispose: vi.fn(() => false),
+    };
+    vi.mocked(createOmniEngine).mockReturnValueOnce(rebuilt as never);
+    view.webview.postMessage.mockClear();
+
+    provider.onConfigChanged();
+
+    await vi.waitFor(() =>
+      expect(view.webview.postMessage).toHaveBeenCalledWith({ command: 'busy', on: false }),
+    );
+    expect(vi.mocked(ctx.deps.onError!).mock.calls).toEqual(error ? [[error]] : []);
+  });
+
+  it('shows an answered regex search again on the new engine, without searching the stone', async () => {
+    const provider = new OmniSearchViewProvider(vi.fn(async () => fakeContext()));
+    const { view, on } = fakeView(true);
+    provider.resolveWebviewView(view as never);
+    await on.message({ command: 'ready' });
+    const old = vi.mocked(createOmniEngine).mock.results[0].value;
+    const answer = { key: 'c:foo', results: [], meta: { exact: true } };
+    old.state = () => ({ scopeId: 'source', caseSensitive: false, regex: true, term: 'foo' });
+    old.lastRegexAnswer.mockReturnValue(answer);
+    const rebuilt = {
+      prime: vi.fn(async () => {}),
+      state: () => ({ scopeId: 'source', caseSensitive: false, regex: true, term: 'foo' }),
+      search: vi.fn(async () => ({ rows: [], hasMore: false, exact: true, truncations: [] })),
+      submit: vi.fn(async () => null),
+      dispose: vi.fn(() => false),
+    };
+    vi.mocked(createOmniEngine).mockReturnValueOnce(rebuilt as never);
+
+    provider.onConfigChanged();
+
+    await vi.waitFor(() => expect(rebuilt.search).toHaveBeenCalledWith('foo'));
+    expect(rebuilt.submit).not.toHaveBeenCalled();
+    expect(vi.mocked(createOmniEngine).mock.calls[1][0].carryOver?.regexAnswer).toBe(answer);
+  });
+
+  it('drops what it carried, and resets the panel, when the session changes before the rebuild', async () => {
+    const contexts = [fakeContext(1)];
+    const provider = new OmniSearchViewProvider(vi.fn(async () => contexts[0]));
+    const shown = fakeView(true);
+    provider.resolveWebviewView(shown.view as never);
+    await shown.on.message({ command: 'ready' });
+    const old = vi.mocked(createOmniEngine).mock.results[0].value;
+    old.state = () => ({ scopeId: 'source', caseSensitive: true, regex: true, term: 'foo' });
+    old.dispose.mockReturnValue(true);
+    shown.view.visible = false;
+
+    provider.onConfigChanged();
+    contexts[0] = fakeContext(2);
+    await provider.onSessionSelectionChanged();
+    shown.view.visible = true;
+    await shown.on.message({ command: 'query', value: '' });
+
+    expect(shown.view.webview.postMessage).toHaveBeenCalledWith({ command: 'reset' });
+    const built = vi.mocked(createOmniEngine).mock.calls;
+    expect(built[built.length - 1][0].carryOver).toBeUndefined();
+    const latest = vi.mocked(createOmniEngine).mock.results.at(-1)!.value;
+    expect(latest.submit).not.toHaveBeenCalled();
+  });
+
+  it('runs nothing again when no regex search was running', async () => {
+    const provider = new OmniSearchViewProvider(vi.fn(async () => fakeContext()));
+    const { view, on } = fakeView(true);
+    provider.resolveWebviewView(view as never);
+    await on.message({ command: 'ready' });
+
+    provider.onConfigChanged();
+    await vi.waitFor(() => expect(createOmniEngine).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(vi.mocked(createOmniEngine).mock.results[1].value.submit).not.toHaveBeenCalled();
   });
 
   it('defers the rebuild to the next interaction when the panel is hidden', async () => {
@@ -572,6 +695,28 @@ describe('GemStone Search docked panel — previewing a regex hit', () => {
     const preview = posted.find((m) => m.command === 'preview');
     const [m] = preview.matches as Array<{ start: number; end: number }>;
     expect(source.slice(m.start, m.end)).toBe('at: 1 put:');
+  });
+
+  it('sends no matches for a row that is not a regex hit', async () => {
+    const ctx = fakeContext();
+    (ctx.deps as unknown as { previewSource: () => string }).previewSource = () => 'bar ^1';
+    const provider = new OmniSearchViewProvider(vi.fn(async () => ctx));
+    const { view, on } = fakeView(true);
+    provider.resolveWebviewView(view as never);
+    await on.message({ command: 'ready' });
+    vi.mocked(createOmniEngine).mock.results[0].value.resultFor = () => ({
+      label: 'Foo>>bar',
+      action: { kind: 'openMethod' },
+    });
+
+    await on.message({ command: 'preview', id: 0 });
+    await settle();
+
+    const posted = view.webview.postMessage.mock.calls.map((c) => c[0]);
+    expect(posted.find((m) => m.command === 'preview')).toMatchObject({
+      source: 'bar ^1',
+      matches: undefined,
+    });
   });
 });
 

@@ -143,6 +143,19 @@ describe('markMatches', () => {
     ]);
   });
 
+  it('clears old marks, and watches for no edit, when no match fits the document', async () => {
+    vi.resetModules();
+    const fresh = await import('../matchHighlights.js');
+    const registered = vi.mocked(vscode.workspace.onDidChangeTextDocument);
+    const callsBefore = registered.mock.calls.length;
+    const { editor, setDecorations } = editorOn(doc('ab', 'gemstone://1/short'));
+
+    fresh.markMatches(editor, [{ start: 5, end: 9 }]);
+
+    expect(setDecorations).toHaveBeenCalledWith(expect.anything(), []);
+    expect(registered.mock.calls.length).toBe(callsBefore);
+  });
+
   it('clears the marks on the first edit to the document, not on an unrelated one', async () => {
     // A fresh copy of the module, so its once-per-session edit listener is registered here.
     vi.resetModules();
@@ -229,6 +242,52 @@ describe('showMatches', () => {
     expect(sel(fromExplorer)).toEqual([0, 0, 0, 3]);
   });
 
+  it('leaves the editor it opened in alone when that same editor is shown again', async () => {
+    const { fresh, reshow } = await freshWithListener();
+    const { editor, setDecorations } = editorOn(doc(SOURCE, 'gemstone://1/same'));
+    fresh.showMatches(editor, [{ start: AT, end: PUT_END }]);
+    setDecorations.mockClear();
+    vi.mocked(editor.revealRange).mockClear();
+
+    reshow(editor);
+
+    expect(setDecorations).not.toHaveBeenCalled();
+    expect(vi.mocked(editor.revealRange)).not.toHaveBeenCalled();
+  });
+
+  it('leaves alone an editor of the method that was already open, in another group', async () => {
+    const { fresh, reshow } = await freshWithListener();
+    const d = doc(SOURCE, 'gemstone://1/twoGroups');
+    const { editor: elsewhere, setDecorations } = editorOn(d);
+    (vscode.window as unknown as { visibleTextEditors: unknown[] }).visibleTextEditors = [
+      elsewhere,
+    ];
+    fresh.showMatches(editorOn(d).editor, [{ start: AT, end: PUT_END }]);
+
+    reshow(elsewhere);
+
+    expect(elsewhere.selection).toBeUndefined();
+    expect(setDecorations).not.toHaveBeenCalled();
+    (vscode.window as unknown as { visibleTextEditors: unknown[] }).visibleTextEditors = [];
+  });
+
+  it('applies them to a new editor once, not again each time the user switches back to it', async () => {
+    const { fresh, reshow } = await freshWithListener();
+    const d = doc(SOURCE, 'gemstone://1/flip');
+    const opened = editorOn(d).editor;
+    fresh.showMatches(opened, [{ start: AT, end: PUT_END }]);
+    const { editor: replacement, setDecorations } = editorOn(d);
+    reshow(replacement);
+    setDecorations.mockClear();
+    vi.mocked(replacement.revealRange).mockClear();
+
+    reshow(opened);
+    reshow(replacement);
+
+    expect(setDecorations).not.toHaveBeenCalled();
+    expect(vi.mocked(replacement.revealRange)).not.toHaveBeenCalled();
+  });
+
   it('applies them to a new editor that only becomes visible, not active', async () => {
     vi.resetModules();
     const fresh = await import('../matchHighlights.js');
@@ -289,5 +348,33 @@ describe('methodKey', () => {
     expect(await key('gemstone://1/Globals/Foo/class/accessing/bar')).not.toBe(await key(base));
     expect(await key('gemstone://1/Globals/Foo/instance/accessing/baz')).not.toBe(await key(base));
     expect(await key('gemstone://2/Globals/Foo/instance/accessing/bar')).not.toBe(await key(base));
+  });
+});
+
+describe('disposeMatchHighlights', () => {
+  it('releases the mark style and the listeners created on first use', async () => {
+    vi.resetModules();
+    const fresh = await import('../matchHighlights.js');
+    const styleDispose = vi.fn();
+    const editDispose = vi.fn();
+    const reshowDispose = vi.fn();
+    vi.mocked(vscode.window.createTextEditorDecorationType).mockReturnValueOnce({
+      dispose: styleDispose,
+    } as never);
+    vi.mocked(vscode.workspace.onDidChangeTextDocument).mockReturnValueOnce({
+      dispose: editDispose,
+    });
+    vi.mocked(vscode.window.onDidChangeActiveTextEditor).mockReturnValueOnce({
+      dispose: reshowDispose,
+    });
+    const { editor } = editorOn(doc(SOURCE));
+    fresh.showMatches(editor, [{ start: AT, end: AT + 3 }]);
+
+    fresh.disposeMatchHighlights();
+
+    expect(styleDispose).toHaveBeenCalledOnce();
+    expect(editDispose).toHaveBeenCalledOnce();
+    expect(reshowDispose).toHaveBeenCalledOnce();
+    expect(fresh.recent.size).toBe(0);
   });
 });

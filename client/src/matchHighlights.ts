@@ -6,8 +6,9 @@
  * Something may replace the editor just after the open, and the replacement has neither the
  * selection nor the marks: the GemStone Explorer, following the open to a method it was not
  * showing, opens that method itself, under its own form of the URI (with the dictionary's
- * position). `showMatches` therefore applies them again to any editor of the same method shown
- * within `RESHOW_WINDOW_MS`, matching the method rather than the URI.
+ * position). `showMatches` therefore applies them again, once, to a new editor of the same method
+ * shown within `RESHOW_WINDOW_MS`, matching the method rather than the URI. An editor of it that
+ * was already open (in another group, say) is left as the user had it.
  *
  * Matches are 0-based offsets into the document, `end` exclusive, counted in characters as the stone
  * counts them (see matchOffsets.ts for the conversion). A method edited since the search may be
@@ -81,9 +82,20 @@ export const RESHOW_WINDOW_MS = 3000;
  *  test only. */
 export const recent = new Map<
   string,
-  { matches: readonly MatchOffsets[]; until: number; editor: vscode.TextEditor }
+  { matches: readonly MatchOffsets[]; until: number; seen: Set<vscode.TextEditor> }
 >();
 let reapplyOnReshow: vscode.Disposable | undefined;
+
+/** Release the marks' style and listeners when the extension deactivates, like its other
+ *  registrations. */
+export function disposeMatchHighlights(): void {
+  decoration?.dispose();
+  clearOnEdit?.dispose();
+  reapplyOnReshow?.dispose();
+  decoration = clearOnEdit = reapplyOnReshow = undefined;
+  marked.clear();
+  recent.clear();
+}
 
 /** The method a document holds, whatever form its URI takes; the URI itself for anything else. */
 export function methodKey(uri: vscode.Uri): string {
@@ -117,7 +129,7 @@ function applyMatches(editor: vscode.TextEditor, matches: readonly MatchOffsets[
 }
 
 /**
- * Show a regex hit's matches in the editor its method was opened in, and again in any editor of
+ * Show a regex hit's matches in the editor its method was opened in, and again in a new editor of
  * that method shown within RESHOW_WINDOW_MS (see the module comment).
  */
 export function showMatches(editor: vscode.TextEditor, matches: readonly MatchOffsets[]): void {
@@ -129,7 +141,8 @@ export function showMatches(editor: vscode.TextEditor, matches: readonly MatchOf
   recent.set(methodKey(editor.document.uri), {
     matches,
     until: Date.now() + RESHOW_WINDOW_MS,
-    editor,
+    // Editors already showing the method (another group, say) are the user's: only a new one counts.
+    seen: new Set([editor, ...vscode.window.visibleTextEditors]),
   });
   reapplyOnReshow ??= vscode.Disposable.from(
     vscode.window.onDidChangeActiveTextEditor((ed) => {
@@ -140,7 +153,7 @@ export function showMatches(editor: vscode.TextEditor, matches: readonly MatchOf
   );
 }
 
-/** Apply a recent open's matches to `ed` if it is a new editor of that method, inside the window. */
+/** Apply a recent open's matches to `ed` if it is a new editor of that method, inside the window, once. */
 function reapplyIfReshown(ed: vscode.TextEditor): void {
   const key = methodKey(ed.document.uri);
   const pending = recent.get(key);
@@ -149,8 +162,8 @@ function reapplyIfReshown(ed: vscode.TextEditor): void {
     recent.delete(key);
     return;
   }
-  if (ed === pending.editor) return;
-  pending.editor = ed;
+  if (pending.seen.has(ed)) return;
+  pending.seen.add(ed);
   applyMatches(ed, pending.matches);
 }
 

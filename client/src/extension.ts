@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFile } from 'child_process';
 import * as vscode from 'vscode';
+import { disposeMatchHighlights } from './matchHighlights';
 import { openDocumentAndSyncExplorer, OpenDocumentOptions } from './openDocumentAndSyncExplorer';
 import {
   LanguageClient,
@@ -874,6 +875,8 @@ export function activate(context: vscode.ExtensionContext) {
   // Relays the controller's result changes to the Explorer, which is registered first.
   const sunitResultsChanged = new vscode.EventEmitter<void>();
   context.subscriptions.push(sunitResultsChanged);
+  // Regex search's match marks in the editor: a style and listeners created on first use.
+  context.subscriptions.push({ dispose: disposeMatchHighlights });
   // Create every output channel up front — not lazily on first use — so the
   // full set is discoverable in the Output view's channel dropdown from
   // activation. (The Class Sync channel is created just after ExportManager is

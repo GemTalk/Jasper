@@ -32,6 +32,7 @@ vi.mock('../omniEngine', () => ({
     search: vi.fn(async () => null),
     // Read for the config message a rebind sends.
     state: vi.fn(() => ({ scopeId: null, regex: false, regexAvailable: false })),
+    dispose: vi.fn(),
   })),
 }));
 
@@ -96,6 +97,8 @@ describe('OmniSearchPanel session binding', () => {
     OmniSearchPanel.show(depsB);
 
     expect(createOmniEngine).toHaveBeenLastCalledWith(depsB);
+    // The old engine's regex search would otherwise keep session 1 busy out of sight.
+    expect(vi.mocked(createOmniEngine).mock.results[0].value.dispose).toHaveBeenCalled();
     expect(vscode.window.createWebviewPanel).toHaveBeenCalledTimes(1); // the user's tab survives
     expect(p.webview.postMessage).toHaveBeenCalledWith({ command: 'reset' });
   });
@@ -152,6 +155,19 @@ describe('OmniSearchPanel session binding', () => {
       command: 'error',
       message: NO_SESSION_MESSAGE,
     });
+  });
+
+  it('stops the regex search of an engine it drops at logout, and of one it closes with', () => {
+    const p = (panel = open(1));
+    const first = vi.mocked(createOmniEngine).mock.results[0].value;
+    OmniSearchPanel.onSessionSelectionChanged(() => null);
+    expect(first.dispose).toHaveBeenCalled();
+
+    OmniSearchPanel.show(deps(2));
+    const second = vi.mocked(createOmniEngine).mock.results[1].value;
+    p.dispose(); // the user closes the tab
+    panel = undefined;
+    expect(second.dispose).toHaveBeenCalled();
   });
 
   it('re-binds after a logout even when the user logs back into the same session id', () => {
@@ -230,6 +246,93 @@ describe('OmniSearchPanel failed actions', () => {
         message: 'session busy',
         failed: 'query',
       }),
+    );
+  });
+});
+
+describe('OmniSearchPanel with regex search', () => {
+  let panel: ReturnType<typeof open> | undefined;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    panel = undefined;
+  });
+  afterEach(() => panel?.dispose());
+
+  const lastEngine = () => {
+    const engines = vi.mocked(createOmniEngine).mock.results;
+    return engines[engines.length - 1].value;
+  };
+  const posted = (p: ReturnType<typeof open>): Array<Record<string, unknown>> =>
+    p.webview.postMessage.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+
+  it('sends the config, regex state included, and loads the corpora when the webview is ready', async () => {
+    const p = (panel = open(1));
+    const engine = lastEngine();
+    engine.state.mockReturnValue({ scopeId: 'source', regex: true, regexAvailable: true });
+
+    messagesTo(p)({ command: 'ready' });
+
+    await vi.waitFor(() => expect(engine.prime).toHaveBeenCalled());
+    expect(posted(p)).toContainEqual(
+      expect.objectContaining({ command: 'config', regex: true, regexAvailable: true }),
+    );
+  });
+
+  it('tells the webview whether regex is on, available, and for which pattern, with each answer', async () => {
+    const p = (panel = open(1));
+    const engine = lastEngine();
+    engine.state.mockReturnValue({
+      scopeId: 'source',
+      regex: true,
+      regexAvailable: true,
+      term: 'foo.*bar',
+    });
+    engine.search.mockResolvedValueOnce({ rows: [], hasMore: false, exact: true, truncations: [] });
+
+    messagesTo(p)({ command: 'query', value: 'foo.*bar' });
+
+    await vi.waitFor(() =>
+      expect(posted(p)).toContainEqual(
+        expect.objectContaining({
+          command: 'results',
+          regex: true,
+          regexAvailable: true,
+          term: 'foo.*bar',
+        }),
+      ),
+    );
+  });
+
+  it('previews a regex hit with its matches as offsets into the source, past an emoji', async () => {
+    const source = 'bar\n  "😀" ^self at: 1 put: 2';
+    OmniSearchPanel.show({ ...deps(1), previewSource: vi.fn(() => source) });
+    const created = vi.mocked(vscode.window.createWebviewPanel).mock.results;
+    const p = (panel = created[created.length - 1].value);
+    const start = [...source.slice(0, source.indexOf('at: 1'))].length;
+    lastEngine().resultFor = () => ({
+      label: 'Foo>>bar',
+      action: { kind: 'openMethod', matches: [{ start, end: start + 10 }] },
+    });
+
+    messagesTo(p)({ command: 'preview', id: 0 });
+
+    await vi.waitFor(() => expect(posted(p).find((m) => m.command === 'preview')).toBeDefined());
+    const [m] = posted(p).find((x) => x.command === 'preview')!.matches as Array<{
+      start: number;
+      end: number;
+    }>;
+    expect(source.slice(m.start, m.end)).toBe('at: 1 put:');
+  });
+
+  it('previews a row that is not a regex hit with no matches', async () => {
+    const p = (panel = open(1));
+    lastEngine().resultFor = () => ({ label: 'Foo>>bar', action: { kind: 'openMethod' } });
+
+    messagesTo(p)({ command: 'preview', id: 0 });
+
+    await vi.waitFor(() =>
+      expect(posted(p).find((m) => m.command === 'preview')).toMatchObject({ matches: undefined }),
     );
   });
 });
