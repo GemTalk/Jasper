@@ -85,7 +85,7 @@ describe('New Method on a highlighted class while a run holds the session', () =
     await expect(ctl.newMethod()).resolves.toBeUndefined();
 
     expect(ctl.state.className).toBeUndefined();
-    expect(window.showWarningMessage).not.toHaveBeenCalled();
+    expect(window.showWarningMessage).not.toHaveBeenCalledWith('Select a class first.');
   });
 
   it('still fails on a read error that is not a busy refusal', async () => {

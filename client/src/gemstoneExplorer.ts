@@ -1896,8 +1896,8 @@ export class ExplorerController {
       !this.unlessBusy(() => this.selectClass(new ClassItem(className), false))
     )
       return;
-    // Loads the access map the filter reads before anything changes, so a refusal leaves
-    // the side and the filter as they were.
+    // Loads the access map the filter reads before anything changes, so for the class already
+    // selected, a refusal leaves the side and the filter as they were.
     if (!this.unlessBusy(() => this.methodIvarAccess())) return;
     this.setMethodSide(false);
     this.setFilterState(VIEW_METHODS, `${kind}:${ivarName}`);
