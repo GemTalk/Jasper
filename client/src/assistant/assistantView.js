@@ -11,6 +11,27 @@
     'show_classes_in_search',
   ]);
 
+  const HELP_TEXT = [
+    '**Jasper Assistant (experimental)**',
+    'Ask in plain words about the code in the GemStone session named at the top. Answers come from the Claude Code installed on this machine, which reads your session through Jasper; the time and cost of each answer show under it.',
+    '### Commands',
+    '- `/help` shows this.',
+    '- `/clear` or `/new` starts a fresh conversation, the same as **New**.',
+    '### Keys',
+    '- **Enter** sends; **Shift+Enter** starts a new line.',
+    '- **Up** and **Down** bring back earlier messages (on the first or last line of the box).',
+    '### Buttons',
+    '- **New** starts a fresh conversation; the assistant forgets the earlier questions.',
+    '- **Stop** cancels the answer in progress; your next message continues the same conversation.',
+    '### Results in Jasper',
+    '- With **Show results in Jasper (if possible)** ticked, a list of methods or classes, or a regular-expression search, opens in GemStone Search instead of filling the chat. A blue banner gives the count and a **Show GemStone Search** button.',
+    '- Press **Esc** in the GemStone Search box to close the list and return to the normal search.',
+    '- A method list stops at the `gemstone.omniSearch.maxServerScan` setting; the answer says when more match.',
+    '- Untick the box to get every answer as text in the chat.',
+    '### If it cannot reach GemStone',
+    "- The assistant works through the window that serves Jasper's MCP server. When this window does not, the line at the top says so. If no window serves it, click **Claim MCP Server** there; if another window does, release it in that window first.",
+  ].join('\n');
+
   function escapeHtml(s) {
     return String(s).replace(
       /[&<>"']/g,
@@ -295,6 +316,11 @@
     function send() {
       const text = input.value.trim();
       if (!text || busy) {
+        return;
+      }
+      if (text === '/help') {
+        input.value = '';
+        append('assistant', renderMarkdown(HELP_TEXT));
         return;
       }
       // What a Claude Code user types to start over; in headless mode Claude Code ignores it.

@@ -310,7 +310,7 @@ export class AssistantPanel {
   </div>
   <label class="option"><input type="checkbox" id="guiUpdates" checked> Show results in Jasper (if possible)</label>
   <form id="composer" class="composer">
-    <textarea id="input" rows="3" placeholder="Ask about your GemStone code. Enter sends, Shift+Enter for a new line."></textarea>
+    <textarea id="input" rows="3" placeholder="Ask about your GemStone code. Enter sends, Shift+Enter for a new line, /help for more."></textarea>
     <div class="buttons">
       <button type="button" id="newConversation" class="secondary">New</button>
       <button type="button" id="stop" class="secondary" hidden>Stop</button>
