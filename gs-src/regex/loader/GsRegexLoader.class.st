@@ -1,0 +1,348 @@
+"
+GsRegexLoader installs Jasper's regular-expression support into a stone. Every load
+path uses it: Jasper's install command and the CI install script file this class in
+and send it #loadFromServerDir:, and so does the by-hand topaz bootstrap
+(load-regex.gs), so the paths cannot drift. It follows GsRefactoringLoader, the
+refactoring engine's loader, in everything but what it loads and checks.
+
+What it does, in order:
+  1. ensureDictionary -- find or create the GsRegexLibrary symbol dictionary, put
+     it at the END of the installing user's symbol list, where it cannot shadow
+     anything, and share the same dictionary object into every user's symbol list.
+     #replaceReceiptIn: then replaces the receipt Jasper reads to tell whether this
+     is the version it ships (none is stored by a by-hand load).
+  2. file in, with the dictionary moved to the FRONT of the symbol list for the
+     duration (see GsRefactoringLoader>>withDictionaryFirstDo: for why; the class
+     names here are prefixed Gs*, so a clash is unlikely, but the cost is nothing):
+        regex-core.gs -- the vendored library, adapted (gs-src/regex/vendor/)
+        engine.gs     -- GsRegex and GsRegexSourceSearch
+        manifest.gs   -- expected classes and method counts, for step 3
+  3. verify -- every manifest class present with at least its expected method
+     count; the class-side initializers ran; a match and a source search work.
+  4. commit when every check passes, abort otherwise, and report either way.
+
+Nothing is added to any kernel class. Sharing the dictionary into other users'
+symbol lists needs SystemUser.
+"
+Class {
+	#name : 'GsRegexLoader',
+	#superclass : 'Object',
+	#instVars : [ 'dir', 'report', 'receipt' ],
+	#classVars : [ ],
+	#classInstVars : [ ],
+	#category : 'Regex-Loader'
+}
+
+{ #category : 'loading' }
+GsRegexLoader class >> loadFromServerDir: aString [
+	"Install from the payload directory aString, a path the gem can read (a local
+	 stone). Answers the loader; #reportString and #allOk describe the outcome."
+
+	^self new loadFromServerDir: aString
+]
+
+{ #category : 'constants' }
+GsRegexLoader class >> dictionaryName [
+	^#GsRegexLibrary
+]
+
+{ #category : 'loading' }
+GsRegexLoader >> loadFromServerDir: aString [
+	"Stage and verify, then commit on success or abort on any failure, a failed commit
+	 included (another session changing the same objects meanwhile)."
+
+	self stageFromServerDir: aString.
+	self allOk ifFalse: [ System abortTransaction. ^self ].
+	self commit ifFalse: [
+		self note: 'Commit' ok: false detail: 'the commit failed (did another session change the same objects?); nothing was installed'.
+		System abortTransaction ].
+	^self
+]
+
+{ #category : 'loading' }
+GsRegexLoader >> commit [
+	^System commitTransaction
+]
+
+{ #category : 'loading' }
+GsRegexLoader >> stageFromServerDir: aString [
+	"File in and verify, but neither commit nor abort: the caller decides."
+
+	dir := aString.
+	report := OrderedCollection new.
+	[ self replaceReceiptIn: self ensureDictionary.
+	  self withDictionaryFirstDo: [
+		self fileIn: 'regex-core.gs'.
+		self fileIn: 'engine.gs'.
+		self fileIn: 'manifest.gs' ] ]
+		on: Error
+		do: [:e |
+			self note: 'File-in' ok: false detail: e messageText.
+			^self ].
+	self verify.
+	^self
+]
+
+{ #category : 'receipt' }
+GsRegexLoader >> receiptDigest: aDigest installedBy: aVersion [
+	"Record a receipt with this load: aDigest, the client's fingerprint of the payload
+	 files, and aVersion, the Jasper version that sent them."
+
+	receipt := Array with: aDigest with: aVersion
+]
+
+{ #category : 'receipt' }
+GsRegexLoader >> replaceReceiptIn: aDict [
+	"Inside the load's transaction, so an aborted load keeps the previous receipt."
+
+	aDict removeKey: #GsRegexDigest ifAbsent: [nil].
+	aDict removeKey: #GsRegexInstalledBy ifAbsent: [nil].
+	receipt isNil ifTrue: [^self].
+	aDict at: #GsRegexDigest put: (receipt at: 1).
+	aDict at: #GsRegexInstalledBy put: (receipt at: 2)
+]
+
+{ #category : 'loading' }
+GsRegexLoader >> withDictionaryFirstDo: aBlock [
+	"Run aBlock with GsRegexLibrary first in the installing user's symbol list, so the
+	 payload's bareword class names resolve to the classes it creates; then put the
+	 dictionary back at the end, even if aBlock fails."
+
+	| dict |
+	dict := self dictionary.
+	self moveDictionary: dict to: 1.
+	^[ aBlock value ]
+		ensure: [ self moveDictionary: dict to: System myUserProfile symbolList size ]
+]
+
+{ #category : 'loading' }
+GsRegexLoader >> moveDictionary: aDict to: anIndex [
+	| prof current |
+	prof := System myUserProfile.
+	current := self indexOfDictionary: aDict.
+	current = anIndex ifTrue: [ ^self ].
+	current notNil ifTrue: [ prof removeDictionaryAt: current ].
+	prof insertDictionary: aDict at: (anIndex min: prof symbolList size + 1)
+]
+
+{ #category : 'loading' }
+GsRegexLoader >> indexOfDictionary: aDict [
+	| list |
+	list := System myUserProfile symbolList.
+	^(1 to: list size) detect: [:i | (list at: i) == aDict] ifNone: [nil]
+]
+
+{ #category : 'loading' }
+GsRegexLoader >> ensureDictionary [
+	"Find or create GsRegexLibrary at the end of the symbol list, bound to its own name,
+	 and share it into every user's symbol list. Idempotent."
+
+	| sym prof list dict |
+	sym := self class dictionaryName.
+	prof := System myUserProfile.
+	list := prof symbolList.
+	dict := list detect: [:d | d name == sym] ifNone: [nil].
+	dict isNil ifTrue: [
+		dict := SymbolDictionary new name: sym; yourself.
+		dict at: sym put: dict.
+		prof insertDictionary: dict at: list size + 1 ].
+	self shareDictionary: dict.
+	^dict
+]
+
+{ #category : 'loading' }
+GsRegexLoader >> shareDictionary: aDict [
+	"Insert the same dictionary object at the end of every symbol list that has no
+	 dictionary of that name yet, so it never clobbers or duplicates one."
+
+	| sym |
+	sym := self class dictionaryName.
+	AllUsers do: [:profile |
+		(profile symbolList detect: [:d | d name == sym] ifNone: [nil]) isNil
+			ifTrue: [ profile insertDictionary: aDict at: profile symbolList size + 1 ] ]
+]
+
+{ #category : 'loading' }
+GsRegexLoader >> dictionary [
+	^System myUserProfile symbolList
+		detect: [:d | d name == self class dictionaryName]
+		ifNone: [self ensureDictionary]
+]
+
+{ #category : 'loading' }
+GsRegexLoader >> fileIn: aName [
+	"The #serverUtf8File form exists only on 3.7 and later; the payload is ASCII, so the
+	 older form reads it the same way."
+
+	| path |
+	path := dir, '/', aName.
+	self useUtf8FileIn
+		ifTrue: [ GsFileIn fromPath: path on: #serverUtf8File to: nil ]
+		ifFalse: [ GsFileIn fromServerPath: path ]
+]
+
+{ #category : 'loading' }
+GsRegexLoader >> useUtf8FileIn [
+	^[ | parts |
+	   parts := self versionParts.
+	   (parts at: 1) > 3 or: [ (parts at: 1) = 3 and: [ (parts at: 2) >= 7 ] ] ]
+		on: Error do: [:e | false ]
+]
+
+{ #category : 'loading' }
+GsRegexLoader >> versionParts [
+	"The stone's release as Integers, e.g. #(3 6 2). Safe to read by String key here
+	 because this method is compiled by file-in, not over the GCI."
+
+	| raw |
+	raw := (System gemVersionAt: 'gsRelease') subStrings: ' '.
+	^(raw first subStrings: '.') collect: [:p | p asInteger]
+]
+
+{ #category : 'verifying' }
+GsRegexLoader >> verify [
+	self checkManifest.
+	self checkInitializers.
+	self checkSmoke.
+	^self
+]
+
+{ #category : 'verifying' }
+GsRegexLoader >> checkManifest [
+	"Every expected class loaded, each with at least its expected method count: fewer
+	 means the file-in silently dropped some."
+
+	| manifest missing short total |
+	manifest := self dictionary at: #GsRegexManifest ifAbsent: [nil].
+	manifest isNil ifTrue: [
+		^self note: 'Manifest present' ok: false detail: 'GsRegexManifest not found' ].
+	missing := OrderedCollection new.
+	short := OrderedCollection new.
+	total := 0.
+	manifest do: [:row | | name expected cls actual |
+		name := row at: 1.
+		expected := row at: 2.
+		total := total + 1.
+		cls := self resolve: name asSymbol.
+		cls isNil
+			ifTrue: [ missing add: name ]
+			ifFalse: [
+				actual := cls selectors size + cls class selectors size.
+				actual < expected ifTrue: [
+					short add: name, ' (', actual printString, '/', expected printString, ')' ] ] ].
+	self note: 'Classes present'
+		ok: missing isEmpty
+		detail: (missing isEmpty
+			ifTrue: [ total printString, ' classes' ]
+			ifFalse: [ 'missing:', (self join: missing) ]).
+	self note: 'Method counts'
+		ok: short isEmpty
+		detail: (short isEmpty
+			ifTrue: [ 'all classes have their expected methods' ]
+			ifFalse: [ 'short:', (self join: short) ])
+]
+
+{ #category : 'verifying' }
+GsRegexLoader >> resolve: aSymbol [
+	"A class this loader installs, looked up in GsRegexLibrary first. The loader is filed
+	 in before those classes exist, so it cannot name them as barewords."
+
+	^(self dictionary at: aSymbol ifAbsent: [nil])
+		ifNil: [ System myUserProfile symbolList objectNamed: aSymbol ]
+]
+
+{ #category : 'verifying' }
+GsRegexLoader >> checkInitializers [
+	"The library's tables are set by class-side initializers, which topaz file-in does not
+	 run by itself; the payload runs them. \e and \w need the parser's, [\w] the character
+	 set predicates', and ^ after a carriage return the matcher's."
+
+	| ok detail |
+	ok := true.
+	detail := 'escape tables set'.
+	[ | regex |
+	  regex := self resolve: #GsRegex.
+	  ((regex matches: (String with: Character esc) pattern: '\e')
+		and: [ (regex matches: 'word' pattern: '\w+')
+		and: [ (regex matches: 'w' pattern: '[\w]')
+		and: [ regex search: 'a', (String with: Character cr), 'b' pattern: '^b' ] ] ])
+			ifFalse: [ ok := false. detail := '\e, \w, [\w] or ^ after a line break did not match' ] ]
+		on: Error do: [:e | ok := false. detail := e messageText ].
+	self note: 'Initializers ran' ok: ok detail: detail
+]
+
+{ #category : 'verifying' }
+GsRegexLoader >> checkSmoke [
+	"End to end: a source search finds a method on a throwaway class, which is removed
+	 before the commit."
+
+	| ok detail |
+	ok := true.
+	detail := 'match and source search work'.
+	[ self runSmoke ] on: Error do: [:e | ok := false. detail := e messageText ].
+	self note: 'Functional smoke (match, source search)' ok: ok detail: detail
+]
+
+{ #category : 'verifying' }
+GsRegexLoader >> runSmoke [
+	| fixture search found |
+	((self resolve: #GsRegex) matches: 'at:put:' pattern: 'at:put:')
+		ifFalse: [ ^self error: 'a colon did not match itself' ].
+	fixture := Object
+		subclass: 'GsRegexSmokeFixture'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: self dictionary.
+	[ fixture
+		compileMethod: 'smoke ^#gsRegexSmokeToken'
+		dictionaries: System myUserProfile symbolList
+		category: 'smoke'.
+	  search := ((self resolve: #GsRegexSourceSearch)
+		pattern: 'gsRegexSmoke\w+' ignoreCase: false limit: 10)
+			classes: (Array with: fixture); run; yourself.
+	  found := search methods anySatisfy: [:m | m inClass == fixture ] ]
+		ensure: [ self dictionary removeKey: #GsRegexSmokeFixture ifAbsent: [nil] ].
+	found ifFalse: [ ^self error: 'the source search did not find the fixture method' ]
+]
+
+{ #category : 'reporting' }
+GsRegexLoader >> note: aLabel ok: aBool detail: aString [
+	report add: (Array with: aLabel with: aBool with: aString)
+]
+
+{ #category : 'reporting' }
+GsRegexLoader >> allOk [
+	^report allSatisfy: [:row | row at: 2]
+]
+
+{ #category : 'reporting' }
+GsRegexLoader >> report [
+	"The raw rows, each #(label okBoolean detailString)."
+
+	^report
+]
+
+{ #category : 'reporting' }
+GsRegexLoader >> join: aCollection [
+	^aCollection inject: '' into: [:acc :each | acc, ' ', each]
+]
+
+{ #category : 'reporting' }
+GsRegexLoader >> reportString [
+	| ws lf |
+	lf := Character lf.
+	ws := WriteStream on: String new.
+	ws nextPutAll: '[GsRegex] --- install report ---'; nextPut: lf.
+	report do: [:row |
+		ws nextPutAll: '[GsRegex]   '.
+		ws nextPutAll: ((row at: 2) ifTrue: ['[ ok ] '] ifFalse: ['[FAIL] ']).
+		ws nextPutAll: (row at: 1); nextPutAll: ' -- '; nextPutAll: (row at: 3); nextPut: lf].
+	ws nextPutAll: '[GsRegex] '.
+	ws nextPutAll: (self allOk
+		ifTrue: ['SUCCESS -- all completeness checks passed.']
+		ifFalse: ['INCOMPLETE -- one or more checks failed (see above).']).
+	ws nextPut: lf.
+	^ws contents
+]

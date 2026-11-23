@@ -1,0 +1,205 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const mocks = vi.hoisted(() => ({
+  showInformationMessage: vi.fn(() => Promise.resolve(undefined)),
+  showInputBox: vi.fn<() => Promise<string | undefined>>(() => Promise.resolve(undefined)),
+  showWarningMessage: vi.fn(() => Promise.resolve(undefined)),
+  showErrorMessage: vi.fn(() => Promise.resolve(undefined)),
+  executeCommand: vi.fn(() => Promise.resolve(undefined)),
+  appendLine: vi.fn(),
+  channelShow: vi.fn(),
+  installSupport: vi.fn(() =>
+    Promise.resolve({ success: true, report: 'SUCCESS -- all checks passed.', message: 'ok' }),
+  ),
+  sessionNeedsCommit: vi.fn<() => boolean | undefined>(() => false),
+  refreshAvailable: vi.fn((s: { regexSupportAvailable?: boolean }) => {
+    s.regexSupportAvailable = true;
+    return true;
+  }),
+  existsSync: vi.fn(() => true),
+}));
+
+vi.mock('vscode', () => ({
+  window: {
+    showInformationMessage: mocks.showInformationMessage,
+    showInputBox: mocks.showInputBox,
+    showWarningMessage: mocks.showWarningMessage,
+    showErrorMessage: mocks.showErrorMessage,
+    createOutputChannel: () => ({ appendLine: mocks.appendLine, show: mocks.channelShow }),
+    withProgress: (_opts: unknown, task: (p: { report: () => void }) => unknown) =>
+      task({ report: () => {} }),
+  },
+  commands: { executeCommand: mocks.executeCommand },
+  ProgressLocation: { Notification: 15 },
+}));
+
+vi.mock('fs', () => ({ existsSync: mocks.existsSync }));
+
+vi.mock('../../browserQueries', () => ({
+  sessionNeedsCommit: mocks.sessionNeedsCommit,
+  // Read at load time by the shared feature registry (pluginFeatures) as the
+  // features' live probes; never invoked in these command tests.
+  checkRegexSupportAvailable: vi.fn(() => false),
+  checkRefactoringSupportAvailable: vi.fn(() => false),
+}));
+
+vi.mock('../regexAvailability', () => ({
+  refreshRegexSupportAvailable: mocks.refreshAvailable,
+}));
+
+vi.mock('../regexInstall', async (importActual) => {
+  const actual = await importActual<typeof import('../regexInstall')>();
+  return {
+    ...actual,
+    installRegexSupport: mocks.installSupport,
+    isRegexSupportInstalled: vi.fn(() => false),
+  };
+});
+vi.mock('../regexPayload', async (importActual) => ({
+  ...(await importActual<typeof import('../regexPayload')>()),
+  REGEX_PAYLOAD_FILES: ['regex-loader.gs'],
+}));
+
+import { ActiveSession, SessionManager } from '../../sessionManager';
+import { installRegexFeature } from '../regexInstallCommand';
+import { fakeActiveSession } from '../../__tests__/fakeActiveSession';
+
+const EXTENSION_PATH = '/ext';
+
+function systemUserLibrary(systemUserLoginSucceeds = true) {
+  return {
+    GciTsLogin: vi.fn(() =>
+      systemUserLoginSucceeds
+        ? { session: {}, err: { number: 0 } }
+        : { session: null, err: { number: 4051, message: 'bad password' } },
+    ),
+    logout: vi.fn(() => ({ sessionFreed: true })),
+  };
+}
+
+function createBaseSession(gci: object = systemUserLibrary()): ActiveSession {
+  return fakeActiveSession({
+    id: 1,
+    login: { stone: 'demo', gem_host: 'localhost', netldi: 'netldi' },
+    gci,
+    stoneVersion: '3.7.5',
+    regexSupportAvailable: false,
+  });
+}
+
+const abortMock = vi.fn(() => ({ success: true, err: { number: 0 } }));
+const sessionManager = { abort: abortMock } as unknown as SessionManager;
+
+const install = (base: ActiveSession, interactive: boolean) =>
+  installRegexFeature(base, sessionManager, EXTENSION_PATH, interactive);
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.existsSync.mockReturnValue(true);
+  mocks.showInputBox.mockReset();
+  mocks.showInputBox.mockResolvedValue(undefined);
+  mocks.sessionNeedsCommit.mockReturnValue(false);
+  mocks.installSupport.mockResolvedValue({
+    success: true,
+    report: 'SUCCESS -- all checks passed.',
+    message: 'ok',
+  });
+  mocks.refreshAvailable.mockImplementation((s: { regexSupportAvailable?: boolean }) => {
+    s.regexSupportAvailable = true;
+    return true;
+  });
+});
+
+describe('installRegexFeature', () => {
+  it('installs over a SystemUser session when the default password works', async () => {
+    const base = createBaseSession();
+
+    const ok = await install(base, true);
+
+    expect(mocks.showInputBox).not.toHaveBeenCalled();
+    expect(mocks.installSupport).toHaveBeenCalledTimes(1);
+    expect(ok).toBe(true);
+  });
+
+  it('reports success (so the caller still toasts) even when the working-session refresh is deferred', async () => {
+    // Server-side install succeeds, but the session has uncommitted changes and the user picks
+    // "Later" on the refresh prompt: refreshWorkingSessionAfterInstall returns false and the
+    // regexSupportAvailable latch is left stale. The feature must still report that the install
+    // LANDED ON THE STONE — keying the return on the latch here made a verified install look like
+    // a failure, so the bundle showed neither a success nor an error (issue #384 review).
+    mocks.sessionNeedsCommit.mockReturnValue(true);
+    mocks.showInformationMessage.mockResolvedValueOnce(undefined); // dismiss = not "Refresh" = Later
+    const base = createBaseSession();
+
+    const ok = await install(base, true);
+
+    expect(mocks.installSupport).toHaveBeenCalledTimes(1); // it did run + verify server-side
+    expect(mocks.refreshAvailable).not.toHaveBeenCalled(); // refresh deferred → latch not relatched
+    expect(base.regexSupportAvailable).toBe(false); // latch intentionally left stale
+    expect(ok).toBe(true); // ...yet the install is reported as landed
+  });
+
+  it('reports a clear error and never logs in when the payload files are missing', async () => {
+    mocks.existsSync.mockReturnValue(false);
+    const gci = systemUserLibrary();
+    const base = createBaseSession(gci);
+
+    const ok = await install(base, true);
+
+    expect(mocks.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('payload not found'),
+    );
+    expect(gci.GciTsLogin).not.toHaveBeenCalled();
+    expect(ok).toBe(false);
+  });
+
+  it('prompts for the SystemUser password when the default is rejected, then installs', async () => {
+    const gci = systemUserLibrary(false);
+    const base = createBaseSession(gci);
+    gci.GciTsLogin.mockReturnValueOnce({
+      session: null,
+      err: { number: 4051, message: 'bad password' },
+    }).mockReturnValueOnce({ session: {}, err: { number: 0 } });
+    mocks.showInputBox.mockResolvedValueOnce('the real password');
+
+    await install(base, true);
+
+    expect(mocks.showInputBox).toHaveBeenCalledTimes(1);
+    expect(mocks.installSupport).toHaveBeenCalledTimes(1);
+  });
+
+  it('warns without prompting when non-interactive and the default password fails', async () => {
+    const base = createBaseSession(systemUserLibrary(false));
+
+    const ok = await install(base, false);
+
+    expect(mocks.showInputBox).not.toHaveBeenCalled();
+    expect(mocks.showWarningMessage).toHaveBeenCalledTimes(1);
+    expect(mocks.installSupport).not.toHaveBeenCalled();
+    expect(ok).toBe(false);
+  });
+
+  it('surfaces the report and reports failure when the loader install is incomplete', async () => {
+    mocks.installSupport.mockResolvedValueOnce({
+      success: false,
+      report: 'INCOMPLETE -- missing GsRxParser',
+      message: 'did not install completely',
+    });
+    const base = createBaseSession();
+
+    const ok = await install(base, true);
+
+    expect(mocks.channelShow).toHaveBeenCalled();
+    expect(mocks.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('install failed'));
+    expect(ok).toBe(false);
+  });
+
+  it('refreshes the working session and relatches availability on success', async () => {
+    const base = createBaseSession();
+
+    await install(base, true);
+
+    expect(abortMock).toHaveBeenCalledWith(base.id);
+    expect(base.regexSupportAvailable).toBe(true);
+  });
+});

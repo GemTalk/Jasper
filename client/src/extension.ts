@@ -132,12 +132,16 @@ import { showClassHierarchy } from './commands/classHierarchy';
 import { revealInspect } from './inspectRouter';
 import {
   maybeOfferServerSupport,
+  getAutoInstallMode,
+  updateServerSupport,
+  checkServerSupportAtLogin,
   runInstallServerSupport,
   runUninstallServerSupport,
 } from './optionalSupportOffer';
 import { noticeDifferentServerSupport, runShowServerSupportStatus } from './serverSupportStatus';
 import { refreshEnhancedInspectorAvailable } from './enhancedInspector/enhancedInspectorAvailability';
 import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAvailability';
+import { refreshRegexSupportAvailable } from './regex/regexAvailability';
 import { refreshUndoUi } from './undo/undoUi';
 import { undoLastCommand } from './undo/undoLastCommand';
 import { FS_CHANGED_COMMAND, SEARCH_RESYNC_COMMAND } from './undo/afterUndo';
@@ -1635,14 +1639,16 @@ export function activate(context: vscode.ExtensionContext) {
       !!selected && selected.rbSupportAvailable === true,
     );
     // Drives the "Uninstall Server Support" menu visibility: it appears only when
-    // at least one optional support (either feature) is actually installed on the
+    // at least one optional support (any feature) is actually installed on the
     // selected stone. The install/uninstall commands refresh this via
     // `optionalSupportOffer` after they change the latches.
     vscode.commands.executeCommand(
       'setContext',
       'gemstone.serverSupportInstalled',
       !!selected &&
-        (selected.rbSupportAvailable === true || selected.enhancedInspectorAvailable === true),
+        (selected.rbSupportAvailable === true ||
+          selected.enhancedInspectorAvailable === true ||
+          selected.regexSupportAvailable === true),
     );
   }
   context.subscriptions.push(
@@ -2297,6 +2303,7 @@ export function activate(context: vscode.ExtensionContext) {
   function afterConnected(login: GemStoneLogin, session: ActiveSession): void {
     refreshEnhancedInspectorAvailable(session);
     refreshRefactoringSupportAvailable(session);
+    refreshRegexSupportAvailable(session);
     updateRefactoringSupportContext();
     refreshUndoUi(session);
     treeProvider.refresh();
@@ -2316,13 +2323,28 @@ export function activate(context: vscode.ExtensionContext) {
     // The "Start Here" status-bar button (shown from onConnected above) points
     // a new user at the basics; see StartHereStatusBar (issue #468).
 
-    // Offer the optional server-side supports this stone lacks (Enhanced
-    // Inspector + refactoring engine) as one bundle, per
+    // Offer the server support this stone lacks as one bundle, per
     // gemstone.serverSupport.autoInstall: `always` installs silently, `ask`
-    // shows one Install/Always/Never modal, `never` does nothing.
-    // Fire-and-forget; no-ops when the stone already has everything applicable.
-    void maybeOfferServerSupport(session, sessionManager, context.extensionPath);
-    void noticeDifferentServerSupport(session, context.extensionPath, context.globalState);
+    // shows one Install/Always/Never modal, `never` does nothing. Then deal with
+    // support that isn't this Jasper's: `always` replaces it, otherwise a warning.
+    void checkServerSupportAtLogin(
+      () =>
+        maybeOfferServerSupport(
+          session,
+          sessionManager,
+          context.extensionPath,
+          context.globalState,
+        ),
+      () =>
+        noticeDifferentServerSupport(
+          session,
+          context.extensionPath,
+          context.globalState,
+          getAutoInstallMode() === 'always'
+            ? (ids) => updateServerSupport(session, sessionManager, context.extensionPath, ids)
+            : undefined,
+        ),
+    );
   }
 
   context.subscriptions.push(

@@ -21,7 +21,12 @@ const mocks = vi.hoisted(() => {
     installRB: vi.fn(() => Promise.resolve(true)),
     uninstallEI: vi.fn(() => Promise.resolve(true)),
     uninstallRB: vi.fn(() => Promise.resolve(true)),
+    installRX: vi.fn(() => Promise.resolve(true)),
+    uninstallRX: vi.fn(() => Promise.resolve(true)),
     executeCommand: vi.fn(() => Promise.resolve(undefined)),
+    loginRefusal: vi.fn<() => string | undefined>(() => undefined),
+    logWarning: vi.fn(),
+    logInfo: vi.fn(),
   };
 });
 
@@ -55,18 +60,30 @@ vi.mock('../enhancedInspector/enhancedInspectorUninstallCommand', () => ({
 vi.mock('../refactoring/refactoringUninstallCommand', () => ({
   uninstallRefactoringFeature: mocks.uninstallRB,
 }));
+vi.mock('../regex/regexInstallCommand', () => ({
+  installRegexFeature: mocks.installRX,
+}));
+vi.mock('../regex/regexUninstallCommand', () => ({
+  uninstallRegexFeature: mocks.uninstallRX,
+}));
+vi.mock('../gciLog', () => ({ logWarning: mocks.logWarning, logInfo: mocks.logInfo }));
+vi.mock('../serverPlugin/systemUserAuth', () => ({
+  defaultSystemUserLoginRefusal: mocks.loginRefusal,
+}));
 
 import { ActiveSession, SessionManager } from '../sessionManager';
 import {
+  checkServerSupportAtLogin,
   maybeOfferServerSupport,
   runInstallServerSupport,
   runUninstallServerSupport,
+  updateServerSupport,
 } from '../optionalSupportOffer';
 
 const AUTO_INSTALL_KEY = 'serverSupport.autoInstall';
 const EXTENSION_PATH = '/ext';
 
-// Both supports missing on a 3.7.5 stone (EI applicable, RB always applicable).
+// Every support missing on a 3.7.5 stone (EI applicable; RB and regex always applicable).
 function baseSession(overrides: Partial<ActiveSession> = {}): ActiveSession {
   return {
     id: 1,
@@ -74,9 +91,19 @@ function baseSession(overrides: Partial<ActiveSession> = {}): ActiveSession {
     stoneVersion: '3.7.5',
     enhancedInspectorAvailable: false,
     rbSupportAvailable: false,
+    regexSupportAvailable: false,
     ...overrides,
   } as unknown as ActiveSession;
 }
+
+const stored = new Map<string, unknown>();
+const memento = {
+  get: (key: string) => stored.get(key),
+  update: (key: string, value: unknown) => {
+    stored.set(key, value);
+    return Promise.resolve();
+  },
+} as unknown as import('vscode').Memento;
 
 const getSelectedSession = vi.fn<() => ActiveSession | undefined>();
 const sessionManager = { getSelectedSession } as unknown as SessionManager;
@@ -103,33 +130,40 @@ beforeEach(() => {
   for (const k of Object.keys(mocks.config)) delete mocks.config[k];
   mocks.showInformationMessage.mockResolvedValue(undefined);
   mocks.showWarningMessage.mockResolvedValue(undefined);
+  mocks.loginRefusal.mockReturnValue(undefined);
+  stored.clear();
 });
 
 describe('maybeOfferServerSupport', () => {
   it('does nothing when the stone already has everything applicable', async () => {
-    const base = baseSession({ enhancedInspectorAvailable: true, rbSupportAvailable: true });
+    const base = baseSession({
+      enhancedInspectorAvailable: true,
+      rbSupportAvailable: true,
+      regexSupportAvailable: true,
+    });
 
-    await maybeOfferServerSupport(base, sessionManager, EXTENSION_PATH);
+    await maybeOfferServerSupport(base, sessionManager, EXTENSION_PATH, memento);
 
     expect(mocks.showInformationMessage).not.toHaveBeenCalled();
     expect(mocks.installEI).not.toHaveBeenCalled();
     expect(mocks.installRB).not.toHaveBeenCalled();
+    expect(mocks.installRX).not.toHaveBeenCalled();
   });
 
   it('does nothing when the setting is "never"', async () => {
     mocks.config[AUTO_INSTALL_KEY] = 'never';
 
-    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH);
+    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH, memento);
 
     expect(mocks.showInformationMessage).not.toHaveBeenCalled();
     expect(mocks.installEI).not.toHaveBeenCalled();
   });
 
-  it('installs both without a modal prompt when the setting is "always"', async () => {
+  it('installs every support without a modal prompt when the setting is "always"', async () => {
     mocks.config[AUTO_INSTALL_KEY] = 'always';
     const base = baseSession();
 
-    await maybeOfferServerSupport(base, sessionManager, EXTENSION_PATH);
+    await maybeOfferServerSupport(base, sessionManager, EXTENSION_PATH, memento);
 
     const shownModal = mocks.showInformationMessage.mock.calls.some(
       (c) => typeof c[1] === 'object' && (c[1] as { modal?: boolean } | undefined)?.modal === true,
@@ -137,13 +171,86 @@ describe('maybeOfferServerSupport', () => {
     expect(shownModal).toBe(false);
     expect(mocks.installEI).toHaveBeenCalledWith(base, sessionManager, EXTENSION_PATH, false);
     expect(mocks.installRB).toHaveBeenCalledWith(base, sessionManager, EXTENSION_PATH, false);
+    expect(mocks.installRX).toHaveBeenCalledWith(base, sessionManager, EXTENSION_PATH, false);
     expect(mocks.executeCommand).toHaveBeenCalledWith('gemstone.explorer.refresh');
+  });
+
+  it('warns once, and installs nothing, when "always" meets a SystemUser password that is not the default', async () => {
+    mocks.config[AUTO_INSTALL_KEY] = 'always';
+    mocks.loginRefusal.mockReturnValue('password incorrect');
+
+    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH, memento);
+
+    expect(mocks.installEI).not.toHaveBeenCalled();
+    expect(mocks.installRB).not.toHaveBeenCalled();
+    expect(mocks.installRX).not.toHaveBeenCalled();
+    expect(mocks.showWarningMessage).toHaveBeenCalledTimes(1);
+    expect(mocks.showWarningMessage.mock.calls[0]).toEqual([
+      'Enhanced Inspector and Refactoring engine and Regex support could not be installed on ' +
+        '"demo" automatically: SystemUser could not log in with the default password ' +
+        '(password incorrect). Install asks for the password.',
+      'Install…',
+      "Don't Ask Again",
+    ]);
+  });
+
+  it('installs with a password prompt when the user clicks Install on that warning', async () => {
+    mocks.config[AUTO_INSTALL_KEY] = 'always';
+    mocks.loginRefusal.mockReturnValue('password incorrect');
+    mocks.showWarningMessage.mockResolvedValueOnce('Install…');
+    const base = baseSession();
+
+    await maybeOfferServerSupport(base, sessionManager, EXTENSION_PATH, memento);
+    await vi.waitFor(() => expect(mocks.installRX).toHaveBeenCalled());
+
+    expect(mocks.installEI).toHaveBeenCalledWith(base, sessionManager, EXTENSION_PATH, true);
+    expect(mocks.installRB).toHaveBeenCalledWith(base, sessionManager, EXTENSION_PATH, true);
+    expect(mocks.installRX).toHaveBeenCalledWith(base, sessionManager, EXTENSION_PATH, true);
+  });
+
+  it('logs an install from that warning that fails, rather than leaving it unhandled', async () => {
+    mocks.config[AUTO_INSTALL_KEY] = 'always';
+    mocks.loginRefusal.mockReturnValue('password incorrect');
+    mocks.showWarningMessage.mockResolvedValueOnce('Install…');
+    mocks.installEI.mockRejectedValueOnce(new Error('stone went away'));
+
+    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH, memento);
+
+    await vi.waitFor(() =>
+      expect(mocks.logWarning).toHaveBeenCalledWith(
+        'Installing the missing server support failed: stone went away',
+      ),
+    );
+  });
+
+  it("stops warning about that stone after Don't Ask Again, until another support goes missing", async () => {
+    mocks.config[AUTO_INSTALL_KEY] = 'always';
+    mocks.loginRefusal.mockReturnValue('password incorrect');
+    mocks.showWarningMessage.mockResolvedValueOnce("Don't Ask Again");
+
+    await maybeOfferServerSupport(
+      baseSession({ enhancedInspectorAvailable: true }),
+      sessionManager,
+      EXTENSION_PATH,
+      memento,
+    );
+    await vi.waitFor(() => expect(stored.size).toBe(1));
+    await maybeOfferServerSupport(
+      baseSession({ enhancedInspectorAvailable: true }),
+      sessionManager,
+      EXTENSION_PATH,
+      memento,
+    );
+    expect(mocks.showWarningMessage).toHaveBeenCalledTimes(1);
+
+    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH, memento);
+    expect(mocks.showWarningMessage).toHaveBeenCalledTimes(2);
   });
 
   it('confirms success with one consolidated "server support" toast, not one per feature', async () => {
     mocks.config[AUTO_INSTALL_KEY] = 'always';
 
-    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH);
+    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH, memento);
 
     const toasts = mocks.showInformationMessage.mock.calls.filter((c) => typeof c[0] === 'string');
     expect(toasts).toEqual([['GemStone server support installed.']]);
@@ -153,7 +260,7 @@ describe('maybeOfferServerSupport', () => {
     mocks.config[AUTO_INSTALL_KEY] = 'always';
     mocks.installRB.mockResolvedValueOnce(false);
 
-    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH);
+    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH, memento);
 
     const succeeded = mocks.showInformationMessage.mock.calls.some(
       (c) => c[0] === 'GemStone server support installed.',
@@ -161,10 +268,28 @@ describe('maybeOfferServerSupport', () => {
     expect(succeeded).toBe(false);
   });
 
+  // The refresh after each install aborts the session directly, which GemStone Search does not hear
+  // about, so a panel opened at login kept .* greyed out after regex support was installed.
+  it('tells GemStone Search after installing, so it sees what was installed', async () => {
+    answer('Install');
+
+    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH, memento);
+
+    expect(mocks.executeCommand).toHaveBeenCalledWith('gemstone.omniSearch.resync', 1);
+  });
+
+  it('tells GemStone Search after a silent install too', async () => {
+    mocks.config[AUTO_INSTALL_KEY] = 'always';
+
+    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH, memento);
+
+    expect(mocks.executeCommand).toHaveBeenCalledWith('gemstone.omniSearch.resync', 1);
+  });
+
   it('reloads the Explorer dictionary list after installing, so a new dictionary appears', async () => {
     answer('Install');
 
-    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH);
+    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH, memento);
 
     expect(mocks.executeCommand).toHaveBeenCalledWith('gemstone.explorer.refresh');
   });
@@ -172,7 +297,7 @@ describe('maybeOfferServerSupport', () => {
   it('offers one modal with Install, Not Now, Always, and Never', async () => {
     answer('Install');
 
-    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH);
+    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH, memento);
 
     expect(shownButtons()).toEqual(['Install', 'Not Now', 'Always', 'Never']);
   });
@@ -180,7 +305,7 @@ describe('maybeOfferServerSupport', () => {
   it('marks "Not Now" as the modal close affordance so Escape declines without touching the setting', async () => {
     answer('Not Now');
 
-    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH);
+    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH, memento);
 
     const items = mocks.showInformationMessage.mock.calls[0].slice(2) as Array<{
       title: string;
@@ -192,55 +317,82 @@ describe('maybeOfferServerSupport', () => {
     expect(mocks.update).not.toHaveBeenCalled();
   });
 
-  it('installs both interactively when the user clicks Install, leaving the setting unchanged', async () => {
+  it('installs every support interactively when the user clicks Install, leaving the setting unchanged', async () => {
     answer('Install');
     const base = baseSession();
 
-    await maybeOfferServerSupport(base, sessionManager, EXTENSION_PATH);
+    await maybeOfferServerSupport(base, sessionManager, EXTENSION_PATH, memento);
 
     expect(mocks.installEI).toHaveBeenCalledWith(base, sessionManager, EXTENSION_PATH, true);
     expect(mocks.installRB).toHaveBeenCalledWith(base, sessionManager, EXTENSION_PATH, true);
+    expect(mocks.installRX).toHaveBeenCalledWith(base, sessionManager, EXTENSION_PATH, true);
     expect(mocks.update).not.toHaveBeenCalled();
   });
 
   it('remembers "always" and installs when the user clicks Always', async () => {
     answer('Always');
 
-    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH);
+    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH, memento);
 
     expect(mocks.update).toHaveBeenCalledWith(AUTO_INSTALL_KEY, 'always', 1);
     expect(mocks.installEI).toHaveBeenCalledTimes(1);
     expect(mocks.installRB).toHaveBeenCalledTimes(1);
+    expect(mocks.installRX).toHaveBeenCalledTimes(1);
   });
 
   it('remembers "never" and installs nothing when the user clicks Never', async () => {
     answer('Never');
 
-    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH);
+    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH, memento);
 
     expect(mocks.update).toHaveBeenCalledWith(AUTO_INSTALL_KEY, 'never', 1);
     expect(mocks.installEI).not.toHaveBeenCalled();
     expect(mocks.installRB).not.toHaveBeenCalled();
+    expect(mocks.installRX).not.toHaveBeenCalled();
   });
 
   it('installs nothing and changes no setting when the user dismisses the prompt', async () => {
     answer(undefined);
 
-    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH);
+    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH, memento);
 
     expect(mocks.installEI).not.toHaveBeenCalled();
     expect(mocks.update).not.toHaveBeenCalled();
     expect(mocks.executeCommand).not.toHaveBeenCalled();
   });
 
-  it('offers only the refactoring engine on a pre-3.7.5 stone (Enhanced Inspector not applicable)', async () => {
+  it('offers the refactoring engine and regex support on a pre-3.7.5 stone (Enhanced Inspector not applicable)', async () => {
     answer('Install');
     const base = baseSession({ stoneVersion: '3.6.2' });
 
-    await maybeOfferServerSupport(base, sessionManager, EXTENSION_PATH);
+    await maybeOfferServerSupport(base, sessionManager, EXTENSION_PATH, memento);
 
     expect(mocks.installRB).toHaveBeenCalledTimes(1);
+    expect(mocks.installRX).toHaveBeenCalledTimes(1);
     expect(mocks.installEI).not.toHaveBeenCalled();
+  });
+
+  it('offers only regex support when it is the one support missing', async () => {
+    answer('Install');
+    const base = baseSession({ enhancedInspectorAvailable: true, rbSupportAvailable: true });
+
+    await maybeOfferServerSupport(base, sessionManager, EXTENSION_PATH, memento);
+
+    expect(mocks.installRX).toHaveBeenCalledTimes(1);
+    expect(mocks.installEI).not.toHaveBeenCalled();
+    expect(mocks.installRB).not.toHaveBeenCalled();
+  });
+
+  it('shows no success toast when regex support fails to install', async () => {
+    mocks.config[AUTO_INSTALL_KEY] = 'always';
+    mocks.installRX.mockResolvedValueOnce(false);
+
+    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH, memento);
+
+    const succeeded = mocks.showInformationMessage.mock.calls.some(
+      (c) => c[0] === 'GemStone server support installed.',
+    );
+    expect(succeeded).toBe(false);
   });
 });
 
@@ -256,7 +408,11 @@ describe('runInstallServerSupport', () => {
 
   it('installs every applicable support interactively, reinstalling even when present', async () => {
     getSelectedSession.mockReturnValue(
-      baseSession({ enhancedInspectorAvailable: true, rbSupportAvailable: true }),
+      baseSession({
+        enhancedInspectorAvailable: true,
+        rbSupportAvailable: true,
+        regexSupportAvailable: true,
+      }),
     );
 
     await runInstallServerSupport(sessionManager, EXTENSION_PATH);
@@ -273,22 +429,105 @@ describe('runInstallServerSupport', () => {
       EXTENSION_PATH,
       true,
     );
+    expect(mocks.installRX).toHaveBeenCalledWith(
+      expect.anything(),
+      sessionManager,
+      EXTENSION_PATH,
+      true,
+    );
   });
 
-  it('installs only the refactoring engine on a pre-3.7.5 stone', async () => {
+  it('installs the refactoring engine and regex support on a pre-3.7.5 stone', async () => {
     getSelectedSession.mockReturnValue(baseSession({ stoneVersion: '3.6.2' }));
 
     await runInstallServerSupport(sessionManager, EXTENSION_PATH);
 
     expect(mocks.installRB).toHaveBeenCalledTimes(1);
+    expect(mocks.installRX).toHaveBeenCalledTimes(1);
     expect(mocks.installEI).not.toHaveBeenCalled();
   });
 });
 
-describe('runUninstallServerSupport', () => {
-  // A stone with both supports installed.
+describe('updateServerSupport', () => {
+  it('changes nothing and answers false when SystemUser has another password', async () => {
+    mocks.loginRefusal.mockReturnValue('password incorrect');
+
+    const updated = await updateServerSupport(baseSession(), sessionManager, EXTENSION_PATH, [
+      'refactoring',
+      'regex',
+    ]);
+
+    expect(updated).toBe(false);
+    expect(mocks.logInfo).toHaveBeenCalledWith(
+      'Did not replace the server support on "demo": password incorrect',
+    );
+    expect(mocks.installRB).not.toHaveBeenCalled();
+    expect(mocks.installRX).not.toHaveBeenCalled();
+    expect(mocks.showWarningMessage).not.toHaveBeenCalled();
+    expect(mocks.showInformationMessage).not.toHaveBeenCalled();
+  });
+
+  it('answers true once it has replaced them', async () => {
+    expect(
+      await updateServerSupport(baseSession(), sessionManager, EXTENSION_PATH, ['regex']),
+    ).toBe(true);
+  });
+
   const installed = () =>
-    baseSession({ enhancedInspectorAvailable: true, rbSupportAvailable: true });
+    baseSession({
+      enhancedInspectorAvailable: true,
+      rbSupportAvailable: true,
+      regexSupportAvailable: true,
+    });
+
+  it('replaces only the named supports, without asking', async () => {
+    await updateServerSupport(installed(), sessionManager, EXTENSION_PATH, ['regex']);
+
+    expect(mocks.installRX).toHaveBeenCalledWith(
+      expect.anything(),
+      sessionManager,
+      EXTENSION_PATH,
+      false,
+    );
+    expect(mocks.installRB).not.toHaveBeenCalled();
+    expect(mocks.installEI).not.toHaveBeenCalled();
+  });
+
+  it('says what it replaced on which stone, and why', async () => {
+    await updateServerSupport(installed(), sessionManager, EXTENSION_PATH, [
+      'refactoring',
+      'regex',
+    ]);
+
+    expect(mocks.showInformationMessage).toHaveBeenCalledWith(
+      'Updated the server support on "demo" (Refactoring engine and Regex support) to the one this ' +
+        'Jasper ships, because gemstone.serverSupport.autoInstall is "always".',
+    );
+  });
+
+  it('says nothing of an update when the install failed', async () => {
+    mocks.installRX.mockResolvedValueOnce(false);
+
+    await updateServerSupport(installed(), sessionManager, EXTENSION_PATH, ['regex']);
+
+    expect(mocks.showInformationMessage).not.toHaveBeenCalled();
+  });
+
+  it('tells GemStone Search afterwards, as an install does', async () => {
+    await updateServerSupport(installed(), sessionManager, EXTENSION_PATH, ['regex']);
+
+    expect(mocks.executeCommand).toHaveBeenCalledWith('gemstone.omniSearch.resync', 1);
+  });
+});
+
+describe('runUninstallServerSupport', () => {
+  // A stone with every support installed.
+  const installed = () =>
+    baseSession({
+      enhancedInspectorAvailable: true,
+      rbSupportAvailable: true,
+      regexSupportAvailable: true,
+    });
 
   function confirm(button: string | undefined) {
     mocks.showWarningMessage.mockResolvedValue(button);
@@ -324,7 +563,9 @@ describe('runUninstallServerSupport', () => {
     expect(mocks.showWarningMessage).toHaveBeenCalled();
     expect(mocks.uninstallEI).toHaveBeenCalledWith(expect.anything(), sessionManager, true);
     expect(mocks.uninstallRB).toHaveBeenCalledWith(expect.anything(), sessionManager, true);
+    expect(mocks.uninstallRX).toHaveBeenCalledWith(expect.anything(), sessionManager, true);
     expect(mocks.executeCommand).toHaveBeenCalledWith('gemstone.explorer.refresh');
+    expect(mocks.executeCommand).toHaveBeenCalledWith('gemstone.omniSearch.resync', 1);
     expect(mocks.showInformationMessage).toHaveBeenCalledWith(
       'GemStone server support uninstalled.',
     );
@@ -338,6 +579,7 @@ describe('runUninstallServerSupport', () => {
 
     expect(mocks.uninstallEI).not.toHaveBeenCalled();
     expect(mocks.uninstallRB).not.toHaveBeenCalled();
+    expect(mocks.uninstallRX).not.toHaveBeenCalled();
     expect(mocks.executeCommand).not.toHaveBeenCalled();
   });
 
@@ -351,6 +593,18 @@ describe('runUninstallServerSupport', () => {
 
     expect(mocks.uninstallRB).toHaveBeenCalledTimes(1);
     expect(mocks.uninstallEI).not.toHaveBeenCalled();
+    expect(mocks.uninstallRX).not.toHaveBeenCalled();
+  });
+
+  it('removes regex support when it is the only support installed', async () => {
+    getSelectedSession.mockReturnValue(baseSession({ regexSupportAvailable: true }));
+    confirm('Uninstall');
+
+    await runUninstallServerSupport(sessionManager);
+
+    expect(mocks.uninstallRX).toHaveBeenCalledTimes(1);
+    expect(mocks.uninstallEI).not.toHaveBeenCalled();
+    expect(mocks.uninstallRB).not.toHaveBeenCalled();
   });
 
   it('shows the confirmation as a modal', async () => {
@@ -361,5 +615,55 @@ describe('runUninstallServerSupport', () => {
 
     const options = mocks.showWarningMessage.mock.calls[0][1] as { modal?: boolean };
     expect(options.modal).toBe(true);
+  });
+});
+
+describe('checkServerSupportAtLogin', () => {
+  it('runs the second step only after the first has finished', async () => {
+    const order: string[] = [];
+    let finishOffer!: () => void;
+    const offer = () =>
+      new Promise<void>((resolve) => {
+        finishOffer = () => {
+          order.push('offer done');
+          resolve();
+        };
+      });
+    const notice = () => {
+      order.push('notice');
+      return Promise.resolve();
+    };
+
+    const done = checkServerSupportAtLogin(offer, notice);
+    await Promise.resolve();
+    expect(order).toEqual([]);
+    finishOffer();
+    await done;
+
+    expect(order).toEqual(['offer done', 'notice']);
+  });
+
+  it('still checks the installed support when the offer fails, and logs the failure', async () => {
+    const notice = vi.fn(() => Promise.resolve());
+
+    await checkServerSupportAtLogin(() => Promise.reject(new Error('stone went away')), notice);
+
+    expect(notice).toHaveBeenCalledOnce();
+    expect(mocks.logWarning).toHaveBeenCalledWith(
+      'Offering the missing server support failed: stone went away',
+    );
+  });
+
+  it('logs a failing check rather than leaving it unhandled', async () => {
+    await expect(
+      checkServerSupportAtLogin(
+        () => Promise.resolve(),
+        () => Promise.reject(new Error('busy')),
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(mocks.logWarning).toHaveBeenCalledWith(
+      'Checking the installed server support failed: busy',
+    );
   });
 });

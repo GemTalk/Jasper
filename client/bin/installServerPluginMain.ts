@@ -3,8 +3,8 @@
 // `Module._load` *before* any static import runs. See that file's header for
 // why the split exists.
 //
-// Provisions a test stone with the Jasper Server Plugin (Refactoring +
-// Enhanced Inspector, version-gated) so CI can run the feature-test suite
+// Provisions a test stone with the Jasper Server Plugin (Refactoring, Regex
+// support, and the Enhanced Inspector, version-gated) so CI can run the feature-test suite
 // a second time in the "present" world, not just the bare-stone "absent"
 // world. Run after `npm run test:server:start` (which writes
 // `client/.env.test`).

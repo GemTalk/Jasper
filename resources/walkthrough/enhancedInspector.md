@@ -1,6 +1,6 @@
 # Install recommended server support
 
-Jasper has two recommended server-side supports that aren't part of a stock GemStone
+Jasper has three recommended server-side supports that aren't part of a stock GemStone
 image, so each is installed once per stone:
 
 - **Enhanced Inspector** — replaces the plain list of instance variables with
@@ -8,13 +8,16 @@ image, so each is installed once per stone:
 - **Refactoring engine** — server-side refactorings (starting with rename
   instance variable), previewed before they recompile. Loads on **any supported
   release (3.6.2+)**.
+- **Regex support** — lets GemStone Search search method source by regular
+  expression. Loads on **any supported release (3.6.2+)**.
 
 They install together as one bundle. When you connect to a stone that is missing
 them, Jasper's behavior follows the `gemstone.serverSupport.autoInstall` setting:
 
 - **Ask on connect** — offer to install with one Install / Not Now / Always / Never
   prompt (the default).
-- **Always** — install automatically on connect.
+- **Always** — install automatically on connect, and replace support that isn't the
+  one this Jasper ships (unless a newer Jasper installed it), saying what it replaced.
 - **Never** — do nothing.
 
 [Install GemStone Support…](command:gemstone.installServerSupport)
@@ -27,5 +30,5 @@ database.
 
 <!-- The link above pre-fills the Command Palette with a search string that must
      match the command's palette label (package.json command title "Install
-     Server Support (Enhanced Inspector + Refactoring)"). If that title is
+     Server Support (Enhanced Inspector, Refactoring, Regex)"). If that title is
      renamed, update this search too. -->

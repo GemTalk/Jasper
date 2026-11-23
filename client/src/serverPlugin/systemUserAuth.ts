@@ -1,20 +1,35 @@
 /**
- * Interactive SystemUser elevation shared by the two install command drivers
- * (`refactoringInstallCommand.ts`, `enhancedInspectorCommand.ts`). Separate
+ * SystemUser elevation shared by the install and uninstall command drivers, and the
+ * default-password check the `always` setting makes first. Separate
  * from `installHelpers.ts` because it needs `vscode` (the password prompt),
  * while `installHelpers.ts` stays free of it so the CI provisioning script
  * (`install-server-plugin.mjs`, which runs outside the extension host) can
  * import `loginAsSystemUser` without dragging `vscode` in.
  *
  * Also owns `refreshWorkingSessionAfterInstall`, the post-install working
- * session refresh shared by the same two callers, for the same vscode-needing
+ * session refresh shared by the install drivers, for the same vscode-needing
  * reason (it shows the confirmation prompt via
  * `vscode.window.showInformationMessage`).
  */
 import * as vscode from 'vscode';
-import { ActiveSession, SessionManager } from '../sessionManager';
+import { ActiveSession, SessionManager, logOutOrFindGone } from '../sessionManager';
 import { sessionNeedsCommit } from '../browserQueries';
 import { DEFAULT_SYSTEMUSER_PW, loginAsSystemUser, messageOf } from './installHelpers';
+
+/**
+ * Why SystemUser can't log in with the stock default password, or undefined when it can.
+ * An install without a prompt (the `always` setting) checks this once first, so a stone with
+ * a real password gets one message instead of a failed login and a warning for every feature.
+ * Any refusal counts, not only a wrong password: a full stone refuses the install's own login too.
+ */
+export function defaultSystemUserLoginRefusal(base: ActiveSession): string | undefined {
+  try {
+    logOutOrFindGone(loginAsSystemUser(base, DEFAULT_SYSTEMUSER_PW));
+    return undefined;
+  } catch (e: unknown) {
+    return messageOf(e);
+  }
+}
 
 /**
  * Obtain a SystemUser session on `base`'s connection. Tries the stock default

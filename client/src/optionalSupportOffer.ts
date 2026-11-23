@@ -1,12 +1,14 @@
 /**
  * The optional server-side supports Jasper can install into a stone — the
- * Enhanced Inspector and the refactoring engine — offered and installed as ONE
- * bundle (both or none), governed by a single `gemstone.serverSupport.autoInstall`
+ * Enhanced Inspector, the refactoring engine and regex support — offered and
+ * installed as ONE bundle (all or none), governed by a single `gemstone.serverSupport.autoInstall`
  * setting.
  *
  * On connect (`maybeOfferServerSupport`), per that setting:
  *  - `never`  → do nothing.
- *  - `always` → install whatever is missing, silently.
+ *  - `always` → install whatever is missing, silently. When SystemUser can't log
+ *               in with the default password, one warning instead, offering to
+ *               install with a password prompt, or to stop asking for this stone.
  *  - `ask`    → show one modal (Install / Not Now / Always / Never) that installs
  *               the missing supports, or none. "Always"/"Never" remember the
  *               choice; "Not Now" (also Escape / the window-close control) asks
@@ -17,7 +19,7 @@
  * `noticeDifferentServerSupport` (serverSupportStatus.ts).
  *
  * A feature is *applicable* when the stone's version supports it (the Enhanced
- * Inspector needs 3.7.5+; the refactoring engine loads on any release) and
+ * Inspector needs 3.7.5+; the refactoring engine and regex support load on any release) and
  * *missing* when it is not yet installed (per the cached availability flag on
  * `ActiveSession`). The connect offer targets applicable-and-missing supports;
  * the command targets all applicable ones so it doubles as a reinstall.
@@ -26,8 +28,8 @@
  * time.
  *
  * The actual per-feature install pipelines (transient SystemUser session, file-in,
- * commit, verify, relatch) live in enhancedInspectorCommand.ts and
- * refactoringInstallCommand.ts; this module only orchestrates the bundle and the
+ * commit, verify, relatch) live in enhancedInspectorCommand.ts,
+ * refactoringInstallCommand.ts and regexInstallCommand.ts; this module only orchestrates the bundle and the
  * single setting.
  */
 import * as vscode from 'vscode';
@@ -37,12 +39,19 @@ import { installEnhancedInspectorFeature } from './enhancedInspector/enhancedIns
 import { installRefactoringFeature } from './refactoring/refactoringInstallCommand';
 import { uninstallEnhancedInspectorFeature } from './enhancedInspector/enhancedInspectorUninstallCommand';
 import { uninstallRefactoringFeature } from './refactoring/refactoringUninstallCommand';
+import { installRegexFeature } from './regex/regexInstallCommand';
+import { uninstallRegexFeature } from './regex/regexUninstallCommand';
+import { SEARCH_RESYNC_COMMAND } from './undo/afterUndo';
+import { defaultSystemUserLoginRefusal } from './serverPlugin/systemUserAuth';
+import { stoneNrsFor } from './loginTypes';
+import { logInfo, logWarning } from './gciLog';
+import { messageOf } from './serverPlugin/installHelpers';
 
 export type AutoInstallMode = 'ask' | 'always' | 'never';
 
 const AUTO_INSTALL_SETTING = 'serverSupport.autoInstall';
 
-function getAutoInstallMode(): AutoInstallMode {
+export function getAutoInstallMode(): AutoInstallMode {
   return vscode.workspace
     .getConfiguration('gemstone')
     .get<AutoInstallMode>(AUTO_INSTALL_SETTING, 'ask');
@@ -102,6 +111,15 @@ export const SERVER_SUPPORT_FEATURES: readonly ServerSupportFeature[] = [
     install: installRefactoringFeature,
     uninstall: uninstallRefactoringFeature,
   },
+  {
+    id: 'regex',
+    label: 'Regex support',
+    isApplicable: (b) => pluginFeatures.regex.isApplicable(b.stoneVersion),
+    isMissing: (b) => !pluginFeatures.regex.isAvailable(b),
+    probe: pluginFeatures.regex.probe,
+    install: installRegexFeature,
+    uninstall: uninstallRegexFeature,
+  },
 ];
 
 function missingFeatures(
@@ -119,7 +137,9 @@ function refreshServerSupportInstalledContext(base: ActiveSession): void {
   void vscode.commands.executeCommand(
     'setContext',
     'gemstone.serverSupportInstalled',
-    base.rbSupportAvailable === true || base.enhancedInspectorAvailable === true,
+    base.rbSupportAvailable === true ||
+      base.enhancedInspectorAvailable === true ||
+      base.regexSupportAvailable === true,
   );
 }
 
@@ -132,9 +152,13 @@ function refreshServerSupportInstalledContext(base: ActiveSession): void {
  * uninstall drivers no longer show their own success toast — this is the single
  * source of the success message.
  */
-function announceServerSupportChange(verb: 'installed' | 'uninstalled', outcomes: boolean[]): void {
+function announceServerSupportChange(
+  verb: 'installed' | 'uninstalled',
+  outcomes: boolean[],
+  message = `GemStone server support ${verb}.`,
+): void {
   if (outcomes.length > 0 && outcomes.every((ok) => ok)) {
-    vscode.window.showInformationMessage(`GemStone server support ${verb}.`);
+    vscode.window.showInformationMessage(message);
   }
 }
 
@@ -153,6 +177,7 @@ async function installFeatures(
   extensionPath: string,
   interactive: boolean,
   features: ServerSupportFeature[],
+  successMessage?: string,
 ): Promise<void> {
   const outcomes: boolean[] = [];
   for (const f of features) {
@@ -167,8 +192,11 @@ async function installFeatures(
   // install just re-reads the unchanged list (retaining the selection) — harmless.
   // The command no-ops gracefully when the Explorer has no active session.
   await vscode.commands.executeCommand('gemstone.explorer.refresh');
+  // GemStone Search too: the refresh after each install aborts the session directly, which does not
+  // tell it, so a panel opened before the install finished kept .* greyed out.
+  await vscode.commands.executeCommand(SEARCH_RESYNC_COMMAND, base.id);
   refreshServerSupportInstalledContext(base);
-  announceServerSupportChange('installed', outcomes);
+  announceServerSupportChange('installed', outcomes, successMessage);
 }
 
 /**
@@ -180,6 +208,7 @@ export async function maybeOfferServerSupport(
   base: ActiveSession,
   sessionManager: SessionManager,
   extensionPath: string,
+  memento: vscode.Memento,
   features: readonly ServerSupportFeature[] = SERVER_SUPPORT_FEATURES,
 ): Promise<void> {
   const missing = missingFeatures(base, features);
@@ -188,7 +217,12 @@ export async function maybeOfferServerSupport(
   const mode = getAutoInstallMode();
   if (mode === 'never') return;
   if (mode === 'always') {
-    await installFeatures(base, sessionManager, extensionPath, false, missing);
+    const refusal = defaultSystemUserLoginRefusal(base);
+    if (refusal === undefined) {
+      await installFeatures(base, sessionManager, extensionPath, false, missing);
+    } else {
+      warnNotAutoInstalled(base, sessionManager, extensionPath, memento, missing, refusal);
+    }
     return;
   }
 
@@ -234,6 +268,46 @@ export async function maybeOfferServerSupport(
 }
 
 /**
+ * `always` could not install the missing support: SystemUser can't log in with the default
+ * password, usually because it has another. Without this, each feature warned on its own at
+ * every login, with no way to stop it. Not awaited: a toast left open must not hold up the
+ * rest of the login.
+ */
+function warnNotAutoInstalled(
+  base: ActiveSession,
+  sessionManager: SessionManager,
+  extensionPath: string,
+  memento: vscode.Memento,
+  missing: ServerSupportFeature[],
+  refusal: string,
+): void {
+  const key = `gemstone.serverSupportNotAutoInstalled:${stoneNrsFor(base.login)}`;
+  const ids = missing.map((f) => f.id).join(',');
+  if (memento.get<string>(key) === ids) return;
+
+  const INSTALL = 'Install…';
+  const DONT_ASK = "Don't Ask Again";
+  const names = missing.map((f) => f.label).join(' and ');
+  void vscode.window
+    .showWarningMessage(
+      `${names} could not be installed on "${base.login.stone}" automatically: SystemUser ` +
+        `could not log in with the default password (${refusal}). Install asks for the password.`,
+      INSTALL,
+      DONT_ASK,
+    )
+    .then(async (choice) => {
+      if (choice === INSTALL) {
+        await installFeatures(base, sessionManager, extensionPath, true, missing);
+      } else if (choice === DONT_ASK) {
+        await memento.update(key, ids);
+      }
+    })
+    .then(undefined, (e: unknown) =>
+      logWarning(`Installing the missing server support failed: ${messageOf(e)}`),
+    );
+}
+
+/**
  * Command Palette entry: install (or reinstall) every optional support that
  * applies to the selected stone's version. Returns the session so callers can
  * read the refreshed availability flags (e.g. the Explorer's rename pencil).
@@ -257,6 +331,59 @@ export async function runInstallServerSupport(
   await installFeatures(base, sessionManager, extensionPath, true, applicable);
 }
 
+/**
+ * Replace the server support named by `featureIds` with this Jasper's, without
+ * asking: what `always` does for a stone whose support is not the one this Jasper
+ * ships (`noticeDifferentServerSupport`). Says what it replaced, and why.
+ * Answers false, having changed nothing, when SystemUser can't log in with the
+ * default password: the caller then warns once, rather than each feature failing on its own.
+ */
+export async function updateServerSupport(
+  base: ActiveSession,
+  sessionManager: SessionManager,
+  extensionPath: string,
+  featureIds: readonly string[],
+): Promise<boolean> {
+  const features = SERVER_SUPPORT_FEATURES.filter((f) => featureIds.includes(f.id));
+  if (features.length === 0) return true;
+  const refusal = defaultSystemUserLoginRefusal(base);
+  if (refusal !== undefined) {
+    logInfo(`Did not replace the server support on "${base.login.stone}": ${refusal}`);
+    return false;
+  }
+  const names = features.map((f) => f.label).join(' and ');
+  await installFeatures(
+    base,
+    sessionManager,
+    extensionPath,
+    false,
+    features,
+    `Updated the server support on "${base.login.stone}" (${names}) to the one this Jasper ships, ` +
+      'because gemstone.serverSupport.autoInstall is "always".',
+  );
+  return true;
+}
+
+/**
+ * The login's two server-support steps, one after the other so `always` never runs two
+ * installs on the stone at once. A failure in the first is logged, and the second still runs.
+ */
+export async function checkServerSupportAtLogin(
+  offerMissing: () => Promise<void>,
+  noticeDifferent: () => Promise<void>,
+): Promise<void> {
+  try {
+    await offerMissing();
+  } catch (e: unknown) {
+    logWarning(`Offering the missing server support failed: ${messageOf(e)}`);
+  }
+  try {
+    await noticeDifferent();
+  } catch (e: unknown) {
+    logWarning(`Checking the installed server support failed: ${messageOf(e)}`);
+  }
+}
+
 async function uninstallFeatures(
   base: ActiveSession,
   sessionManager: SessionManager,
@@ -274,6 +401,8 @@ async function uninstallFeatures(
   // Refresh. Harmless when nothing dictionary-shaped changed, and the command
   // no-ops gracefully when the Explorer has no active session.
   await vscode.commands.executeCommand('gemstone.explorer.refresh');
+  // And GemStone Search, for the same reason as after an install: .* must grey out again.
+  await vscode.commands.executeCommand(SEARCH_RESYNC_COMMAND, base.id);
   refreshServerSupportInstalledContext(base);
   announceServerSupportChange('uninstalled', outcomes);
 }

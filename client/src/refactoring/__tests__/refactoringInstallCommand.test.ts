@@ -37,9 +37,10 @@ vi.mock('fs', () => ({ existsSync: mocks.existsSync }));
 
 vi.mock('../../browserQueries', () => ({
   sessionNeedsCommit: mocks.sessionNeedsCommit,
-  // Read at load time by the shared feature registry (pluginFeatures) as
-  // the refactoring feature's live probe; never invoked in these command tests.
+  // Read at load time by the shared feature registry (pluginFeatures) as the
+  // features' live probes; never invoked in these command tests.
   checkRefactoringSupportAvailable: vi.fn(() => false),
+  checkRegexSupportAvailable: vi.fn(() => false),
 }));
 
 vi.mock('../refactoringAvailability', () => ({
