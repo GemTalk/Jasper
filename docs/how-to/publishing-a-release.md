@@ -177,7 +177,7 @@ The policy lives on the publisher's **Trusted Publishing** tab at <https://marke
 
 Renaming the workflow file or the environment, or moving the repository, breaks Trusted Publishing until the policy is changed to match. The sign-in happens before the upload, so a rejected sign-in sends nothing. There is no way to check the policy without a real release: `vsce verify-pat` checks tokens only.
 
-**A refused sign-in fails the `publish-vsce` job, with nothing sent.** There is no token to fall back on: Trusted Publishing published 1.20.0, so the stored token and the retry that used it were removed ([#939](https://github.com/GemTalk/Jasper/issues/939)). Fix the policy so it matches the table above, then **Re-run failed jobs**, as for any failed publish job.
+**A refused sign-in fails the `publish-vsce` job, with nothing sent.** There is no token to fall back on: Trusted Publishing published 1.20.0, so the stored token and the retry that used it were removed ([#939](https://github.com/GemTalk/Jasper/issues/939)). The run carries a red **Marketplace Trusted Publishing refused** annotation, and the version is not spent. Check the policy against the table above and fix any mismatch, then **Re-run failed jobs**, as for any failed publish job. A brief Marketplace or GitHub outage can refuse the sign-in too, so re-run even when the policy already matches.
 
 Trusted Publishing works only inside the release workflow, so publishing the Marketplace from a laptop needs something else. Until Azure DevOps retires global personal access tokens on **27 January 2027**, `npm run publish:vsce` still works with a token created at `dev.azure.com` → User settings → Personal Access Tokens, with **Organization: All accessible organizations** (a single-organization token fails with a 401 that reads like a bad token) and **Scopes: Marketplace → Manage**. After that date the Marketplace accepts no such token. Two emergency fallbacks should still work, but neither has been tried against our publisher: `vsce publish --azure-credential` after `az login`, which signs in with a Microsoft Entra ID account that belongs to the `gemtalksystems` publisher instead of a token, and uploading the `.vsix` by hand on the publisher's management page.
 
@@ -206,7 +206,7 @@ One-time repository setup. **The workflow is not safe until step 2 is done** —
 
 1. Create three **environments** (Settings → Environments), so no environment holds more privilege than the job attached to it needs:
    - `release-approval` — the gate. **No secrets.**
-   - `release-vsce` — **no secrets.** The Marketplace's Trusted Publishing policy names this environment, which is what lets the job publish.
+   - `release-vsce` — needs **no secrets.** The Marketplace's Trusted Publishing policy names this environment, which is what lets the job publish. It still holds an unused `VSCE_PAT`, kept until GemDB, which publishes with the same token, has moved to Trusted Publishing too ([GemTalk/GemDB_Code#196](https://github.com/GemTalk/GemDB_Code/issues/196)).
    - `release-ovsx` — holds `OVSX_PAT` only.
 2. On `release-approval`, add **required reviewers** and enable **prevent self-review**. This is the approval gate and the audit trail of who released what.
 3. On all three, add a **deployment branch policy** restricting them to `main`. This is the backstop that does not depend on the workflow's own checks being right.

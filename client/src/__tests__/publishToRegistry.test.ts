@@ -214,6 +214,7 @@ onSupportedPosixDescribe('publish-to-registry.sh', () => {
     expect(status).toBe(1);
     expect(stdout).not.toContain('result:');
     expect(stderr).toContain('the version is not up');
+    expect(stderr).toContain('::error title=Marketplace Trusted Publishing refused::');
     expect(secondArgv).toEqual([]);
   });
 

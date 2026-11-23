@@ -111,6 +111,12 @@ if printf '%s' "$output" | grep -qiE "is already published|already exists"; then
     exit 0
 fi
 
+# vsce exchanges the OIDC token before it uploads, so a refused sign-in sent
+# nothing and the "version is spent" advice below doesn't apply.
+if [ "$registry" = marketplace ] && printf '%s' "$output" | grep -qF OIDC; then
+    echo "::error title=Marketplace Trusted Publishing refused::Nothing was uploaded. Check the Trusted Publishing policy (docs/how-to/publishing-a-release.md, Credentials), fix any mismatch, and re-run the failed job; do not bump the version." >&2
+fi
+
 echo >&2
 echo "error: publishing to $registry failed and the version is not up." >&2
 echo "Both registries are immutable per version, so if any part of this upload landed," >&2
