@@ -830,9 +830,10 @@ export function clearHolds(session: ActiveSession): boolean {
  * stops waiting, and now and then while it is collected in the background
  * (see collectLate). A soft break that reaches the gem before it has started the call
  * is lost, and the call runs on (measured on 3.6.8 and 3.7.5, with the gem held
- * back while the call and the break were sent); a soft break the gem already has
- * is harmless to repeat, since repeated ones never escalate. Best-effort: logged,
- * never thrown.
+ * back while the call and the break were sent). Sending it again usually recovers
+ * the stop, but not always: a gem fresh from login has ignored every re-send until
+ * the call ended (#851). A soft break the gem already has is harmless to repeat,
+ * since repeated ones never escalate. Best-effort: logged, never thrown.
  */
 export function resendSoftBreak(session: ActiveSession): void {
   try {
