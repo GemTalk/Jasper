@@ -34,8 +34,7 @@
 #
 # Usage: scripts/publish-to-registry.sh <marketplace|openvsx> <path-to-vsix>
 # Auth:  marketplace signs in with OIDC (Trusted Publishing), so it runs only in
-#        a GitHub Actions job with `id-token: write`; if that fails and
-#        VSCE_PAT is set, it retries once with the token. openvsx reads OVSX_PAT.
+#        a GitHub Actions job with `id-token: write`. openvsx reads OVSX_PAT.
 
 set -euo pipefail
 
@@ -85,59 +84,31 @@ echo "Publishing $(basename "$vsix") to $registry..." >&2
 log=$(mktemp)
 trap 'rm -f "$log"' EXIT
 
-attempt() {
-    set +e
-    "$@" 2>&1 | tee "$log" >&2
-    status=${PIPESTATUS[0]}
-    set -e
-    output=$(cat "$log")
-}
+set +e
+"$@" 2>&1 | tee "$log" >&2
+status=${PIPESTATUS[0]}
+set -e
 
-# Prints the outcome and succeeds when the version is up.
-version_is_up() {
-    if [ "$status" -eq 0 ]; then
-        echo "result: published"
-        return 0
-    fi
+output=$(cat "$log")
 
-    # Order matters: the inactive message also contains "is already published",
-    # so the more specific case is tested first.
-    if printf '%s' "$output" | grep -qiF "isn't active and therefore not visible"; then
-        echo "result: awaiting-activation"
-        echo "This version was already uploaded and is waiting for the registry to activate it." >&2
-        echo "That is not a failure and re-publishing cannot fix it — the version is taken." >&2
-        return 0
-    fi
-
-    if printf '%s' "$output" | grep -qiE "is already published|already exists"; then
-        echo "result: already-published"
-        echo "This version is already on $registry; nothing to do." >&2
-        return 0
-    fi
-
-    return 1
-}
-
-attempt "$@"
-if version_is_up; then
+if [ "$status" -eq 0 ]; then
+    echo "result: published"
     exit 0
 fi
 
-# Temporary, until Trusted Publishing has published a release (GemTalk/Jasper#939).
-# The retry cannot publish twice: versions are immutable, and an upload the
-# first attempt landed comes back as "already exists", which counts as up.
-if [ "$registry" = marketplace ] && [ -n "${VSCE_PAT:-}" ]; then
-    # Every Trusted Publishing error vsce raises mentions OIDC, so anything
-    # else (an upload timeout, say) must not blame the policy.
-    if printf '%s' "$output" | grep -qF OIDC; then
-        echo "::error title=Marketplace Trusted Publishing failed::Retrying with VSCE_PAT. Fix the Trusted Publishing policy on the gemtalksystems publisher before the token stops working on 27 January 2027." >&2
-    else
-        echo "::error title=Marketplace publish failed::It failed for a reason other than Trusted Publishing (see the first attempt above). Retrying with VSCE_PAT." >&2
-    fi
-    attempt npx --no-install @vscode/vsce publish --packagePath "$vsix" --skip-duplicate
-    if version_is_up; then
-        exit 0
-    fi
+# Order matters: the inactive message also contains "is already published",
+# so the more specific case is tested first.
+if printf '%s' "$output" | grep -qiF "isn't active and therefore not visible"; then
+    echo "result: awaiting-activation"
+    echo "This version was already uploaded and is waiting for the registry to activate it." >&2
+    echo "That is not a failure and re-publishing cannot fix it — the version is taken." >&2
+    exit 0
+fi
+
+if printf '%s' "$output" | grep -qiE "is already published|already exists"; then
+    echo "result: already-published"
+    echo "This version is already on $registry; nothing to do." >&2
+    exit 0
 fi
 
 echo >&2
