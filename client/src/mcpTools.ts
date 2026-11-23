@@ -36,6 +36,7 @@ export interface McpUiHooks {
     highlight?: string[],
   ): Promise<string>;
   showClassList(title: string, classes: ClassNameEntry[]): Promise<string>;
+  showClass(className: string, dictName?: string): Promise<string>;
   /** The most methods a method list shows: GemStone Search's `maxServerScan` setting. */
   maxMethods(): number;
 }
@@ -872,6 +873,23 @@ export function registerMcpTools(
           }
           return await ui.showClassList(args.title, classes);
         })(),
+    );
+
+    server.tool(
+      'show_class_in_explorer',
+      "Take the user to one class in Jasper's GemStone Explorer: its dictionary, class category, " +
+        'class and methods panes open on it, and its definition opens in an editor. Use it after ' +
+        'you create or redefine a class, and whenever the user asks to see or go to a class. ' +
+        'To show methods you created, follow it with show_methods_in_search.',
+      {
+        className: z.string().min(1).describe('The class name, e.g. "OrderLine"'),
+        dictionary: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Its symbol dictionary, when the name may be defined in more than one'),
+      },
+      async (args) => await uiTool(() => ui.showClass(args.className, args.dictionary))(),
     );
 
     server.tool(

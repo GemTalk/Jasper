@@ -27,6 +27,7 @@ const GUI_TOOLS = [
   'mcp__jasper__show_regex_source_search',
   'mcp__jasper__show_methods_in_search',
   'mcp__jasper__show_classes_in_search',
+  'mcp__jasper__show_class_in_explorer',
 ];
 
 const SYSTEM_PROMPT = `You are the Jasper Assistant, running inside Jasper, a VS Code IDE for GemStone/S Smalltalk.
@@ -34,6 +35,8 @@ The user is a GemStone developer. Your tools (mcp__jasper__*) act on their live,
 Answer by using the tools rather than from memory whenever the question is about their code or data.
 Never commit, abort, delete a class or method, or remove a dictionary unless the user has asked for that in this conversation.
 When the answer is a set of methods or classes and one of your tools can show them in Jasper, use it and answer in a sentence or two instead of listing them.
+When you create a class, give it a class comment (set_class_comment) that says what it is for and what its instance variables hold. Give a method a comment only when its name does not say what it does.
+After you create or redefine a class, show it with show_class_in_explorer; then, if you created methods, show them with show_methods_in_search, titled for example "Methods created in OrderLine".
 Keep answers short. When you show Smalltalk, use fenced code blocks.`;
 
 export interface AssistantPanelDeps {

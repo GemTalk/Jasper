@@ -6371,6 +6371,40 @@ export class ExplorerController {
     });
   }
 
+  /** Take the user to a class the Jasper Assistant names (typically one it just created): expand
+   *  the Dictionaries, Class Categories, Classes and Methods panes, land on the class in its own
+   *  category, and open its definition. Answers an error message, or undefined on success.
+   *
+   *  The deliberate exception to the cascade rule (revealCascade): the user asked the assistant to
+   *  show them the class, so opening the panes is the point, as in revealCategoryByPath. */
+  async showClassForAssistant(className: string, dictName?: string): Promise<string | undefined> {
+    const session = this.session();
+    if (!session) return 'No GemStone session is selected.';
+    const named = queries
+      .getAllClassNames(session)
+      .filter((e) => e.className === className && (!dictName || e.dictName === dictName));
+    if (named.length === 0) {
+      return dictName ? `No class ${className} in ${dictName}.` : `No class named ${className}.`;
+    }
+    const chosen = named[0];
+    await this.showExplorerAndWait();
+    for (const viewId of [VIEW_DICTS, VIEW_CATEGORIES, VIEW_CLASSES, VIEW_METHODS]) {
+      try {
+        await vscode.commands.executeCommand(`${viewId}.focus`);
+      } catch {
+        /* a host without that view: reveal what can be revealed */
+      }
+    }
+    await this.revealClass(chosen.dictName, chosen.dictIndex, chosen.className, {
+      selectOwnCategory: true,
+    });
+    if (this.state.className !== chosen.className) {
+      return `Could not open ${className}; see the warning in Jasper.`;
+    }
+    await this.openDefinitionFor(chosen.className, chosen.dictName, chosen.dictIndex, true);
+    return undefined;
+  }
+
   // Reveal+select a dictionary row by name in the Dictionaries pane (used by GemStone
   // Search). Resolves the 1-based symbol-list index from the live list, cascades
   // the panes to that dictionary, and highlights its row. Warns on an unknown name.
@@ -9779,6 +9813,11 @@ export function registerGemStoneExplorer(
           typeof dictName === 'string' && dictName.length > 0 ? dictName : undefined,
           methodArg(method),
         ),
+    ),
+    // The Jasper Assistant's "show me that class": answers an error message, or undefined.
+    vscode.commands.registerCommand(
+      'gemstone.explorer.showClassForAssistant',
+      (className: string, dictName?: string) => ctl.showClassForAssistant(className, dictName),
     ),
     // Reveal+select a method row by class + selector (used by Undo, #434).
     vscode.commands.registerCommand(

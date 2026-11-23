@@ -9,7 +9,10 @@
     'show_regex_source_search',
     'show_methods_in_search',
     'show_classes_in_search',
+    'show_class_in_explorer',
   ]);
+  // GUI tools whose result is not in GemStone Search, so their banner has no button to reveal it.
+  const NOT_IN_SEARCH = new Set(['show_class_in_explorer']);
 
   const HELP_TEXT = [
     '**Jasper Assistant (experimental)**',
@@ -25,6 +28,7 @@
     '- **Stop** cancels the answer in progress; your next message continues the same conversation.',
     '### Results in Jasper',
     '- With **Show results in Jasper (if possible)** ticked, a list of methods or classes, or a regular-expression search, opens in GemStone Search instead of filling the chat. A blue banner gives the count and a **Show GemStone Search** button.',
+    '- A class the assistant creates, or one you ask to see, opens in the GemStone Explorer with its definition; the methods it created follow in GemStone Search.',
     '- Press **Esc** in the GemStone Search box to close the list and return to the normal search.',
     '- A method list stops at the `gemstone.omniSearch.maxServerScan` setting; the answer says when more match.',
     '- Untick the box to get every answer as text in the chat.',
@@ -196,13 +200,17 @@
       banner.innerHTML =
         '<span>🔎</span><span class="headline">' +
         escapeHtml(text) +
-        '</span><button type="button">Show GemStone Search</button>' +
+        '</span>' +
+        (NOT_IN_SEARCH.has(card.dataset.tool)
+          ? ''
+          : '<button type="button">Show GemStone Search</button>') +
         (input.pattern
           ? '<span class="pattern">Pattern: <code>' + escapeHtml(input.pattern) + '</code></span>'
           : '');
-      banner
-        .querySelector('button')
-        .addEventListener('click', () => vscode.postMessage({ command: 'revealSearch' }));
+      const reveal = banner.querySelector('button');
+      if (reveal) {
+        reveal.addEventListener('click', () => vscode.postMessage({ command: 'revealSearch' }));
+      }
       card.after(banner);
       scrollToEnd();
     }

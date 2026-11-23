@@ -3737,6 +3737,15 @@ export function activate(context: vscode.ExtensionContext) {
         if ('error' in outcome) throw new Error(outcome.error);
         return `Showing ${outcome.shownCount} methods in the GemStone Search pane, titled "${title}".`;
       },
+      showClass: async (className, dictName) => {
+        const error = await vscode.commands.executeCommand<string | undefined>(
+          'gemstone.explorer.showClassForAssistant',
+          className,
+          dictName,
+        );
+        if (error) throw new Error(error);
+        return `Showing ${className} in the GemStone Explorer, with its definition open.`;
+      },
       maxMethods: () =>
         readOmniConfig(vscode.workspace.getConfiguration('gemstone.omniSearch')).maxServerScan,
     };
