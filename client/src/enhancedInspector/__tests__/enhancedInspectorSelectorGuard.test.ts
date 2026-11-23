@@ -36,4 +36,10 @@ describe('Enhanced Inspector fetchers refuse a name that is not a selector', () 
     fetch(execute, 'gtItemsFor:');
     expect(execute).toHaveBeenCalled();
   });
+
+  it.each(fetchers)('%s asks the stone about a three-character binary selector', (_name, fetch) => {
+    const execute = vi.fn(() => '');
+    fetch(execute, '==>');
+    expect(execute).toHaveBeenCalled();
+  });
 });

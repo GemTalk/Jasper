@@ -140,6 +140,16 @@ describe('fetchMethodSource', () => {
   });
 
   it.each([
+    ['\\\\', "sourceCodeAt: #'\\\\'"],
+    ['==>', "sourceCodeAt: #'==>'"],
+  ])('fetches the source of the binary selector %s', (selector, sent) => {
+    expect.assertions(2);
+    const execute = vi.fn((_code: string) => 'the source');
+    expect(fetchMethodSource(execute, 1000n, selector, false)).toBe('the source');
+    expect(execute.mock.calls[0][0]).toContain(sent);
+  });
+
+  it.each([
     { isClassSide: false, expected: 'theNonMetaClass sourceCodeAt:' },
     { isClassSide: true, expected: 'theNonMetaClass class sourceCodeAt:' },
   ])('isClassSide $isClassSide — recv contains "$expected"', ({ isClassSide, expected }) => {

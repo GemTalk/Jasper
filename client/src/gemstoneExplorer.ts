@@ -1895,7 +1895,14 @@ export class ExplorerController {
     ivarName: string,
     className: string,
   ): void {
-    if (className !== this.state.className) this.selectClass(new ClassItem(className), false);
+    if (
+      className !== this.state.className &&
+      !this.unlessBusy(() => this.selectClass(new ClassItem(className), false))
+    )
+      return;
+    // Loads the access map the filter reads before anything changes, so for the class already
+    // selected, a refusal leaves the side and the filter as they were.
+    if (!this.unlessBusy(() => this.methodIvarAccess())) return;
     this.setMethodSide(false);
     this.setFilterState(VIEW_METHODS, `${kind}:${ivarName}`);
   }
@@ -2428,6 +2435,18 @@ export class ExplorerController {
         : [];
     const hierarchy = this.fetchHierarchy(item.className);
     this.commitClassSelection(item, { envLines, hierarchy }, revealHierarchy);
+  }
+
+  // Runs a command's blocking read. False when a run holds the session: the refused read
+  // has already given the busy notice, so the command stops there.
+  private unlessBusy(read: () => unknown): boolean {
+    try {
+      read();
+      return true;
+    } catch (e) {
+      if (queries.isBusyRefusal(e)) return false;
+      throw e;
+    }
   }
 
   private commitClassSelection(
@@ -8310,7 +8329,7 @@ export class ExplorerController {
       // may still be highlighted — adopt it so "New Method" acts on what the user
       // sees selected (this also reloads its methods and hierarchy).
       const fromTree = this.selectedClassInTree();
-      if (fromTree) this.selectClass(fromTree);
+      if (fromTree && !this.unlessBusy(() => this.selectClass(fromTree))) return;
     }
     if (this.state.className === undefined) {
       void vscode.window.showWarningMessage('Select a class first.');
