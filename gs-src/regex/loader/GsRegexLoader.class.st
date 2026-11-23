@@ -48,13 +48,20 @@ GsRegexLoader class >> dictionaryName [
 
 { #category : 'loading' }
 GsRegexLoader >> loadFromServerDir: aString [
-	"Stage and verify, then commit on success or abort on any failure."
+	"Stage and verify, then commit on success or abort on any failure, a failed commit
+	 included (another session changing the same objects meanwhile)."
 
 	self stageFromServerDir: aString.
-	self allOk
-		ifTrue: [ System commitTransaction ]
-		ifFalse: [ System abortTransaction ].
+	self allOk ifFalse: [ System abortTransaction. ^self ].
+	self commit ifFalse: [
+		self note: 'Commit' ok: false detail: 'the commit failed (did another session change the same objects?); nothing was installed'.
+		System abortTransaction ].
 	^self
+]
+
+{ #category : 'loading' }
+GsRegexLoader >> commit [
+	^System commitTransaction
 ]
 
 { #category : 'loading' }

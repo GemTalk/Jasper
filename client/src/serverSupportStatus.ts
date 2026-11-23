@@ -100,16 +100,42 @@ export async function runShowServerSupportStatus(
 }
 
 /** Whether `installed` is a later version than `mine`, comparing the numbers of `1.15.0`-style
- *  versions in turn. False when either is unknown, so an unrecorded installer counts as older. */
+ *  versions in turn. A pre-release (`1.19.0-issue619.1`, as a hand-off build carries) is older
+ *  than its release, as in semver. False when either is unknown, so an unrecorded installer
+ *  counts as older. */
 export function isNewerVersion(installed: string | undefined, mine: string): boolean {
   if (!installed || !mine) return false;
-  const parts = (v: string) => v.split(/[.-]/).map((p) => parseInt(p, 10) || 0);
-  const a = parts(installed);
-  const b = parts(mine);
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
+  return compareVersions(installed, mine) > 0;
+}
+
+function compareVersions(a: string, b: string): number {
+  const [aCore, aPre] = splitPreRelease(a);
+  const [bCore, bPre] = splitPreRelease(b);
+  const byCore = compareParts(aCore.split('.'), bCore.split('.'));
+  if (byCore !== 0) return byCore;
+  if (aPre === undefined || bPre === undefined) {
+    return aPre === bPre ? 0 : aPre === undefined ? 1 : -1;
   }
-  return false;
+  return compareParts(aPre.split('.'), bPre.split('.'));
+}
+
+function splitPreRelease(v: string): [string, string | undefined] {
+  const dash = v.indexOf('-');
+  return dash === -1 ? [v, undefined] : [v.slice(0, dash), v.slice(dash + 1)];
+}
+
+/** Part by part: numbers numerically, other text alphabetically; a missing part counts as 0. */
+function compareParts(a: string[], b: string[]): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i] ?? '0';
+    const y = b[i] ?? '0';
+    if (x === y) continue;
+    const nx = Number(x);
+    const ny = Number(y);
+    if (Number.isInteger(nx) && Number.isInteger(ny)) return nx - ny;
+    return x < y ? -1 : 1;
+  }
+  return 0;
 }
 
 /** How often, and how far apart, the login check asks again when the stone could not be read. */
@@ -149,8 +175,9 @@ async function differentSupports(base: ActiveSession, extensionPath: string) {
 /**
  * After login, when the stone's server support is not the one this Jasper ships:
  * with `autoUpdate` (the `always` setting), replace it and say so; otherwise warn
- * and offer to reinstall it. The features are installed together, so one notice
- * covers them all. Under `always`, any login replaces it, edits made to that code
+ * and offer to reinstall it. `autoUpdate` answers false when it could not try
+ * (SystemUser can't log in with the default password), and the warning is shown
+ * instead. The features are installed together, so one notice covers them all. Under `always`, any login replaces it, edits made to that code
  * in the stone included: always means always. Under `ask` and `never` the warning
  * never blocks or fails the login, so someone editing that code in the stone can
  * keep working and decline. Silent for every other state, including a read that
@@ -169,7 +196,7 @@ export async function noticeDifferentServerSupport(
   base: ActiveSession,
   extensionPath: string,
   memento: vscode.Memento,
-  autoUpdate?: (featureIds: string[]) => Promise<void>,
+  autoUpdate?: (featureIds: string[]) => Promise<boolean>,
 ): Promise<void> {
   const different = await differentSupports(base, extensionPath);
   if (different.length === 0) return;
@@ -177,8 +204,7 @@ export async function noticeDifferentServerSupport(
   const jasperVersion = readJasperVersion(extensionPath);
   const newer = different.filter(({ status }) => isNewerVersion(status.installedBy, jasperVersion));
   if (autoUpdate && newer.length === 0) {
-    await autoUpdate(different.map(({ feature }) => feature.id));
-    return;
+    if (await autoUpdate(different.map(({ feature }) => feature.id))) return;
   }
 
   const key = `gemstone.differentServerSupportDeclined:${stoneNrsFor(base.login)}`;
