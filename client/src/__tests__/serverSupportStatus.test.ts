@@ -256,7 +256,7 @@ describe('noticeDifferentServerSupport', () => {
   describe('with autoInstall "always"', () => {
     it('replaces the different support instead of warning', async () => {
       respond(different('aaaa'));
-      const update = vi.fn(() => Promise.resolve());
+      const update = vi.fn(() => Promise.resolve(true));
 
       await noticeDifferentServerSupport(session(), '/ext', memento(), update);
 
@@ -264,12 +264,35 @@ describe('noticeDifferentServerSupport', () => {
       expect(warn).not.toHaveBeenCalled();
     });
 
+    it('warns instead when it could not replace it, SystemUser having another password', async () => {
+      respond(different('aaaa'));
+      const update = vi.fn(() => Promise.resolve(false));
+
+      await noticeDifferentServerSupport(session(), '/ext', memento(), update);
+
+      expect(update).toHaveBeenCalledOnce();
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn.mock.calls[0]).toContain("Don't Ask Again");
+    });
+
+    it("stays silent then after Don't Ask Again, as without always", async () => {
+      const seen = memento();
+      respond(different('aaaa'));
+      const update = vi.fn(() => Promise.resolve(false));
+      warn.mockResolvedValueOnce("Don't Ask Again" as never);
+
+      await noticeDifferentServerSupport(session(), '/ext', seen, update);
+      await noticeDifferentServerSupport(session(), '/ext', seen, update);
+
+      expect(warn).toHaveBeenCalledOnce();
+    });
+
     it("replaces it even after Don't Ask Again, which only silences the warning", async () => {
       const seen = memento();
       respond(different('aaaa'));
       warn.mockResolvedValueOnce("Don't Ask Again" as never);
       await noticeDifferentServerSupport(session(), '/ext', seen);
-      const update = vi.fn(() => Promise.resolve());
+      const update = vi.fn(() => Promise.resolve(true));
 
       await noticeDifferentServerSupport(session(), '/ext', seen, update);
 
@@ -278,7 +301,7 @@ describe('noticeDifferentServerSupport', () => {
 
     it('warns instead, naming the version, when a newer Jasper installed it', async () => {
       respond({ ...different('aaaa'), installedBy: '999.0.0' });
-      const update = vi.fn(() => Promise.resolve());
+      const update = vi.fn(() => Promise.resolve(true));
 
       await noticeDifferentServerSupport(session(), '/ext', memento(), update);
 
@@ -300,6 +323,14 @@ describe('isNewerVersion', () => {
     ['1.15', '1.15.0', false],
     [undefined, '1.15.0', false],
     ['1.16.0', '', false],
+    // A pre-release, such as a hand-off build, is older than its release.
+    ['1.19.0-issue619.1', '1.19.0', false],
+    ['1.19.0', '1.19.0-issue619.1', true],
+    ['1.20.0-beta.1', '1.19.0', true],
+    ['1.19.0-issue619.2', '1.19.0-issue619.1', true],
+    ['1.19.0-issue619.10', '1.19.0-issue619.9', true],
+    ['1.19.0-alpha', '1.19.0-beta', false],
+    ['1.19.0-issue619.1', '1.19.0-issue619.1', false],
   ])('%s over %s: %s', (installed, mine, expected) => {
     expect(isNewerVersion(installed, mine)).toBe(expected);
   });

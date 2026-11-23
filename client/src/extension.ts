@@ -135,6 +135,7 @@ import {
   maybeOfferServerSupport,
   getAutoInstallMode,
   updateServerSupport,
+  checkServerSupportAtLogin,
   runInstallServerSupport,
   runUninstallServerSupport,
 } from './optionalSupportOffer';
@@ -2330,16 +2331,23 @@ export function activate(context: vscode.ExtensionContext) {
     // gemstone.serverSupport.autoInstall: `always` installs silently, `ask`
     // shows one Install/Always/Never modal, `never` does nothing. Then deal with
     // support that isn't this Jasper's: `always` replaces it, otherwise a warning.
-    // One after the other, so `always` never runs two installs on the stone at once.
-    void maybeOfferServerSupport(session, sessionManager, context.extensionPath).then(() =>
-      noticeDifferentServerSupport(
-        session,
-        context.extensionPath,
-        context.globalState,
-        getAutoInstallMode() === 'always'
-          ? (ids) => updateServerSupport(session, sessionManager, context.extensionPath, ids)
-          : undefined,
-      ),
+    void checkServerSupportAtLogin(
+      () =>
+        maybeOfferServerSupport(
+          session,
+          sessionManager,
+          context.extensionPath,
+          context.globalState,
+        ),
+      () =>
+        noticeDifferentServerSupport(
+          session,
+          context.extensionPath,
+          context.globalState,
+          getAutoInstallMode() === 'always'
+            ? (ids) => updateServerSupport(session, sessionManager, context.extensionPath, ids)
+            : undefined,
+        ),
     );
   }
 

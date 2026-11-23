@@ -135,8 +135,8 @@ export async function installRegexSupport(
     report,
     message: success
       ? 'Regex support installed and verified.'
-      : 'Regex support did not install completely; the completeness check failed and nothing ' +
-        'was committed. See the report for what was missing.',
+      : 'Regex support did not install: a check or the commit failed, and nothing was ' +
+        'committed. See the report for which.',
   };
 }
 

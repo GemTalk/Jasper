@@ -7,17 +7,6 @@ import {
   parseMethodSearchResults,
 } from './methodSearch';
 
-/**
- * Methods whose source matches a regular expression, found by the server plugin's
- * regex support (`GsRegexSourceSearch`, gs-src/regex/engine/). Needs that support
- * installed; on a stone without it the query fails to compile.
- *
- * The search matches one line at a time unless the pattern contains `\n` or `\r`,
- * when it matches whole methods. Methods the matcher runs out of stack on are counted as
- * `skipped`, and ones it fails on otherwise as `failed`. Rows are the same as every other method search (environment 0, like
- * the plain Source search), at most `limit` of them (GemStone Search passes
- * `gemstone.omniSearch.maxServerScan`; other callers get `METHOD_SEARCH_RESULT_LIMIT`).
- */
 /** Where a match is in a method's source: 0-based, `end` exclusive, as in a JS string. */
 export interface RegexMatchRange {
   start: number;
@@ -51,15 +40,15 @@ export class RegexPatternError extends Error {
 
 const ERROR_MARK = '#error\t';
 
+export function isAscii(s: string): boolean {
+  return Array.from(s).every((ch) => ch.charCodeAt(0) < 128);
+}
+
 /**
  * The pattern as a Smalltalk expression. An ASCII pattern is a string literal; any other is built
  * on the stone from its character codes, because the 3.6.x compiler fails on non-ASCII source
  * (`ComStrmSetCursor: new cursor out of range`) and the doit must stay ASCII.
  */
-export function isAscii(s: string): boolean {
-  return Array.from(s).every((ch) => ch.charCodeAt(0) < 128);
-}
-
 export function patternLiteral(pattern: string): string {
   if (isAscii(pattern)) return `'${escapeString(pattern)}'`;
   const codes = Array.from(pattern, (ch) => ch.codePointAt(0));
@@ -124,6 +113,18 @@ export function parseRegexSourceSearch(raw: string): RegexSourceSearchResult {
   };
 }
 
+/**
+ * Methods whose source matches a regular expression, found by the server plugin's
+ * regex support (`GsRegexSourceSearch`, gs-src/regex/engine/). Needs that support
+ * installed; on a stone without it the query fails to compile.
+ *
+ * The search matches one line at a time unless the pattern contains `\n` or `\r`,
+ * when it matches whole methods. Methods the matcher runs out of stack on are counted
+ * as `skipped`, and ones it fails on otherwise as `failed`.
+ * Rows are the same as every other method search (environment 0, like the plain
+ * Source search), at most `limit` of them (GemStone Search passes
+ * `gemstone.omniSearch.maxServerScan`; other callers get `METHOD_SEARCH_RESULT_LIMIT`).
+ */
 export function searchMethodSourceRegex(
   execute: QueryExecutor,
   pattern: string,
@@ -133,6 +134,7 @@ export function searchMethodSourceRegex(
   return parseRegexSourceSearch(execute(regexSourceSearchCode(pattern, ignoreCase, limit)));
 }
 
+/** `searchMethodSourceRegex` through the non-blocking executor. */
 export async function searchMethodSourceRegexAsync(
   execute: NbQueryExecutor,
   pattern: string,

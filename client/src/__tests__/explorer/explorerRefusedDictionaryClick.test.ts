@@ -235,6 +235,48 @@ describe('a dictionary click while the session is busy', () => {
   });
 });
 
+describe('a dictionary click refused while no dictionary is selected', () => {
+  function controllerWithNothingSelected() {
+    const session = { id: 1 } as ActiveSession;
+    const sessionManager = { getSelectedSession: () => session } as unknown as SessionManager;
+    const ctl = new ExplorerController(sessionManager);
+    const views = fakeViews();
+    ctl.setViews(views as never);
+    return { ctl, dict: views.dict };
+  }
+
+  it('leaves no dictionary selected', async () => {
+    const { ctl } = controllerWithNothingSelected();
+    sessionBusy = true;
+
+    await ctl.selectDictFromTree(BETA);
+
+    expect(ctl.state.dictName).toBeUndefined();
+    expect(ctl.filteredCategoryPaths()).toEqual([]);
+  });
+
+  it('has no other dictionary to move the highlight back to', async () => {
+    const { ctl, dict } = controllerWithNothingSelected();
+    sessionBusy = true;
+
+    await ctl.selectDictFromTree(BETA);
+
+    expect(dict.reveal).not.toHaveBeenCalled();
+  });
+
+  it('selects the dictionary when it is clicked again once the run ends', async () => {
+    const { ctl } = controllerWithNothingSelected();
+    sessionBusy = true;
+    await ctl.selectDictFromTree(BETA);
+    sessionBusy = false;
+
+    await ctl.selectDictFromTree(BETA);
+
+    expect(ctl.state.dictName).toBe('BetaDict');
+    expect(ctl.filteredCategoryPaths()).toEqual(['Category2']);
+  });
+});
+
 describe('a dictionary click whose class row details fail for another reason', () => {
   it('selects the dictionary with plain class rows', async () => {
     const { ctl } = controllerOnAlpha();
