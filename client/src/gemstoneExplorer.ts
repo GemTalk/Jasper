@@ -2591,8 +2591,9 @@ export class ExplorerController {
     };
   }
 
-  // Runs a row click, unless it repeats the one still pending (VS Code reports a class
-  // click twice, see handleClassClick) or clicks the row already selected. Clicking the
+  // Runs a row click, unless it repeats the one still pending (VS Code reports a class or
+  // dictionary click twice, once as a selection and once through the row's command) or
+  // clicks the row already selected. Clicking the
   // selected row abandons a click pending in the same pane: the user went back. One
   // pending in another pane is left alone, and so is one in the same pane while that
   // row is being highlighted again, since that highlight's selection event lands here
