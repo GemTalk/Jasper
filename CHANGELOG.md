@@ -4,6 +4,10 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Fixed
+
+- **A notebook cell you stop while it waits for the session no longer runs.** When a stopped run was still finishing, the next Smalltalk or Python cell waited for it. If you pressed Stop on that cell during the wait, it was started once the session was free and stopped in the same instant, and the gem sometimes ignored a stop that early, so the cell ran to its end. It is now never sent: it says **Stopped.** once the session is free. The same goes for a cell stopped while you pick its session, and for a debugger step or evaluation waiting for the session when you close the Debugger. ([#980](https://github.com/GemTalk/Jasper/issues/980))
+
 ### Changed
 
 - **Releases no longer fall back to the old Marketplace token.** Trusted Publishing published 1.20.0, so the release workflow drops the stored token it kept in case Trusted Publishing failed. A refused sign-in now fails the Marketplace publish job, with nothing uploaded. ([#939](https://github.com/GemTalk/Jasper/issues/939))

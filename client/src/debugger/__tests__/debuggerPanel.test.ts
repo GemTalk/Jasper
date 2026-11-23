@@ -4803,6 +4803,55 @@ describe('DebuggerPanel', () => {
       expect(panel.dispose).toHaveBeenCalled();
     });
 
+    it('close() while a step waits for the session keeps the step from starting', async () => {
+      let signal: AbortSignal | undefined;
+      let finish: (r: debug.StepResult) => void = () => {};
+      vi.mocked(debug.stepOverNb).mockImplementationOnce(
+        (_s, _p, _l, opts) =>
+          new Promise<debug.StepResult>((resolve) => {
+            signal = opts?.signal;
+            finish = resolve;
+          }),
+      );
+      const handle = DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG, vi.fn(), vi.fn());
+      sendReady(lastPanel());
+      sendMessage(lastPanel(), { command: 'stepOver', level: 1 });
+      await tick();
+      expect(signal?.aborted).toBe(false);
+
+      handle.close();
+
+      expect(signal?.aborted).toBe(true);
+      finish({ completed: false, errorMessage: 'cancelled' });
+      await tick();
+      expect(lastPanel().dispose).toHaveBeenCalled();
+    });
+
+    it('close() while a frame eval waits for the session keeps the eval from starting', async () => {
+      let signal: AbortSignal | undefined;
+      vi.mocked(debug.evaluateInFrameNb).mockImplementationOnce(
+        (_s, _p, _e, _l, opts) =>
+          new Promise<string>((_resolve, reject) => {
+            signal = opts?.signal;
+            // What the runner does with a stopped wait once the session is free.
+            signal?.addEventListener('abort', () => reject(new NbCancelledError()));
+          }),
+      );
+      const handle = DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG, vi.fn(), vi.fn());
+      const panel = lastPanel();
+      sendReady(panel);
+      sendMessage(panel, { command: 'evalInFrame', level: 3, expr: '3 + 4' });
+      await tick();
+      expect(signal?.aborted).toBe(false);
+
+      handle.close();
+      await tick();
+
+      expect(signal?.aborted).toBe(true);
+      expect(panel.dispose).toHaveBeenCalledTimes(1);
+      expect(posted(panel, 'evalResult')).toEqual([]);
+    });
+
     it('close() closes the panel', () => {
       const handle = DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
 

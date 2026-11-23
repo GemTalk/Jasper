@@ -112,16 +112,20 @@ export async function evalSmalltalk(
   source: string,
   onStart?: NbRunOptions['onStart'],
   openDebugger: OpenCellDebugger = openCellDebugger,
+  stop?: AbortSignal,
 ): Promise<string> {
   // Before any GCI call: a stopped call still on the session would make GemStone
   // refuse clientForwarder mode's start, and while a worker still owns the
   // session a call from here could kill the process.
   let runStopRequested = (): boolean => false;
-  const outcome = await whenSessionFree(session, () =>
-    runCell(session, source, (cancel, stopRequested) => {
-      runStopRequested = stopRequested;
-      onStart?.(cancel, stopRequested);
-    }),
+  const outcome = await whenSessionFree(
+    session,
+    () =>
+      runCell(session, source, (cancel, stopRequested) => {
+        runStopRequested = stopRequested;
+        onStart?.(cancel, stopRequested);
+      }),
+    stop,
   );
   if (typeof outcome === 'string') return outcome;
   // Stopped while running, but the gem reached the halt before the break.
@@ -280,7 +284,8 @@ export function smalltalkSessionKernel(
     label: SMALLTALK_CONTROLLER_LABEL,
     description: `Always runs Smalltalk in Session ${sessionId}`,
     supportedLanguages: [SMALLTALK_LANGUAGE_ID],
-    evaluate: (session, source, _scopeId, onStart) => evalSmalltalk(session, source, onStart),
+    evaluate: (session, source, _scopeId, onStart, stop) =>
+      evalSmalltalk(session, source, onStart, openCellDebugger, stop),
     sessionId,
   });
 }
@@ -294,7 +299,8 @@ export class SmalltalkNotebookController extends GemStoneNotebookKernel {
       label: SMALLTALK_CONTROLLER_LABEL,
       description: 'Run Smalltalk in the active GemStone session',
       supportedLanguages: [SMALLTALK_LANGUAGE_ID],
-      evaluate: (session, source, _scopeId, onStart) => evalSmalltalk(session, source, onStart),
+      evaluate: (session, source, _scopeId, onStart, stop) =>
+        evalSmalltalk(session, source, onStart, openCellDebugger, stop),
     });
     // Offer this kernel first for Smalltalk notebooks, including ones that
     // hot-exit restored before the extension activated.

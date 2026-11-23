@@ -57,13 +57,15 @@ export interface NotebookKernelSpec {
    * scopeId identifies the notebook (its URI) for kernels that keep
    * per-notebook state on the GemStone side; stateless kernels ignore it.
    * Runs non-blocking, handing `onStart` the run's canceller, so the cell's own
-   * stop button stops it as every other stop control does.
+   * stop button stops it as every other stop control does. `stop` fires when that
+   * button is pressed before the run has started (see `NbRunOptions.signal`).
    */
   evaluate: (
     session: ActiveSession,
     source: string,
     scopeId: string,
     onStart: NbRunOptions['onStart'],
+    stop: AbortSignal,
   ) => string | Promise<string>;
   /**
    * Run every cell in this one session instead of the active one. In
@@ -283,20 +285,32 @@ export class GemStoneNotebookKernel {
       );
       return 'refused';
     }
+    // Pressed while the session was being picked.
+    if (token.isCancellationRequested) return 'stopped';
 
     let cancel: (() => void) | undefined;
     let stopRequested = (): boolean => false;
-    const onStop = token.onCancellationRequested(() => cancel?.());
+    const stoppedBeforeStart = new AbortController();
+    const onStop = token.onCancellationRequested(() => {
+      stoppedBeforeStart.abort();
+      cancel?.();
+    });
     let result: NotebookCellResult;
     let refused = false;
     try {
       const scopeId = cell.notebook.uri.toString();
       result = classifyCellResult(
-        await this.evaluate(session, source, scopeId, (c, requested) => {
-          cancel = c;
-          stopRequested = requested;
-          if (token.isCancellationRequested) c();
-        }),
+        await this.evaluate(
+          session,
+          source,
+          scopeId,
+          (c, requested) => {
+            cancel = c;
+            stopRequested = requested;
+            if (token.isCancellationRequested) c();
+          },
+          stoppedBeforeStart.signal,
+        ),
       );
     } catch (e: unknown) {
       if (e instanceof NbCancelledError || stopRequested()) return 'stopped';

@@ -1578,6 +1578,8 @@ export class DebuggerPanel {
   /** Cancel was clicked for the current op; later clicks do nothing. */
   private cancelRequested = false;
   private closeRequested = false;
+  /** Fired by close(): an op still waiting for the session is then never started. */
+  private readonly closing = new AbortController();
   /** Set when `create` fails part-way: its caller releases the process, so dispose leaves it. */
   private processReleasedByCaller = false;
   /** Set in dispose() so an in-flight Nb op's continuation skips touching a dead panel. */
@@ -1684,6 +1686,7 @@ export class DebuggerPanel {
    */
   close(): void {
     this.closeRequested = true;
+    this.closing.abort();
     if (this.nbBusy) this.cancelActiveOp();
     this.closeIfRequested();
   }
@@ -2883,6 +2886,7 @@ export class DebuggerPanel {
         suppressNotification: true,
         onStart: (cancel) => this.armCancel(cancel),
         onAbandonedCollected: this.closeOnceCollected,
+        signal: this.closing.signal,
       });
     } catch (e: unknown) {
       const raw = e instanceof Error ? e.message : String(e);
@@ -3683,6 +3687,7 @@ export class DebuggerPanel {
       suppressNotification: true,
       onStart: (cancel) => this.armCancel(cancel),
       onAbandonedCollected: this.closeOnceCollected,
+      signal: this.closing.signal,
     };
     try {
       await op(opts);
