@@ -22,7 +22,7 @@ Each item below was measured from run, job, step or log data, or read in the cod
 - **The weekly slowdown trend** and the **Oct 28 to 30 step**: measured from step durations of green legs. The new test files that appear between a green log of Oct 28 and one of Oct 30 are measured.
 - **The failure catalogue**: 250 failed legs in the first window and 27 in the Nov 12 to 13 update were downloaded and read. Failing test names, first error lines and dates are from the logs.
 - **Four flake causes confirmed in code or commits**:
-  - `activeSession` and `forceStopSurfaces` fail in a 15 s `vi.waitFor` waiting for the stone to deregister a stopped gem. A timeout bump on Oct 29 did not fix it (20 of 29 failures came after it). (Found since, [#851](https://github.com/GemTalk/Jasper/issues/851): `forceStopSurfaces` was not waiting on the stone. Its stop, sent before the gem had begun the run, was sometimes ignored until the code ended; the test now lets the run end by itself.)
+  - `activeSession` fails in a 15 s `vi.waitFor` waiting for the stone to deregister a stopped gem. A timeout bump on Oct 29 did not fix it (20 of 29 failures came after it). `forceStopSurfaces`, first listed here too, had a different cause, found since in [#851](https://github.com/GemTalk/Jasper/issues/851): its stop, sent before the gem had begun the run, was sometimes ignored until the code ended. The test now lets the run end by itself.
   - `rowanLoad` ran real git clones in a 20 s test. It was replaced by a mocked git on Nov 10 and 11, and has not failed since Nov 3.
   - `versionExtract` runs a real `hdiutil attach` and throws when the last output line has no mount point (`versionManager.ts:613`).
   - `lintSupplyChain` spawns `node` and `npm` per case. It takes 51 s on Windows against 14 s on Ubuntu.
@@ -41,7 +41,7 @@ Treat everything in this section as a lead, not a finding.
 | `sunitRunNb` ("session is busy", break 6003) | The error text and dates | Why the session is still busy. No code read. |
 | `transcriptSink` (`expected 2366 to be +0`, cascades) | The error text and dates | Cause of the failing assertion. Cascade tests ("a previous test's cleanup failed") inflate the counts. |
 | `forceStop`, `stopSlowGem` | Error text and dates | Cause. No code read. |
-| `activeSession`, `forceStopSurfaces` | They wait 15 s for the stone to deregister a gem and sometimes it does not | **Why** the stone is slow or never deregisters. A longer timeout did not help. (Found since, [#851](https://github.com/GemTalk/Jasper/issues/851): `forceStopSurfaces` was not waiting on the stone. Its stop, sent before the gem had begun the run, was sometimes ignored until the code ended; the test now lets the run end by itself.) |
+| `activeSession` | It waits 15 s for the stone to deregister a gem and sometimes it does not | **Why** the stone is slow or never deregisters. A longer timeout did not help. (`forceStopSurfaces`: see the confirmed causes above.) |
 | Session gate teardown ("login(s) ... never reported") | It fails the step after all tests pass. It is now the top failure (12 of 27 recent failed legs). | Which code logs in without reporting, and why only sometimes. It also defeats the merge queue's retry. |
 | `browserQueries` "missing LGC_CALL_FINISH_RPC_LOGIN" | Two occurrences, Nov 12 and 13 | Everything else. New, unexamined. |
 | Windows WSL setup failures | apt 404, DNS failure, WSL timeout, "action has timed out" (7 jobs) | Whether they are runner/network luck or something we can harden. |
@@ -102,7 +102,7 @@ Treat everything in this section as a lead, not a finding.
 
 1. **Fix the gate teardown failure.** It is the largest recent cause of red runs and the queue retry cannot help. Find which test worker logs in without reporting. The failure message names the login serial and worker process.
 2. **Merge #926** to close the macOS dmg flake, then watch macOS runs for a week.
-3. **Investigate the stone deregistration delay** behind `activeSession` and `forceStopSurfaces`. A longer wait will not fix it, so the stone or the test's assumption needs a look. (Found since, [#851](https://github.com/GemTalk/Jasper/issues/851): `forceStopSurfaces` was not waiting on the stone. Its stop, sent before the gem had begun the run, was sometimes ignored until the code ended; the test now lets the run end by itself.)
+3. **Investigate the stone deregistration delay** behind `activeSession`. A longer wait will not fix it, so the stone or the test's assumption needs a look. (`forceStopSurfaces`: see the confirmed causes above.)
 4. **Read the code of the not-yet-explained flakes** (`sunitRunNb`, `transcriptSink`, `forceStop`, `stopSlowGem`). They share the "session still busy after a stop" family, so one cause may explain several.
 5. **Cut leg time.** Options to evaluate, none tested: run the second pass (with server plugin) only where it matters, trim the 10 to 20 s waits in the stop tests, shard the Windows leg. First measure the critical path of the vitest run.
 6. **Re-measure in a week.** Re-run the same queries after #894, #919, #917 and #926 have time in the data. The scripts are in the data folder.
