@@ -1,8 +1,9 @@
 // Manual double-click detection for VS Code TreeViews, which expose no
 // double-click event: a row's `command` fires on every click, so we time
 // consecutive clicks on the same key. Pure and clock-injectable so it can be
-// unit-tested without real time. Used by the GemStone Explorer Classes pane to
-// open a class definition on double-click (a single click just navigates).
+// unit-tested without real time. Used by the GemStone Explorer's Classes pane to
+// open a class definition on double-click (a single click just navigates), and by
+// its Methods pane to keep a method's tab open.
 export class DoubleClickDetector {
   private last = { key: '', time: 0 };
 
@@ -22,5 +23,19 @@ export class DoubleClickDetector {
     }
     this.last = { key, time: t };
     return false;
+  }
+
+  // Records a click as `register` does, and returns a way to take that click back, so
+  // one that changed nothing can't start a pair. Taking it back does nothing once a
+  // later click is recorded, even one on the same key.
+  click(key: string): { completesPair: boolean; withdraw: () => void } {
+    const completesPair = this.register(key);
+    const recorded = this.last;
+    return {
+      completesPair,
+      withdraw: () => {
+        if (this.last === recorded) this.last = { key: '', time: 0 };
+      },
+    };
   }
 }

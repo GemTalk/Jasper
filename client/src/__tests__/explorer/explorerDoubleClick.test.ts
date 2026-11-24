@@ -62,6 +62,52 @@ describe('DoubleClickDetector', () => {
     expect(detector.register('a')).toBe(false);
   });
 
+  it('does not pair a click with a withdrawn one on the same key', () => {
+    const clock = makeClock();
+    const detector = new DoubleClickDetector(500, clock.now);
+
+    detector.click('a').withdraw();
+    clock.advance(100);
+
+    expect(detector.register('a')).toBe(false);
+  });
+
+  it('keeps a later click on the same key when an earlier one is withdrawn', () => {
+    const clock = makeClock();
+    const detector = new DoubleClickDetector(500, clock.now);
+    const earlier = detector.click('a');
+    clock.advance(600);
+    detector.register('a');
+
+    earlier.withdraw();
+    clock.advance(100);
+
+    expect(detector.register('a')).toBe(true);
+  });
+
+  it('keeps a later click on another key when an earlier one is withdrawn', () => {
+    const clock = makeClock();
+    const detector = new DoubleClickDetector(500, clock.now);
+    const earlier = detector.click('a');
+    detector.register('b');
+
+    earlier.withdraw();
+    clock.advance(100);
+
+    expect(detector.register('b')).toBe(true);
+  });
+
+  it('reports whether a click completes a pair', () => {
+    const clock = makeClock();
+    const detector = new DoubleClickDetector(500, clock.now);
+    const first = detector.click('a');
+    clock.advance(100);
+
+    const second = detector.click('a');
+
+    expect([first.completesPair, second.completesPair]).toEqual([false, true]);
+  });
+
   it('honors a custom threshold', () => {
     const clock = makeClock();
     const detector = new DoubleClickDetector(100, clock.now);
