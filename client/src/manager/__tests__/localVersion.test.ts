@@ -484,11 +484,13 @@ describe('VersionManager.fetchAvailableVersions', () => {
 
 // ── GCI library auto-detection ───────────────────────────────
 
+// A server install exists only where a server can run: not on Windows here, where WSL is mocked
+// away (see the no-server tests in sysadminStorage.test.ts).
 describe('GCI library auto-detection', () => {
   const libExt =
     process.platform === 'win32' ? 'dll' : process.platform === 'darwin' ? 'dylib' : 'so';
 
-  it('finds GCI library in extracted version lib/ directory', () => {
+  onSupportedPosixIt('finds GCI library in extracted version lib/ directory', () => {
     const storage = new SysadminStorage();
     const suffix = storage.getPlatformSuffix();
 
@@ -531,7 +533,7 @@ describe('GCI library auto-detection', () => {
     expect(storage.getGemstonePath('9.9.9')).toBeUndefined();
   });
 
-  it('does not find GCI library when lib/ directory is missing', () => {
+  onSupportedPosixIt('does not find GCI library when lib/ directory is missing', () => {
     const storage = new SysadminStorage();
     const suffix = storage.getPlatformSuffix();
 
