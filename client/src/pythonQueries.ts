@@ -42,7 +42,7 @@ export async function evalPythonInScopeNb(
       disposableProcess: true,
       disposableResult: true,
       onStart,
-      signal: stop,
+      stopWhileWaitingForSession: stop,
     },
   );
 }

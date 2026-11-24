@@ -2886,7 +2886,7 @@ export class DebuggerPanel {
         suppressNotification: true,
         onStart: (cancel) => this.armCancel(cancel),
         onAbandonedCollected: this.closeOnceCollected,
-        signal: this.closing.signal,
+        stopWhileWaitingForSession: this.closing.signal,
       });
     } catch (e: unknown) {
       const raw = e instanceof Error ? e.message : String(e);
@@ -3687,7 +3687,7 @@ export class DebuggerPanel {
       suppressNotification: true,
       onStart: (cancel) => this.armCancel(cancel),
       onAbandonedCollected: this.closeOnceCollected,
-      signal: this.closing.signal,
+      stopWhileWaitingForSession: this.closing.signal,
     };
     try {
       await op(opts);

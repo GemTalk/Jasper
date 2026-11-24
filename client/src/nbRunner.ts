@@ -111,11 +111,12 @@ export interface NbRunOptions {
   /**
    * A stop asked for before the call has started, while it waits for the session
    * ({@link whenSessionFree}). The call is then never sent, and the run rejects
-   * with `NbCancelledError` once the session is free. Starting it and stopping it at once would send the
-   * soft break before the gem had begun the call, where it can be ignored
-   * ([#851](https://github.com/GemTalk/Jasper/issues/851)).
+   * with `NbCancelledError` once the session is free. Starting it and stopping
+   * it at once would send the soft break before the gem had begun the call,
+   * where it can be ignored ([#851](https://github.com/GemTalk/Jasper/issues/851)).
+   * Once the call has started, this does nothing: stop it with `onStart`'s cancel.
    */
-  signal?: AbortSignal;
+  stopWhileWaitingForSession?: AbortSignal;
   /**
    * Whether the process this call stops is the call's own, to be thrown away
    * with it. True for anything that starts a fresh execution: abandoned inside
@@ -646,7 +647,7 @@ function stillBusy(session: ActiveSession): boolean {
  * ABANDONED_READ_WAIT_MS.
  *
  * Once `stop` has fired, `start` never runs: when the session is free, this
- * rejects with {@link NbCancelledError} instead (see {@link NbRunOptions.signal}).
+ * rejects with {@link NbCancelledError} instead (see {@link NbRunOptions.stopWhileWaitingForSession}).
  * Not sooner, so whatever the caller does next still finds the session free.
  */
 export function whenSessionFree<T>(
@@ -1314,7 +1315,7 @@ export async function runNbCall<T>(
   return await whenSessionFree(
     session,
     () => beginNbCall(session, start, onReady, opts),
-    opts.signal,
+    opts.stopWhileWaitingForSession,
   );
 }
 

@@ -210,6 +210,28 @@ describe('a cell stopped before its run has started', () => {
     expect(execution(controller).end).toHaveBeenCalledWith(undefined, expect.any(Number));
   });
 
+  it('says "Stopped.", not the busy error, when the session is still held once the wait ends', async () => {
+    const evaluate = vi.fn(
+      (_s: unknown, _src: string, _scope: string, _onStart: unknown, stop: AbortSignal) =>
+        // The wait ended with a clean-up still holding the session.
+        new Promise<string>((_resolve, reject) => {
+          stop.addEventListener('abort', () =>
+            reject(new NbSessionBusyError('A previous run is still cleaning up on the server.')),
+          );
+        }),
+    );
+    const controller = kernel(evaluate);
+
+    const running = controller.executeHandler([cell('3 + 4'), cell('5 + 6')]);
+    await vi.waitFor(() => expect(evaluate).toHaveBeenCalled());
+    execution(controller).stop.cancel();
+    await running;
+
+    expect(outputText(execution(controller))).toBe('Stopped.');
+    expect(execution(controller).end).toHaveBeenCalledWith(undefined, expect.any(Number));
+    expect(controller.createNotebookCellExecution).toHaveBeenCalledTimes(1);
+  });
+
   it('never runs a cell stopped while its session is being picked', async () => {
     let picked!: (session: typeof SESSION) => void;
     vi.mocked(manager.resolveSession).mockReturnValueOnce(

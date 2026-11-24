@@ -1467,7 +1467,7 @@ describe('a session whose stopped call is still being drained', () => {
       const onStart = vi.fn();
       const run = runNbCall(session, start, () => 'ran', {
         suppressNotification: true,
-        signal: stop.signal,
+        stopWhileWaitingForSession: stop.signal,
         onStart,
       });
       run.catch(() => {});
@@ -1545,7 +1545,10 @@ describe('a session whose stopped call is still being drained', () => {
     const start = vi.fn(() => ({ success: true, err: noErr as never }));
 
     await expect(
-      runNbCall(session, start, () => 'ran', { suppressNotification: true, signal: stop.signal }),
+      runNbCall(session, start, () => 'ran', {
+        suppressNotification: true,
+        stopWhileWaitingForSession: stop.signal,
+      }),
     ).rejects.toBeInstanceOf(NbCancelledError);
 
     expect(start).not.toHaveBeenCalled();

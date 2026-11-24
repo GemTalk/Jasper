@@ -58,7 +58,7 @@ export interface NotebookKernelSpec {
    * per-notebook state on the GemStone side; stateless kernels ignore it.
    * Runs non-blocking, handing `onStart` the run's canceller, so the cell's own
    * stop button stops it as every other stop control does. `stop` fires when that
-   * button is pressed before the run has started (see `NbRunOptions.signal`).
+   * button is pressed before the run has started (see `NbRunOptions.stopWhileWaitingForSession`).
    */
   evaluate: (
     session: ActiveSession,
@@ -313,7 +313,11 @@ export class GemStoneNotebookKernel {
         ),
       );
     } catch (e: unknown) {
-      if (e instanceof NbCancelledError || stopRequested()) return 'stopped';
+      // Stopped before it started: still a stop, even if the session was then
+      // found busy.
+      if (e instanceof NbCancelledError || stopRequested() || stoppedBeforeStart.signal.aborted) {
+        return 'stopped';
+      }
       const msg = e instanceof Error ? e.message : String(e);
       logError(session.id, `Notebook cell failed: ${msg}`);
       await this.endWithError(execution, msg);
