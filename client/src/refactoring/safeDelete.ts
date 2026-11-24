@@ -32,6 +32,7 @@
  */
 import * as vscode from 'vscode';
 import { MethodSearchResult } from '../queries/methodSearch';
+import { compareMethods, compareNames } from '../methodOrder';
 import { showMethodResults } from '../methodResultsPicker';
 
 export type SafeDeleteKind =
@@ -137,12 +138,13 @@ export function environmentSuffix(environmentId: number): string {
  *  Environment 0 stays unlabelled, so nothing changes on a stone that never raised
  *  `gemstone.maxEnvironment`, which is the overwhelmingly common case.
  *
- *  Receivers are ordered by name, instance side before class side, then by environment, so
- *  the same reference set always reads the same way. A superclass, or any class outside the
- *  target's own hierarchy, is just another receiver and likewise appears once: senders of a
- *  method and references to a class can come from anywhere in the image. (A VARIABLE's
- *  accessors cannot come from a superclass — the scan starts at the class that declares it
- *  and walks down — so those lists only ever name that class and its subclasses.) */
+ *  Receivers are ordered by name, instance side before class side, then by environment, and
+ *  each receiver's selectors by name, so the same reference set always reads the same way. A
+ *  superclass, or any class outside the target's own hierarchy, is just another receiver and
+ *  likewise appears once: senders of a method and references to a class can come from
+ *  anywhere in the image. (A VARIABLE's accessors cannot come from a superclass — the scan
+ *  starts at the class that declares it and walks down — so those lists only ever name that
+ *  class and its subclasses.) */
 export function groupReferencesByReceiver(references: MethodSearchResult[]): string[] {
   const byReceiver = new Map<
     string,
@@ -170,16 +172,12 @@ export function groupReferencesByReceiver(references: MethodSearchResult[]): str
     byReceiver.set(key, group);
   }
 
-  // Sort on the parts rather than the rendered string: the intent is "by class name, then
-  // instance side before class side, then by environment", and saying that directly does
-  // not depend on how a collator happens to weigh the space in `Account class` or the
-  // bracket in `[env 1]`.
-  const groups = [...byReceiver.values()].sort(
-    (a, b) =>
-      a.className.localeCompare(b.className) ||
-      Number(a.isMeta) - Number(b.isMeta) ||
-      a.environmentId - b.environmentId,
+  // Sort on the parts rather than the rendered string, so the order does not depend on how a
+  // collator weighs the space in `Account class` or the bracket in `[env 1]`.
+  const groups = [...byReceiver.values()].sort((a, b) =>
+    compareMethods({ ...a, selector: '' }, { ...b, selector: '' }),
   );
+  for (const group of groups) group.selectors.sort(compareNames);
   const shown = groups.slice(0, NAMED_RECEIVER_LIMIT);
   const restReceivers = groups.length - shown.length;
 

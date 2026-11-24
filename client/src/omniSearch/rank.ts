@@ -6,6 +6,7 @@
  */
 import { match, compareMatches, MatchResult } from './omniMatch';
 import { OmniConfig, OmniResult } from './omniTypes';
+import { compareMethods, compareNames, MethodKey } from '../methodOrder';
 
 export function rankAndLimit<T>(
   query: string,
@@ -25,34 +26,28 @@ export function rankAndLimit<T>(
   return out.slice(0, cfg.maxResultsPerCategory);
 }
 
-/** Ordering key for a method-like row: the class it lives on, which side of it, and its selector.
- *  Non-method rows (Source/Literals hits are `openMethod` too, so there are none today) fall back to
- *  their label, so the key is total whatever lands here. */
-function methodSortKey(r: OmniResult): [string, number, string] {
+/** Ordering key for a method-like row: the method it opens. Non-method rows (Source/Literals hits
+ *  are `openMethod` too, so there are none today) fall back to their label, so the key is total
+ *  whatever lands here. */
+function methodSortKey(r: OmniResult): MethodKey {
   return r.action.kind === 'openMethod'
-    ? [r.action.className, r.action.isMeta ? 1 : 0, r.action.selector]
-    : [r.label, 0, ''];
+    ? r.action
+    : { className: r.label, isMeta: false, selector: '' };
 }
 
 /**
  * Total order over method-like rows: matcher score first (Source/Literals rows all tie at 0), then
- * the method key above, then the label as a last resort so two rows are never merely "equal".
+ * the shared method order (methodOrder.ts) on the key above, then the label as a last resort so two
+ * rows are never merely "equal".
  *
  * Shared deliberately. The Methods provider caps its own page with this, and the engine re-ranks the
  * whole flat list with it, so a row cannot be kept by one order and then displayed in another — at
  * the cap boundary that would drop an instance-side row while keeping its class-side sibling, and
  * then claim to show the instance side first. Ordering by the METHOD rather than by the label text
- * is what makes the two agree: `'Array class>>at:'.localeCompare('Array>>at:')` is -1, so a label
+ * is what makes the two agree: `Array class>>at:` sorts before `Array>>at:` as text, so a label
  * tiebreak puts the class side FIRST, the opposite of the side step here.
  */
 export function compareMethodRows(a: OmniResult, b: OmniResult): number {
   if (a.score !== b.score) return b.score - a.score;
-  const [aClass, aSide, aSel] = methodSortKey(a);
-  const [bClass, bSide, bSel] = methodSortKey(b);
-  const byClass = aClass.localeCompare(bClass);
-  if (byClass !== 0) return byClass;
-  if (aSide !== bSide) return aSide - bSide;
-  const bySelector = aSel.localeCompare(bSel);
-  if (bySelector !== 0) return bySelector;
-  return a.label.localeCompare(b.label);
+  return compareMethods(methodSortKey(a), methodSortKey(b)) || compareNames(a.label, b.label);
 }
