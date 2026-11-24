@@ -3,6 +3,7 @@ import * as queries from '../browserQueries';
 import { SessionManager } from '../sessionManager';
 import { SystemBrowser } from '../systemBrowser';
 import { buildMethodUri } from '../gemstoneFileSystemProvider';
+import { compareNames } from '../methodOrder';
 import { ClassPickItem, loadClassPickItems, withLoadingProgress } from './classPicker';
 
 /**
@@ -63,9 +64,8 @@ export async function findMethodInClass(sessionManager: SessionManager): Promise
   }
 
   // Instance side first, then class side, each by selector — the `(class) ` rows stay together.
-  const { compare } = new Intl.Collator();
   const sorted = [...methods].sort(
-    (a, b) => Number(a.isMeta) - Number(b.isMeta) || compare(a.selector, b.selector),
+    (a, b) => Number(a.isMeta) - Number(b.isMeta) || compareNames(a.selector, b.selector),
   );
   const items = sorted.map((m) => ({
     label: `${m.isMeta ? '(class) ' : ''}${m.selector}`,

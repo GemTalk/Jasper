@@ -12,6 +12,7 @@
  */
 import * as vscode from 'vscode';
 import { MethodSearchResult } from './queries/methodSearch';
+import { compareMethods } from './methodOrder';
 import { SystemBrowser } from './systemBrowser';
 import { buildMethodUri } from './gemstoneFileSystemProvider';
 
@@ -94,7 +95,7 @@ export async function showMethodResults(
     return true;
   }
 
-  const items = results.map((r) => ({
+  const items = [...results].sort(compareMethods).map((r) => ({
     label: describeMethodResult(r),
     description: r.category,
     detail: r.dictName,

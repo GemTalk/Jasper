@@ -17,6 +17,7 @@ import { withMcpErrorMap } from './mcpZodErrorMap';
 import { drainTranscript } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
 import { VIEW_REFRESH_CODE } from './queries/transactionMode';
+import { compareMethods } from './methodOrder';
 import { commitTransaction } from './queries/commitTransaction';
 
 // AI-executed code writes to the Transcript too: the sink buffers those writes
@@ -835,7 +836,8 @@ export function registerMcpTools(
 
 function formatMethodResults(results: queries.MethodSearchResult[], fallback: string): string {
   if (results.length === 0) return fallback;
-  return results
+  return [...results]
+    .sort(compareMethods)
     .map(
       (r) =>
         `${r.dictName}\t${r.className}\t${r.isMeta ? 'class' : 'instance'}\t${r.selector}\t${r.category}`,

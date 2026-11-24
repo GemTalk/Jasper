@@ -1,3 +1,4 @@
+import { compareNames } from '../../methodOrder';
 import { QueryExecutor } from '../../queries/types';
 import { escapeString, homeDictionaryNameExpr, isValidSelector } from '../../queries/util';
 
@@ -270,10 +271,21 @@ STONJSON toString: (Dictionary new
   at: 'category' put: (baseCls category ifNil: ['']);
   at: 'comment' put: (baseCls comment ifNil: ['']);
   at: 'definition' put: baseCls definition;
-  at: 'methodSelectors' put: baseCls selectors asSortedCollection asArray;
-  at: 'classMethodSelectors' put: baseCls class selectors asSortedCollection asArray;
+  at: 'methodSelectors' put: baseCls selectors asArray;
+  at: 'classMethodSelectors' put: baseCls class selectors asArray;
   yourself)`;
-  return enhancedInspectorExecute(execute, code);
+  const json = enhancedInspectorExecute(execute, code);
+  if (json === null) return null;
+  let meta;
+  try {
+    meta = JSON.parse(json);
+  } catch {
+    // Left for the webview, which already reports metadata it cannot read.
+    return json;
+  }
+  if (Array.isArray(meta?.methodSelectors)) meta.methodSelectors.sort(compareNames);
+  if (Array.isArray(meta?.classMethodSelectors)) meta.classMethodSelectors.sort(compareNames);
+  return JSON.stringify(meta);
 }
 
 export function fetchEnhancedInspectorListData(

@@ -195,6 +195,7 @@ import {
 } from './autoCommit/autoCommitState';
 import type { ReverseRenameKind } from './refactoring/queries/previewUndoRefactoring';
 import { explorerRowUri } from './activeEditorDecoration';
+import { compareNames } from './methodOrder';
 
 const VIEW_DICTS = 'gemstoneExplorerDicts';
 const VIEW_CATEGORIES = 'gemstoneExplorerCategories';
@@ -5367,7 +5368,7 @@ export class ExplorerController {
     const fresh = [...this.newMethodCategories[isMeta ? 'meta' : 'instance']].filter(
       (c) => !real.includes(c),
     );
-    let combined = [...real, ...fresh].sort((a, b) => a.localeCompare(b));
+    let combined = [...real, ...fresh].sort(compareNames);
     if (lines.length === 0 && combined.length === 0) return [];
     const hasSession = lines.some(
       (l) => l.sessionMethodBits && Object.keys(l.sessionMethodBits).length > 0,
@@ -5723,14 +5724,12 @@ export class ExplorerController {
       ];
     }
 
-    return selectors
-      .sort((a, b) => a.localeCompare(b))
-      .map((sel) => ({
-        selector: sel,
-        category: realCategory[sel] || 'as yet unclassified',
-        overrideBits: overrideBits[sel] || 0,
-        sessionBit: sessionBit[sel] || 0,
-      }));
+    return selectors.sort(compareNames).map((sel) => ({
+      selector: sel,
+      category: realCategory[sel] || 'as yet unclassified',
+      overrideBits: overrideBits[sel] || 0,
+      sessionBit: sessionBit[sel] || 0,
+    }));
   }
 
   // The gemstone:// source URI for a method row — the SAME URI openMethod opens, so
