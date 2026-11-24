@@ -338,7 +338,8 @@ Behaviour decisions (Eric's review of the first webview cut):
   Each row wears a small **category tag** (Class / Method / Global / …) so you still see what it is.
 - **Ties break by kind.** An `exact` row (a pasted method reference) leads everything. Below it and the prefix and first-letter-case rules, method rows (Methods / Source /
   Literals) order by **match score first**, then class A→Z, then instance side before class side, then
-  selector; everything else orders by the matcher's shorter-then-alphabetical label order. Score leads,
+  selector, then dictionary and environment, by the one method order every list shares
+  ([#973](https://github.com/GemTalk/Jasper/issues/973)); everything else orders by the matcher's shorter-then-alphabetical label order. Score leads,
   so for Methods rows — where scores differ — the class/side/selector steps only break a tie beneath
   the match quality. Method rows need their own key because Source and Literals hits match a method
   BODY, so every one of them scores 0 and there is no label match left to rank on; for those the whole

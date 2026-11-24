@@ -22,6 +22,7 @@
  * Each function is written against `QueryExecutor` (a plain
  * `(code: string) => string`) so it can be unit-tested without a stone.
  */
+import { compareNames } from '../../methodOrder';
 import { QueryExecutor } from '../../queries/types';
 import { escapeString, homeDictionaryNameExpr, isValidSelector } from '../../queries/util';
 import {
@@ -493,9 +494,9 @@ put value: 'sup' value: (cls superclass ifNil: [''] ifNotNil: [:s | s name]).
 put value: 'cat' value: ([cls category ifNil: ['']] on: Error do: [:e | '']).
 put value: 'cmt' value: ([cls comment ifNil: ['']] on: Error do: [:e | '']).
 put value: 'def' value: ([cls definition] on: Error do: [:e | '']).
-sels := [cls selectors asSortedCollection asArray] on: Error do: [:e | #()].
+sels := [cls selectors] on: Error do: [:e | #()].
 sels do: [:s | put value: 'inst' value: s].
-sels := [cls class selectors asSortedCollection asArray] on: Error do: [:e | #()].
+sels := [cls class selectors] on: Error do: [:e | #()].
 sels do: [:s | put value: 'meta' value: s].
 out contents`;
   const data = inspectorExecute(execute, code);
@@ -540,6 +541,8 @@ export function parseObjectMeta(data: string): ObjectMeta {
         break;
     }
   }
+  meta.instanceSelectors.sort(compareNames);
+  meta.classSelectors.sort(compareNames);
   return meta;
 }
 

@@ -441,6 +441,17 @@ describe('the reference list as it reads for a real removal', () => {
     ]);
   });
 
+  it('orders receivers and their selectors by the shared method-list rule', () => {
+    const lines = groupReferencesByReceiver([
+      ref('SdDemo10', false, 'a'),
+      ref('SdDemo2', false, 'test10'),
+      ref('SdDemo2', false, 'test2'),
+      ref('SdDemo2', false, '\\\\'),
+    ]);
+
+    expect(lines).toEqual(['SdDemo2 >> #\\\\, #test2, #test10', 'SdDemo10 >> #a']);
+  });
+
   it('answers nothing for no references', () => {
     expect(groupReferencesByReceiver([])).toEqual([]);
   });

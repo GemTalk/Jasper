@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { SessionManager } from './sessionManager';
 import { SelectorResolver } from './selectorProviders';
 import { dedupeMethodResults } from './queries/methodSearch';
+import { compareMethods } from './methodOrder';
 import { maxEnvironment, sweepEnvironments } from './methodEnvironments';
 import * as queries from './browserQueries';
 
@@ -71,7 +72,7 @@ export class GemStoneHoverProvider implements vscode.HoverProvider {
             return [];
           }
         }),
-      );
+      ).sort(compareMethods);
 
       // Senders count (cached — sendersOf is costly and a hover fires easily).
       const sKey = `${sel}|${session.id}|${maxEnvironment()}`;

@@ -299,6 +299,27 @@ describe('tools', () => {
       expect(result.content[0].text).toContain('String');
     });
 
+    it('lists the results by class, then side, then selector', async () => {
+      vi.mocked(session.executeFetchString).mockImplementation((code: string) =>
+        code.includes('environmentId: 0')
+          ? 'Globals\tZed\t0\ta\tmisc\t0\n' +
+            'Globals\tArray\t1\tnew\tmisc\t0\n' +
+            'Globals\tArray\t0\ttest10\tmisc\t0\n' +
+            'Globals\tArray\t0\ttest2\tmisc\t0\n'
+          : '',
+      );
+      const result = await server.getTool('find_senders')!.handler({ selector: 'x' });
+
+      expect(
+        result.content[0].text.split('\n').map((l: string) => l.split('\t').slice(1, 4).join(' ')),
+      ).toEqual([
+        'Array instance test2',
+        'Array instance test10',
+        'Array class new',
+        'Zed instance a',
+      ]);
+    });
+
     // Symmetric with find_implementors / find_references_to — uses the same
     // searchWithEnvFallback helper, so a refactor that breaks one would
     // silently break this without a guard.
@@ -443,8 +464,8 @@ describe('tools', () => {
 
       const code = vi.mocked(session.executeFetchString).mock.calls[0][0];
       expect(code).toContain("objectNamed: #'Foo'");
-      expect(code).toContain('=== Instance methods ===');
       expect(result.content[0].text).toContain('=== Definition ===');
+      expect(result.content[0].text).toContain('=== Instance methods ===');
     });
 
     it('scopes to a specific dictionary when dictionaryName is given', async () => {

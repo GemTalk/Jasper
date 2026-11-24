@@ -226,6 +226,19 @@ describe('FunctionBreakpointResolver', () => {
     expect(addedSourceBreakpoint()?.location.uri.toString()).toContain('/SavingsAccount/');
   });
 
+  it('lists the classes by the shared method-list rule, instance side first', async () => {
+    const at = (className: string, isMeta = false) => ({ ...account, className, isMeta });
+    mockImplementors.mockReturnValue([at('Foo10'), at('Foo', true), at('Foo2'), at('Foo')]);
+    vi.mocked(window.showQuickPick).mockResolvedValue(undefined);
+    const bp = new FunctionBreakpoint('balance');
+    debug.breakpoints = [bp];
+
+    await new FunctionBreakpointResolver(makeSessionManager()).handle([bp]);
+
+    const items = vi.mocked(window.showQuickPick).mock.calls[0][0] as { label: string }[];
+    expect(items.map((i) => i.label)).toEqual(['Foo', 'Foo class', 'Foo2', 'Foo10']);
+  });
+
   it('drops the breakpoint when the class picker is dismissed', async () => {
     mockImplementors.mockReturnValue([savings, account]);
     vi.mocked(window.showQuickPick).mockResolvedValue(undefined);

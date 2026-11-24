@@ -693,7 +693,7 @@ export class SunitTestController implements vscode.Disposable {
       const methods = sunit.discoverTestMethods(session, className, dictName);
       const children: vscode.TestItem[] = [];
 
-      for (const { selector, category } of methods) {
+      for (const [index, { selector, category }] of methods.entries()) {
         this.methodCategory.set(`${dictName}/${className}/${selector}`, category);
 
         const methodItem = this.controller.createTestItem(
@@ -703,6 +703,9 @@ export class SunitTestController implements vscode.Disposable {
         );
         // Gutter icon on line 1 of the method's own document (see above).
         methodItem.range = topOfDocument();
+        // The Test Explorer re-sorts siblings by sortText, else by label with plain
+        // localeCompare (test10 before test2); this keeps discoverTestMethods' order.
+        methodItem.sortText = String(index).padStart(6, '0');
         if (methodItem.uri) this.itemUris.add(methodItem.uri.toString());
         children.push(methodItem);
       }

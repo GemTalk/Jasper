@@ -6,6 +6,8 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ### Changed
 
+- **Every method list now uses the same order, the one VS Code uses for file names.** Lists used to disagree, and some hid methods where nobody would look: on the Inspector's Meta tab for `7`, `\\` came near the bottom, after `rem:`, with the private `_` methods and `~=` after it. Now symbols sort before letters, so operators and private `_` methods sit together at the top. Case is ignored, and numbers in a name sort by value (`test2` before `test10`). Method categories follow the same rule. This covers both Inspector Meta tabs, the Explorer's Methods pane with grouping on or off, method files in the Explorer's file view, Find Method in Class, GemStone Search, the Breakpoints view, the Senders, Implementors and References lists, the class picker for a breakpoint added by name, the safe-delete confirmation, the implementors listed in a selector's hover, the Test Explorer, the Grail stub picker, and the MCP `describe_class`, `list_methods` and `find_*` tools. Lists of methods from more than one class sort by class, then instance side before class side, then selector. ([#973](https://github.com/GemTalk/Jasper/issues/973))
+
 - **Releases no longer fall back to the old Marketplace token.** Trusted Publishing published 1.20.0, so the release workflow drops the stored token it kept in case Trusted Publishing failed. A refused sign-in now fails the Marketplace publish job, with nothing uploaded. ([#939](https://github.com/GemTalk/Jasper/issues/939))
 
 ## [1.20.0] - 2026-11-23

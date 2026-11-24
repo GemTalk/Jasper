@@ -1,3 +1,4 @@
+import { compareNames } from '../methodOrder';
 import { QueryExecutor } from './types';
 import { receiver, splitLines } from './util';
 
@@ -10,8 +11,8 @@ export function getMethodCategories(
   const recv = receiver(className, isMeta, dict);
   const code = `| ws |
 ws := WriteStream on: String new.
-${recv} categoryNames asSortedCollection do: [:each |
+${recv} categoryNames do: [:each |
   ws nextPutAll: each; lf].
 ws contents`;
-  return splitLines(execute(code));
+  return splitLines(execute(code)).sort(compareNames);
 }
