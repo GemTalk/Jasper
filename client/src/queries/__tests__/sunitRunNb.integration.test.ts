@@ -13,8 +13,8 @@
 import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
-// What a stop did, step by step, for a test to print when it fails: one CI
-// failure (#983) never reproduced, so the next one has to say what the gem answered.
+// What a stop did, step by step, for a test to print when it fails: a stop's
+// failures are rare and timing-bound, so the failure has to say what the gem answered.
 const stopTrace = vi.hoisted(() => {
   let startedAt = 0;
   let lines: string[] | undefined;
@@ -52,7 +52,7 @@ import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
 import type { ActiveSession } from '../../sessionManager';
-import { NbCancelledError } from '../../nbRunner';
+import { NbCancelledError, NbSessionBusyError, stoppedRunCleared } from '../../nbRunner';
 import { runTestClassNb, runTestMethodNb } from '../../sunitQueries';
 import { discoverTestClasses } from '../discoverTestClasses';
 import { discoverTestMethods } from '../discoverTestMethods';
@@ -117,8 +117,8 @@ describe('SUnit non-blocking runs (integration)', () => {
    *   always synchronous.
    * - the short sleep, because a break that arrives before the gem has picked the
    *   call up is documented as ignored. 250ms is far more than it needs: the gem
-   *   reports its own elapsed time as ~250ms when a break lands right after this
-   *   wait, i.e. it started executing essentially at once.
+   *   reaches the test's setUp in about 1 ms. It takes the break only at its own
+   *   2-second tick, so when the stop lands is the gem's choice, not this wait's.
    */
   async function startSlowRun(): Promise<{
     run: ReturnType<typeof runTestMethodNb>;
@@ -291,9 +291,9 @@ describe('SUnit non-blocking runs (integration)', () => {
     // isn't logged, so it is also the nearest time to one.
     stopTrace.add('next run starts');
     try {
-      await expect(
-        runTestMethodNb(session(), SUNIT_PROBE_TEST_CLASS, SUNIT_PROBE_PASSING_SELECTOR),
-      ).resolves.toMatchObject({ status: 'passed' });
+      await expect(runPassingTestOnceTheStopIsCleared()).resolves.toMatchObject({
+        status: 'passed',
+      });
     } catch (drainErr) {
       // Only swallowed when the gesture above already failed — the drain
       // couldn't recover a session already left in a bad state by that
@@ -313,6 +313,29 @@ describe('SUnit non-blocking runs (integration)', () => {
 
     if (gestureFailed) throw stopTrace.attachTo(originalFailure);
   }, 120_000);
+
+  /**
+   * Run the passing test, waiting out the stopped run's clean-up if that refuses
+   * it. A gem that takes the stop before the run code's handlers exist answers
+   * with a raw Break, whose process is then cleared in the background, and a run
+   * started meanwhile is refused as "still cleaning up" by design (#809; how the
+   * gem gets there is in #916). Only that refusal is waited out: any other one is
+   * still a failure.
+   */
+  async function runPassingTestOnceTheStopIsCleared(): Promise<
+    Awaited<ReturnType<typeof runTestMethodNb>>
+  > {
+    const runPassing = () =>
+      runTestMethodNb(session(), SUNIT_PROBE_TEST_CLASS, SUNIT_PROBE_PASSING_SELECTOR);
+    try {
+      return await runPassing();
+    } catch (e) {
+      if (!(e instanceof NbSessionBusyError) || !/still cleaning up/.test(e.message)) throw e;
+      stopTrace.add('refused while the stopped run is cleared; waiting for the clear');
+      await stoppedRunCleared(session());
+      return await runPassing();
+    }
+  }
 
   /**
    * Add each answer the session collects, and each clear of a stopped run's
