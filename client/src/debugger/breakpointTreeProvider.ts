@@ -5,6 +5,7 @@ import * as queries from '../browserQueries';
 import { GemStoneBreakpoint } from '../browserQueries';
 import { BreakpointManager } from './breakpointManager';
 import { loginLabel } from '../loginTypes';
+import { compareNames } from '../methodOrder';
 import { RuleParts, appendRuleMarkdown, rowDescription } from './breakpointRuleText';
 
 /**
@@ -55,7 +56,7 @@ export function groupBreakpoints(breakpoints: GemStoneBreakpoint[]): BreakpointN
       className,
       isMeta,
       breakpoints: [...list].sort(
-        (a, b) => a.selector.localeCompare(b.selector) || a.stepPoint - b.stepPoint,
+        (a, b) => compareNames(a.selector, b.selector) || a.stepPoint - b.stepPoint,
       ),
     });
   }
@@ -65,7 +66,7 @@ export function groupBreakpoints(breakpoints: GemStoneBreakpoint[]): BreakpointN
     // Doits last — they're the odd ones out and nothing navigates to them.
     if (a.className === '') return b.className === '' ? 0 : 1;
     if (b.className === '') return -1;
-    return a.className.localeCompare(b.className) || Number(a.isMeta) - Number(b.isMeta);
+    return compareNames(a.className, b.className) || Number(a.isMeta) - Number(b.isMeta);
   });
   return nodes;
 }

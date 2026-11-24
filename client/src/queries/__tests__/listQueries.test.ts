@@ -119,10 +119,10 @@ describe('getInstVarNames', () => {
 });
 
 describe('getAllSelectors', () => {
-  it('parses allSelectors sorted output', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'at:\nsize\n');
+  it('parses allSelectors output and sorts it in the client', () => {
+    const execute = vi.fn<QueryExecutor>(() => 'size\nat:\n');
     expect(getAllSelectors(execute, 'Foo')).toEqual(['at:', 'size']);
-    expect(execute.mock.calls[0][0]).toContain('Foo allSelectors asSortedCollection');
+    expect(execute.mock.calls[0][0]).toContain('Foo allSelectors do:');
   });
 });
 
