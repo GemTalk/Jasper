@@ -31,7 +31,7 @@
     '- With **Show results in Jasper (if possible)** ticked, a list of methods or classes, or a regular-expression search, opens in GemStone Search instead of filling the chat. A blue banner gives the count and a **Show GemStone Search** button.',
     '- A class the assistant creates, or one you ask to see, opens in the GemStone Explorer with its definition; the methods it created follow in GemStone Search.',
     '- A method written like `Class>>selector` in an answer is a link: click it to open the method. After creating a class, the assistant lists where to start reading it.',
-    '- After creating a class, the assistant also opens a new Workspace with a short example of using it. Put the cursor on an expression and Display It or Inspect It to see what it answers. Jasper compiles the example first, without running it, so it will not hold a typo or a message nothing implements.',
+    '- After creating a class, the assistant also opens a new Workspace with a short example of using it. Put the cursor on an expression and Display It or Inspect It to see what it answers. Jasper compiles the example first, without running it, so it will not hold a typo or a message nothing implements. It cannot tell what an expression does when run, so read each one before running it.',
     '- Press **Esc** in the GemStone Search box to close the list and return to the normal search.',
     '- A method list stops at the `gemstone.omniSearch.maxServerScan` setting; the answer says when more match.',
     '- Untick the box to get every answer as text in the chat.',

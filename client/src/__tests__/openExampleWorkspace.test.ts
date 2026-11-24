@@ -30,6 +30,9 @@ describe('openExampleWorkspace', () => {
     const text = insertedText();
     expect(text).toMatch(/^"Trying Parser, an example from the Jasper Assistant\./);
     expect(text).toMatch(/Display It.*Inspect It/s);
+    expect(text).toMatch(
+      /Jasper has not run this example\. Make sure you understand what Parser does before\n you run it\./,
+    );
     expect(text.endsWith('"Display It: a Dictionary"\nParser parse: \'{}\'\n')).toBe(true);
   });
 

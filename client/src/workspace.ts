@@ -78,7 +78,8 @@ export async function openExampleWorkspace(className: string, code: string): Pro
   }
   const header =
     `"Trying ${className}, an example from the Jasper Assistant. Put the cursor on an\n` +
-    ` expression, then Display It (<${MOD_KEY}>+<K> then <D>) or Inspect It (<${MOD_KEY}>+<K> then <I>)."\n\n`;
+    ` expression, then Display It (<${MOD_KEY}>+<K> then <D>) or Inspect It (<${MOD_KEY}>+<K> then <I>).\n` +
+    ` Jasper has not run this example. Make sure you understand what ${className} does before\n you run it."\n\n`;
   const edit = new vscode.WorkspaceEdit();
   edit.insert(uri, new vscode.Position(0, 0), `${header}${code.trim()}\n`);
   await vscode.workspace.applyEdit(edit);
