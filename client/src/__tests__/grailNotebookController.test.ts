@@ -118,6 +118,7 @@ describe('GrailNotebookController', () => {
       '1 + 2',
       'file:///nb/a.ipynb',
       expect.any(Function),
+      expect.any(AbortSignal),
     );
     const execution = executionAt(0);
     expect(execution.start).toHaveBeenCalled();

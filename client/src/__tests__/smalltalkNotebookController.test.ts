@@ -116,6 +116,11 @@ function executionAt(index: number) {
   return lastController().createNotebookCellExecution.mock.results[index].value;
 }
 
+/** The text of the cell's last output. */
+function outputText(execution: ReturnType<typeof executionAt>): string {
+  return new TextDecoder().decode(execution.replaceOutput.mock.lastCall[0][0].items[0].data);
+}
+
 async function runCells(cells: unknown[]) {
   await lastController().executeHandler(cells);
 }
@@ -251,8 +256,6 @@ describe('SmalltalkNotebookController', () => {
       });
       return { ...gci, GciTsClearStackAsync };
     };
-    const outputText = (execution: ReturnType<typeof executionAt>): string =>
-      new TextDecoder().decode(execution.replaceOutput.mock.lastCall[0][0].items[0].data);
     const debuggerCallbacks = () => {
       const call = vi.mocked(DebuggerPanel.create).mock.lastCall!;
       return { onComplete: call[3]!, onCleared: call[4]! };
@@ -650,6 +653,74 @@ describe('SmalltalkNotebookController', () => {
       const item = executionAt(0).replaceOutput.mock.calls[0][0][0].items[0];
       expect(JSON.parse(new TextDecoder().decode(item.data)).message).toBe(SESSION_BUSY_MESSAGE);
       ctrl.dispose();
+    });
+  });
+
+  describe('a cell stopped while a stopped cell is still being collected', () => {
+    // Cell A is stopped but the gem is slow to let go, so the runner collects it in
+    // the background and cell B waits for the session. The user then stops B too.
+    // A stop sent in the same instant as B's code can be ignored by the gem (#851),
+    // so B must never be sent at all.
+    async function stopWhileWaiting() {
+      vi.useFakeTimers();
+      onTestFinished(() => {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+        forgetSession(1);
+      });
+      const breaks = vi.fn(() => ({ success: true, err: { number: 0 } }));
+      const gci = makeGci({
+        GciTsNbPoll: vi.fn(() => ({ result: 0, err: { number: 0 } })),
+        GciTsBreak: breaks,
+        GciTsCallInProgress: vi.fn(() => ({ result: 0, err: { number: 0 } })),
+      });
+      const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
+      onTestFinished(() => ctrl.dispose());
+
+      const cellA = runCells([makeCell('[true] whileTrue')]);
+      await vi.advanceTimersByTimeAsync(0);
+      executionAt(0).stop.cancel();
+      executionAt(0).stop.cancel(); // the second press stops waiting for A at once
+      await cellA;
+
+      const cellB = runCells([makeCell('3 + 4')]);
+      await vi.advanceTimersByTimeAsync(100);
+      // Only A's code has gone out: B is waiting for the session.
+      expect(gci.GciTsNbExecute).toHaveBeenCalledTimes(1);
+      return { gci, breaks, cellB };
+    }
+
+    const forwardingStarts = (gci: ReturnType<typeof makeGci>) =>
+      gci.executeAndFetchString.mock.calls.filter((c) =>
+        String(c[1]).includes('jasperStartClientForwarderModeFor:'),
+      ).length;
+
+    it('never sends the stopped cell, nor a stop after it', async () => {
+      const { gci, breaks, cellB } = await stopWhileWaiting();
+      executionAt(1).stop.cancel();
+      const breaksBeforeRelease = breaks.mock.calls.length;
+      const startsBeforeRelease = forwardingStarts(gci);
+
+      gci.GciTsNbPoll.mockReturnValue({ result: 1, err: { number: 0 } }); // A finally ends
+      await vi.advanceTimersByTimeAsync(500);
+      await cellB;
+
+      expect(gci.GciTsNbExecute).toHaveBeenCalledTimes(1);
+      expect(breaks).toHaveBeenCalledTimes(breaksBeforeRelease);
+      expect(forwardingStarts(gci)).toBe(startsBeforeRelease);
+      expect(outputText(executionAt(1))).toBe('Stopped.');
+      expect(executionAt(1).end).toHaveBeenCalledWith(undefined, expect.any(Number));
+    });
+
+    it('still runs the waiting cell once the session is free, when nobody stopped it', async () => {
+      const { gci, cellB } = await stopWhileWaiting();
+
+      gci.GciTsNbPoll.mockReturnValue({ result: 1, err: { number: 0 } });
+      await vi.advanceTimersByTimeAsync(500);
+      await cellB;
+
+      expect(gci.GciTsNbExecute).toHaveBeenCalledTimes(2);
+      expect(outputText(executionAt(1))).toBe('7');
     });
   });
 

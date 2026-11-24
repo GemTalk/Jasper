@@ -1,3 +1,4 @@
+import { compareNames } from '../methodOrder';
 import { NbQueryExecutor, QueryExecutor } from './types';
 import { escapeString } from './util';
 
@@ -122,7 +123,7 @@ function parseClassEnvironments(raw: string): EnvCategoryLine[] {
         if (flag & 4) sessionMethodBits[sel] = flag & 8 ? 2 : 1;
         return sel;
       })
-      .sort();
+      .sort(compareNames);
     const isMeta = receiverName.endsWith(' class');
     results.push({ isMeta, envId, category, selectors, methodOverrideBits, sessionMethodBits });
   }

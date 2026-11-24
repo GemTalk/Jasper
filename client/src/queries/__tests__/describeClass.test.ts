@@ -3,11 +3,13 @@ import { QueryExecutor } from '../types';
 import { describeClass } from '../describeClass';
 
 describe('describeClass', () => {
-  it('defaults to first-match objectNamed: lookup and returns the raw text', () => {
-    const sample = '=== Definition ===\nObject subclass: #Foo\n\n=== Comment ===\nhello\n';
+  it('defaults to first-match objectNamed: lookup and appends the method sections', () => {
+    const sample = '=== Definition ===\nObject subclass: #Foo\n\n=== Comment ===\nhello\n\n';
     const execute = vi.fn<QueryExecutor>(() => sample);
 
-    expect(describeClass(execute, 'Foo')).toBe(sample);
+    expect(describeClass(execute, 'Foo')).toBe(
+      `${sample}=== Instance methods ===\n\n=== Class methods ===\n`,
+    );
     const [code] = execute.mock.calls[0];
     expect(code).toContain("objectNamed: #'Foo'");
   });
@@ -28,28 +30,23 @@ describe('describeClass', () => {
     expect(code).toContain("#'Customer' ifAbsent: [nil]");
   });
 
-  it('emits all five sections in the Smalltalk', () => {
+  it('emits the definition and comment sections in the Smalltalk', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     describeClass(execute, 'X');
     const code = execute.mock.calls[0][0];
     expect(code).toContain('=== Definition ===');
     expect(code).toContain('=== Comment ===');
-    expect(code).toContain('=== Instance methods ===');
-    expect(code).toContain('=== Class methods ===');
     expect(code).toContain('cls definition');
     expect(code).toContain('cls comment');
   });
 
-  it('lists selectors via sortedSelectorsIn: (own, not inherited) for both sides', () => {
+  it('reads own selectors (not inherited) for both sides, unsorted', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     describeClass(execute, 'X');
     const code = execute.mock.calls[0][0];
-    // Instance side
-    expect(code).toMatch(/cls categoryNames asSortedCollection do:/);
-    expect(code).toContain('cls sortedSelectorsIn: cat');
-    // Class side
-    expect(code).toContain('cls class categoryNames');
-    expect(code).toContain('cls class sortedSelectorsIn: cat');
+    expect(code).toContain("{ cls -> 'i'. cls class -> 'c' }");
+    expect(code).toContain('side key categoryNames do:');
+    expect(code).toContain('side key selectorsIn: cat');
   });
 
   it('guards against nil (class not found) and non-class globals', () => {

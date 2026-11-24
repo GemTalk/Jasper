@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, onTestFinished } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../gciLog', async (orig) => ({ ...(await orig()), logInfo: vi.fn() }));
@@ -1466,6 +1466,136 @@ describe('a session whose stopped call is still being drained', () => {
       await vi.advanceTimersByTimeAsync(60_000);
 
       expect(poll.mock.calls.length).toBe(pollsAtLogout);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  describe('a run stopped while it waits for the drain', () => {
+    // Its code and its stop would otherwise reach the gem in the same instant, and
+    // a stop that early can be ignored (#851).
+    async function waitingRun() {
+      vi.useFakeTimers();
+      onTestFinished(() => {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+      });
+      const { session, gci } = makeSession([{ result: 0 }]);
+      const poll = gci.GciTsNbPoll as ReturnType<typeof vi.fn>;
+      poll.mockReturnValue({ result: 0, err: noErr });
+      await stopAndStayInTheDrain(session);
+      const stop = new AbortController();
+      const start = vi.fn(() => ({ success: true, err: noErr as never }));
+      const onStart = vi.fn();
+      const run = runNbCall(session, start, () => 'ran', {
+        suppressNotification: true,
+        stopWhileWaitingForSession: stop.signal,
+        onStart,
+      });
+      run.catch(() => {});
+      await vi.advanceTimersByTimeAsync(0);
+      expect(start).not.toHaveBeenCalled();
+      const breaksBefore = gci.GciTsBreak.mock.calls.length;
+      const drainEnds = async () => {
+        poll.mockReturnValue({ result: 1, err: noErr });
+        await vi.advanceTimersByTimeAsync(100);
+      };
+      return { session, gci, stop, start, onStart, run, breaksBefore, drainEnds };
+    }
+
+    it('is never started, so no stop is sent for it', async () => {
+      const { gci, stop, start, onStart, run, breaksBefore, drainEnds } = await waitingRun();
+
+      stop.abort();
+      await drainEnds();
+
+      await expect(run).rejects.toBeInstanceOf(NbCancelledError);
+      expect(start).not.toHaveBeenCalled();
+      expect(onStart).not.toHaveBeenCalled();
+      expect(gci.GciTsBreak).toHaveBeenCalledTimes(breaksBefore);
+    });
+
+    it('leaves the session free for the next run', async () => {
+      const { session, stop, run, drainEnds } = await waitingRun();
+
+      stop.abort();
+      await drainEnds();
+      await expect(run).rejects.toBeInstanceOf(NbCancelledError);
+
+      expect(() => ensureSessionFree(session)).not.toThrow();
+      await expect(
+        runNbCall(
+          session,
+          () => ({ success: true, err: noErr as never }),
+          () => 'next',
+          {
+            suppressNotification: true,
+          },
+        ),
+      ).resolves.toBe('next');
+    });
+
+    it('starts as usual once the drain ends, when nobody stopped it', async () => {
+      const { start, onStart, run, drainEnds } = await waitingRun();
+
+      await drainEnds();
+
+      await expect(run).resolves.toBe('ran');
+      expect(start).toHaveBeenCalledTimes(1);
+      expect(onStart).toHaveBeenCalledTimes(1);
+    });
+
+    it('says it was stopped only once the drain has ended, so what follows finds the session free', async () => {
+      const { session, stop, run, drainEnds } = await waitingRun();
+      let settled = false;
+      run.finally(() => (settled = true)).catch(() => {});
+
+      stop.abort();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(settled).toBe(false);
+
+      await drainEnds();
+      await expect(run).rejects.toBeInstanceOf(NbCancelledError);
+      expect(() => ensureSessionFree(session)).not.toThrow();
+    });
+  });
+
+  it('never starts a run stopped before it was asked for', async () => {
+    const { session, gci } = makeSession([{ result: 1 }]);
+    const stop = new AbortController();
+    stop.abort();
+    const start = vi.fn(() => ({ success: true, err: noErr as never }));
+
+    await expect(
+      runNbCall(session, start, () => 'ran', {
+        suppressNotification: true,
+        stopWhileWaitingForSession: stop.signal,
+      }),
+    ).rejects.toBeInstanceOf(NbCancelledError);
+
+    expect(start).not.toHaveBeenCalled();
+    expect(gci.GciTsBreak).not.toHaveBeenCalled();
+  });
+
+  it('never calls start for a wait stopped before the drain ended', async () => {
+    vi.useFakeTimers();
+    try {
+      const { session, gci } = makeSession([{ result: 0 }]);
+      const poll = gci.GciTsNbPoll as ReturnType<typeof vi.fn>;
+      poll.mockReturnValue({ result: 0, err: noErr });
+      await stopAndStayInTheDrain(session);
+      const stop = new AbortController();
+      const start = vi.fn(() => 'started');
+
+      const wait = whenSessionFree(session, start, stop.signal);
+      (wait as Promise<unknown>).catch(() => {});
+      stop.abort();
+      poll.mockReturnValue({ result: 1, err: noErr });
+      await vi.advanceTimersByTimeAsync(100);
+
+      await expect(wait).rejects.toBeInstanceOf(NbCancelledError);
+      expect(start).not.toHaveBeenCalled();
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();

@@ -109,6 +109,15 @@ export interface NbRunOptions {
    */
   onStart?: (cancel: () => void, stopRequested: () => boolean) => void;
   /**
+   * A stop asked for before the call has started, while it waits for the session
+   * ({@link whenSessionFree}). The call is then never sent, and the run rejects
+   * with `NbCancelledError` once the session is free. Starting it and stopping
+   * it at once would send the soft break before the gem had begun the call,
+   * where it can be ignored ([#851](https://github.com/GemTalk/Jasper/issues/851)).
+   * Once the call has started, this does nothing: stop it with `onStart`'s cancel.
+   */
+  stopWhileWaitingForSession?: AbortSignal;
+  /**
    * Whether the process this call stops is the call's own, to be thrown away
    * with it. True for anything that starts a fresh execution: abandoned inside
    * a Transcript write it holds the session's Transcript semaphore, and
@@ -636,15 +645,21 @@ function stillBusy(session: ActiveSession): boolean {
  * call with nothing before it still begins in the same tick (see
  * {@link runNbCall}). The wait is bounded by the drain's own budget, or by
  * ABANDONED_READ_WAIT_MS.
+ *
+ * Once `stop` has fired, `start` never runs: when the session is free, this
+ * rejects with {@link NbCancelledError} instead (see {@link NbRunOptions.stopWhileWaitingForSession}).
+ * Not sooner, so whatever the caller does next still finds the session free.
  */
 export function whenSessionFree<T>(
   session: ActiveSession,
   start: () => T,
+  stop?: AbortSignal,
 ): T | Promise<Awaited<T>> {
   // Clean-up takes as long as the user's ensure: blocks do, too long to wait out
   // without a word: refused with the notice instead.
   if (!draining.has(session.id) || clearHolds(session)) {
     ensureSessionFree(session);
+    if (stop?.aborted) throw new NbCancelledError();
     return start();
   }
   return (async (): Promise<Awaited<T>> => {
@@ -654,6 +669,7 @@ export function whenSessionFree<T>(
       await pending;
     }
     ensureSessionFree(session);
+    if (stop?.aborted) throw new NbCancelledError();
     return await start();
   })();
 }
@@ -1375,7 +1391,11 @@ export async function runNbCall<T>(
   // the ordinary case, so a stop pressed the moment a run starts still has
   // something to press. GciTsCallInProgress is no help here: it can answer
   // "idle" while the abandoned Nb result is still uncollected.
-  return await whenSessionFree(session, () => beginNbCall(session, start, onReady, opts));
+  return await whenSessionFree(
+    session,
+    () => beginNbCall(session, start, onReady, opts),
+    opts.stopWhileWaitingForSession,
+  );
 }
 
 function beginNbCall<T>(

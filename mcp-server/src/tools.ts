@@ -39,6 +39,7 @@ import { deleteMethod } from '../../client/src/queries/deleteMethod';
 import { deleteClass } from '../../client/src/queries/deleteClass';
 import { addDictionary } from '../../client/src/queries/addDictionary';
 import { removeDictionary } from '../../client/src/queries/removeDictionary';
+import { compareMethods } from '../../client/src/methodOrder';
 import {
   searchMethodSource,
   sendersOf,
@@ -87,7 +88,8 @@ function formatTestFailureDetails(d: TestFailureDetails): string {
 
 function formatMethodResults(results: MethodSearchResult[], fallback: string): string {
   if (results.length === 0) return fallback;
-  return results
+  return [...results]
+    .sort(compareMethods)
     .map(
       (r) =>
         `${r.dictName}\t${r.className}\t${r.isMeta ? 'class' : 'instance'}\t${r.selector}\t${r.category}`,

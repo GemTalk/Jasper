@@ -1,3 +1,4 @@
+import { compareNames } from '../methodOrder';
 import { QueryExecutor } from './types';
 import { classLookupExpr } from './util';
 
@@ -58,8 +59,8 @@ cls instVarNames do: [:iv |
     nextPutAll: ((cls canUnderstand: iv asSymbol) ifTrue: ['1'] ifFalse: ['0']); tab;
     nextPutAll: ((cls canUnderstand: (iv, ':') asSymbol) ifTrue: ['1'] ifFalse: ['0']); lf].
 { cls -> 'i'. cls class -> 'c' } do: [:pair |
-  pair key categoryNames asSortedCollection do: [:cat |
-    (pair key sortedSelectorsIn: cat) do: [:sel |
+  pair key categoryNames do: [:cat |
+    (pair key selectorsIn: cat) do: [:sel |
       ws nextPutAll: 'METHOD'; tab; nextPutAll: pair value; tab;
         nextPutAll: cat; tab; nextPutAll: sel; lf]]].
 ws nextPutAll: '===COMMENT==='; lf.
@@ -101,5 +102,11 @@ export function parseGrailStubReflection(raw: string): GrailStubReflection {
       });
     }
   }
+  methods.sort(
+    (a, b) =>
+      Number(a.side === 'class') - Number(b.side === 'class') ||
+      compareNames(a.category, b.category) ||
+      compareNames(a.selector, b.selector),
+  );
   return { found: true, superclass, comment: commentLines.join('\n'), instVars, methods };
 }
