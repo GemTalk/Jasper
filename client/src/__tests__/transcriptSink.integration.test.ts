@@ -363,6 +363,11 @@ tmps := SessionTemps current.
     // writes, which puts it on the worker, then waits there long enough for
     // the first logout to land; the pause before it lets the worker actually
     // start, since the write is reported just before the resume is queued.
+    //
+    // The wait is 1s, well inside the 2s stopCallsOn waits (STOP_CALLS_WAIT_MS),
+    // because the gem now and then ignores every stop sent to a run it has just
+    // resumed and runs the code to its end (#990). Ended either way, the run
+    // hands the session back before the retry.
     const { session: busy, err } = reportedTransientLogin(session());
     if (!busy) throw new Error(`Transient login failed: ${err.message}`);
     const gemLogin = reportedSerialOf(busy);
@@ -373,7 +378,7 @@ tmps := SessionTemps current.
     });
     const code =
       "Transcript nextPutAll: 'streaming'. " +
-      '200 timesRepeat: [(Delay forMilliseconds: 50) wait]. 42';
+      '20 timesRepeat: [(Delay forMilliseconds: 50) wait]. 42';
     startClientForwarderMode(busy, code);
     const run = runNbCall(
       busy,
