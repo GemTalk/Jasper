@@ -54,6 +54,10 @@
     // The currently-rendered row elements, in display order — the target of Up/Down navigation.
     // `activeIndex` points into it; -1 = nothing active.
     var rows = [];
+    // Rows with nested rows under them (a class and its methods) that the user folded, by label. A
+    // re-render (typing to filter the list) keeps them folded; a list under another title does not.
+    var collapsedGroups = {};
+    var collapsedForTitle = null;
     var activeIndex = -1;
     var inPivot = false;
     var previewTimer = null;
@@ -344,6 +348,42 @@
       }
     }
 
+    /** Give a row with nested rows a twisty that folds them away and back. Arrowing skips folded
+     *  rows; one folded while selected hands the selection to its parent. */
+    function makeGroup(group) {
+      var key = group.key;
+      var twisty = doc.createElement('button');
+      twisty.className = 'twisty';
+      group.li.insertBefore(twisty, group.li.firstChild);
+      function apply(collapsed) {
+        twisty.textContent = collapsed ? '▸' : '▾';
+        twisty.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        twisty.title = collapsed ? 'Show its methods' : 'Hide its methods';
+        // Inline: `.row` sets display, which beats the hidden attribute.
+        for (var i = 0; i < group.children.length; i++) {
+          group.children[i].style.display = collapsed ? 'none' : '';
+        }
+      }
+      twisty.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        var collapsed = !collapsedGroups[key];
+        collapsedGroups[key] = collapsed;
+        apply(collapsed);
+        if (collapsed && group.children.indexOf(rows[activeIndex]) >= 0) {
+          setActive(rows.indexOf(group.li));
+        }
+      });
+      apply(!!collapsedGroups[key]);
+    }
+
+    /** The next row up (`step` -1) or down (1) from the selected one that is not folded away. */
+    function nextShownRow(step) {
+      for (var i = activeIndex + step; i >= 0 && i < rows.length; i += step) {
+        if (rows[i].style.display !== 'none') return i;
+      }
+      return activeIndex;
+    }
+
     function renderResults(view) {
       resultsEl.textContent = '';
       rows = [];
@@ -353,8 +393,25 @@
       // Flat, globally relevance-ranked list — no category grouping/dividers; each row wears a small
       // category tag instead so you still see what it is.
       var viewRows = view.rows || [];
+      var groupTitle = view.pivot ? view.pivotTitle || '' : null;
+      if (groupTitle !== collapsedForTitle) {
+        collapsedGroups = {};
+        collapsedForTitle = groupTitle;
+      }
+      var groups = [];
+      var parent = null;
       for (var r = 0; r < viewRows.length; r++) {
-        resultsEl.appendChild(makeRow(viewRows[r]));
+        var li = makeRow(viewRows[r]);
+        if (viewRows[r].nested && parent) {
+          parent.children.push(li);
+        } else {
+          parent = { li: li, key: viewRows[r].label, children: [] };
+          groups.push(parent);
+        }
+        resultsEl.appendChild(li);
+      }
+      for (var g = 0; g < groups.length; g++) {
+        if (groups[g].children.length) makeGroup(groups[g]);
       }
       // A fresh search/clear/scope change scrolls back to the top; Load-more keeps your place.
       if (scrollResetPending) resultsEl.scrollTop = 0;
@@ -378,7 +435,7 @@
 
     function makeRow(row) {
       var li = doc.createElement('li');
-      li.className = 'row';
+      li.className = row.nested ? 'row nested' : 'row';
       li.setAttribute('data-id', String(row.id));
 
       var label = doc.createElement('span');
@@ -1649,11 +1706,11 @@
       switch (ev.key) {
         case 'ArrowDown':
           ev.preventDefault();
-          setActive(activeIndex + 1);
+          setActive(nextShownRow(1));
           break;
         case 'ArrowUp':
           ev.preventDefault();
-          setActive(activeIndex - 1);
+          setActive(nextShownRow(-1));
           break;
         case 'Enter': {
           // A plain Enter on a focused button is its own click (Load More, case, pin…) — leave it be.

@@ -16,6 +16,7 @@ import { spawn, ChildProcessWithoutNullStreams } from 'child_process';
 import { readWebviewScript } from '../webviewAssets';
 import { McpReport } from '../mcpWindowStatus';
 import { OMNI_VIEW_ID } from '../omniSearch/omniSearchViewProvider';
+import { HeldDisplay } from './heldDisplay';
 
 const assistantViewJs = readWebviewScript('assistantView.js', 'assistant');
 
@@ -38,9 +39,9 @@ Never commit, abort, delete a class or method, or remove a dictionary unless the
 When the answer is a set of methods or classes and one of your tools can show them in Jasper, use it and answer in a sentence or two instead of listing them.
 When you create a class, give it a class comment (set_class_comment) that says what it is for and what its instance variables hold. Give a method a comment only when its name does not say what it does.
 Write a method as \`Class>>selector\` or \`Class class>>selector\`, in backticks: the user can click it to open the method.
-After you create a class, end your answer with "Start reading at:" and the methods find_starting_points gives.
-After you create or redefine a class, show it with show_class_in_explorer; then, if you created methods, show them with show_methods_in_search, titled for example "Methods created in OrderLine".
-After you create a class, and after showing it, open an example of using it with show_example_in_workspace, and say the user can try it in that Workspace.
+After you create or redefine one class, show it with show_class_in_explorer; then, if you created methods, show them with show_methods_in_search, titled for example "Methods created in OrderLine". End your answer with "Start reading at:" and the methods find_starting_points gives.
+When one request creates several classes, show them instead with show_classes_in_search and withMethods, titled for example "Classes created for order entry", then show the one the user would call first with show_class_in_explorer.
+After creating classes and showing them, open one example with show_example_in_workspace, using the class the user would call first, and say the user can try it in that Workspace.
 Keep answers short. When you show Smalltalk, use fenced code blocks.`;
 
 export interface AssistantPanelDeps {
@@ -49,6 +50,8 @@ export interface AssistantPanelDeps {
   proxyScriptPath: string;
   mcpReport: () => McpReport;
   memento: vscode.Memento;
+  /** Held from each message sent until its answer ends. */
+  heldDisplay: HeldDisplay;
 }
 
 type Inbound =
@@ -164,6 +167,7 @@ export class AssistantPanel {
       return;
     }
     const line = { type: 'user', message: { role: 'user', content: text } };
+    this.deps.heldDisplay.hold();
     child.stdin.write(JSON.stringify(line) + '\n');
   }
 
@@ -242,6 +246,8 @@ export class AssistantPanel {
     child.on('close', (code, signal) => {
       if (this.child === child) {
         this.child = undefined;
+        // Stopped or crashed mid-answer: no `result` comes, but what was done so far still shows.
+        void this.showHeld();
       }
       if (!this.killed.has(child) && signal === null && code !== 0) {
         this.post({
@@ -272,11 +278,19 @@ export class AssistantPanel {
         this.sessionId = event.session_id;
       }
       this.post({ command: 'event', event });
-      // A tool may have opened an editor over this tab (a class definition lands in the active
-      // group, which is this one). Bring the answer back beside it, so the user reads the end of it.
-      if (event.type === 'result' && !this.panel.visible) {
-        this.panel.reveal(vscode.ViewColumn.Beside, true);
+      if (event.type === 'result') {
+        void this.showHeld();
       }
+    }
+  }
+
+  /** Show what the answer's tools held back. That may open an editor over this tab (a class
+   *  definition lands in the active group, which is this one), so then bring the answer back beside
+   *  it, for the user to read the end of it. */
+  private async showHeld(): Promise<void> {
+    await this.deps.heldDisplay.release();
+    if (!this.panel.visible) {
+      this.panel.reveal(vscode.ViewColumn.Beside, true);
     }
   }
 
@@ -301,6 +315,9 @@ export class AssistantPanel {
       this.killed.add(child);
       child.kill();
     }
+    // An answer cut short shows what its tools did so far; `close` will not, as this is no longer
+    // the current child. Not showHeld: this also runs as the panel is disposed.
+    void this.deps.heldDisplay.release();
   }
 
   private dispose(): void {
@@ -332,7 +349,7 @@ export class AssistantPanel {
   </div>
   <label class="option"><input type="checkbox" id="guiUpdates" checked> Show results in Jasper (if possible)</label>
   <form id="composer" class="composer">
-    <textarea id="input" rows="3" placeholder="Ask about your GemStone code. Enter sends, Shift+Enter for a new line, /help for more."></textarea>
+    <textarea id="input" rows="3" placeholder="Ask about your GemStone code, or ask for new classes. Enter sends, Shift+Enter for a new line, /help for more."></textarea>
     <div class="buttons">
       <button type="button" id="newConversation" class="secondary">New</button>
       <button type="button" id="stop" class="secondary" hidden>Stop</button>
@@ -370,6 +387,11 @@ body {
   display: flex; gap: .75rem; align-items: center; flex-wrap: wrap;
 }
 .status.ok { color: var(--muted); }
+.status.alert {
+  color: var(--vscode-inputValidation-errorForeground, var(--vscode-foreground));
+  background: var(--vscode-inputValidation-errorBackground, rgba(241, 76, 76, .15));
+  border-bottom: 2px solid var(--bad); font-weight: 600;
+}
 .log { flex: 1; overflow-y: auto; padding: 1rem; }
 .msg { margin: 0 0 1rem; line-height: 1.5; max-width: 90ch; }
 .msg.user {

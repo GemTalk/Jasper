@@ -103,6 +103,8 @@ export interface OmniResult {
   description?: string;
   /** More about the row, shown on hovering its description. */
   detail?: string;
+  /** Shown indented, as part of the row above it: a method listed under its class. */
+  nested?: boolean;
   /** Ranking score from the matcher (higher = better). */
   score: number;
   /** Matched ranges in `label` (for future highlighting). */

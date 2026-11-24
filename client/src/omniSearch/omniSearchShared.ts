@@ -510,6 +510,8 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
     .preview-ref .desc { flex: 1 1 auto; color: var(--vscode-descriptionForeground); font-size: 0.85em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .preview-empty { color: var(--vscode-descriptionForeground); font-style: italic; }
     .row { display: flex; align-items: baseline; gap: 8px; padding: 3px 8px 3px 10px; border-radius: 4px; cursor: pointer; }
+    .row.nested { padding-left: 30px; }
+    .row .twisty { background: none; border: none; color: inherit; padding: 0 2px; margin-left: -4px; cursor: pointer; font: inherit; line-height: 1; }
     .row:hover { background: var(--vscode-list-hoverBackground); }
     /* The active row's background is theme-dependent and can be faint (and webviews don't get VS
        Code's focused/unfocused list treatment), so add a solid left accent bar that always reads. */

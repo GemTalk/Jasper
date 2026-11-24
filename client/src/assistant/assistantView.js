@@ -17,7 +17,7 @@
 
   const HELP_TEXT = [
     '**Jasper Assistant (experimental)**',
-    'Ask in plain words about the code in the GemStone session named at the top. Answers come from the Claude Code installed on this machine, which reads your session through Jasper; the time and cost of each answer show under it.',
+    'Ask in plain words about the code in the GemStone session named at the top, or ask for new classes. Answers come from the Claude Code installed on this machine, which reads your session through Jasper; the time and cost of each answer show under it.',
     '### Commands',
     '- `/help` shows this.',
     '- `/clear` or `/new` starts a fresh conversation, the same as **New**.',
@@ -29,9 +29,11 @@
     '- **Stop** cancels the answer in progress; your next message continues the same conversation.',
     '### Results in Jasper',
     '- With **Show results in Jasper (if possible)** ticked, a list of methods or classes, or a regular-expression search, opens in GemStone Search instead of filling the chat. A blue banner gives the count and a **Show GemStone Search** button.',
+    '- Lists, the Explorer and example Workspaces change when the answer is finished, all at once. A regular-expression search shows straight away.',
     '- A class the assistant creates, or one you ask to see, opens in the GemStone Explorer with its definition; the methods it created follow in GemStone Search.',
+    '- When it creates several classes at once, they are listed in GemStone Search instead, each with its methods under it, and the Explorer opens on the one you would use first.',
     '- A method written like `Class>>selector` in an answer is a link: click it to open the method. After creating a class, the assistant lists where to start reading it.',
-    '- After creating a class, the assistant also opens a new Workspace with a short example of using it. Put the cursor on an expression and Display It or Inspect It to see what it answers. Jasper compiles the example first, without running it, so it will not hold a typo or a message nothing implements. It cannot tell what an expression does when run, so read each one before running it.',
+    '- After creating classes, the assistant also opens a new Workspace with a short example of using them. Put the cursor on an expression and Display It or Inspect It to see what it answers. Jasper compiles the example first, without running it, so it will not hold a typo or a message nothing implements. It cannot tell what an expression does when run, so read each one before running it.',
     '- Press **Esc** in the GemStone Search box to close the list and return to the normal search.',
     '- A method list stops at the `gemstone.omniSearch.maxServerScan` setting; the answer says when more match.',
     '- Untick the box to get every answer as text in the chat.',
@@ -321,9 +323,15 @@
 
     function onMcpStatus(msg) {
       status.hidden = false;
+      if (msg.state === 'this' && !msg.servedSession) {
+        status.className = 'status alert';
+        status.textContent =
+          'No GemStone session is logged in, so the assistant cannot reach your code. Log in, then ask.';
+        return;
+      }
       if (msg.state === 'this') {
         status.className = 'status ok';
-        status.textContent = 'Tools act on: ' + (msg.servedSession || 'no session logged in');
+        status.textContent = 'Tools act on: ' + msg.servedSession;
         return;
       }
       status.className = 'status';

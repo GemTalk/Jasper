@@ -603,6 +603,52 @@ describe('GemStone Search docked panel — reopening the view', () => {
     );
     expect(createOmniEngine).toHaveBeenCalledTimes(1); // and without paying for a rebuild
   });
+
+  /** Open the panel, put a list on screen, and answer a reopen's fresh webview. */
+  async function showListThenReopen(
+    betweenOpens: (provider: OmniSearchViewProvider, select: (id: number) => void) => unknown,
+  ) {
+    let sessionId = 1;
+    const provider = new OmniSearchViewProvider(vi.fn(async () => fakeContext(sessionId)));
+    const first = fakeView(true);
+    provider.resolveWebviewView(first.view as never);
+    void first.on.message({ command: 'ready' });
+    await vi.waitFor(() => expect(createOmniEngine).toHaveBeenCalled());
+    await settle();
+    const engine = vi.mocked(createOmniEngine).mock.results[0].value;
+    engine.search.mockResolvedValue({
+      rows: [{ id: 1, label: 'Parser>>parse' }],
+      shownCount: 1,
+      pivot: true,
+      pivotTitle: 'Methods created in Parser',
+    });
+    void first.on.message({ command: 'query', value: '' });
+    await settle();
+    await betweenOpens(provider, (id) => (sessionId = id));
+    const reopened = fakeView(true);
+    provider.resolveWebviewView(reopened.view as never);
+    void reopened.on.message({ command: 'ready' });
+    await settle();
+    await settle();
+    return reopened.view.webview.postMessage.mock.calls
+      .map((c) => c[0] as { command?: string; pivotTitle?: string })
+      .filter((m) => m.command === 'results');
+  }
+
+  it('puts the list that was on screen back into the fresh webview a reopen creates', async () => {
+    const results = await showListThenReopen(() => {});
+
+    expect(results.map((m) => m.pivotTitle)).toEqual(['Methods created in Parser']);
+  });
+
+  it('does not put back a list from a session the user has since left', async () => {
+    const results = await showListThenReopen(async (provider, select) => {
+      select(2);
+      await provider.onSessionSelectionChanged();
+    });
+
+    expect(results).toEqual([]);
+  });
 });
 
 describe('GemStone Search docked panel — failed actions', () => {

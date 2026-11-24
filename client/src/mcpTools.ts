@@ -23,6 +23,7 @@ import { methodsFromCode } from './assistant/queries/methodsFromCode';
 import { MethodNote, startingPointNotes, startingPoints } from './assistant/queries/startingPoints';
 import { classesFromCode } from './assistant/queries/classesFromCode';
 import { checkExample } from './assistant/queries/checkExample';
+import { classMethodsCode } from './assistant/queries/classMethodsCode';
 import type { ClassNameEntry } from './queries/getAllClassNames';
 
 /**
@@ -38,7 +39,12 @@ export interface McpUiHooks {
     highlight?: string[],
     notes?: ReadonlyMap<string, MethodNote>,
   ): Promise<string>;
-  showClassList(title: string, classes: ClassNameEntry[]): Promise<string>;
+  /** With `methods`, each class's methods are listed under it. */
+  showClassList(
+    title: string,
+    classes: ClassNameEntry[],
+    methods?: MethodSearchResult[],
+  ): Promise<string>;
   showClass(className: string, dictName?: string): Promise<string>;
   /** Open a new Workspace holding `code`, an example of using `className`. */
   showExample(className: string, code: string): Promise<string>;
@@ -892,13 +898,18 @@ export function registerMcpTools(
         GUI_RESULT_GUIDANCE +
         ' `code` is Smalltalk run on the stone as the body of a block: it may declare temporaries, ' +
         'must not use ^, and its last expression must be a collection of classes (a metaclass ' +
-        'counts as its class). At most 5000 are shown.',
+        'counts as its class). At most 5000 are shown. Pass withMethods for classes you just ' +
+        "created, so each class's methods are listed under it.",
       {
         title: z.string().min(1).describe('What the list is, e.g. "Classes that implement size"'),
         code: z
           .string()
           .min(1)
           .describe('Smalltalk whose last expression is a collection of classes'),
+        withMethods: z
+          .boolean()
+          .optional()
+          .describe("List each class's methods under it, instance side then class side"),
       },
       async (args) =>
         await uiTool(async () => {
@@ -908,7 +919,18 @@ export function registerMcpTools(
           if (classes.length === 0) {
             return 'The code answered no classes that a dictionary holds, so nothing was shown.';
           }
-          return await ui.showClassList(args.title, classes);
+          if (!args.withMethods) return await ui.showClassList(args.title, classes);
+          const limit = ui.maxMethods();
+          const { methods, more } = methodsFromCode(
+            (code) => executeString(session, code),
+            classMethodsCode(classes),
+            limit,
+          );
+          const shown = await ui.showClassList(args.title, classes, methods);
+          return more
+            ? `${shown} Only the first ${limit} of their methods are listed ` +
+                '(gemstone.omniSearch.maxServerScan).'
+            : shown;
         })(),
     );
 
@@ -932,7 +954,7 @@ export function registerMcpTools(
     server.tool(
       'show_example_in_workspace',
       'Open a new Workspace in Jasper holding a short example of using a class, so the user can ' +
-        'try it with Display It and Inspect It. Use it after you create a class. Write 2 to 4 ' +
+        'try it with Display It and Inspect It. Use it after you create classes, once. Write 2 to 4 ' +
         'expressions, separated by blank lines, each a one-line comment saying what to do with it ' +
         'and what kind of object it answers (e.g. "Display It: a Dictionary"), then the ' +
         'expression. Do not write the results themselves: the user sees the real ones. Jasper ' +

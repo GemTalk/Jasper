@@ -184,6 +184,99 @@ describe('GemStone Search view — results rendering (flat, no grouping)', () =>
     expect(handle.activeRowId()).toBe(0);
   });
 
+  describe('folding the rows nested under a row', () => {
+    const classList = (over: Record<string, unknown> = {}) =>
+      resultsMsg({
+        rows: [
+          row(0, 'Library'),
+          row(1, 'addBook:', { nested: true }),
+          row(2, 'lend:to:', { nested: true }),
+          row(3, 'Book'),
+        ],
+        shownCount: 4,
+        pivot: true,
+        pivotTitle: 'Classes for the lending library',
+        ...over,
+      });
+    const shown = () =>
+      [...document.querySelectorAll<HTMLElement>('#results .row')]
+        .filter((r) => r.style.display !== 'none')
+        .map((r) => r.querySelector('.label')!.textContent);
+    const twisty = () => document.querySelector<HTMLButtonElement>('#results .twisty')!;
+    const arrowDown = () =>
+      document
+        .getElementById('query')!
+        .dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+
+    it('gives a twisty only to a row with rows nested under it', () => {
+      const { handle } = mount();
+
+      handle.renderResults(classList());
+
+      expect(document.querySelectorAll('#results .twisty').length).toBe(1);
+      expect(twisty().closest('.row')!.querySelector('.label')!.textContent).toBe('Library');
+    });
+
+    it('hides and shows the nested rows from the twisty', () => {
+      const { handle } = mount();
+      handle.renderResults(classList());
+
+      twisty().click();
+      const folded = shown();
+      twisty().click();
+
+      expect(folded).toEqual(['Library', 'Book']);
+      expect(shown()).toEqual(['Library', 'addBook:', 'lend:to:', 'Book']);
+    });
+
+    it('skips folded rows when arrowing down', () => {
+      const { handle } = mount();
+      handle.renderResults(classList());
+      twisty().click();
+
+      arrowDown();
+
+      expect(handle.activeRowId()).toBe(3);
+    });
+
+    it('selects the parent when the selected row is folded away', () => {
+      const { handle } = mount();
+      handle.renderResults(classList());
+      handle.setActive(2);
+
+      twisty().click();
+
+      expect(handle.activeRowId()).toBe(0);
+    });
+
+    it('keeps a fold when the same list is drawn again, but not for another list', () => {
+      const { handle } = mount();
+      handle.renderResults(classList());
+      twisty().click();
+
+      handle.renderResults(classList());
+      const sameList = shown();
+      handle.renderResults(classList({ pivotTitle: 'Classes for something else' }));
+
+      expect(sameList).toEqual(['Library', 'Book']);
+      expect(shown()).toEqual(['Library', 'addBook:', 'lend:to:', 'Book']);
+    });
+  });
+
+  it('indents a row that belongs to the one above it', () => {
+    const { handle } = mount();
+
+    handle.renderResults(
+      resultsMsg({
+        rows: [row(0, 'Library'), row(1, 'addBook:', { nested: true })],
+        shownCount: 2,
+      }),
+    );
+
+    const rows = document.querySelectorAll('#results .row');
+    expect([...rows].map((r) => r.classList.contains('nested'))).toEqual([false, true]);
+  });
+
   it('wears a per-row category tag so you can tell what each row is', () => {
     const { handle } = mount();
     handle.renderResults(

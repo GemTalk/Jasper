@@ -107,6 +107,12 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
   // what is shown on another's behalf waits in `replayOnReady` until it is.
   private webviewReady = false;
   private replayOnReady: { pattern?: string; view: OmniViewData } | undefined;
+  // The view last put on screen. Closing the panel disposes the webview, though retainContextWhenHidden
+  // keeps it across tab switches, and the one built on reopen starts blank: without this, a list the
+  // assistant showed would be gone when its banner's Show GemStone Search button reopens the panel.
+  // Kept with its engine: rows are activated through the engine that made them, so a view from a
+  // replaced engine (another session, a settings change) is never put back.
+  private lastView: { engine: OmniEngine; view: OmniViewData } | undefined;
   // The webview's height as it last reported it, and a waiter for the next report.
   private viewHeight = 0;
   private onViewHeight: (() => void) | undefined;
@@ -376,26 +382,15 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
   }
 
   /** Show a list of classes someone else found, as showMethodList does methods. Each row opens its
-   *  class, as a Classes result does. */
+   *  class, as a Classes result does. With `methods`, each class's methods follow it: see
+   *  classListResults. */
   async showClassList(
     title: string,
     classes: readonly ClassNameEntry[],
+    methods?: readonly MethodSearchResult[],
   ): Promise<{ shownCount: number } | { error: string }> {
     return await this.showListOnBehalf(title, undefined, (sessionId) =>
-      classes.map((c) => ({
-        categoryId: 'classes',
-        label: c.className,
-        description: c.dictName,
-        score: 0,
-        ranges: [],
-        action: {
-          kind: 'openClass',
-          sessionId,
-          dictName: c.dictName,
-          className: c.className,
-          dictIndex: c.dictIndex,
-        },
-      })),
+      classListResults(classes, methods ?? [], sessionId),
     );
   }
 
@@ -493,6 +488,7 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
 
   private postView(view: OmniViewData): void {
     if (!this.engine || !this.deps) return;
+    this.lastView = { engine: this.engine, view };
     const st = this.engine.state();
     this.post(
       resultsMessage(view, {
@@ -526,6 +522,9 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
           const { pattern, view } = this.replayOnReady;
           this.replayOnReady = undefined;
           this.showOnBehalf(view, pattern);
+        } else if (this.engine && this.lastView?.engine === this.engine) {
+          this.post({ command: 'setInput', value: this.engine.state().term });
+          this.postView(this.lastView.view);
         }
         this.deliverFocus(); // a focus() that raced the webview load lands the cursor now
         return;
@@ -640,4 +639,37 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
         this.post(configMessage(this.deps.config, false, this.engine.state()));
     }
   }
+}
+
+/** A row per class, each followed by its own methods from `methods`, indented and named by selector
+ *  alone, since the class is the row above. */
+export function classListResults(
+  classes: readonly ClassNameEntry[],
+  methods: readonly MethodSearchResult[],
+  sessionId: number,
+): OmniResult[] {
+  return classes.flatMap((c) => {
+    const own = methods.filter((m) => m.className === c.className && m.dictName === c.dictName);
+    const classRow: OmniResult = {
+      categoryId: 'classes',
+      label: c.className,
+      description: c.dictName,
+      score: 0,
+      ranges: [],
+      action: {
+        kind: 'openClass',
+        sessionId,
+        dictName: c.dictName,
+        className: c.className,
+        dictIndex: c.dictIndex,
+      },
+    };
+    const methodRows = methodRowsToResults(own, sessionId).map((r, i) => ({
+      ...r,
+      label: `${own[i].isMeta ? 'class ' : ''}${own[i].selector}`,
+      description: undefined,
+      nested: true,
+    }));
+    return [classRow, ...methodRows];
+  });
 }

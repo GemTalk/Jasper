@@ -188,6 +188,7 @@ import {
 } from './languageIds';
 import { provideDocumentFormattingEdits } from './formattingMiddleware';
 import { openExampleWorkspace, openWorkspace } from './workspace';
+import { HeldDisplay } from './assistant/heldDisplay';
 import { openScratchNotebook } from './scratchNotebook';
 import {
   chooseActiveSession,
@@ -1628,6 +1629,8 @@ export function activate(context: vscode.ExtensionContext) {
   }
   context.subscriptions.push(
     sessionManager.onDidChangeSelection(() => updateEnhancedInspectorSupportedContext()),
+    // The assistant's status line names the session its tools act on, or says there is none.
+    sessionManager.onDidChangeSelection(() => AssistantPanel.refreshIfOpen()),
   );
   updateEnhancedInspectorSupportedContext();
 
@@ -3716,6 +3719,11 @@ export function activate(context: vscode.ExtensionContext) {
     // Only labels this window for the others; without a folder the sidecar
     // records NO_WORKSPACE_RECORDED.
     const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    // The regex search is not held: the model needs its count, or its error, to answer.
+    const heldDisplay = new HeldDisplay(
+      (message) => void vscode.window.showWarningMessage(message),
+    );
+    const whenAnswered = 'when your answer is finished';
     const mcpUi: McpUiHooks = {
       showRegexSearch: async (pattern) => {
         const outcome = await omniSearch.showRegexSearch(pattern);
@@ -3726,29 +3734,41 @@ export function activate(context: vscode.ExtensionContext) {
           (outcome.notice ? ` ${outcome.notice}` : '')
         );
       },
-      showClassList: async (title, classes) => {
-        const outcome = await omniSearch.showClassList(title, classes);
-        if ('error' in outcome) throw new Error(outcome.error);
+      showClassList: async (title, classes, methods) => {
         const capped = classes.length >= CLASSES_FROM_CODE_LIMIT ? ' (the most it shows)' : '';
-        return `Showing ${outcome.shownCount} classes${capped} in the GemStone Search pane, titled "${title}".`;
+        const where = `in the GemStone Search pane, titled "${title}"`;
+        return await heldDisplay.show(async () => {
+          const outcome = await omniSearch.showClassList(title, classes, methods);
+          if ('error' in outcome) throw new Error(outcome.error);
+          return `Showing ${outcome.shownCount} classes${capped} ${where}.`;
+        }, `Will show ${classes.length} classes${capped} ${where}, ${whenAnswered}.`);
       },
       showMethodList: async (title, methods, highlight, notes) => {
-        const outcome = await omniSearch.showMethodList(title, methods, highlight, notes);
-        if ('error' in outcome) throw new Error(outcome.error);
-        return `Showing ${outcome.shownCount} methods in the GemStone Search pane, titled "${title}".`;
+        const where = `in the GemStone Search pane, titled "${title}"`;
+        return await heldDisplay.show(async () => {
+          const outcome = await omniSearch.showMethodList(title, methods, highlight, notes);
+          if ('error' in outcome) throw new Error(outcome.error);
+          return `Showing ${outcome.shownCount} methods ${where}.`;
+        }, `Will show ${methods.length} methods ${where}, ${whenAnswered}.`);
       },
       showClass: async (className, dictName) => {
-        const error = await vscode.commands.executeCommand<string | undefined>(
-          'gemstone.explorer.showClassForAssistant',
-          className,
-          dictName,
-        );
-        if (error) throw new Error(error);
-        return `Showing ${className} in the GemStone Explorer, with its definition open.`;
+        const where = `${className} in the GemStone Explorer, with its definition open`;
+        return await heldDisplay.show(async () => {
+          const error = await vscode.commands.executeCommand<string | undefined>(
+            'gemstone.explorer.showClassForAssistant',
+            className,
+            dictName,
+          );
+          if (error) throw new Error(error);
+          return `Showing ${where}.`;
+        }, `Will show ${where}, ${whenAnswered}.`);
       },
       showExample: async (className, code) => {
-        await openExampleWorkspace(className, code);
-        return `Opened the example in a new Workspace, "${className} example".`;
+        const where = `a new Workspace, "${className} example"`;
+        return await heldDisplay.show(async () => {
+          await openExampleWorkspace(className, code);
+          return `Opened the example in ${where}.`;
+        }, `Will open the example in ${where}, ${whenAnswered}.`);
       },
       maxMethods: () =>
         readOmniConfig(vscode.workspace.getConfiguration('gemstone.omniSearch')).maxServerScan,
@@ -3987,6 +4007,7 @@ export function activate(context: vscode.ExtensionContext) {
           proxyScriptPath: proxyScriptPath(context.extensionPath),
           mcpReport: () => mcpReport(mcpOwnership()),
           memento: context.globalState,
+          heldDisplay,
         }),
       ),
       vscode.commands.registerCommand('jasper.installMcpTlsCertificate', async () => {
