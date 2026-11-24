@@ -107,6 +107,31 @@ describe('showing a result list', () => {
     expect(items.map((i) => i.label)).toEqual(['Account >> #balance', 'Account class >> #reset']);
   });
 
+  it('lists the results by class, then side, then selector, whatever order the stone found them in', async () => {
+    quickPick.mockResolvedValue(undefined);
+
+    await showMethodResults(
+      1,
+      [
+        result({ className: 'Zed', selector: 'a' }),
+        result({ className: 'Account', isMeta: true, selector: 'new' }),
+        result({ className: 'Account', selector: 'test10' }),
+        result({ className: 'Account', selector: 'test2' }),
+        result({ className: 'Account', selector: '\\\\' }),
+      ],
+      'Senders',
+    );
+
+    const items = quickPick.mock.calls[0][0] as { label: string }[];
+    expect(items.map((i) => i.label)).toEqual([
+      'Account >> #\\\\',
+      'Account >> #test2',
+      'Account >> #test10',
+      'Account class >> #new',
+      'Zed >> #a',
+    ]);
+  });
+
   it('tells apart the same method found in two environments', async () => {
     quickPick.mockResolvedValue(undefined);
 

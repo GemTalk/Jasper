@@ -123,6 +123,23 @@ describe('groupBreakpoints', () => {
     ]);
   });
 
+  it('sorts selectors and class names by the shared method-list rule', () => {
+    const nodes = groupBreakpoints([
+      bp({ className: 'Foo10', selector: 'a' }),
+      bp({ className: 'Foo2', selector: 'test10' }),
+      bp({ className: 'Foo2', selector: 'test2' }),
+      bp({ className: 'Foo2', selector: '\\\\' }),
+      bp({ className: 'Foo2', selector: '_bottomBit' }),
+    ]);
+    expect(
+      nodes.map((n) =>
+        n.kind === 'class'
+          ? `${n.className}: ${n.breakpoints.map((b) => b.selector).join(' ')}`
+          : '',
+      ),
+    ).toEqual(['Foo2: _bottomBit \\\\ test2 test10', 'Foo10: a']);
+  });
+
   it('puts executed-code breakpoints last — nothing navigates to them', () => {
     const nodes = groupBreakpoints([
       bp({ className: '', selector: '' }),

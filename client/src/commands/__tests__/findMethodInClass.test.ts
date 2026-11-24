@@ -226,6 +226,27 @@ describe('findMethodInClass', () => {
         '(class) new',
       ]);
     });
+
+    it('keeps operators and _ methods together and orders numbers by value', async () => {
+      const unsorted =
+        '0\tarithmetic\t/\n0\tarithmetic\tabs\n0\ttesting\ttest10\n0\ttesting\ttest2\n' +
+        '0\tarithmetic\t\\\\\n0\tprivate\t_bottomBit\n0\tcomparing\t~=\n';
+      const { qp, done } = await openClassPicker(unsorted);
+
+      await acceptClass(qp, done, 'Array');
+
+      const shown = vi.mocked(vscode.window.showQuickPick).mock
+        .calls[0][0] as vscode.QuickPickItem[];
+      expect(shown.map((i) => i.label)).toEqual([
+        '_bottomBit',
+        '/',
+        '\\\\',
+        '~=',
+        'abs',
+        'test2',
+        'test10',
+      ]);
+    });
   });
 
   describe('when no class is selected in the System Browser', () => {
