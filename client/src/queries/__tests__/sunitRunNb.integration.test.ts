@@ -287,6 +287,9 @@ describe('SUnit non-blocking runs (integration)', () => {
     // Unconditional, and outside the try/finally above: an abandoned GciTsNb
     // op left on the session would otherwise fail every later test in this file
     // via assertCommitGuardIsStillArmed, burying the one real failure.
+    // The marker splits the stopped run's answers from this run's; a refusal
+    // isn't logged, so it is also the nearest time to one.
+    stopTrace.add('next run starts');
     try {
       await expect(
         runTestMethodNb(session(), SUNIT_PROBE_TEST_CLASS, SUNIT_PROBE_PASSING_SELECTOR),
@@ -314,7 +317,10 @@ describe('SUnit non-blocking runs (integration)', () => {
   /**
    * Add each answer the session collects, and each clear of a stopped run's
    * process, to {@link stopTrace}, until the test ends. A clear is what makes the
-   * next run be refused as "still cleaning up".
+   * next run be refused as "still cleaning up". That refusal starts at the answer
+   * whose context is a process (the runner starts the clear right after collecting
+   * it), not at the "clearing" line, which can wait behind a drain; it ends at the
+   * "cleared" line.
    */
   function traceAnswersAndClears(): void {
     const s = session();
@@ -328,9 +334,16 @@ describe('SUnit non-blocking runs (integration)', () => {
       return answer;
     });
     const clear = s.GciTsClearStackAsync.bind(s);
-    const clears = vi.spyOn(s, 'GciTsClearStackAsync').mockImplementation((gsProcess) => {
+    const clears = vi.spyOn(s, 'GciTsClearStackAsync').mockImplementation(async (gsProcess) => {
       stopTrace.add(`clearing process ${String(gsProcess)}`);
-      return clear(gsProcess);
+      let ending = 'threw';
+      try {
+        const cleared = await clear(gsProcess);
+        ending = `error ${cleared.err.number}`;
+        return cleared;
+      } finally {
+        stopTrace.add(`cleared process ${String(gsProcess)}: ${ending}`);
+      }
     });
     onTestFinished(() => {
       answers.mockRestore();
