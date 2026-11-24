@@ -25,6 +25,7 @@
  * `refreshPending` for an explicit refresh — and pays for it on the next reveal or webview message,
  * never on the hidden path itself.
  */
+import { MethodNote, methodNoteKey } from '../assistant/queries/startingPoints';
 import * as vscode from 'vscode';
 import { codePointMatchesToUtf16 } from '../matchOffsets';
 import {
@@ -348,16 +349,29 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
   }
 
   /** Show a list of methods someone else found (the MCP tool the Jasper Assistant uses), under
-   *  `title`, as a reference pivot is shown. The preview marks sends of each `highlight` selector. */
+   *  `title`, as a reference pivot is shown. The preview marks sends of each `highlight` selector;
+   *  a row's note (`notes`, keyed by methodNoteKey) follows its dictionary name, with its tip on hover. */
   async showMethodList(
     title: string,
     methods: readonly MethodSearchResult[],
     highlight?: readonly string[],
+    notes?: ReadonlyMap<string, MethodNote>,
   ): Promise<{ shownCount: number } | { error: string }> {
     // Space-separated: no selector or global name contains one (see pivotSendRanges in the webview).
     const target = highlight?.length ? highlight.join(' ') : undefined;
     return await this.showListOnBehalf(title, target, (sessionId) =>
-      methods.flatMap((m) => methodRowsToResults([m], sessionId, 'methods', m.environmentId)),
+      methods.flatMap((m) => {
+        const note = notes?.get(methodNoteKey(m.className, m.isMeta, m.selector));
+        return methodRowsToResults([m], sessionId, 'methods', m.environmentId).map((r) =>
+          note
+            ? {
+                ...r,
+                description: r.description ? `${r.description} · ${note.text}` : note.text,
+                detail: note.tip,
+              }
+            : r,
+        );
+      }),
     );
   }
 

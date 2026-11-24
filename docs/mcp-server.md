@@ -292,7 +292,7 @@ predictable and visible.
 
 The full tool list lives in [`client/src/mcpTools.ts`](../client/src/mcpTools.ts). Roughly, they fall into:
 
-- **Class & method browsing** — `list_classes`, `describe_class`, `get_method_source`, `find_implementors`, `find_senders`, `find_references_to`, `search_method_source`, `get_class_definition`, `get_class_hierarchy`, `export_class_source`.
+- **Class & method browsing** — `list_classes`, `describe_class`, `get_method_source`, `find_implementors`, `find_senders`, `find_starting_points`, `find_references_to`, `search_method_source`, `get_class_definition`, `get_class_hierarchy`, `export_class_source`.
 - **Code execution** — `execute_code`, `eval_python`, `compile_method`, `compile_python`, `compile_class_definition`, `delete_method`, `delete_class`.
 - **Session control** — `commit`, `abort`, `refresh`, `status`.
 - **Dictionaries** — `list_dictionaries`, `list_dictionary_entries`, `add_dictionary`, `remove_dictionary`, `list_all_classes`.

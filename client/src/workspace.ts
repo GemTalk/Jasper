@@ -65,3 +65,22 @@ export async function openWorkspace(): Promise<void> {
     logInfo(`[Workspace] ERROR: ${msg}`);
   }
 }
+
+/** A new Workspace, `<Class> example`, holding an example the Jasper Assistant wrote. */
+export async function openExampleWorkspace(className: string, code: string): Promise<void> {
+  // Skip names a document still holds, not just open tabs, so the example never lands after
+  // the text of one that was closed or that hot exit restored.
+  const taken = [...openTabUris(), ...vscode.workspace.textDocuments.map((d) => d.uri.toString())];
+  const uri = nextUntitledUri(`${className} example`, '', taken);
+  const doc = await vscode.workspace.openTextDocument(uri);
+  if (doc.languageId !== SMALLTALK_LANGUAGE) {
+    await vscode.languages.setTextDocumentLanguage(doc, SMALLTALK_LANGUAGE);
+  }
+  const header =
+    `"Trying ${className}, an example from the Jasper Assistant. Put the cursor on an\n` +
+    ` expression, then Display It (<${MOD_KEY}>+<K> then <D>) or Inspect It (<${MOD_KEY}>+<K> then <I>)."\n\n`;
+  const edit = new vscode.WorkspaceEdit();
+  edit.insert(uri, new vscode.Position(0, 0), `${header}${code.trim()}\n`);
+  await vscode.workspace.applyEdit(edit);
+  await vscode.window.showTextDocument(doc, { preview: false });
+}

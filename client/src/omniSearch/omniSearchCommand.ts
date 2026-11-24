@@ -613,8 +613,8 @@ export function registerOmniSearch(
     notifyClassRemoved: (sessionId, className) => foldClassChange(sessionId, className),
     showRegexSearch: (pattern) => viewProvider.showRegexSearch(pattern),
     showClassList: (title, classes) => viewProvider.showClassList(title, classes),
-    showMethodList: (title, methods, highlight) =>
-      viewProvider.showMethodList(title, methods, highlight),
+    showMethodList: (title, methods, highlight, notes) =>
+      viewProvider.showMethodList(title, methods, highlight, notes),
     notifySessionSynced: (sessionId) => {
       void viewProvider.onSessionSynced(sessionId);
       OmniSearchPanel.onSessionSynced(sessionId);

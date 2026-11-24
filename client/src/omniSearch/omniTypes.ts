@@ -101,7 +101,7 @@ export interface OmniResult {
   label: string;
   /** Secondary text (e.g. dictionary name, category). */
   description?: string;
-  /** Tertiary detail line. */
+  /** More about the row, shown on hovering its description. */
   detail?: string;
   /** Ranking score from the matcher (higher = better). */
   score: number;

@@ -187,7 +187,7 @@ import {
   withGemstoneLanguage,
 } from './languageIds';
 import { provideDocumentFormattingEdits } from './formattingMiddleware';
-import { openWorkspace } from './workspace';
+import { openExampleWorkspace, openWorkspace } from './workspace';
 import { openScratchNotebook } from './scratchNotebook';
 import {
   chooseActiveSession,
@@ -3732,8 +3732,8 @@ export function activate(context: vscode.ExtensionContext) {
         const capped = classes.length >= CLASSES_FROM_CODE_LIMIT ? ' (the most it shows)' : '';
         return `Showing ${outcome.shownCount} classes${capped} in the GemStone Search pane, titled "${title}".`;
       },
-      showMethodList: async (title, methods, highlight) => {
-        const outcome = await omniSearch.showMethodList(title, methods, highlight);
+      showMethodList: async (title, methods, highlight, notes) => {
+        const outcome = await omniSearch.showMethodList(title, methods, highlight, notes);
         if ('error' in outcome) throw new Error(outcome.error);
         return `Showing ${outcome.shownCount} methods in the GemStone Search pane, titled "${title}".`;
       },
@@ -3745,6 +3745,10 @@ export function activate(context: vscode.ExtensionContext) {
         );
         if (error) throw new Error(error);
         return `Showing ${className} in the GemStone Explorer, with its definition open.`;
+      },
+      showExample: async (className, code) => {
+        await openExampleWorkspace(className, code);
+        return `Opened the example in a new Workspace, "${className} example".`;
       },
       maxMethods: () =>
         readOmniConfig(vscode.workspace.getConfiguration('gemstone.omniSearch')).maxServerScan,

@@ -20,7 +20,9 @@ import { VIEW_REFRESH_CODE } from './queries/transactionMode';
 import { commitTransaction } from './queries/commitTransaction';
 import type { MethodSearchResult } from './queries/methodSearch';
 import { methodsFromCode } from './assistant/queries/methodsFromCode';
+import { MethodNote, startingPointNotes, startingPoints } from './assistant/queries/startingPoints';
 import { classesFromCode } from './assistant/queries/classesFromCode';
+import { checkExample } from './assistant/queries/checkExample';
 import type { ClassNameEntry } from './queries/getAllClassNames';
 
 /**
@@ -34,9 +36,12 @@ export interface McpUiHooks {
     title: string,
     methods: MethodSearchResult[],
     highlight?: string[],
+    notes?: ReadonlyMap<string, MethodNote>,
   ): Promise<string>;
   showClassList(title: string, classes: ClassNameEntry[]): Promise<string>;
   showClass(className: string, dictName?: string): Promise<string>;
+  /** Open a new Workspace holding `code`, an example of using `className`. */
+  showExample(className: string, code: string): Promise<string>;
   /** The most methods a method list shows: GemStone Search's `maxServerScan` setting. */
   maxMethods(): number;
 }
@@ -537,6 +542,38 @@ export function registerMcpTools(
   );
 
   server.tool(
+    'find_starting_points',
+    'Find where reading a class starts: the methods no other method of the class sends to self, ' +
+      'so another class or a user calls them. Answers each as `Class>>selector`. Use it after ' +
+      'you create a class, and when the user asks where to start reading one.',
+    {
+      className: z.string().min(1).describe('The class name, e.g. "OrderLine"'),
+      dictionary: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Its symbol dictionary, when the name may be defined in more than one'),
+    },
+    async (args) =>
+      wrap<typeof args>((session, a) => {
+        const found = startingPoints(
+          (code) => executeString(session, code),
+          a.className,
+          a.dictionary,
+        );
+        if (!found) return `No class named ${a.className}.`;
+        const names = found.starts.map(
+          (m) => `\`${found.className}${m.isMeta ? ' class' : ''}>>${m.selector}\``,
+        );
+        if (names.length === 0) return `${found.className} has no methods.`;
+        return found.noneUncalled
+          ? `Every method of ${found.className} is sent to by another of its methods; the least ` +
+              `called are ${names.join(', ')}.`
+          : `Methods of ${found.className} that no other of its methods sends to: ${names.join(', ')}.`;
+      })(args),
+  );
+
+  server.tool(
     'get_class_definition',
     'Get the class definition (superclass, instance variables, etc.) for a class.',
     { className: z.string().describe('Class name, e.g. "Array"') },
@@ -893,6 +930,33 @@ export function registerMcpTools(
     );
 
     server.tool(
+      'show_example_in_workspace',
+      'Open a new Workspace in Jasper holding a short example of using a class, so the user can ' +
+        'try it with Display It and Inspect It. Use it after you create a class. Write 2 to 4 ' +
+        'expressions, separated by blank lines, each a one-line comment saying what to do with it ' +
+        'and what kind of object it answers (e.g. "Display It: a Dictionary"), then the ' +
+        'expression. Do not write the results themselves: the user sees the real ones. Jasper ' +
+        'compiles each expression without running it and refuses the example if one does not ' +
+        'compile or sends a message no class implements.',
+      {
+        className: z.string().min(1).describe('The class the example uses, e.g. "OrderLine"'),
+        code: z.string().min(1).describe('The expressions, separated by blank lines'),
+      },
+      async (args) =>
+        await uiTool(async () => {
+          const session = getSession();
+          if (!session) throw new Error('No active GemStone session. Ask the user to log in.');
+          const problems = checkExample((code) => executeString(session, code), args.code);
+          if (problems.length > 0) {
+            throw new Error(
+              `The example was not shown. Fix it and try again:\n${problems.join('\n')}`,
+            );
+          }
+          return await ui.showExample(args.className, args.code);
+        })(),
+    );
+
+    server.tool(
       'show_methods_in_search',
       "Show a set of methods in Jasper's GemStone Search pane, as a titled list the user can open. " +
         'Use this whenever the answer is more than a few methods and no source pattern describes ' +
@@ -931,7 +995,23 @@ export function registerMcpTools(
           if (methods.length === 0) {
             return 'The code answered no methods that a dictionary holds, so nothing was shown.';
           }
-          const shown = await ui.showMethodList(args.title, methods, args.highlight);
+          // A list from one class notes where reading it starts. Several classes would need a
+          // walk of each, and a list that wide is not about reading one class anyway.
+          const homes = new Set(methods.map((m) => `${m.dictName}\t${m.className}`));
+          const found =
+            homes.size === 1
+              ? startingPoints(
+                  (code) => executeString(session, code),
+                  methods[0].className,
+                  methods[0].dictName,
+                )
+              : undefined;
+          const shown = await ui.showMethodList(
+            args.title,
+            methods,
+            args.highlight,
+            found ? startingPointNotes(found) : undefined,
+          );
           return more
             ? `${shown} These are only the first ${limit}; more match. Narrow the code, or the ` +
                 'user can raise gemstone.omniSearch.maxServerScan, to see the rest.'

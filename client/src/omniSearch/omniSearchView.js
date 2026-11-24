@@ -397,6 +397,7 @@
         var desc = doc.createElement('span');
         desc.className = 'desc';
         desc.textContent = row.description;
+        if (row.detail) desc.title = row.detail;
         li.appendChild(desc);
       }
 

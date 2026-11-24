@@ -10,9 +10,10 @@
     'show_methods_in_search',
     'show_classes_in_search',
     'show_class_in_explorer',
+    'show_example_in_workspace',
   ]);
   // GUI tools whose result is not in GemStone Search, so their banner has no button to reveal it.
-  const NOT_IN_SEARCH = new Set(['show_class_in_explorer']);
+  const NOT_IN_SEARCH = new Set(['show_class_in_explorer', 'show_example_in_workspace']);
 
   const HELP_TEXT = [
     '**Jasper Assistant (experimental)**',
@@ -29,6 +30,8 @@
     '### Results in Jasper',
     '- With **Show results in Jasper (if possible)** ticked, a list of methods or classes, or a regular-expression search, opens in GemStone Search instead of filling the chat. A blue banner gives the count and a **Show GemStone Search** button.',
     '- A class the assistant creates, or one you ask to see, opens in the GemStone Explorer with its definition; the methods it created follow in GemStone Search.',
+    '- A method written like `Class>>selector` in an answer is a link: click it to open the method. After creating a class, the assistant lists where to start reading it.',
+    '- After creating a class, the assistant also opens a new Workspace with a short example of using it. Put the cursor on an expression and Display It or Inspect It to see what it answers. Jasper compiles the example first, without running it, so it will not hold a typo or a message nothing implements.',
     '- Press **Esc** in the GemStone Search box to close the list and return to the normal search.',
     '- A method list stops at the `gemstone.omniSearch.maxServerScan` setting; the answer says when more match.',
     '- Untick the box to get every answer as text in the chat.',
@@ -57,9 +60,25 @@
       .join('');
   }
 
+  // `Class>>selector` or `Class class>>selector` in a code span, after escaping (so `>>` is `&gt;&gt;`).
+  const METHOD_REF = /^([A-Za-z_]\w*)( class)?&gt;&gt;(\S+)$/;
+
   function renderInline(s) {
     return escapeHtml(s)
-      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/`([^`]+)`/g, (whole, code) => {
+        const m = METHOD_REF.exec(code);
+        return m
+          ? '<code class="mlink" title="Open this method" data-class="' +
+              m[1] +
+              '" data-meta="' +
+              (m[2] ? '1' : '0') +
+              '" data-selector="' +
+              m[3] +
+              '">' +
+              code +
+              '</code>'
+          : '<code>' + code + '</code>';
+      })
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   }
 
@@ -371,6 +390,16 @@
         historyIndex++;
         input.value = historyIndex === history.length ? draft : history[historyIndex];
       }
+    });
+    log.addEventListener('click', (e) => {
+      const ref = e.target.closest && e.target.closest('.mlink');
+      if (!ref) return;
+      vscode.postMessage({
+        command: 'openMethod',
+        className: ref.dataset.class,
+        isMeta: ref.dataset.meta === '1',
+        selector: ref.dataset.selector,
+      });
     });
     stopBtn.addEventListener('click', () => vscode.postMessage({ command: 'stop' }));
     newBtn.addEventListener('click', () => vscode.postMessage({ command: 'newConversation' }));

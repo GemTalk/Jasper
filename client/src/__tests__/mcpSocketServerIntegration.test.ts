@@ -183,6 +183,7 @@ describe('McpSocketServer integration', () => {
         'find_implementors',
         'find_references_to',
         'find_senders',
+        'find_starting_points',
         'get_class_definition',
         'get_class_hierarchy',
         'get_method_source',
