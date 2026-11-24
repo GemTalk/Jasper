@@ -18,13 +18,15 @@ export function evalPython(session: ActiveSession, source: string) {
 /**
  * Run a Python cell in its notebook's module scope (see `evalPythonInScope` in
  * queries/python.ts), non-blocking, so VS Code stays free while it runs and it
- * can be stopped like any other run (`onStart` hands out its canceller).
+ * can be stopped like any other run (`onStart` hands out its canceller, and
+ * `stop` keeps a cell stopped before it started from being sent).
  */
 export async function evalPythonInScopeNb(
   session: ActiveSession,
   source: string,
   scopeId: string,
   onStart?: NbRunOptions['onStart'],
+  stop?: AbortSignal,
 ): Promise<string> {
   const code = pythonInScopeCode(source, scopeId);
   return await runNbCall(
@@ -35,7 +37,13 @@ export async function evalPythonInScopeNb(
       if (err.number !== 0) return await failCell(session, err);
       return fetchCellResult(session, result);
     },
-    { title: 'GemStone: Running cell…', disposableProcess: true, disposableResult: true, onStart },
+    {
+      title: 'GemStone: Running cell…',
+      disposableProcess: true,
+      disposableResult: true,
+      onStart,
+      stopWhileWaitingForSession: stop,
+    },
   );
 }
 

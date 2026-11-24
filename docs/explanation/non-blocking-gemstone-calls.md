@@ -153,7 +153,8 @@ structural edits, hover, completion, CodeLens and the MCP server all still block
 
 Every non-blocking Smalltalk evaluation goes through `runNbCall` in `nbRunner.ts`:
 
-1. Wait until the session is free, or refuse if it is busy.
+1. Wait until the session is free, or refuse if it is busy. A run stopped while it waits is
+   never started.
 2. Start the call with `GciTsNbExecute` or `GciTsNbPerform`.
 3. Wait until the result is ready: `GciTsNbPoll` on 3.7+, socket readiness on 3.6.x.
 4. Collect it with `GciTsNbResult`, in the caller's `onReady`.

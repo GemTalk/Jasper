@@ -188,6 +188,7 @@ describe('a session-bound kernel', () => {
       '3 + 4',
       'nb',
       expect.any(Function),
+      expect.any(AbortSignal),
     );
     expect(manager.resolveSession).not.toHaveBeenCalled();
   });
@@ -274,6 +275,7 @@ describe('the real per-session factories', () => {
       'x = 1',
       'file:///demo.ipynb',
       expect.any(Function),
+      expect.any(AbortSignal),
     );
   });
 
