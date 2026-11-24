@@ -2873,7 +2873,8 @@ export class ExplorerController {
 
   // Manual double-click detection for the Classes pane: VS Code trees have no
   // double-click event, so a class row's `command` (fired on each click) records
-  // the click; two on the same class within the threshold open its definition.
+  // the click; two that each select the same class within the threshold open its
+  // definition.
   private readonly classClicks = new DoubleClickDetector(500);
   handleClassClick(className: string): void {
     // (Re)select the class even when VS Code's tree still shows it highlighted from
@@ -2885,16 +2886,21 @@ export class ExplorerController {
     // classView selection wiring reports the same click; selectClassFromTree reads it once.
     const { dictIndex } = this.state;
     const selected = this.selectClassFromTree(new ClassItem(className));
-    if (this.classClicks.register(className)) {
-      // Opens only once the click settles: a dropped click opens nothing, and neither
-      // does one whose class another dictionary's selection has since replaced.
-      this.openFromExplorer(
-        selected.then(() => {
-          if (this.state.className !== className || this.state.dictIndex !== dictIndex) return;
-          return this.openClassDefinition(new ClassItem(className));
-        }),
-      );
-    }
+    // Recorded now, so the threshold runs from the click itself rather than from when a
+    // slow read answers.
+    const click = this.classClicks.click(className);
+    // Settled, a click that left its class unselected (refused while busy, dropped, or
+    // replaced by another dictionary's selection) opens nothing, and is withdrawn so the
+    // next click on the class can't pair with it.
+    this.openFromExplorer(
+      selected.then(() => {
+        if (this.state.className !== className || this.state.dictIndex !== dictIndex) {
+          click.withdraw();
+          return;
+        }
+        if (click.completesPair) return this.openClassDefinition(new ClassItem(className));
+      }),
+    );
   }
 
   // Opens an editor for an Explorer click or row button. VS Code hands a failed open back as a

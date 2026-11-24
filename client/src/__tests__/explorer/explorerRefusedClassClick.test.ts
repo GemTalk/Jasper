@@ -75,6 +75,10 @@ beforeEach(() => {
   });
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 // Makes the panes' header update throw, the last step of a click once the new selection
 // is in place.
 function failTitleUpdates(view: { description: string }) {
@@ -179,6 +183,26 @@ describe('a class double-clicked before its click answers', () => {
     expect(selectedWhenOpened).toBe('Beta');
   });
 
+  it('opens its definition on a double-click made while an earlier, dropped click on it was still loading', async () => {
+    // Frozen so the pair falls inside the double-click window however slow the runner.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const { ctl } = controllerOnClass('Alpha');
+    const beta = methodsHeldBack('Beta');
+    ctl.handleClassClick('Beta');
+    await settle();
+    ctl.handleClassClick('Alpha');
+    await settle();
+    ctl.handleClassClick('Beta');
+    await settle();
+    beta.answer();
+    await vi.waitFor(() => expect(ctl.state.className).toBe('Beta'));
+
+    ctl.handleClassClick('Beta');
+    await settle();
+
+    expect(workspace.openTextDocument).toHaveBeenCalled();
+  });
+
   it('does not open its definition when the click is refused', async () => {
     const { ctl } = controllerOnClass('Alpha');
     const beta = methodsHeldBack('Beta');
@@ -226,6 +250,22 @@ describe('a class click while the session is busy', () => {
 
     expect(ctl.state.className).toBe('Beta');
     expect(ctl.methodCategories(false).map((c) => c.label)).toContain('Beta methods');
+  });
+
+  it('does not open its definition when the class is clicked again once the session is free', async () => {
+    // Frozen so the two clicks fall inside the double-click window however slow the runner.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const { ctl } = controllerOnClass('Alpha');
+    sessionBusy = true;
+    ctl.handleClassClick('Beta');
+    await settle();
+    sessionBusy = false;
+
+    ctl.handleClassClick('Beta');
+    await settle();
+
+    expect(ctl.state.className).toBe('Beta');
+    expect(workspace.openTextDocument).not.toHaveBeenCalled();
   });
 
   it("keeps the previous class when only the hierarchy can't be read", async () => {
