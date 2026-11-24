@@ -31,10 +31,15 @@ export function findFiles(dir: string, extensions: string[]): string[] {
 /** Whether `uri` is a file {@link findFiles} finds under one of `folderUris`. */
 export function isScannedFile(uri: string, folderUris: string[], extensions: string[]): boolean {
   if (!uri.startsWith('file:') || !extensions.some((ext) => uri.endsWith(ext))) return false;
-  const file = fileURLToPath(uri);
-  return folderUris.some((folderUri) => {
-    const relative = path.relative(fileURLToPath(folderUri), file);
-    if (relative.startsWith('..') || path.isAbsolute(relative)) return false;
-    return !relative.split(path.sep).slice(0, -1).some(skippedFolder);
-  });
+  try {
+    const file = fileURLToPath(uri);
+    return folderUris.some((folderUri) => {
+      const relative = path.relative(fileURLToPath(folderUri), file);
+      if (relative.startsWith('..') || path.isAbsolute(relative)) return false;
+      return !relative.split(path.sep).slice(0, -1).some(skippedFolder);
+    });
+  } catch {
+    // A URI this platform can't turn into a path, such as a drive-less one on Windows.
+    return false;
+  }
 }
