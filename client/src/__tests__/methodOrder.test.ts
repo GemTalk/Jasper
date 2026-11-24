@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { compareMethods, compareNames } from '../methodOrder';
 
-describe('compareNames: the one order for selectors and method category names', () => {
+describe('the one order for selectors and method category names', () => {
   it('keeps every operator and private _ method together ahead of the letters', () => {
     // GemStone's own sort puts \\, _foo and ~= after Z; plain .sort() puts \\ and _foo
     // between the capitals and the lower case. VS Code's file-name rule keeps them together.
@@ -34,11 +34,16 @@ describe('compareNames: the one order for selectors and method category names', 
   });
 
   it('ignores case, so capitalised selectors sit among the lower-case ones', () => {
-    expect(['beta', 'Zulu', 'Alpha', 'alpha'].sort(compareNames)).toEqual([
-      'alpha',
-      'Alpha',
-      'beta',
-      'Zulu',
+    expect(['beta', 'Zulu', 'alpha'].sort(compareNames)).toEqual(['alpha', 'beta', 'Zulu']);
+  });
+
+  it('puts the capitalised one first when two names differ only in case or accent, as VS Code does', () => {
+    expect(['at:', 'resume', 'résumé', 'At:', 'Resume'].sort(compareNames)).toEqual([
+      'At:',
+      'at:',
+      'Resume',
+      'resume',
+      'résumé',
     ]);
   });
 

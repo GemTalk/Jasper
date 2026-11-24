@@ -99,7 +99,7 @@ ws contents`);
     ]);
   });
 
-  it('getMethodList: by side, then category, then selector', () => {
+  it("lists a class's methods by side, then category, then selector", () => {
     const rows = getMethodList(exec, PROBE).map(
       (m) => `${m.isMeta ? 'C' : 'I'} ${m.category} ${m.selector}`,
     );
@@ -117,11 +117,11 @@ ws contents`);
     ]);
   });
 
-  it('getMethodCategories', () => {
+  it("lists a class's method categories in the shared order", () => {
     expect(getMethodCategories(exec, PROBE, false)).toEqual(CATEGORY_ORDER);
   });
 
-  it('getClassEnvironments: the Explorer Methods pane data', () => {
+  it("lists the Explorer Methods pane's selectors in the shared order", () => {
     const dictIndex = Number(
       exec('(System myUserProfile symbolList indexOf: UserGlobals) printString'),
     );
@@ -132,20 +132,20 @@ ws contents`);
     expect(lines.find((l) => l.category === 'arithmetic')?.selectors).toEqual(['/', '\\\\', '~=']);
   });
 
-  it('discoverTestMethods', () => {
+  it("lists a test class's test methods in the shared order", () => {
     expect(discoverTestMethods(exec, PROBE, 'UserGlobals').map((t) => t.selector)).toEqual([
       'test2',
       'test10',
     ]);
   });
 
-  it('getAllSelectors: inherited ones too, all in one order', () => {
+  it('lists every selector a class understands, inherited ones too, in the shared order', () => {
     const all = getAllSelectors(exec, PROBE);
     expect(all).toEqual([...all].sort(compareNames));
     expect(probeSelectors(all)).toEqual(INSTANCE_ORDER);
   });
 
-  it('describeClass: the instance-methods section', () => {
+  it('lists the instance methods in a class description in the shared order', () => {
     const text = describeClass(exec, PROBE, 'UserGlobals');
     const section = text.slice(
       text.indexOf('=== Instance methods ===\n'),
@@ -162,7 +162,7 @@ ws contents`);
     expect(text.endsWith('=== Class methods ===\ninstance creation:\n  _make\n  Zed\n')).toBe(true);
   });
 
-  it('getGrailStubReflection', () => {
+  it("lists a Grail stub's methods in the shared order", () => {
     const methods = getGrailStubReflection(exec, PROBE, 'UserGlobals').methods;
     expect(methods.filter((m) => m.side === 'instance').map((m) => m.selector)).toEqual([
       'abs',
@@ -178,13 +178,13 @@ ws contents`);
 
   const probeOop = () => BigInt(exec(`${PROBE} asOop printString`));
 
-  it('Inspector Meta tab', () => {
+  it("lists the Inspector's Meta tab selectors in the shared order", () => {
     const meta = fetchBasicMeta(exec, probeOop());
     expect(meta?.instanceSelectors).toEqual(INSTANCE_ORDER);
     expect(meta?.classSelectors).toEqual(['_make', 'Zed']);
   });
 
-  it('Enhanced Inspector Meta tab', (ctx) => {
+  it("lists the Enhanced Inspector's Meta tab selectors in the shared order", (ctx) => {
     requireServerPluginFeature(pluginFeatures.enhancedInspector, ctx, session());
     const meta = JSON.parse(fetchEnhancedMeta(exec, probeOop()) ?? '{}');
     expect(meta.methodSelectors).toEqual(INSTANCE_ORDER);

@@ -1,18 +1,19 @@
 /**
  * The one order for every list of methods Jasper shows: VS Code's own rule for file names, so a
  * method list reads like the Explorer next to it. Symbols sort before letters, so operators and
- * private `_` methods stay together at the top; case is ignored; digits compare by value
- * (`test2` before `test10`).
+ * private `_` methods stay together at the top; case and accents are ignored; digits compare by
+ * value (`test2` before `test10`).
  *
  * Lists are sorted here rather than on the stone because GemStone's `asSortedCollection` folds
  * case to capitals first, which puts `\\`, `_foo` and `~=` after `Z`.
  */
 
-const collator = new Intl.Collator(undefined, { numeric: true });
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 /** Selectors, method category names, and the class names of method rows. Never answers 0 for two
- *  different names (canonically equal spellings fall back to code-unit order), so a sort's result
- *  does not depend on its input order. */
+ *  different names: names the collator calls equal (differing only in case or accent, or
+ *  canonically equal spellings) fall back to code-unit order, as VS Code's does, so a sort's
+ *  result does not depend on its input order. */
 export function compareNames(a: string, b: string): number {
   return collator.compare(a, b) || (a < b ? -1 : a > b ? 1 : 0);
 }

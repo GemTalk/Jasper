@@ -21,7 +21,7 @@ const stone = (answer: string) => vi.fn<QueryExecutor>(() => answer);
 const lines = (rows: string[]) => rows.map((r) => `${r}\n`).join('');
 
 describe('method list queries sort in Jasper, not on the stone', () => {
-  it('getMethodList: instance side first, then by category, then by selector', () => {
+  it("lists a class's methods instance side first, then by category, then by selector", () => {
     const answer = lines([
       '0\tversion10\tb',
       '0\tversion2\ta',
@@ -39,7 +39,7 @@ describe('method list queries sort in Jasper, not on the stone', () => {
     ]);
   });
 
-  it('getMethodCategories', () => {
+  it("lists a class's method categories in the shared order", () => {
     expect(
       getMethodCategories(
         stone(lines(['version10', 'Accessing', 'version2', '*ext'])),
@@ -49,13 +49,13 @@ describe('method list queries sort in Jasper, not on the stone', () => {
     ).toEqual(['*ext', 'Accessing', 'version2', 'version10']);
   });
 
-  it('getClassEnvironments: the selectors of each category', () => {
+  it('lists the selectors of each category in the Methods pane in the shared order', () => {
     const tokens = STONE_ORDER.map((s) => `00${s}`).join('\t');
     const [only] = getClassEnvironments(stone(`Probe\t0\tAll\t${tokens}\t\n`), 1, 'Probe', 0);
     expect(only.selectors).toEqual(JASPER_ORDER);
   });
 
-  it('discoverTestMethods', () => {
+  it("lists a test class's test methods in the shared order", () => {
     const answer = lines(['testZed', 'test10', 'test2', 'test_private'].map((s) => `${s}\ttests`));
     expect(discoverTestMethods(stone(answer), 'ProbeTest').map((t) => t.selector)).toEqual([
       'test_private',
@@ -65,11 +65,11 @@ describe('method list queries sort in Jasper, not on the stone', () => {
     ]);
   });
 
-  it('getAllSelectors', () => {
+  it('lists every selector a class understands in the shared order', () => {
     expect(getAllSelectors(stone(lines(STONE_ORDER)), 'Probe')).toEqual(JASPER_ORDER);
   });
 
-  it('describeClass: categories and their selectors, both sides', () => {
+  it('describes a class with its categories and their selectors in the shared order, both sides', () => {
     const answer =
       lines([
         'i\tversion10',
@@ -96,7 +96,7 @@ describe('method list queries sort in Jasper, not on the stone', () => {
     );
   });
 
-  it('describeClass: an empty category still gets its heading', () => {
+  it('gives an empty category its heading in a class description', () => {
     const answer = lines(['i\tempty']) + '=== Definition ===\nx\n\n=== Comment ===\ny\n\n';
     expect(describeClass(stone(answer), 'Probe')).toBe(
       '=== Definition ===\nx\n\n=== Comment ===\ny\n\n' +
@@ -104,11 +104,11 @@ describe('method list queries sort in Jasper, not on the stone', () => {
     );
   });
 
-  it('describeClass: passes a not-found answer through untouched', () => {
+  it('passes a class-not-found answer through untouched', () => {
     expect(describeClass(stone('Class not found: Nope'), 'Nope')).toBe('Class not found: Nope');
   });
 
-  it('getGrailStubReflection: methods by side, then category, then selector', () => {
+  it("lists a Grail stub's methods by side, then category, then selector", () => {
     const answer =
       'SUPER\tObject\n' +
       lines([
@@ -129,7 +129,7 @@ describe('method list queries sort in Jasper, not on the stone', () => {
     ]);
   });
 
-  it('Inspector Meta tab: both selector lists', () => {
+  it("lists both selector lists on the Inspector's Meta tab in the shared order", () => {
     // The payload escapes a backslash as \\, so the selector \\ arrives as four.
     const esc = (s: string) => s.replace(/\\/g, '\\\\');
     const answer = lines([
@@ -142,7 +142,7 @@ describe('method list queries sort in Jasper, not on the stone', () => {
     expect(meta?.classSelectors).toEqual(JASPER_ORDER);
   });
 
-  it('Enhanced Inspector Meta tab: both selector lists', () => {
+  it("lists both selector lists on the Enhanced Inspector's Meta tab in the shared order", () => {
     const answer = JSON.stringify({
       className: 'Probe',
       methodSelectors: STONE_ORDER,
