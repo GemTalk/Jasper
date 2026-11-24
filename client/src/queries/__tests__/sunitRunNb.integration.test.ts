@@ -10,8 +10,43 @@
 // Fully transient: the probe fixture is installed inside each test's own
 // transaction, so the harness's per-test abort cleans it up. Nothing commits.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
+
+// What a stop did, step by step, for a test to print when it fails: one CI
+// failure (#983) never reproduced, so the next one has to say what the gem answered.
+const stopTrace = vi.hoisted(() => {
+  let startedAt = 0;
+  let lines: string[] | undefined;
+  return {
+    start(): void {
+      startedAt = performance.now();
+      lines = [];
+    },
+    stop(): void {
+      lines = undefined;
+    },
+    add(line: string): void {
+      lines?.push(`+${Math.round(performance.now() - startedAt)}ms ${line}`);
+    },
+    attachTo(e: unknown): unknown {
+      if (e instanceof Error && lines) {
+        e.message += `\n\nWhat the stop did:\n${lines.map((l) => `  ${l}`).join('\n')}`;
+      }
+      return e;
+    },
+  };
+});
+vi.mock('../../gciLog', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../gciLog')>();
+  return {
+    ...real,
+    logInfo: (message: string) => {
+      stopTrace.add(message);
+      real.logInfo(message);
+    },
+  };
+});
 
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { GciLibrary } from '../../gciLibrary';
@@ -222,6 +257,7 @@ describe('SUnit non-blocking runs (integration)', () => {
       sent.push(hard);
       return realBreak(h, hard);
     });
+    traceAnswersAndClears();
 
     // Tracked as a flag rather than by testing `originalFailure` for truthiness:
     // a block that throws a falsy value (an undefined rejection, an empty
@@ -231,6 +267,7 @@ describe('SUnit non-blocking runs (integration)', () => {
     let originalFailure: unknown;
     try {
       const { run, cancel } = await startSlowRun();
+      stopTrace.start();
       cancel(); // soft break
       cancel(); // stop waiting
 
@@ -250,6 +287,9 @@ describe('SUnit non-blocking runs (integration)', () => {
     // Unconditional, and outside the try/finally above: an abandoned GciTsNb
     // op left on the session would otherwise fail every later test in this file
     // via assertCommitGuardIsStillArmed, burying the one real failure.
+    // The marker splits the stopped run's answers from this run's; a refusal
+    // isn't logged, so it is also the nearest time to one.
+    stopTrace.add('next run starts');
     try {
       await expect(
         runTestMethodNb(session(), SUNIT_PROBE_TEST_CLASS, SUNIT_PROBE_PASSING_SELECTOR),
@@ -260,7 +300,7 @@ describe('SUnit non-blocking runs (integration)', () => {
       // failure, which is expected and shouldn't bury the original error.
       // On the happy path a drain failure is itself the real bug and must
       // surface normally.
-      if (!gestureFailed) throw drainErr;
+      if (!gestureFailed) throw stopTrace.attachTo(drainErr);
 
       // Demoted, not discarded. The gesture may have failed for something
       // trivial (a legal ending missing from STOPPED_ENDINGS) while this one
@@ -271,8 +311,46 @@ describe('SUnit non-blocking runs (integration)', () => {
       else console.warn('sunitRunNb: drain failed after the gesture failed:', drainErr);
     }
 
-    if (gestureFailed) throw originalFailure;
+    if (gestureFailed) throw stopTrace.attachTo(originalFailure);
   }, 120_000);
+
+  /**
+   * Add each answer the session collects, and each clear of a stopped run's
+   * process, to {@link stopTrace}, until the test ends. A clear is what makes the
+   * next run be refused as "still cleaning up". That refusal starts at the answer
+   * whose context is a process (the runner starts the clear right after collecting
+   * it), not at the "clearing" line, which can wait behind a drain; it ends at the
+   * "cleared" line.
+   */
+  function traceAnswersAndClears(): void {
+    const s = session();
+    const collect = s.GciTsNbResult.bind(s);
+    const answers = vi.spyOn(s, 'GciTsNbResult').mockImplementation(() => {
+      const answer = collect();
+      const { number, context, message } = answer.err;
+      stopTrace.add(
+        `answer: error ${number}, context ${String(context)}` + (message ? `, "${message}"` : ''),
+      );
+      return answer;
+    });
+    const clear = s.GciTsClearStackAsync.bind(s);
+    const clears = vi.spyOn(s, 'GciTsClearStackAsync').mockImplementation(async (gsProcess) => {
+      stopTrace.add(`clearing process ${String(gsProcess)}`);
+      let ending = 'threw';
+      try {
+        const cleared = await clear(gsProcess);
+        ending = `error ${cleared.err.number}`;
+        return cleared;
+      } finally {
+        stopTrace.add(`cleared process ${String(gsProcess)}: ${ending}`);
+      }
+    });
+    onTestFinished(() => {
+      answers.mockRestore();
+      clears.mockRestore();
+      stopTrace.stop();
+    });
+  }
 
   it('discovers the probe class, and its methods carry the category the URI needs', () => {
     const found = discoverTestClasses(exec).find(

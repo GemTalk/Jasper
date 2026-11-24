@@ -5,6 +5,7 @@ import * as queries from '../browserQueries';
 import { MethodSearchResult } from '../browserQueries';
 import { buildLineStarts, lineOfOffset } from './stepPointModel';
 import { describeMethodResult } from '../methodResultsPicker';
+import { compareMethods } from '../methodOrder';
 import { logInfo } from '../gciLog';
 import { parseMethodReference } from '../methodReference';
 
@@ -258,14 +259,12 @@ export class FunctionBreakpointResolver {
     candidates: MethodSearchResult[],
     selector: string,
   ): Promise<MethodSearchResult | undefined> {
-    const items = candidates
-      .map((target) => ({
-        label: `${target.className}${target.isMeta ? ' class' : ''}`,
-        description: target.dictName,
-        detail: target.category,
-        target,
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label));
+    const items = [...candidates].sort(compareMethods).map((target) => ({
+      label: `${target.className}${target.isMeta ? ' class' : ''}`,
+      description: target.dictName,
+      detail: target.category,
+      target,
+    }));
 
     const picked = await vscode.window.showQuickPick(items, {
       title: `Break on entry to #${selector}`,

@@ -127,6 +127,35 @@ describe('GemStoneHoverProvider', () => {
       expect(md.value).toContain('`String` (accessing)');
     });
 
+    it('lists implementors in the shared method order, not the order the stone found them', async () => {
+      const row = (className: string, isMeta: boolean) => ({
+        dictName: 'Globals',
+        className,
+        isMeta,
+        selector: 'size',
+        category: 'accessing',
+        environmentId: 0,
+      });
+      mockImplementorsOf.mockReturnValue([
+        row('Zed', false),
+        row('array', true),
+        row('_Private', false),
+        row('array', false),
+      ]);
+      const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
+      const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
+      const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
+
+      const md = result!.contents as unknown as MarkdownString;
+      const listed = md.value.split('\n').filter((l) => l.startsWith('- '));
+      expect(listed).toEqual([
+        '- `_Private` (accessing)',
+        '- `array` (accessing)',
+        '- `array class` (accessing)',
+        '- `Zed` (accessing)',
+      ]);
+    });
+
     it('shows a hover with just a senders link when the selector has no implementors', async () => {
       mockImplementorsOf.mockReturnValue([]);
       mockSendersOf.mockReturnValue(Array.from({ length: 3 }, () => ({}) as never));

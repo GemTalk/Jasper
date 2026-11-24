@@ -17,8 +17,7 @@ import {
   isRunning,
   NbCancelledError,
   resendSoftBreak,
-  sayStillRunningUnlessItEnds,
-  stopWaitingDelay,
+  stopControl,
   trackRun,
 } from '../nbRunner';
 import { continueThroughForwarderSends } from '../transcriptSink';
@@ -604,11 +603,11 @@ export interface RuleRunOptions {
  *
  * The resume and the judgement run the developer's code, so both go to a worker
  * thread: a long skip or a slow condition leaves VS Code responsive. Cancel
- * stops it as the non-blocking runner's Cancel does. Inside a run the runner
+ * stops it with the non-blocking runner's `stopControl`. Inside a run the runner
  * polls (Execute It), it is that run's Cancel. Otherwise it sends a soft break if
  * a call is running (a break in the resumed code comes back as a `raised` 6003)
  * and stops at the hit reached; a call that ignores the break is given up on
- * after STOP_WAITING_AFTER_MS, or at a second press, rejecting with
+ * after `stopWaitingDelay`, or at a second press, rejecting with
  * `NbCancelledError` while the session is held until the gem lets go, and the
  * user is offered Force Stop.
  */
@@ -636,7 +635,6 @@ export async function applyBreakpointRules(
   let inFlight: Promise<unknown> | undefined;
   let inFlightIsResume = false;
   let giveUp: ((e: Error) => void) | undefined;
-  let stopWaitingTimer: ReturnType<typeof setTimeout> | undefined;
   const enclosingRun = isRunning(session);
 
   /** Answers whether there was a call to stop waiting for. */
@@ -668,43 +666,27 @@ export async function applyBreakpointRules(
     reject(new NbCancelledError());
     return true;
   };
+  const stopping = enclosingRun
+    ? undefined
+    : stopControl(session, startedAt, { callRunning: () => calling, giveUp: stopWaiting });
   const cancel = (): void => {
-    if (enclosingRun) {
-      cancelled = true;
-      cancelRunOn(session);
-      return;
-    }
-    if (cancelled) {
-      // A second press stops waiting at once, as the runner's does.
-      clearTimeout(stopWaitingTimer);
-      if (stopWaiting()) sayStillRunningUnlessItEnds(session);
-      return;
-    }
     cancelled = true;
-    if (!calling) return;
-    try {
-      session.GciTsBreak(false);
-    } catch (e) {
-      logError(session.id, `Could not send a soft break: ${errorText(e)}`);
-    }
-    stopWaitingTimer = setTimeout(() => {
-      if (stopWaiting()) sayStillRunningUnlessItEnds(session);
-    }, stopWaitingDelay(startedAt));
+    if (stopping) stopping.press();
+    else cancelRunOn(session);
   };
   options.onStart?.(cancel, () => cancelled);
-  const untrack = enclosingRun
-    ? undefined
-    : trackRun(session, {
-        stopRequested: () => cancelled,
-        cancel,
-        // A logout: stop waiting at once, without the notice. stopWaiting holds the
-        // session until the call ends, so the logout's own bounded wait covers it.
-        stop: async () => {
-          if (!cancelled) cancel();
-          clearTimeout(stopWaitingTimer);
-          stopWaiting();
-        },
-      });
+  const untrack =
+    stopping &&
+    trackRun(session, {
+      stopRequested: () => cancelled,
+      cancel,
+      // stopWaiting holds the session until the call ends, so the logout's own
+      // bounded wait covers it.
+      stop: async () => {
+        cancelled = true;
+        stopping.stop();
+      },
+    });
 
   /** `work` on a worker thread, which Cancel can stop waiting for. */
   const onWorker = async <T>(work: Promise<T>, isResume = false): Promise<T> => {
@@ -854,7 +836,7 @@ export async function applyBreakpointRules(
     }
   } finally {
     clearTimeout(progressTimer);
-    clearTimeout(stopWaitingTimer);
+    stopping?.dispose();
     untrack?.();
     closeProgress?.();
   }
