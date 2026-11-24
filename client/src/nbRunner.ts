@@ -715,7 +715,8 @@ export interface StopHooks {
   onFirstPress?: () => void;
   /**
    * A soft break that could not be sent. Left out, it is logged and the press
-   * goes on as if it had been sent.
+   * goes on as if it had been sent. If it throws, the press ends before it
+   * counts as pressed or starts the give-up timer, so the caller must settle the run.
    */
   onBreakError?: (e: unknown) => void;
 }
@@ -738,7 +739,7 @@ export interface StopControl {
  * Stop a run that began at `startedAt`. The first press sends a soft break and
  * gives up after {@link stopWaitingDelay}; a second gives up at once. Giving up
  * after a press says, after {@link NOTICE_GRACE_MS}, that the run still holds the
- * session.
+ * session, except at a logout.
  */
 export function stopControl(
   session: ActiveSession,
@@ -1150,7 +1151,6 @@ export function pollNbToCompletion<T>(
         return run;
       },
     };
-    live.set(session.id, liveEntry);
 
     const finishProgress = (): void => {
       if (progressResolve) {
@@ -1246,6 +1246,8 @@ export function pollNbToCompletion<T>(
       },
     });
     const requestCancel = settleOnThrow(() => stopping.press());
+    // Published only now: liveEntry reaches stopping and requestCancel.
+    live.set(session.id, liveEntry);
     if (opts.onStart) opts.onStart(requestCancel, () => stopping.pressed());
 
     const doPoll = settleOnThrow(() => {
