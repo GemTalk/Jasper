@@ -3920,6 +3920,6 @@
     "esbuild@0.28.2": true,
     "koffi@2.16.3": true,
     "lefthook": false,
-    "@vscode/vsce-sign@2.1.0": true
+    "@vscode/vsce-sign@2.1.1": true
   }
 }
