@@ -2,7 +2,7 @@
 // of them on the shared comparators in methodOrder.ts.
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 
 const CLIENT_SRC = join(__dirname, '..');
 const REPO = join(CLIENT_SRC, '..', '..');
@@ -22,7 +22,8 @@ function sourceFiles(dir: string): string[] {
 }
 
 const ALL_SOURCES = [...sourceFiles(CLIENT_SRC), ...sourceFiles(join(REPO, 'mcp-server', 'src'))];
-const rel = (path: string) => relative(REPO, path);
+// Forward slashes on every OS, so the paths below match on Windows too.
+const rel = (path: string) => relative(REPO, path).split(sep).join('/');
 
 // A selector list sorted on the stone comes back in GemStone's order (case folded to capitals),
 // not Jasper's, so queries send them unsorted and the client sorts.
