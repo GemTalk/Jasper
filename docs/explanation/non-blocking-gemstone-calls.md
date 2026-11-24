@@ -478,11 +478,12 @@ groups:
   `logouts`).
 - **Stays in Jasper (UI):** the progress notification, the "Stopping…" status bar item, the
   registered command handlers and the message text.
-- **Needs a callback seam first (mixed):** `pollNbToCompletion`, `requestCancel`, `settle`,
-  `stopWaiting`. Callbacks such as "slow call started", "stop requested" and "settled" let the
+- **Needs a callback seam first (mixed):** `pollNbToCompletion`, `settle`, and `stopControl`
+  (which the conditional-breakpoint loop shares, and which raises the "still running" notice).
+  Callbacks such as "slow call started", "stop requested" and "settled" let the
   UI stay in Jasper.
 
-This inventory was taken on 2026-10-29; re-check it against `nbRunner.ts` before starting.
+This inventory was taken on 2026-10-29, with the stop logic updated on 2026-11-23; re-check it against `nbRunner.ts` before starting.
 
 Moving nbRunner's GCI layer was estimated at 1.5 to 2.5 weeks over three PRs: the poll core;
 draining and late collection; the busy gate and maps. The cost drivers: `activeSession.ts` must

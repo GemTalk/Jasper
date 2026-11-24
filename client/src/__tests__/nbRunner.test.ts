@@ -406,6 +406,29 @@ describe('runNbCall — one press is enough', () => {
     }
   });
 
+  it('does nothing at a press after the call has ended', async () => {
+    vi.useFakeTimers();
+    try {
+      const { p, cancel, gci } = stoppableCall();
+      gci.GciTsNbPoll.mockReturnValue({ result: 1, err: noErr });
+      await vi.advanceTimersByTimeAsync(100);
+      await expect(p).resolves.toBe('unused');
+
+      cancel();
+      cancel();
+      await vi.advanceTimersByTimeAsync(EARLIEST_STOP_WAITING_MS + NOTICE_GRACE_MS);
+
+      expect(gci.GciTsBreak).not.toHaveBeenCalled();
+      expect(vscode.window.setStatusBarMessage).not.toHaveBeenCalledWith(
+        expect.stringContaining('Stopping…'),
+        expect.anything(),
+      );
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it("waits until the call's early window is over before it stops waiting", async () => {
     // A break sent in a call's first ~2s does not land until ~2s in, so a press at
     // the very start must not count its wait from the press.

@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { ActiveSession } from './sessionManager';
 import { GciError } from './gciLibrary';
 import { pollReadable } from './socketPoll';
-import { logInfo } from './gciLog';
+import { logError, logInfo } from './gciLog';
 import { GciLibraryError } from './gciLibraryError';
 import { GCI_ERR_BAD_SESSION_ID, OOP_ILLEGAL, OOP_NIL, SOFT_BREAK_ERROR } from './gciConstants';
 
@@ -717,6 +717,91 @@ export function trackRun(session: ActiveSession, run: TrackedRun): (() => void) 
   return () => endRun(session.id, run);
 }
 
+/** What {@link stopControl} needs from the run it stops. */
+export interface StopHooks {
+  /** Whether a call is running for a press to break; a press with none does nothing. */
+  callRunning: () => boolean;
+  /**
+   * Give up on the call: send the soft break again (see {@link resendSoftBreak}),
+   * hold the session until the call lets go of it, and reject the run. Answers
+   * whether there was a call to give up on. Runs from a timer, so must not throw.
+   */
+  giveUp: () => boolean;
+  /** After a first press has sent its soft break, or tried to. */
+  onFirstPress?: () => void;
+  /**
+   * A soft break that could not be sent. Left out, it is logged and the press
+   * goes on as if it had been sent. If it throws, the press ends before it
+   * counts as pressed or starts the give-up timer, so the caller must settle the run.
+   */
+  onBreakError?: (e: unknown) => void;
+}
+
+/** How a run is stopped: see {@link stopControl}. */
+export interface StopControl {
+  /** A press of the run's Cancel. */
+  press: () => void;
+  /** A logout's stop: a press if there has been none, then give up at once, without the notice. */
+  stop: () => void;
+  /** Whether a first press has gone through. */
+  pressed: () => boolean;
+  /** Whether {@link StopControl.stop} has been called. */
+  byLogout: () => boolean;
+  /** Drop the pending give-up, once the run has ended. */
+  dispose: () => void;
+}
+
+/**
+ * Stop a run that began at `startedAt`. The first press sends a soft break and
+ * gives up after {@link stopWaitingDelay}; a second gives up at once. Giving up
+ * after a press says, after {@link NOTICE_GRACE_MS}, that the run still holds the
+ * session, except at a logout.
+ */
+export function stopControl(
+  session: ActiveSession,
+  startedAt: number,
+  hooks: StopHooks,
+): StopControl {
+  let pressed = false;
+  let byLogout = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const giveUp = (): void => {
+    clearTimeout(timer);
+    timer = undefined;
+    if (hooks.giveUp() && !byLogout) sayStillRunningUnlessItEnds(session);
+  };
+
+  const press = (): void => {
+    if (!hooks.callRunning()) return;
+    if (pressed) {
+      giveUp();
+      return;
+    }
+    try {
+      sendSoftBreak(session, '');
+    } catch (e) {
+      if (hooks.onBreakError) hooks.onBreakError(e);
+      else logError(session.id, `Could not send a soft break: ${errorText(e)}`);
+    }
+    pressed = true;
+    hooks.onFirstPress?.();
+    timer = setTimeout(giveUp, stopWaitingDelay(startedAt));
+  };
+
+  return {
+    press,
+    stop: () => {
+      byLogout = true;
+      if (!pressed) press();
+      giveUp();
+    },
+    pressed: () => pressed,
+    byLogout: () => byLogout,
+    dispose: () => clearTimeout(timer),
+  };
+}
+
 /**
  * Hold the session for `work` its caller has stopped waiting for, until it
  * settles: the way the runner holds it for a call it gave up on (see
@@ -853,17 +938,27 @@ export function clearHolds(session: ActiveSession): boolean {
  */
 export function resendSoftBreak(session: ActiveSession): void {
   try {
-    const { success, err } = session.GciTsBreak(false);
-    logInfo(
-      `[Session ${session.id}] Soft break sent again: success=${success}` +
-        (err?.number ? ` err=${err.number} ${err.message ?? ''}` : ''),
-    );
+    sendSoftBreak(session, ' again');
   } catch (e) {
-    logInfo(
-      `[Session ${session.id}] Could not send the soft break again: ` +
-        (e instanceof Error ? e.message : String(e)),
-    );
+    logInfo(`[Session ${session.id}] Could not send the soft break again: ${errorText(e)}`);
   }
+}
+
+/**
+ * Send a soft break and log it: a break that the gem ignores is indistinguishable,
+ * from the outside, from a break that was never sent, and the difference is the
+ * whole diagnosis when a stop button appears to do nothing.
+ */
+function sendSoftBreak(session: ActiveSession, again: '' | ' again'): void {
+  const { success, err } = session.GciTsBreak(false);
+  logInfo(
+    `[Session ${session.id}] Soft break sent${again}: success=${success}` +
+      (err?.number ? ` err=${err.number} ${err.message ?? ''}` : ''),
+  );
+}
+
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }
 
 /** Whether a GCI error's `context` names a process. */
@@ -1056,30 +1151,22 @@ export function pollNbToCompletion<T>(
     let pollIndex = 0;
     let progressShown = false;
     let progressTimer: ReturnType<typeof setTimeout> | null = null;
-    let softBreakSent = false;
-    let stopWaitingTimer: ReturnType<typeof setTimeout> | null = null;
     const startedAt = performance.now();
     let progressResolve: (() => void) | null = null;
     const abandoned = new AbortController();
     // onReady's work, once it has begun: from then on the non-blocking result
     // is already read and the session may belong to a worker thread.
     let reading: Promise<T> | null = null;
-    let stopped = false;
     const liveEntry = {
-      stopRequested: (): boolean => softBreakSent,
+      stopRequested: (): boolean => stopping.pressed(),
       disposableProcess: opts.disposableProcess === true,
       // What the run's own Cancel does.
       cancel: (): void => requestCancel(),
-      // Twice, like pressing Cancel twice: a soft break, then stop waiting. A run
-      // the first press already settled needs no second one.
       stop: (): Promise<T> => {
-        stopped = true;
-        requestCancel();
-        if (!settled) requestCancel();
+        settleOnThrow(() => stopping.stop())();
         return run;
       },
     };
-    live.set(session.id, liveEntry);
 
     const finishProgress = (): void => {
       if (progressResolve) {
@@ -1094,15 +1181,12 @@ export function pollNbToCompletion<T>(
       settled = true;
       stoppingDone?.();
       endRun(session.id, liveEntry);
-      if (stopped) fn = () => reject(new NbCancelledError());
+      if (stopping.byLogout()) fn = () => reject(new NbCancelledError());
       if (progressTimer) {
         clearTimeout(progressTimer);
         progressTimer = null;
       }
-      if (stopWaitingTimer) {
-        clearTimeout(stopWaitingTimer);
-        stopWaitingTimer = null;
-      }
+      stopping.dispose();
       finishProgress();
       fn();
     };
@@ -1122,55 +1206,22 @@ export function pollNbToCompletion<T>(
     let progressReport: ((value: { message?: string }) => void) | null = null;
 
     // Shared by the notification's Cancel and any external canceller handed out via
-    // opts.onStart. The first call asks the gem to stop at a safe point; the runner
-    // stops waiting if the call is still going later, or at a second call.
-    const stopWaiting = settleOnThrow(() => {
-      if (settled) return;
-      resendSoftBreak(session);
-      abandoned.abort();
-      logInfo(
-        `[Session ${session.id}] Stopped waiting for the call; the gem may still be finishing it.`,
-      );
-      if (reading) {
-        // Nothing to drain, and the session must not be touched — see
-        // awaitAbandonedRead.
-        void awaitAbandonedRead(session, reading, opts.onAbandonedCollected);
-      } else {
-        // The session counts the call as in progress until its result is collected.
-        // Drain it, or the very next call on this session is refused with "session
-        // is busy" — which reads as the next run silently doing nothing.
-        void drainAbandonedCall(
-          session,
-          opts.disposableProcess === true,
-          opts.disposableResult === true,
-          opts.onAbandonedCollected,
-        );
-      }
-      settle(() => reject(new NbCancelledError()));
-      if (!stopped) sayStillRunningUnlessItEnds(session);
-    });
-
-    const requestCancel = settleOnThrow(() => {
-      if (settled) {
-        logInfo(`[Session ${session.id}] Break requested, but the call had already settled.`);
-        return;
-      }
-      if (softBreakSent) {
-        stopWaiting();
-        return;
-      }
-      // Logged because a break that the gem ignores is indistinguishable, from
-      // the outside, from a break that was never sent — and the difference is
-      // the whole diagnosis when a stop button appears to do nothing.
-      const { success, err } = session.GciTsBreak(false);
-      logInfo(
-        `[Session ${session.id}] Soft break sent: success=${success}` +
-          (err?.number ? ` err=${err.number} ${err.message ?? ''}` : ''),
-      );
-      softBreakSent = true;
-      progressReport?.({ message: 'Soft break sent — waiting for the gem to stop…' });
-      // Best-effort: a failure here must not keep the stop-waiting timer below unset.
-      if (!stopped) {
+    // opts.onStart.
+    const stopping = stopControl(session, startedAt, {
+      callRunning: () => {
+        if (settled) {
+          logInfo(`[Session ${session.id}] Break requested, but the call had already settled.`);
+        }
+        return !settled;
+      },
+      // Settles the run: see settleOnThrow.
+      onBreakError: (e) => {
+        throw e;
+      },
+      onFirstPress: () => {
+        progressReport?.({ message: 'Soft break sent — waiting for the gem to stop…' });
+        if (stopping.byLogout()) return;
+        // Best-effort: a failure here must not keep the stop-waiting timer unset.
         try {
           vscode.window.setStatusBarMessage(
             '$(loading~spin) Stopping…',
@@ -1179,13 +1230,41 @@ export function pollNbToCompletion<T>(
         } catch (e) {
           logInfo(`[Session ${session.id}] Could not show "Stopping…": ${String(e)}`);
         }
-      }
-      stopWaitingTimer = setTimeout(() => {
-        stopWaitingTimer = null;
-        stopWaiting();
-      }, stopWaitingDelay(startedAt));
+      },
+      giveUp: () => {
+        if (settled) return false;
+        let gaveUp = false;
+        settleOnThrow(() => {
+          resendSoftBreak(session);
+          abandoned.abort();
+          logInfo(
+            `[Session ${session.id}] Stopped waiting for the call; the gem may still be finishing it.`,
+          );
+          if (reading) {
+            // Nothing to drain, and the session must not be touched — see
+            // awaitAbandonedRead.
+            void awaitAbandonedRead(session, reading, opts.onAbandonedCollected);
+          } else {
+            // The session counts the call as in progress until its result is collected.
+            // Drain it, or the very next call on this session is refused with "session
+            // is busy" — which reads as the next run silently doing nothing.
+            void drainAbandonedCall(
+              session,
+              opts.disposableProcess === true,
+              opts.disposableResult === true,
+              opts.onAbandonedCollected,
+            );
+          }
+          settle(() => reject(new NbCancelledError()));
+          gaveUp = true;
+        })();
+        return gaveUp;
+      },
     });
-    if (opts.onStart) opts.onStart(requestCancel, () => softBreakSent);
+    const requestCancel = settleOnThrow(() => stopping.press());
+    // Published only now: liveEntry reaches stopping and requestCancel.
+    live.set(session.id, liveEntry);
+    if (opts.onStart) opts.onStart(requestCancel, () => stopping.pressed());
 
     const doPoll = settleOnThrow(() => {
       if (settled) return;
