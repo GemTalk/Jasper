@@ -64,6 +64,52 @@ describe('SysadminStorage.getPlatformKey on Darwin', () => {
   });
 });
 
+describe('which machines can run a GemStone server', () => {
+  let root: string | undefined;
+
+  // A root holding an installed product folder for 3.7.5, named the way Jasper names it
+  // for `platformKey`.
+  function rootWithInstall(platformKey: string): void {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'jasper-platform-'));
+    fs.mkdirSync(path.join(root, `GemStone64Bit3.7.5-${platformKey}`));
+    __setConfig('gemstone', 'rootPath', root);
+  }
+
+  afterEach(() => {
+    if (root) fs.rmSync(root, { recursive: true, force: true });
+    root = undefined;
+    __resetConfig();
+  });
+
+  it('says no server can run on Windows without WSL', () => {
+    withPlatform('win32', 'x64', () => {
+      expect(new SysadminStorage().hasLocalServer()).toBe(false);
+    });
+  });
+
+  it('finds no installed server on Windows without WSL, whatever the folders are called', () => {
+    rootWithInstall('undefined');
+    withPlatform('win32', 'x64', () => {
+      const storage = new SysadminStorage();
+      expect(storage.getExtractedVersionInfos(true)).toEqual([]);
+      expect(storage.getGemstonePath('3.7.5')).toBeUndefined();
+      expect(storage.isLocalVersion('3.7.5')).toBe(false);
+    });
+  });
+
+  onSupportedPosixIt('finds the installed server on Linux', () => {
+    rootWithInstall('x86_64.Linux');
+    withPlatform('linux', 'x64', () => {
+      const storage = new SysadminStorage();
+      expect(storage.hasLocalServer()).toBe(true);
+      expect(storage.getExtractedVersions()).toEqual(['3.7.5']);
+      expect(storage.getGemstonePath('3.7.5')).toBe(
+        path.join(root!, 'GemStone64Bit3.7.5-x86_64.Linux'),
+      );
+    });
+  });
+});
+
 describe('a root path that cannot be read', () => {
   /** Root can read a folder whatever its mode, so a run as root would prove
    *  nothing — and should say it was skipped rather than report a pass. */

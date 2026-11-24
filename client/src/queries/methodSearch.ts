@@ -36,7 +36,7 @@ export const METHOD_SEARCH_RESULT_LIMIT = 500;
  *  Senders, Implementors, hierarchy implementors, References, the method-source search and
  *  the safe-delete scans all build one list out of one query per environment, and each of
  *  them used to hand-roll the same fold on class/side/selector alone. */
-export function dedupeMethodResults(results: MethodSearchResult[]): MethodSearchResult[] {
+export function dedupeMethodResults<T extends MethodSearchResult>(results: T[]): T[] {
   const seen = new Set<string>();
   return results.filter((r) => {
     const key = `${r.className}|${r.isMeta}|${r.selector}|${r.environmentId}`;
@@ -46,8 +46,13 @@ export function dedupeMethodResults(results: MethodSearchResult[]): MethodSearch
   });
 }
 
-/** Smalltalk that writes the first `rowLimit` of `methods` as rows for `parseMethodSearchResults`. */
-export function methodSerialization(envId: number, rowLimit = METHOD_SEARCH_RESULT_LIMIT): string {
+/** Smalltalk that writes the first `rowLimit` of `methods` as rows for `parseMethodSearchResults`.
+ *  `moreColumns` runs at the end of row `i` (method `each`) to write columns after the row's own. */
+export function methodSerialization(
+  envId: number,
+  rowLimit = METHOD_SEARCH_RESULT_LIMIT,
+  moreColumns = '',
+): string {
   return `sl := System myUserProfile symbolList.
 classDict := IdentityDictionary new.
 sl do: [:dict |
@@ -71,7 +76,9 @@ limit := methods size min: ${rowLimit}.
     nextPutAll: (cls isMeta ifTrue: ['1'] ifFalse: ['0']); tab;
     nextPutAll: each selector; tab;
     nextPutAll: ((cls categoryOfSelector: each selector environmentId: ${envId}) ifNil: ['']); tab;
-    nextPutAll: '${envId}'; lf.
+    nextPutAll: '${envId}'.
+  ${moreColumns}
+  stream lf.
 ].
 stream contents`;
 }
@@ -332,6 +339,57 @@ methods := methods asArray.`;
   return `| organizer methods stream limit classDict sl |
 ${collect}
 ${methodSerialization(environmentId)}`;
+}
+
+/** A sender, and where in its source it first sends the selector, as the editor counts: 0-based
+ *  line and character. */
+export interface SendSite extends MethodSearchResult {
+  line: number;
+  character: number;
+}
+
+/**
+ * The senders of `selector`, each with where its first send sits. `sendersOf:` answers that
+ * itself, as a 1-based offset into the source, which is turned into a line and character here
+ * on the stone so no method's source has to come back. Columns are counted as the editor counts
+ * them, in UTF-16 units, and a CR LF pair and a lone CR each end a line. A method with no
+ * position is placed at its first line.
+ */
+export async function sendSitesOfAsync(
+  execute: NbQueryExecutor,
+  selector: string,
+  environmentId: number,
+): Promise<SendSite[]> {
+  const position = `src := each sourceString.
+  at := (offsets at: i) ifNil: [0].
+  line := 0. col := 0. k := 1.
+  [k < at] whileTrue: [
+    ch := src at: k.
+    (ch = Character lf or: [ch = Character cr])
+      ifTrue: [
+        (ch = Character cr and: [k + 1 < at and: [(src at: k + 1) = Character lf]])
+          ifTrue: [k := k + 1].
+        line := line + 1. col := 0]
+      ifFalse: [col := col + (ch codePoint > 16rFFFF ifTrue: [2] ifFalse: [1])].
+    k := k + 1].
+  stream tab; nextPutAll: line printString; tab; nextPutAll: col printString.`;
+  const raw =
+    await execute(`| found methods offsets stream limit classDict sl src at line col k ch |
+found := ${classOrganizerExpr(environmentId)} sendersOf: #'${escapeString(selector)}'.
+methods := found at: 1.
+offsets := found at: 2.
+${methodSerialization(environmentId, METHOD_SEARCH_RESULT_LIMIT, position)}`);
+  const count = (column: string | undefined) => {
+    const n = Number(column);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const sites: SendSite[] = [];
+  for (const row of raw.split('\n')) {
+    const [result] = parseMethodSearchResults(row);
+    const columns = row.split('\t');
+    if (result) sites.push({ ...result, line: count(columns[6]), character: count(columns[7]) });
+  }
+  return sites;
 }
 
 export function implementorsOf(

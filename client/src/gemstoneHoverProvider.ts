@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { SessionManager } from './sessionManager';
-import { SelectorResolver } from './selectorProviders';
+import { SelectorResolver, sessionForDocument } from './selectorProviders';
 import { dedupeMethodResults } from './queries/methodSearch';
 import { compareMethods } from './methodOrder';
 import { maxEnvironment, sweepEnvironments } from './methodEnvironments';
@@ -44,7 +44,7 @@ export class GemStoneHoverProvider implements vscode.HoverProvider {
     document: vscode.TextDocument,
     position: vscode.Position,
   ): Promise<vscode.Hover | null> {
-    const session = this.sessionManager.getSelectedSession();
+    const session = sessionForDocument(this.sessionManager, document);
     if (!session) return null;
 
     // 1. Try selector → show implementors with categories

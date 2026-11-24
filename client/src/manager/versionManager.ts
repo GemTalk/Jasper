@@ -264,7 +264,7 @@ export class VersionManager {
    */
   versionsFrom(catalog: CatalogEntry[]): GemStoneVersion[] {
     const versions: GemStoneVersion[] = [];
-    const hasLocalServer = this.storage.getPlatformKey() !== undefined;
+    const hasLocalServer = this.storage.hasLocalServer();
     const downloaded = hasLocalServer
       ? this.storage.getDownloadedFiles()
       : new Map<string, number>();
