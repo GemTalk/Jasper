@@ -268,9 +268,12 @@ describe('MethodItem click wiring', () => {
 });
 
 describe('ExplorerController.handleMethodClick', () => {
-  it('leaves the first click to the single-click preview open', () => {
+  // A row's selection change opens its method before or after the row's command
+  // reports the click, so these start with the clicked method already selected.
+  it('leaves a click on the selected method to its selection change', () => {
     const ctl = makeController();
     const open = vi.spyOn(ctl, 'openMethod').mockResolvedValue();
+    ctl.state.selectedSelector = 'at:';
 
     ctl.handleMethodClick(methodItem());
 
@@ -281,6 +284,7 @@ describe('ExplorerController.handleMethodClick', () => {
     const ctl = makeController();
     const open = vi.spyOn(ctl, 'openMethod').mockResolvedValue();
     const node = methodItem();
+    ctl.state.selectedSelector = 'at:';
 
     ctl.handleMethodClick(node);
     ctl.handleMethodClick(node);
@@ -296,7 +300,7 @@ describe('ExplorerController.handleMethodClick', () => {
     ctl.handleMethodClick(methodItem({ selector: 'at:' }));
     ctl.handleMethodClick(methodItem({ selector: 'size' }));
 
-    expect(open).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalledWith(expect.anything(), 'keep');
   });
 });
 
@@ -310,7 +314,9 @@ describe('a method clicked while a run holds the session', () => {
 
   const clicks = {
     'a single click': (ctl: ExplorerController, node: MethodItem) => ctl.openClickedMethod(node),
+    // The first click's selection change has already opened the method.
     'a double-click': (ctl: ExplorerController, node: MethodItem) => {
+      ctl.state.selectedSelector = node.info.selector;
       ctl.handleMethodClick(node);
       ctl.handleMethodClick(node);
     },
@@ -323,7 +329,7 @@ describe('a method clicked while a run holds the session', () => {
       vi.mocked(isRunning).mockReturnValue(true);
       openTextDocument.mockRejectedValueOnce(refusedOpen(RUN_IN_PROGRESS_MESSAGE));
 
-      click(makeController(), methodItem());
+      void click(makeController(), methodItem());
       await settle();
       await settle();
 
@@ -336,7 +342,7 @@ describe('a method clicked while a run holds the session', () => {
       vi.mocked(isRunning).mockReturnValue(true);
       openTextDocument.mockRejectedValueOnce(new Error('no such class'));
 
-      click(makeController(), methodItem());
+      void click(makeController(), methodItem());
       await settle();
       await settle();
 
@@ -348,7 +354,7 @@ describe('a method clicked while a run holds the session', () => {
     it(`logs any other failure to open the method from ${gesture}`, async () => {
       openTextDocument.mockRejectedValueOnce(new Error('the stone went away'));
 
-      click(makeController(), methodItem());
+      void click(makeController(), methodItem());
       await settle();
       await settle();
 
@@ -367,7 +373,7 @@ describe('a method open that fails for a reason the user already knows', () => {
   function openHeld(ctl: ExplorerController) {
     let fail!: (e: Error) => void;
     openTextDocument.mockReturnValueOnce(new Promise((_, reject) => (fail = reject)));
-    ctl.openClickedMethod(methodItem());
+    void ctl.openClickedMethod(methodItem());
     return { fail };
   }
 

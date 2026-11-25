@@ -1140,6 +1140,18 @@ interface PendingClick {
   highlightMoved?: boolean;
 }
 
+/** A method open whose source hasn't been read yet. */
+interface MethodOpening {
+  uri: string;
+  mode: OpenSourceMode;
+  /** The method selected before the first of the opens overlapping this one. */
+  selectorBefore: string | undefined;
+  /** Settles with whether the method opened; never rejects. */
+  done: Promise<boolean>;
+  /** Why it didn't open. */
+  error?: unknown;
+}
+
 /** What the Classes pane shows on each class row of a dictionary, besides its name. */
 interface ClassRowMetadata {
   definedIvarCounts: Map<string, number>;
@@ -2892,7 +2904,7 @@ export class ExplorerController {
     // Settled, a click that left its class unselected (refused while busy, dropped, or
     // replaced by another dictionary's selection) opens nothing, and is withdrawn so the
     // next click on the class can't pair with it.
-    this.openFromExplorer(
+    void this.openFromExplorer(
       selected.then(() => {
         if (this.state.className !== className || this.state.dictIndex !== dictIndex) {
           click.withdraw();
@@ -2903,44 +2915,74 @@ export class ExplorerController {
     );
   }
 
-  // Opens an editor for an Explorer click or row button. VS Code hands a failed open back as a
-  // plain Error that keeps only its message, so a refused or cancelled read, which has already
-  // said so, is recognised by its wording. For the other ways a run holds a session only the
-  // session's state is known, which can't tell a refusal from a real failure, so those get a
-  // plain log line rather than a warning; a run that ended in between can still leave one
-  // needless warning.
-  private openFromExplorer(open: Promise<void>): void {
+  // Opens an editor for an Explorer click or row button, answering whether it opened. VS Code
+  // hands a failed open back as a plain Error that keeps only its message, so a refused or
+  // cancelled read, which has already said so, is recognised by its wording. For the other ways
+  // a run holds a session only the session's state is known, which can't tell a refusal from a
+  // real failure, so those get a plain log line rather than a warning; a run that ended in
+  // between can still leave one needless warning.
+  private openFromExplorer(open: Promise<void>): Promise<boolean> {
     const openedIn = this.session();
-    void open.catch((e: unknown) => {
-      if (this.session() !== openedIn) return;
-      if (queries.isBusyRefusal(e) || e instanceof NbCancelledError) return;
-      const message = e instanceof Error ? e.message : String(e);
-      if (QUIET_OPEN_FAILURES.some((quiet) => message.includes(quiet))) return;
-      if (openedIn && (isRunning(openedIn) || stoppedRunHolds(openedIn))) {
-        logInfo(`Explorer could not open the editor while a run held the session: ${message}`);
-        return;
-      }
-      logWarning(`Explorer could not open the editor: ${message}`);
-    });
+    return open.then(
+      () => true,
+      (e: unknown) => {
+        if (this.session() !== openedIn) return false;
+        if (queries.isBusyRefusal(e) || e instanceof NbCancelledError) return false;
+        const message = e instanceof Error ? e.message : String(e);
+        if (QUIET_OPEN_FAILURES.some((quiet) => message.includes(quiet))) return false;
+        if (openedIn && (isRunning(openedIn) || stoppedRunHolds(openedIn))) {
+          logInfo(`Explorer could not open the editor while a run held the session: ${message}`);
+          return false;
+        }
+        logWarning(`Explorer could not open the editor: ${message}`);
+        return false;
+      },
+    );
   }
 
-  openClickedMethod(node: MethodItem, mode: OpenSourceMode = 'preview'): void {
-    this.openFromExplorer(this.openMethod(node, mode));
+  // A method open the click's other report is already making, for that report to share.
+  private methodOpeningFor(node: MethodItem, mode: OpenSourceMode): MethodOpening | undefined {
+    const uri = this.methodSourceUri(node.isMeta, node.info)?.toString();
+    const opening = this.methodOpening;
+    return uri !== undefined && opening?.uri === uri && opening.mode === mode ? opening : undefined;
+  }
+
+  // Answers whether the method opened. VS Code reports one click twice, as a selection change
+  // and as the row's command (handleMethodClick), in no promised order: the second report
+  // shares the first's open, which alone reports a failure.
+  openClickedMethod(node: MethodItem, mode: OpenSourceMode = 'preview'): Promise<boolean> {
+    const opening = this.methodOpeningFor(node, mode);
+    if (opening) return opening.done;
+    return this.openFromExplorer(this.openMethod(node, mode));
   }
 
   openClickedDefinition(item?: ClassItem, pin = false): void {
-    this.openFromExplorer(this.openClassDefinition(item, pin));
+    void this.openFromExplorer(this.openClassDefinition(item, pin));
   }
 
-  // Same manual double-click detection for the Methods pane: a single click
-  // already opened the method as a preview tab (via onDidChangeSelection); a
-  // double-click on the same row promotes it to a permanent tab so a later
-  // single click elsewhere won't replace it.
+  // Same manual double-click detection for the Methods pane: a single click opens the
+  // method as a preview tab; a double-click on the same row promotes it to a permanent
+  // tab so a later single click elsewhere won't replace it.
   private readonly methodClicks = new DoubleClickDetector(500);
   handleMethodClick(node: MethodItem): void {
-    if (this.methodClicks.register(`${node.isMeta}:${node.info.selector}`)) {
-      this.openClickedMethod(node, 'keep');
+    const click = this.methodClicks.click(`${node.isMeta}:${node.info.selector}`);
+    if (click.completesPair) {
+      void this.openClickedMethod(node, 'keep');
+      return;
     }
+    // Usually the click's selection change opens the method. But a refused open leaves
+    // its row highlighted, and clicking a highlighted row changes no selection, so a
+    // click on a method that isn't the selected one opens it here, as handleClassClick
+    // re-syncs a class. Either way, a click that opened nothing is withdrawn so the
+    // next one can't pair with it.
+    if (
+      !this.methodOpeningFor(node, 'preview') &&
+      this.state.selectedSelector === node.info.selector
+    )
+      return;
+    void this.openClickedMethod(node).then((ok) => {
+      if (!ok) click.withdraw();
+    });
   }
 
   // ── Hierarchy pane ──────────────────────────────────────────────────────────
@@ -5804,35 +5846,78 @@ export class ExplorerController {
     });
   }
 
+  // The latest method open still reading its source.
+  private methodOpening: MethodOpening | undefined;
+
   async openMethod(node: MethodItem, mode: OpenSourceMode = 'preview'): Promise<void> {
-    const session = this.session();
-    if (!session || this.state.dictName === undefined || this.state.className === undefined) {
+    const uri = this.methodSourceUri(node.isMeta, node.info);
+    if (!uri) return;
+    // A second open of the same method shares the read already under way.
+    const earlier = this.methodOpening;
+    if (earlier?.uri === uri.toString() && earlier.mode === mode) {
+      if (!(await earlier.done)) throw earlier.error;
       return;
     }
+    let settle!: (opened: boolean) => void;
+    const opening: MethodOpening = {
+      uri: uri.toString(),
+      mode,
+      selectorBefore: earlier ? earlier.selectorBefore : this.state.selectedSelector,
+      done: new Promise((resolve) => (settle = resolve)),
+    };
+    this.methodOpening = opening;
+    try {
+      await this.showMethod(node, uri, mode, opening);
+      settle(true);
+    } catch (e) {
+      opening.error = e;
+      settle(false);
+      throw e;
+    } finally {
+      if (this.methodOpening === opening) this.methodOpening = undefined;
+    }
+  }
+
+  private async showMethod(
+    node: MethodItem,
+    uri: vscode.Uri,
+    mode: OpenSourceMode,
+    opening: MethodOpening,
+  ): Promise<void> {
     // A row click still reading would commit over this method, clearing it while its
     // editor stays open.
     this.pendingClick = undefined;
     this.state.selectedSelector = node.info.selector;
     this.syncTitles();
-    this.recordLanding({ selector: node.info.selector, isMeta: node.isMeta });
-    // Carry the 1-based dictionary index so the method's class is resolved in the
-    // right dictionary (some dictionaries — e.g. Python — hold classes whose
-    // lookup is ambiguous by bare name). Slash-bearing selectors are escaped.
-    const uri = buildMethodUri({
-      kind: 'method',
-      sessionId: session.id,
-      dictName: this.state.dictName,
-      className: this.state.className,
+    // Taken now but recorded only once the source is read: a refused read opens nothing
+    // to come back to.
+    const recordLanding = this.landingRecorder({
+      selector: node.info.selector,
       isMeta: node.isMeta,
-      category: node.info.category,
-      selector: escapeSelectorSlashes(node.info.selector),
-      environmentId: EXPLORER_METHOD_ENVIRONMENT,
-      dictIndex: this.state.dictIndex,
     });
     // Marked so syncToEditor ignores this open instead of re-revealing the row under ALL
     // METHODS and stealing the selection from the category the user clicked.
     this.markSelfOpen(uri);
-    const doc = await vscode.workspace.openTextDocument(uri);
+    let doc: vscode.TextDocument;
+    try {
+      doc = await vscode.workspace.openTextDocument(uri);
+    } catch (e) {
+      // Nothing opened (a busy session refuses the read), so take back what this open
+      // claimed, unless a later open has claimed it since. Any failure counts: the error
+      // crosses VS Code's file-system boundary, which loses what kind it was.
+      if (this.methodOpening === opening) {
+        this.selfOpenedUris.delete(selfOpenKey(uri));
+        if (this.state.selectedSelector === node.info.selector) {
+          this.state.selectedSelector = opening.selectorBefore;
+          this.syncTitles();
+        }
+      }
+      throw e;
+    }
+    // A later open that is refused goes back to this method, which did open.
+    const later = this.methodOpening;
+    if (later && later !== opening) later.selectorBefore = node.info.selector;
+    recordLanding();
     // Assign the language BEFORE the doc enters the (reused) preview editor. A
     // gemstone doc is otherwise language-tagged asynchronously
     // (onDidOpenTextDocument → setTextDocumentLanguage) — i.e. *after* it's shown —
@@ -6673,22 +6758,36 @@ export class ExplorerController {
    * appending a duplicate entry.
    */
   private recordLanding(method?: { selector: string; isMeta: boolean }): void {
+    this.landingRecorder(method)();
+  }
+
+  // Takes the landing the panes are on now, and answers a way to record it later. The
+  // later record is skipped once the panes have left that class: the trail must follow
+  // the panes.
+  private landingRecorder(method?: { selector: string; isMeta: boolean }): () => void {
     const session = this.session();
     const { dictName, dictIndex, classCategory, className } = this.state;
     // Until the panes have a dictionary index there is no dictionary landed on to record.
-    if (!session || dictName === undefined || dictIndex === undefined) return;
-    this.history.record(
-      {
-        sessionId: session.id,
-        dictName,
-        dictIndex,
-        classCategory,
-        className,
-        selector: method?.selector,
-        isMeta: method?.isMeta,
-      },
-      { fromEditor: this.syncingToEditor },
-    );
+    if (!session || dictName === undefined || dictIndex === undefined) return () => {};
+    const landing = {
+      sessionId: session.id,
+      dictName,
+      dictIndex,
+      classCategory,
+      className,
+      selector: method?.selector,
+      isMeta: method?.isMeta,
+    };
+    const options = { fromEditor: this.syncingToEditor };
+    return () => {
+      const now = this.state;
+      const stillHere =
+        this.session()?.id === session.id &&
+        now.dictIndex === dictIndex &&
+        now.classCategory === classCategory &&
+        now.className === className;
+      if (stillHere) this.history.record(landing, options);
+    };
   }
 
   /**
@@ -9629,7 +9728,7 @@ export function registerGemStoneExplorer(
     // side is the title-bar toggle now, not a selectable row.
     if (node instanceof MethodItem) {
       ctl.recordMethodContext(node.isMeta, node.info.category);
-      ctl.openClickedMethod(node);
+      void ctl.openClickedMethod(node);
     } else if (node instanceof MethodCategoryItem) {
       ctl.recordMethodContext(node.isMeta, node.computed ? undefined : node.category);
     }
@@ -9741,7 +9840,7 @@ export function registerGemStoneExplorer(
       },
     ),
     vscode.commands.registerCommand('gemstone.explorer.openMethodToSide', (node: MethodItem) => {
-      if (node instanceof MethodItem) ctl.openClickedMethod(node, 'pin');
+      if (node instanceof MethodItem) void ctl.openClickedMethod(node, 'pin');
     }),
     // The inline ▶ on a test method row. Runs through the same command the System
     // Browser uses, so the result lands in the Testing view like every other run.
@@ -9832,7 +9931,7 @@ export function registerGemStoneExplorer(
     // pass the tree selection, so read it from the view here.
     vscode.commands.registerCommand('gemstone.explorer.openSelectedMethodToSide', () => {
       const node = methodView.selection[0];
-      if (node instanceof MethodItem) ctl.openClickedMethod(node, 'pin');
+      if (node instanceof MethodItem) void ctl.openClickedMethod(node, 'pin');
     }),
     // Find Class: cascade the panes to a class by name (from the Classes pane
     // title button or the command palette). The optional sessionId lets a caller (GemStone Search) target
