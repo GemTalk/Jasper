@@ -17,7 +17,42 @@ runs:
       uses: Vampire/setup-wsl@d1da7f2c0322a5ee4f24975344f67fc0f5baf364 # v7.0.0
       with:
         distribution: Ubuntu-22.04
-        additional-packages: curl unzip
+        # No additional-packages: that runs `apt-get update`, ~49 MB of
+        # package lists from Ubuntu's servers on every leg, which crawled
+        # enough on 2026-11-25 to trip this step's 4-minute limit. The image
+        # already has curl; unzip comes from the cached .deb below.
+    - name: Cache unzip package
+      # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
+      # not a mutable tag like @v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}\ubuntu-debs
+        key: ubuntu-22.04-unzip-6.0-26ubuntu3.2-amd64
+    - name: Fetch unzip package
+      env:
+        # SHA256 from Ubuntu's signed jammy-updates package index. Launchpad
+        # keeps superseded builds, unlike the archive mirrors' pool.
+        UNZIP_DEB_URL: https://launchpad.net/ubuntu/+archive/primary/+files/unzip_6.0-26ubuntu3.2_amd64.deb
+        UNZIP_DEB_SHA256: 4f274ffc6774d52878322ef1e3eb6d185003e1607448e62893849825bfae347d
+        UNZIP_DEB: ${{ runner.temp }}\ubuntu-debs\unzip_6.0-26ubuntu3.2_amd64.deb
+      shell: pwsh
+      run: |
+        if (-not (Test-Path $env:UNZIP_DEB)) {
+          New-Item -ItemType Directory -Force (Split-Path $env:UNZIP_DEB) | Out-Null
+          curl.exe -fsSL --retry 3 --max-time 30 -o $env:UNZIP_DEB $env:UNZIP_DEB_URL
+          if ($LASTEXITCODE -ne 0) { throw "unzip .deb download failed" }
+        }
+        $actual = (Get-FileHash -Algorithm SHA256 $env:UNZIP_DEB).Hash.ToLower()
+        if ($actual -ne $env:UNZIP_DEB_SHA256) {
+          Remove-Item $env:UNZIP_DEB
+          throw "unzip .deb checksum mismatch: $actual"
+        }
+    - name: Install unzip in WSL
+      env:
+        UNZIP_DEB: ${{ runner.temp }}\ubuntu-debs\unzip_6.0-26ubuntu3.2_amd64.deb
+        WSLENV: UNZIP_DEB/p
+      shell: wsl-bash {0}
+      run: dpkg -i "$UNZIP_DEB" && unzip -v | head -1
     - name: Cache GemStone Windows client download
       # The client build is always native Windows (this action only ever
       # runs on windows-latest), so there's only ever one platform's archive
