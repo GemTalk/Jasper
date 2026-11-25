@@ -27,6 +27,10 @@ function actionWithoutComments(): string {
     .join('\n');
 }
 
+function unzipCacheKey(action: string): string | undefined {
+  return action.match(/^\s*key:\s*(\S*-unzip-\S+)\s*$/m)?.[1];
+}
+
 describe('Windows CI setup', () => {
   it('never downloads Ubuntu package lists', () => {
     const action = actionWithoutComments();
@@ -40,7 +44,7 @@ describe('Windows CI setup', () => {
     const debFiles = new Set(action.match(/unzip_[^_\s]+_amd64\.deb/g));
     expect(debFiles.size).toBe(1);
     const version = [...debFiles][0].split('_')[1];
-    expect(action).toMatch(new RegExp(`key:\\s*\\S*unzip-${version.replace(/\./g, '\\.')}\\b`));
+    expect(unzipCacheKey(action)).toContain(`-unzip-${version}-`);
     expect(action).toMatch(/UNZIP_DEB_SHA256:\s*[0-9a-f]{64}\s*$/m);
     expect(action).toMatch(/Get-FileHash -Algorithm SHA256/);
   });
@@ -49,9 +53,7 @@ describe('Windows CI setup', () => {
     const action = actionWithoutComments();
     const distribution = action.match(/^\s*distribution:\s*Ubuntu-(\S+)\s*$/m)?.[1];
     expect(distribution).toBeDefined();
-    expect(action).toMatch(
-      new RegExp(`key:\\s*ubuntu-${distribution!.replace(/\./g, '\\.')}-unzip-`),
-    );
+    expect(unzipCacheKey(action)?.startsWith(`ubuntu-${distribution}-unzip-`)).toBe(true);
   });
 
   it('installs unzip inside WSL without the network', () => {
