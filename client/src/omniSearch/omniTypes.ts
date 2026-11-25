@@ -112,6 +112,9 @@ export interface OmniResult {
   /** Selectors, space-separated, whose sends the row's source preview marks: in a trail, the sends
    *  that lead to the next steps. */
   highlight?: string;
+  /** A trail step's code of interest, copied from its method: marked in the preview, shown on the
+   *  card, and where Open puts the cursor. */
+  focus?: string;
   /** Ranking score from the matcher (higher = better). */
   score: number;
   /** Matched ranges in `label` (for future highlighting). */

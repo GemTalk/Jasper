@@ -37,6 +37,7 @@
     '- **Stop** cancels the answer in progress; your next message continues the same conversation.',
     '### Results in Jasper',
     "- With **Show results in Jasper (if possible)** ticked, lists open in the **Assistant Results** panel, one tab each, instead of in the chat, with the question it answers. The **Clear Assistant Results** button in the panel's title bar closes them all. Your GemStone Search is left alone.",
+    '- To ask about rows of a list, select them (Ctrl+click or Shift+click for several; Cmd+click on a Mac) and press **Ask about this** beside the filter box. The chat opens with them named over the box.',
     '- A regular-expression search opens in GemStone Search instead.',
     '- A blue banner in the chat gives the count, with a button that brings up the panel.',
     '- Lists, the Explorer and example Workspaces change when the answer is finished, all at once. A regular-expression search shows straight away.',

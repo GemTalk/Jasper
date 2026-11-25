@@ -4033,6 +4033,35 @@ export function activate(context: vscode.ExtensionContext) {
         void showAssistantResultsTab();
         AssistantPanel.show(assistantDeps());
       }),
+      vscode.commands.registerCommand('jasper.copyAssistantLog', async () => {
+        const text = AssistantPanel.logMarkdown();
+        if (!text)
+          return void vscode.window.showInformationMessage(
+            'The Jasper Assistant has no conversation to copy.',
+          );
+        await vscode.env.clipboard.writeText(text);
+        void vscode.window.showInformationMessage('Copied the Jasper Assistant conversation.');
+      }),
+      vscode.commands.registerCommand('jasper.saveAssistantLog', async () => {
+        const text = AssistantPanel.logMarkdown();
+        if (!text)
+          return void vscode.window.showInformationMessage(
+            'The Jasper Assistant has no conversation to save.',
+          );
+        const uri = await vscode.window.showSaveDialog({
+          filters: { Markdown: ['md'] },
+          saveLabel: 'Save Log',
+          title: 'Save the Jasper Assistant conversation',
+        });
+        if (!uri) return;
+        try {
+          await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(text));
+        } catch (err) {
+          void vscode.window.showErrorMessage(
+            `Could not save the conversation: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }),
       vscode.commands.registerCommand(ASK_ABOUT_COMMAND, (about: AskAbout) =>
         AssistantPanel.askAbout(assistantDeps(), about),
       ),

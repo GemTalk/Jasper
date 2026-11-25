@@ -715,6 +715,7 @@ export function trailResults(steps: readonly FoundStep[], sessionId: number): Om
       description: step.note,
       coach: step.note,
       depth,
+      ...(step.focus ? { focus: step.focus } : {}),
     };
   });
   return rows.map((row, i) => {

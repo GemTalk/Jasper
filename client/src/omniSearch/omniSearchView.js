@@ -62,6 +62,14 @@
     var coachEl = null;
     var coachClosed = false;
     var activeIndex = -1;
+    // Rows picked to ask about (indexes into `rows`): the selected row, plus any Ctrl/Cmd- or
+    // Shift-clicked with it. Only Assistant Results picks several; elsewhere it is the selected row.
+    var picked = [];
+    var askBtn = doc.getElementById('askAbout');
+    var multiPick = !!askBtn;
+    // Whether the user chose the selected row: a new list selects its first row by itself, and a
+    // click on that must select it, not unselect it.
+    var chosen = false;
     var inPivot = false;
     var previewTimer = null;
     // Keystroke coalescing for the search field. `debounceMs` is pushed from the host config; 0 means
@@ -306,15 +314,17 @@
       if (activeIndex >= 0 && rows[activeIndex]) rows[activeIndex].classList.remove('active');
     }
 
-    function setActive(index, scroll) {
+    function setActive(index, scroll, keepPicked) {
       if (rows.length === 0) {
         activeIndex = -1;
+        setPicked([]);
         return;
       }
       clearActive();
       activeIndex = Math.max(0, Math.min(rows.length - 1, index));
       var el = rows[activeIndex];
       el.classList.add('active');
+      if (!keepPicked) setPicked([activeIndex]);
       showCoach();
       if (scroll !== false && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
       // A new left-row selection dismisses a sticky references list — the pane goes back to source.
@@ -360,6 +370,12 @@
       text.className = 'coach-text';
       text.textContent = row.coachText;
       coachEl.appendChild(text);
+      if (row.focusText) {
+        var code = doc.createElement('pre');
+        code.className = 'coach-focus';
+        code.textContent = row.focusText;
+        coachEl.appendChild(code);
+      }
       var buttons = doc.createElement('div');
       buttons.className = 'coach-buttons';
       function button(label, title, onClick) {
@@ -376,7 +392,7 @@
       }
       var id = activeRowId();
       button('Ask about this', 'Ask the Jasper Assistant about this step', function () {
-        post('askAbout', { id: id });
+        post('askAbout', { ids: pickedIds() });
       }).className = 'secondary';
       button('Open', 'Open this method in an editor', function () {
         post('activate', { id: id, side: false });
@@ -453,6 +469,70 @@
         strip.appendChild(b);
       });
       if (asked.textContent) strip.appendChild(asked);
+    }
+
+    function setPicked(list) {
+      for (var i = 0; i < picked.length; i++)
+        if (rows[picked[i]]) rows[picked[i]].classList.remove('picked');
+      picked = list.slice().sort(function (a, b) {
+        return a - b;
+      });
+      if (picked.length > 1) {
+        for (var j = 0; j < picked.length; j++) rows[picked[j]].classList.add('picked');
+      }
+      if (askBtn) {
+        askBtn.style.display = picked.length ? '' : 'none';
+        askBtn.textContent = picked.length > 1 ? 'Ask about ' + picked.length : 'Ask about this';
+      }
+    }
+
+    /** No row selected, nothing picked: what a click on the only selected row leaves. */
+    function clearSelection() {
+      clearActive();
+      activeIndex = -1;
+      chosen = false;
+      setPicked([]);
+      showCoach();
+      refreshRefIndicator();
+    }
+
+    function pickedIds() {
+      return picked.map(function (i) {
+        return Number(rows[i].getAttribute('data-id'));
+      });
+    }
+
+    /** Ctrl/Cmd+click adds a row to the picked ones or takes it out; Shift+click picks every row from
+     *  the selected one to it. Answers false for a plain click, which picks only its row. */
+    function pickWithKeys(idx, ev) {
+      if (!multiPick) return false;
+      if (ev.shiftKey && activeIndex >= 0) {
+        var from = Math.min(activeIndex, idx);
+        var to = Math.max(activeIndex, idx);
+        var range = [];
+        for (var i = from; i <= to; i++) if (rows[i].style.display !== 'none') range.push(i);
+        setPicked(range);
+        setActive(idx, true, true);
+        chosen = true;
+        return true;
+      }
+      if (ev.ctrlKey || ev.metaKey) {
+        var at = picked.indexOf(idx);
+        if (at >= 0 && picked.length === 1) {
+          if (chosen) clearSelection();
+          chosen = true;
+        } else if (at >= 0) {
+          var rest = picked.slice(0, at).concat(picked.slice(at + 1));
+          setPicked(rest);
+          setActive(idx === activeIndex ? rest[rest.length - 1] : activeIndex, true, true);
+        } else {
+          setPicked(picked.concat(at >= 0 ? [] : [idx]));
+          setActive(idx, true, true);
+          chosen = true;
+        }
+        return true;
+      }
+      return false;
     }
 
     function activeRowId() {
@@ -537,6 +617,7 @@
       }
       var groups = [];
       var parent = null;
+      chosen = false;
       for (var r = 0; r < viewRows.length; r++) {
         var li = makeRow(viewRows[r]);
         if (viewRows[r].nested && parent) {
@@ -616,16 +697,24 @@
         li.coachLabel = row.label;
       }
       if (row.highlight) li.highlightTerm = row.highlight;
+      if (row.focus) li.focusText = row.focus;
       // Inline: a trail can go deeper than the one level `.nested` styles.
       if (row.depth) li.style.paddingLeft = 10 + 20 * row.depth + 'px';
       var idx = rows.length;
-      li.addEventListener('click', function () {
+      li.addEventListener('click', function (ev) {
+        if (pickWithKeys(idx, ev)) return;
         // A click on the step whose card is showing folds the card away; another click opens it.
-        if (idx === activeIndex && li.coachText) {
+        if (idx === activeIndex && li.coachText && picked.length === 1) {
           coachClosed = !coachClosed;
           showCoach();
           return;
         }
+        // In Assistant Results a click on the only selected row, once chosen, unselects it.
+        if (multiPick && idx === activeIndex && picked.length === 1 && chosen) {
+          clearSelection();
+          return;
+        }
+        chosen = true;
         coachClosed = false;
         setActive(idx);
       });
@@ -983,7 +1072,7 @@
           // Ignore a stale preview for a row that's no longer active, or one that arrives while the
           // pane is showing a sticky references list (referencesInPreview mode).
           if (previewMode === 'source' && msg.id === activeRowId())
-            showPreview(msg.source, msg.title, msg.matches);
+            showPreview(msg.source, msg.title, msg.matches, msg.focus);
           break;
         case 'refPreview':
           // Fill the preview pane with the row's references/senders — but only if that row is still
@@ -1356,6 +1445,39 @@
       return first;
     }
 
+    /** Fill `container` with `source`, its focus lines (a trail step's code of interest, whole lines)
+     *  wrapped in a highlighted span, and `ranges` marked as highlightRanges does. Answers the span,
+     *  to scroll to. */
+    function renderWithFocus(container, source, ranges, focus) {
+      var from = source.lastIndexOf('\n', focus.start - 1) + 1;
+      var to = source.indexOf('\n', focus.end);
+      if (to < 0) to = source.length;
+      var parts = [
+        [0, from, null],
+        [from, to, 'focus-lines'],
+        [to, source.length, null],
+      ];
+      var focusEl = null;
+      parts.forEach(function (p) {
+        if (p[1] <= p[0]) return;
+        var span = doc.createElement('span');
+        if (p[2]) {
+          span.className = p[2];
+          focusEl = span;
+        }
+        var inside = ranges
+          .filter(function (r) {
+            return r.start >= p[0] && r.end <= p[1];
+          })
+          .map(function (r) {
+            return { start: r.start - p[0], end: r.end - p[0] };
+          });
+        highlightRanges(span, source.slice(p[0], p[1]), inside);
+        container.appendChild(span);
+      });
+      return focusEl;
+    }
+
     // Fill `container` with `text`, wrapping every occurrence of `term` in <mark> (built from text
     // nodes, never innerHTML). Returns the first mark element (for scroll-into-view) or null — so the
     // preview SHOWS WHERE the query matched (e.g. a Source search for "foo").
@@ -1567,7 +1689,7 @@
 
     // `matches` are a regex hit's matches ({start, end} into `source`, in order); they are marked
     // instead of the typed text, which for a regex is not text to look for.
-    function showPreview(source, title, matches) {
+    function showPreview(source, title, matches, focus) {
       previewMode = 'source';
       refreshRefIndicator();
       previewEl.textContent = '';
@@ -1593,7 +1715,9 @@
       var rowTarget = rows[activeIndex] && rows[activeIndex].highlightTerm;
       var target = rowTarget || pivotHighlightTerm;
       var pivotRanges = target ? pivotSendRanges(source, target) : null;
-      if (pivotRanges) firstHit = highlightRanges(pre, source, pivotRanges);
+      if (focus && focus.end <= source.length)
+        firstHit = renderWithFocus(pre, source, pivotRanges || [], focus);
+      else if (pivotRanges) firstHit = highlightRanges(pre, source, pivotRanges);
       else if (Array.isArray(matches) && matches.length)
         firstHit = highlightRanges(pre, source, markableRanges(matches, source.length));
       else firstHit = highlightOccurrences(pre, source, previewTerm(), caseSensitive);
@@ -1948,6 +2072,12 @@
           break;
       }
     });
+
+    if (askBtn) {
+      askBtn.addEventListener('click', function () {
+        if (picked.length) post('askAbout', { ids: pickedIds() });
+      });
+    }
 
     if (clearEl) {
       clearEl.addEventListener('click', function () {

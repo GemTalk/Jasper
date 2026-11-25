@@ -521,6 +521,9 @@ export function renderOmniHtml(opts: { showPin: boolean; resultsOnly?: boolean }
     .result-tab .close { background: none; border: none; color: inherit; cursor: pointer; padding: 0 4px; opacity: 0.7; font: inherit; }
     .result-tab .close:hover { opacity: 1; }
     .results-asked { flex-basis: 100%; color: var(--vscode-descriptionForeground); font-size: 0.85em; padding: 4px 2px 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #askAbout { flex: 0 0 auto; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 2px; padding: 3px 10px; cursor: pointer; font: inherit; white-space: nowrap; }
+    #askAbout:hover { background: var(--vscode-button-hoverBackground); }
+    .row.picked { background: var(--vscode-list-inactiveSelectionBackground); }
     .results-empty { color: var(--vscode-descriptionForeground); font-style: italic; padding: 3px 0; }
     .coach {
       list-style: none; margin: 2px 8px 8px 22px; padding: 8px 10px;
@@ -531,6 +534,8 @@ export function renderOmniHtml(opts: { showPin: boolean; resultsOnly?: boolean }
     .coach-head { display: flex; justify-content: space-between; align-items: center; font-size: 0.85em; color: var(--vscode-descriptionForeground); }
     .coach-close { background: none; border: none; color: inherit; cursor: pointer; font-size: 1.1em; padding: 0 2px; }
     .coach-text { margin: 4px 0 8px; white-space: normal; }
+    .coach-focus { margin: 0 0 8px; padding: 4px 6px; font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); white-space: pre-wrap; background: var(--vscode-textCodeBlock-background); border-radius: 3px; }
+    .focus-lines { background: var(--vscode-editor-findRangeHighlightBackground, rgba(255, 210, 0, 0.18)); outline: 1px solid var(--vscode-editor-findRangeHighlightBorder, transparent); }
     .coach-buttons { display: flex; gap: 6px; justify-content: flex-end; }
     .coach-buttons button {
       background: var(--vscode-button-background); color: var(--vscode-button-foreground);
@@ -712,7 +717,11 @@ export function renderOmniHtml(opts: { showPin: boolean; resultsOnly?: boolean }
              and the button lands near the ↗ that was just clicked on a row. -->
         <button id="refindicator" title="Showing references — click to exit" aria-pressed="false" style="display:none">↗ References</button>
         <button id="clear" title="Clear search" aria-label="Clear search" style="display:none">×</button>
-      </div>
+      </div>${
+        opts.resultsOnly
+          ? '\n      <button id="askAbout" title="Ask the Jasper Assistant about the selected rows. Ctrl+click (Cmd+click on a Mac) or Shift+click selects several." style="display:none">Ask about this</button>'
+          : ''
+      }
       <!-- The tooltip names the case this button exists for. A class, global or
            method created by EXECUTING code announces nothing the panel can listen
            for (see DESIGN.md §3), so the only way anyone learns that a workspace

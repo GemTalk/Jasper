@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchTrail, trailCode, type TrailStep } from '../trail';
+import { findFocus, matchTrail, trailCode, type TrailStep } from '../trail';
 import type { MethodSearchResult } from '../../../queries/methodSearch';
 
 function step(className: string, selector: string, classSide = false): TrailStep {
@@ -50,5 +50,27 @@ describe('a trail of methods to read', () => {
     const code = trailCode([step('Order', "x']. System logout. #['")]);
 
     expect(code).not.toContain('logout');
+  });
+});
+
+describe("finding a step's code of interest in its method", () => {
+  const source = 'run\n  | m |\n  m := self matcher.\n  ^m matchesIn: [:x | x size > 2]';
+
+  it('finds code copied exactly', () => {
+    const found = findFocus(source, 'm := self matcher.');
+
+    expect(source.slice(found!.start, found!.end)).toBe('m := self matcher.');
+  });
+
+  it('finds code whose spaces and line breaks differ from the source', () => {
+    const found = findFocus(source, 'm := self matcher.\n^m   matchesIn: [:x | x size > 2]');
+
+    expect(source.slice(found!.start, found!.end)).toBe(
+      'm := self matcher.\n  ^m matchesIn: [:x | x size > 2]',
+    );
+  });
+
+  it('finds nothing for code the method does not hold', () => {
+    expect(findFocus(source, 'self halt')).toBeUndefined();
   });
 });

@@ -217,7 +217,7 @@ describe('the Assistant Results view', () => {
     const { results, send } = mount();
     await results.open(deps(), trail);
 
-    await send({ command: 'askAbout', id: 0 });
+    await send({ command: 'askAbout', ids: [0] });
 
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
       'jasper.askAbout',
@@ -240,7 +240,7 @@ describe('what Ask about this tells the assistant', () => {
         question: 'How does lending work?',
         results: steps,
       },
-      steps[1],
+      [steps[1]],
     );
 
     expect(label).toBe('Results 2: Library>>isOnLoan');
@@ -253,7 +253,7 @@ describe('what Ask about this tells the assistant', () => {
   it('asks for a trail into a method only when the question is about the whole method', () => {
     const { context } = askAboutContext(
       { label: 'Results 1', title: 'How lending works', results: steps },
-      steps[0],
+      [steps[0]],
     );
 
     expect(context).toContain('show a trail into it with show_trail_in_search');
@@ -279,7 +279,7 @@ describe('what Ask about this tells the assistant', () => {
 
     const { context } = askAboutContext(
       { label: 'Results 1', title: 'Classes created', results: [cls] },
-      cls,
+      [cls],
     );
 
     expect(context).not.toContain('show_trail_in_search');
@@ -290,7 +290,7 @@ describe('what Ask about this tells the assistant', () => {
 
     const { context } = askAboutContext(
       { label: 'Results 1', title: 'Classes created', results: [nested] },
-      nested,
+      [nested],
     );
 
     expect(context).toContain('  - Library>>addBook:');
@@ -300,12 +300,73 @@ describe('what Ask about this tells the assistant', () => {
   it('sends at most a hundred rows, and says how many more there are', () => {
     const many = Array.from({ length: 130 }, (_, i) => method(`m${i}`));
 
-    const { context } = askAboutContext(
-      { label: 'Results 1', title: 'Many', results: many },
+    const { context } = askAboutContext({ label: 'Results 1', title: 'Many', results: many }, [
       many[0],
-    );
+    ]);
 
     expect(context).toContain('(and 30 more)');
     expect(context).not.toContain('Library>>m100');
+  });
+
+  it('asks about several rows together, and names them all', () => {
+    const { label, context } = askAboutContext(
+      { label: 'Results 1', title: 'How lending works', results: steps },
+      steps,
+    );
+
+    expect(label).toBe('Results 1: 2 rows (Library>>lend:to:, Library>>isOnLoan)');
+    expect(context).toContain(
+      'They have these selected:\n- Library>>lend:to:\n- Library>>isOnLoan',
+    );
+    expect(context).not.toContain('show_trail_in_search');
+  });
+});
+
+describe('a trail step that points at its code', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const source = 'run\n  | m |\n  m := self matcher.\n  ^m size';
+  const step = {
+    ...method('run'),
+    label: '1. Library>>run',
+    coach: 'makes the matcher',
+    focus: 'm := self matcher.',
+  };
+
+  it('tells the preview where the code is', async () => {
+    const d = { ...deps(), previewSource: vi.fn(() => source) };
+    const { results, send, posted } = mount();
+    await results.open(d, { title: 'T', results: [step] });
+
+    await send({ command: 'preview', id: 0 });
+
+    expect(posted()).toContainEqual(
+      expect.objectContaining({ command: 'preview', focus: { start: 14, end: 32 } }),
+    );
+  });
+
+  it('opens the method with the cursor on that code', async () => {
+    const d = { ...deps(), previewSource: vi.fn(() => source) };
+    const { results, send } = mount();
+    await results.open(d, { title: 'T', results: [step] });
+
+    await send({ command: 'activate', id: 0 });
+
+    expect(d.activate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: expect.objectContaining({ matches: [{ start: 14, end: 32 }] }),
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('opens the method as usual when the code is not in it', async () => {
+    const d = { ...deps(), previewSource: vi.fn(() => 'run\n  ^1') };
+    const { results, send } = mount();
+    await results.open(d, { title: 'T', results: [step] });
+
+    await send({ command: 'activate', id: 0 });
+
+    expect(vi.mocked(d.activate).mock.calls[0][0].action).not.toHaveProperty('matches');
   });
 });

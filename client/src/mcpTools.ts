@@ -962,7 +962,8 @@ export function registerMcpTools(
         'something works or where something happens: follow the real sends, from where it starts ' +
         'to where the work is done, usually 3 to 12 steps. Give the main steps depth 0; where you ' +
         'follow a step into the methods it sends, list those right after it at depth 1 (2 for ' +
-        'deeper), so the main steps stand out. Afterwards reply with one or two ' +
+        'deeper), so the main steps stand out. Give each step a focus: the lines its note is about, ' +
+        'copied from the method. Afterwards reply with one or two ' +
         'sentences; do not repeat the steps.',
       {
         title: z.string().min(1).describe('What the trail shows, e.g. "How an order is priced"'),
@@ -987,6 +988,13 @@ export function registerMcpTools(
                 .max(4)
                 .optional()
                 .describe('0 for a main step; 1 for a method the step above it sends; and so on'),
+              focus: z
+                .string()
+                .optional()
+                .describe(
+                  'The code in this method the note is about, copied exactly from its source: ' +
+                    'a statement or a few lines, so Jasper can mark it and open the method there',
+                ),
             }),
           )
           .min(1)

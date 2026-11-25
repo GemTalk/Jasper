@@ -915,6 +915,18 @@
         "category": "GemStone"
       },
       {
+        "command": "jasper.copyAssistantLog",
+        "title": "Copy Jasper Assistant Log",
+        "category": "GemStone",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "jasper.saveAssistantLog",
+        "title": "Save Jasper Assistant Log…",
+        "category": "GemStone",
+        "icon": "$(save)"
+      },
+      {
         "command": "jasper.installMcpTlsCertificate",
         "title": "Install MCP TLS Certificate",
         "category": "GemStone"
@@ -2723,6 +2735,14 @@
           "when": "jasper.mcpAvailable"
         },
         {
+          "command": "jasper.copyAssistantLog",
+          "when": "jasper.mcpAvailable"
+        },
+        {
+          "command": "jasper.saveAssistantLog",
+          "when": "jasper.mcpAvailable"
+        },
+        {
           "command": "jasper.installMcpTlsCertificate",
           "when": "jasper.mcpAvailable"
         },
@@ -3592,6 +3612,16 @@
         }
       ],
       "editor/title": [
+        {
+          "command": "jasper.copyAssistantLog",
+          "when": "activeWebviewPanelId == 'jasperAssistant'",
+          "group": "navigation@0"
+        },
+        {
+          "command": "jasper.saveAssistantLog",
+          "when": "activeWebviewPanelId == 'jasperAssistant'",
+          "group": "navigation@1"
+        },
         {
           "command": "gemstone.methodHistoryFromEditor",
           "when": "gemstone.methodEditorActive",

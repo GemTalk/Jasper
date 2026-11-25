@@ -18,6 +18,7 @@ import { McpReport } from '../mcpWindowStatus';
 import { OMNI_VIEW_ID } from '../omniSearch/omniSearchViewProvider';
 import { ASSISTANT_RESULTS_VIEW_ID } from '../omniSearch/assistantResultsView';
 import { HeldDisplay } from './heldDisplay';
+import { conversationMarkdown, LogMessage } from './conversationMarkdown';
 
 const assistantViewJs = readWebviewScript('assistantView.js', 'assistant');
 
@@ -56,13 +57,6 @@ export interface AssistantPanelDeps {
   /** Held from each message sent until its answer ends. */
   heldDisplay: HeldDisplay;
 }
-
-/** What the chat shows, as posted to the webview: kept so a reopened panel can show it again. */
-type LogMessage =
-  | { command: 'user'; text: string; about?: string }
-  | { command: 'event'; event: unknown }
-  | { command: 'error'; text: string }
-  | { command: 'stopped' };
 
 type Inbound =
   | { command: 'ready' }
@@ -130,6 +124,12 @@ export class AssistantPanel {
   private setAbout(about: AskAbout | undefined): void {
     this.about = about;
     this.post({ command: 'about', label: about?.label ?? null });
+  }
+
+  /** The conversation so far as Markdown (Copy Log, Save Log); undefined when there is none. */
+  static logMarkdown(): string | undefined {
+    const log = AssistantPanel.conversation.log;
+    return log.length ? conversationMarkdown(log) : undefined;
   }
 
   /** Redraw the MCP status line; called wherever the MCP Server tab is told ownership changed. */

@@ -390,6 +390,31 @@ describe('GemStone Search view — results rendering (flat, no grouping)', () =>
       expect(marked).toEqual(['pattern:', 'ignoreCase:', 'spansLines:']);
     });
 
+    it("marks the lines of a step's code of interest, and shows that code on its card", () => {
+      const { handle } = mount();
+      handle.renderResults(
+        trail({
+          rows: [row(0, '1. A>>run', { coach: 'makes the matcher', focus: 'm := self matcher.' })],
+          shownCount: 1,
+        }),
+      );
+
+      handle.onMessage({
+        data: {
+          command: 'preview',
+          id: 0,
+          source: 'run\n  | m |\n  m := self matcher.\n  ^m size',
+          title: 'A>>run',
+          focus: { start: 14, end: 32 },
+        },
+      });
+
+      expect(document.querySelector('#preview .focus-lines')!.textContent).toBe(
+        '  m := self matcher.',
+      );
+      expect(card()!.querySelector('.coach-focus')!.textContent).toBe('m := self matcher.');
+    });
+
     it('asks the assistant about the step it is on', () => {
       const { handle, vscode } = mount();
       handle.renderResults(trail());
@@ -397,7 +422,7 @@ describe('GemStone Search view — results rendering (flat, no grouping)', () =>
 
       cardButton('Ask about this')!.click();
 
-      expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'askAbout', id: 1 });
+      expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'askAbout', ids: [1] });
     });
 
     it('shows no card for a list that is not a trail', () => {
@@ -472,6 +497,114 @@ describe('GemStone Search view — results rendering (flat, no grouping)', () =>
       handle.onMessage({ data: { command: 'resultTabs', tabs: [] } });
 
       expect(el.textContent).toMatch(/Lists the Jasper Assistant shows open here/);
+    });
+  });
+
+  describe('picking rows to ask about in Assistant Results', () => {
+    const list = () =>
+      resultsMsg({
+        rows: [row(0, 'A>>a'), row(1, 'A>>b'), row(2, 'A>>c'), row(3, 'A>>d')],
+        shownCount: 4,
+        pivot: true,
+        pivotTitle: 'Methods in A',
+      });
+    const mountResults = () => {
+      const ask = document.createElement('button');
+      ask.id = 'askAbout';
+      document.body.innerHTML = SHELL;
+      document.body.appendChild(ask);
+      const vscode = { postMessage: vi.fn() };
+      const handle = api().wire(document, vscode);
+      handle.renderResults(list());
+      vscode.postMessage.mockClear();
+      return { handle, vscode, ask };
+    };
+    const rowEls = () => [...document.querySelectorAll<HTMLElement>('#results .row')];
+    const click = (i: number, keys: MouseEventInit = {}) =>
+      rowEls()[i].dispatchEvent(new MouseEvent('click', { bubbles: true, ...keys }));
+
+    it('asks about the selected row', () => {
+      const { vscode, ask } = mountResults();
+      click(2);
+
+      ask.click();
+
+      expect(ask.textContent).toBe('Ask about this');
+      expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'askAbout', ids: [2] });
+    });
+
+    it('adds rows with Ctrl+click and takes one out with another', () => {
+      const { vscode, ask } = mountResults();
+      click(0);
+      click(2, { ctrlKey: true });
+      click(3, { metaKey: true });
+      click(2, { ctrlKey: true });
+
+      ask.click();
+
+      expect(ask.textContent).toBe('Ask about 2');
+      expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'askAbout', ids: [0, 3] });
+    });
+
+    it('picks every row between with Shift+click', () => {
+      const { vscode, ask } = mountResults();
+      click(1);
+      click(3, { shiftKey: true });
+
+      ask.click();
+
+      expect(rowEls().map((r) => r.classList.contains('picked'))).toEqual([
+        false,
+        true,
+        true,
+        true,
+      ]);
+      expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'askAbout', ids: [1, 2, 3] });
+    });
+
+    it('selects, not unselects, the row a new list selected by itself', () => {
+      const { ask } = mountResults();
+
+      click(0);
+
+      expect(rowEls()[0].classList.contains('active')).toBe(true);
+      expect(ask.style.display).toBe('');
+    });
+
+    it('unselects the only selected row on a click or a Ctrl+click on it', () => {
+      const { ask } = mountResults();
+      click(1);
+      click(1);
+      const afterClick = rowEls().some((r) => r.classList.contains('active'));
+      click(2);
+
+      click(2, { ctrlKey: true });
+
+      expect(afterClick).toBe(false);
+      expect(rowEls().some((r) => r.classList.contains('active'))).toBe(false);
+      expect(ask.style.display).toBe('none');
+    });
+
+    it('goes back to one row on a plain click', () => {
+      const { vscode, ask } = mountResults();
+      click(0);
+      click(2, { ctrlKey: true });
+      click(1);
+
+      ask.click();
+
+      expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'askAbout', ids: [1] });
+    });
+
+    it('picks one row at a time in GemStone Search, which has no Ask button', () => {
+      const { handle } = mount();
+      handle.renderResults(list());
+      click(0);
+
+      click(2, { ctrlKey: true });
+
+      expect(rowEls().some((r) => r.classList.contains('picked'))).toBe(false);
+      expect(handle.activeRowId()).toBe(2);
     });
   });
 

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { codePointMatchesToUtf16 } from '../matchOffsets';
 import { OmniResult } from './omniTypes';
+import { findFocus } from '../assistant/queries/trail';
 import { createOmniEngine, OmniEngine, OmniViewData, ReferenceView } from './omniEngine';
 import { OmniPanelDeps } from './omniSearchPanel';
 import { configMessage, renderOmniHtml, resultsMessage } from './omniSearchShared';
@@ -18,6 +19,7 @@ export async function showAssistantResultsTab(): Promise<void> {
 
 type Inbound = {
   command: string;
+  ids?: number[];
   value?: string;
   id?: number;
   refId?: number;
@@ -214,7 +216,8 @@ export class AssistantResultsView implements vscode.WebviewViewProvider {
       }
       case 'activate': {
         const result = engine.resultFor(m.id ?? -1);
-        if (result) await deps.activate(result, { beside: false, preserveFocus: false });
+        if (result)
+          await deps.activate(atFocus(result, deps), { beside: false, preserveFocus: false });
         return;
       }
       case 'preview': {
@@ -242,9 +245,9 @@ export class AssistantResultsView implements vscode.WebviewViewProvider {
         return;
       }
       case 'askAbout': {
-        const result = engine.resultFor(m.id ?? -1);
-        if (!result) return;
-        await vscode.commands.executeCommand(ASK_ABOUT_COMMAND, askAboutContext(tab, result));
+        const picked = (m.ids ?? []).flatMap((id) => engine.resultFor(id) ?? []);
+        if (picked.length === 0) return;
+        await vscode.commands.executeCommand(ASK_ABOUT_COMMAND, askAboutContext(tab, picked));
         return;
       }
       case 'openReference': {
@@ -271,35 +274,57 @@ function rowName(r: OmniResult): string {
 /** The most rows of a list sent with a question about it; the assistant can look up the rest. */
 const MAX_ROWS_ASKED_ABOUT = 100;
 
-/** What Ask about this tells the assistant: the list, its question, and the row the user is on. */
+/** What Ask about this tells the assistant: the list, its question, and the rows the user picked. */
 export function askAboutContext(
   tab: Pick<ResultTab, 'label' | 'title' | 'question' | 'results'>,
-  selected: OmniResult,
+  picked: readonly OmniResult[],
 ): { label: string; context: string } {
   const rows = tab.results.slice(0, MAX_ROWS_ASKED_ABOUT).map((r) => {
     const note = r.coach ? ` — ${r.coach}` : '';
     return `${'  '.repeat(r.depth ?? (r.nested ? 1 : 0))}- ${rowName(r)}${note}`;
   });
   const more = tab.results.length - rows.length;
+  const one = picked.length === 1 ? picked[0] : undefined;
   const lines = [
     `The user is asking about a list you showed in Jasper's Assistant Results panel, titled "${tab.title}".`,
     ...(tab.question ? [`It answered their question: "${tab.question}".`] : []),
     'Its rows:',
     ...rows,
     ...(more > 0 ? [`(and ${more} more)`] : []),
-    `They have "${rowName(selected)}" selected. Answer about that, reading its source with your tools as needed.`,
-    ...(selected.action.kind === 'openMethod'
+    ...(one
+      ? [
+          `They have "${rowName(one)}" selected. Answer about that, reading its source with your tools as needed.`,
+        ]
+      : [
+          'They have these selected:',
+          ...picked.map((r) => `- ${rowName(r)}`),
+          'Answer about those, together, reading their source with your tools as needed.',
+        ]),
+    ...(one?.action.kind === 'openMethod'
       ? [
           'Only if their question is about how that method works as a whole (for example "tell me more ' +
             `about this" or "how does this work"), then show a trail into it with show_trail_in_search, titled ` +
-            `for example "Inside ${rowName(selected)}": start at that method and follow the methods it sends, ` +
+            `for example "Inside ${rowName(one)}": start at that method and follow the methods it sends, ` +
             'into other classes too, so the user can go a level deeper; if it sends nothing worth following ' +
             '(only primitives or basic messages), say so instead. A question about one detail of it (a ' +
             'variable, a line, a value) gets an answer in the chat and no trail.',
         ]
       : []),
   ];
-  return { label: `${tab.label}: ${rowName(selected)}`, context: lines.join('\n') };
+  const about = one ? rowName(one) : `${picked.length} rows (${picked.map(rowName).join(', ')})`;
+  return { label: `${tab.label}: ${about}`, context: lines.join('\n') };
+}
+
+/** `result`, opening with the cursor on its focus (a trail step's code of interest) when its method's
+ *  source holds it. Opening selects a result's first match, counted as the stone counts characters. */
+function atFocus(result: OmniResult, deps: OmniPanelDeps): OmniResult {
+  if (!result.focus || result.action.kind !== 'openMethod') return result;
+  const source = previewSource(deps, result);
+  const found = findFocus(source, result.focus);
+  if (!found) return result;
+  const codePoints = (end: number) => [...source.slice(0, end)].length;
+  const matches = [{ start: codePoints(found.start), end: codePoints(found.end) }];
+  return { ...result, action: { ...result.action, matches } };
 }
 
 /** The source to preview, or none when it cannot be read: a preview is not worth an error. */
@@ -322,6 +347,7 @@ function previewMessage(
     id,
     source,
     title: result.label,
+    focus: result.focus ? findFocus(source, result.focus) : undefined,
     matches:
       result.action.kind === 'openMethod' && result.action.matches
         ? codePointMatchesToUtf16(source, result.action.matches)
