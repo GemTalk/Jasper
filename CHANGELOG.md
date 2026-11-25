@@ -20,6 +20,8 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 - **Releases no longer fall back to the old Marketplace token.** Trusted Publishing published 1.20.0, so the release workflow drops the stored token it kept in case Trusted Publishing failed. A refused sign-in now fails the Marketplace publish job, with nothing uploaded. ([#939](https://github.com/GemTalk/Jasper/issues/939))
 
+- **Developer tooling and test-suite work.** No user-facing behavior change: Windows CI no longer downloads Ubuntu's package lists to install `unzip` in WSL, which failed Windows jobs when Ubuntu's servers were slow. It installs `unzip` from a cached, checksum-pinned package file instead. ([#999](https://github.com/GemTalk/Jasper/issues/999))
+
 ## [1.20.0] - 2026-11-23
 
 ### Added
