@@ -899,7 +899,7 @@ export function registerMcpTools(
   if (ui) {
     server.tool(
       'show_classes_in_search',
-      "Show a set of classes in Jasper's GemStone Search pane, as a titled list the user can open. " +
+      "Show a set of classes in a new tab of Jasper's Assistant Results panel, as a titled list the user can open. " +
         'Use this whenever the answer is more than a few classes (classes that implement a ' +
         'selector, that reference something, that look like they do some job): ' +
         GUI_RESULT_GUIDANCE +
@@ -955,8 +955,8 @@ export function registerMcpTools(
 
     server.tool(
       'show_trail_in_search',
-      "Show the methods to read, in order, to see how something works, as a numbered list in Jasper's " +
-        'GemStone Search pane, each with a note on what it does there. Use it when the user asks how ' +
+      'Show the methods to read, in order, to see how something works, as a numbered list in a new ' +
+        "tab of Jasper's Assistant Results panel, each with a note on what it does there. Use it when the user asks how " +
         'something works or where something happens: follow the real sends, from where it starts ' +
         'to where the work is done, usually 3 to 12 steps. Afterwards reply with one or two ' +
         'sentences; do not repeat the steps.',
@@ -1049,7 +1049,7 @@ export function registerMcpTools(
 
     server.tool(
       'show_methods_in_search',
-      "Show a set of methods in Jasper's GemStone Search pane, as a titled list the user can open. " +
+      "Show a set of methods in a new tab of Jasper's Assistant Results panel, as a titled list the user can open. " +
         'Use this whenever the answer is more than a few methods and no source pattern describes ' +
         'them (use show_regex_source_search when one does): ' +
         GUI_RESULT_GUIDANCE +

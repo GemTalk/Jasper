@@ -340,6 +340,56 @@ describe('GemStone Search view — results rendering (flat, no grouping)', () =>
     });
   });
 
+  describe('the row of tabs in Assistant Results', () => {
+    const strip = () => {
+      const el = document.createElement('div');
+      el.id = 'resulttabs';
+      document.body.prepend(el);
+      return el;
+    };
+    const tabsMsg = (active: number) => ({
+      data: {
+        command: 'resultTabs',
+        active,
+        tabs: [
+          { id: 1, title: 'Methods in Library', question: 'What does Library do?' },
+          { id: 2, title: 'How lending works' },
+        ],
+      },
+    });
+
+    it('shows the question the selected list answers', () => {
+      const { handle } = mount();
+      const el = strip();
+
+      handle.onMessage(tabsMsg(1));
+
+      expect(el.querySelector('.results-asked')!.textContent).toBe('Asked: What does Library do?');
+    });
+
+    it('selects a tab on a click, and closes one from its ×', () => {
+      const { handle, vscode } = mount();
+      const el = strip();
+      handle.onMessage(tabsMsg(1));
+      const [, second] = el.querySelectorAll<HTMLElement>('.result-tab');
+
+      second.click();
+      second.querySelector<HTMLButtonElement>('.close')!.click();
+
+      expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'selectTab', tab: 2 });
+      expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'closeTab', tab: 2 });
+    });
+
+    it('says what goes there when there are no lists', () => {
+      const { handle } = mount();
+      const el = strip();
+
+      handle.onMessage({ data: { command: 'resultTabs', tabs: [] } });
+
+      expect(el.textContent).toMatch(/Lists the Jasper Assistant shows open here/);
+    });
+  });
+
   it('indents a row that belongs to the one above it', () => {
     const { handle } = mount();
 

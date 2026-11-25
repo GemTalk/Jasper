@@ -10,13 +10,21 @@
  */
 export class HeldDisplay {
   private holding = false;
+  private asked: string | undefined;
   private queue: Array<() => Promise<unknown>> = [];
 
   constructor(private readonly onError: (message: string) => void) {}
 
-  /** The assistant has started an answer. */
-  hold(): void {
+  /** The assistant has started answering `question`. */
+  hold(question?: string): void {
     this.holding = true;
+    this.asked = question;
+  }
+
+  /** The question being answered, until what it showed has been shown: undefined for a tool that
+   *  another Claude Code calls between answers. */
+  get question(): string | undefined {
+    return this.asked;
   }
 
   /** The answer has ended, finished or not: show what was held, in the order it came. A failure
@@ -32,6 +40,7 @@ export class HeldDisplay {
         this.onError(err instanceof Error ? err.message : String(err));
       }
     }
+    if (!this.holding) this.asked = undefined;
   }
 
   /** Run `show` now and answer what it says, or, while an answer is in progress, keep it for

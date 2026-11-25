@@ -37,6 +37,7 @@ import { focusGemStoneExplorer } from '../explorerContainer';
 import { buildMethodUri } from '../gemstoneFileSystemProvider';
 import { readOmniConfig } from './omniConfig';
 import { OMNI_OPEN_KEY_HINT } from './omniSearchShared';
+import { AssistantResultsView, ASSISTANT_RESULTS_VIEW_ID } from './assistantResultsView';
 import { OmniProvider, OmniResult, RegexSearchOutcome, RegexSearchRunner } from './omniTypes';
 import { RegexPatternError, searchMethodSourceRegexAsync } from '../queries/regexSourceSearch';
 import { NbCancelledError, stoppedRunHolds } from '../nbRunner';
@@ -477,12 +478,14 @@ export interface OmniSearchRegistration extends vscode.Disposable {
   notifySessionSynced(sessionId: number): void;
   /** Run a regex source search in the docked view; see OmniSearchViewProvider.showRegexSearch. */
   showRegexSearch: OmniSearchViewProvider['showRegexSearch'];
-  /** Show a list of methods in the docked view; see OmniSearchViewProvider.showMethodList. */
+  /** Show a list of methods in the Assistant Results view; see OmniSearchViewProvider.showMethodList. */
   showMethodList: OmniSearchViewProvider['showMethodList'];
-  /** Show a list of classes in the docked view; see OmniSearchViewProvider.showClassList. */
+  /** Show a list of classes in the Assistant Results view; see OmniSearchViewProvider.showClassList. */
   showClassList: OmniSearchViewProvider['showClassList'];
-  /** Show a trail of methods in the docked view; see OmniSearchViewProvider.showTrail. */
+  /** Show a trail of methods in the Assistant Results view; see OmniSearchViewProvider.showTrail. */
   showTrail: OmniSearchViewProvider['showTrail'];
+  /** Where Assistant Results learns the question each list answers; see AssistantResultsView. */
+  setQuestionSource: AssistantResultsView['setQuestionSource'];
 }
 
 export function registerOmniSearch(
@@ -491,7 +494,11 @@ export function registerOmniSearch(
 ): OmniSearchRegistration {
   // The bottom-panel view provider is registered up-front (before any session) and resolves its
   // session lazily; the command reveals it when `ui: "panel"` is selected.
-  const viewProvider = new OmniSearchViewProvider(buildViewContextResolver(sessionManager));
+  const assistantResults = new AssistantResultsView();
+  const viewProvider = new OmniSearchViewProvider(
+    buildViewContextResolver(sessionManager),
+    assistantResults,
+  );
 
   // Discoverability clue #1 (persistent): a status-bar button that opens GemStone Search and, via its
   // tooltip, teaches the shortcut that works from anywhere in a session. Shown only while a session
@@ -568,6 +575,12 @@ export function registerOmniSearch(
     vscode.window.registerWebviewViewProvider(OMNI_VIEW_ID, viewProvider, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
+    vscode.window.registerWebviewViewProvider(ASSISTANT_RESULTS_VIEW_ID, assistantResults, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+    vscode.commands.registerCommand('gemstone.assistantResults.clear', () =>
+      assistantResults.clear(),
+    ),
     vscode.commands.registerCommand('gemstone.search', () =>
       runOmniSearch(sessionManager, viewProvider),
     ),
@@ -618,6 +631,7 @@ export function registerOmniSearch(
     showClassList: (...args) => viewProvider.showClassList(...args),
     showMethodList: (...args) => viewProvider.showMethodList(...args),
     showTrail: (...args) => viewProvider.showTrail(...args),
+    setQuestionSource: (...args) => assistantResults.setQuestionSource(...args),
     notifySessionSynced: (sessionId) => {
       void viewProvider.onSessionSynced(sessionId);
       OmniSearchPanel.onSessionSynced(sessionId);

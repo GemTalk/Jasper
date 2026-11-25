@@ -225,9 +225,10 @@ export function dispatchEngineMessage(
 
 /**
  * The full GemStone Search webview HTML. `showPin` includes the 📌 (only the editor-tab host has a tab
- * to pin). Both hosts get the always-on source-preview pane of the active row.
+ * to pin). Both hosts get the always-on source-preview pane of the active row. `resultsOnly` hides
+ * what searches, and adds a row of tabs, for the Assistant Results view (AssistantResultsView).
  */
-export function renderOmniHtml(opts: { showPin: boolean }): string {
+export function renderOmniHtml(opts: { showPin: boolean; resultsOnly?: boolean }): string {
   const nonce = crypto.randomBytes(16).toString('hex');
   const script = readWebviewScript('omniSearchView.js', 'omniSearch');
   const pinButton = opts.showPin
@@ -511,6 +512,16 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
     .preview-empty { color: var(--vscode-descriptionForeground); font-style: italic; }
     .row { display: flex; align-items: baseline; gap: 8px; padding: 3px 8px 3px 10px; border-radius: 4px; cursor: pointer; }
     .row.nested { padding-left: 30px; }
+    .results-only #tabs, .results-only #refresh, .results-only #case, .results-only #regex,
+    .results-only #scopeFilterWrap, .results-only #matchMode, .results-only #scopehint,
+    .results-only #hints, .results-only #refindicator { display: none !important; }
+    #resulttabs { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: var(--omni-gap); border-bottom: 1px solid var(--vscode-panel-border, transparent); }
+    .result-tab { display: flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; border: none; border-bottom: 2px solid transparent; background: none; color: var(--vscode-descriptionForeground); cursor: pointer; font: inherit; font-size: 0.9em; }
+    .result-tab.active { color: var(--vscode-foreground); border-bottom-color: var(--vscode-focusBorder, #007acc); }
+    .result-tab .close { background: none; border: none; color: inherit; cursor: pointer; padding: 0 4px; opacity: 0.7; font: inherit; }
+    .result-tab .close:hover { opacity: 1; }
+    .results-asked { flex-basis: 100%; color: var(--vscode-descriptionForeground); font-size: 0.85em; padding: 4px 2px 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .results-empty { color: var(--vscode-descriptionForeground); font-style: italic; padding: 3px 0; }
     .coach {
       list-style: none; margin: 2px 8px 8px 22px; padding: 8px 10px;
       background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
@@ -688,8 +699,8 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
     body.no-preview #preview { display: none; }
   </style>
 </head>
-<body>
-  <div id="omni">
+<body${opts.resultsOnly ? ' class="results-only"' : ''}>
+  <div id="omni">${opts.resultsOnly ? '\n    <div id="resulttabs" role="tablist"></div>' : ''}
     <div id="tabs" role="tablist"></div>
     <div id="searchbar">
       <div id="field">

@@ -3723,6 +3723,7 @@ export function activate(context: vscode.ExtensionContext) {
     const heldDisplay = new HeldDisplay(
       (message) => void vscode.window.showWarningMessage(message),
     );
+    omniSearch.setQuestionSource(() => heldDisplay.question);
     const whenAnswered = 'when your answer is finished';
     const mcpUi: McpUiHooks = {
       showRegexSearch: async (pattern) => {
@@ -3736,7 +3737,7 @@ export function activate(context: vscode.ExtensionContext) {
       },
       showClassList: async (title, classes, methods, notes) => {
         const capped = classes.length >= CLASSES_FROM_CODE_LIMIT ? ' (the most it shows)' : '';
-        const where = `in the GemStone Search pane, titled "${title}"`;
+        const where = `in a new tab of the Assistant Results panel, titled "${title}"`;
         return await heldDisplay.show(async () => {
           const outcome = await omniSearch.showClassList(title, classes, methods, notes);
           if ('error' in outcome) throw new Error(outcome.error);
@@ -3744,7 +3745,7 @@ export function activate(context: vscode.ExtensionContext) {
         }, `Will show ${classes.length} classes${capped} ${where}, ${whenAnswered}.`);
       },
       showMethodList: async (title, methods, highlight, notes) => {
-        const where = `in the GemStone Search pane, titled "${title}"`;
+        const where = `in a new tab of the Assistant Results panel, titled "${title}"`;
         return await heldDisplay.show(async () => {
           const outcome = await omniSearch.showMethodList(title, methods, highlight, notes);
           if ('error' in outcome) throw new Error(outcome.error);
@@ -3752,7 +3753,7 @@ export function activate(context: vscode.ExtensionContext) {
         }, `Will show ${methods.length} methods ${where}, ${whenAnswered}.`);
       },
       showTrail: async (title, steps) => {
-        const where = `in the GemStone Search pane, titled "${title}"`;
+        const where = `in a new tab of the Assistant Results panel, titled "${title}"`;
         return await heldDisplay.show(async () => {
           const outcome = await omniSearch.showTrail(title, steps);
           if ('error' in outcome) throw new Error(outcome.error);

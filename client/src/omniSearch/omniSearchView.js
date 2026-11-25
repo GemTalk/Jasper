@@ -405,6 +405,49 @@
       if (bs.length) bs[bs.length - 1].focus();
     }
 
+    /** The Assistant Results view's row of tabs, one per list, each closed by its ×. */
+    function renderResultTabs(tabs, active) {
+      var strip = doc.getElementById('resulttabs');
+      if (!strip) return;
+      strip.textContent = '';
+      if (tabs.length === 0) {
+        var empty = doc.createElement('div');
+        empty.className = 'results-empty';
+        empty.textContent = 'Lists the Jasper Assistant shows open here, each in a tab of its own.';
+        strip.appendChild(empty);
+        return;
+      }
+      var asked = doc.createElement('div');
+      asked.className = 'results-asked';
+      tabs.forEach(function (t) {
+        if (t.id === active && t.question) asked.textContent = 'Asked: ' + t.question;
+        var b = doc.createElement('div');
+        b.className = t.id === active ? 'result-tab active' : 'result-tab';
+        b.setAttribute('role', 'tab');
+        b.setAttribute('aria-selected', t.id === active ? 'true' : 'false');
+        b.title = t.question ? t.title + '\nAsked: ' + t.question : t.title;
+        var name = doc.createElement('span');
+        name.textContent = t.title;
+        b.appendChild(name);
+        var close = doc.createElement('button');
+        close.type = 'button';
+        close.className = 'close';
+        close.textContent = '×';
+        close.title = 'Close ' + t.title;
+        close.setAttribute('aria-label', close.title);
+        close.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          post('closeTab', { tab: t.id });
+        });
+        b.appendChild(close);
+        b.addEventListener('click', function () {
+          if (t.id !== active) post('selectTab', { tab: t.id });
+        });
+        strip.appendChild(b);
+      });
+      if (asked.textContent) strip.appendChild(asked);
+    }
+
     function activeRowId() {
       if (activeIndex < 0 || !rows[activeIndex]) return null;
       var raw = rows[activeIndex].getAttribute('data-id');
@@ -903,6 +946,9 @@
           break;
         case 'pinned':
           setPin(msg.pinned);
+          break;
+        case 'resultTabs':
+          renderResultTabs(msg.tabs || [], msg.active);
           break;
         case 'busy':
           setBusy(!!msg.on);

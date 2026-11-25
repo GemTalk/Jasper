@@ -66,4 +66,19 @@ describe('holding what the assistant shows until its answer ends', () => {
     expect(said).toBe('Showing it.');
     expect(first).toHaveBeenCalledTimes(1);
   });
+
+  it('knows the question while what it showed is shown, and forgets it after', async () => {
+    const held = new HeldDisplay(vi.fn());
+    let whileShowing: string | undefined;
+    held.hold('How does lending work?');
+    await held.show(async () => {
+      whileShowing = held.question;
+      return '';
+    }, '');
+
+    await held.release();
+
+    expect(whileShowing).toBe('How does lending work?');
+    expect(held.question).toBeUndefined();
+  });
 });

@@ -14,7 +14,14 @@
     'show_example_in_workspace',
   ]);
   // GUI tools whose result is not in GemStone Search, so their banner has no button to reveal it.
-  const NOT_IN_SEARCH = new Set(['show_class_in_explorer', 'show_example_in_workspace']);
+  // The button under a tool's banner, and the view it brings up. Only a regular-expression search
+  // uses GemStone Search; lists go to Assistant Results.
+  const REVEAL_BUTTON = {
+    show_regex_source_search: { label: 'Show GemStone Search', command: 'revealSearch' },
+    show_methods_in_search: { label: 'Show Assistant Results', command: 'revealResults' },
+    show_classes_in_search: { label: 'Show Assistant Results', command: 'revealResults' },
+    show_trail_in_search: { label: 'Show Assistant Results', command: 'revealResults' },
+  };
 
   const HELP_TEXT = [
     '**Jasper Assistant (experimental)**',
@@ -29,14 +36,16 @@
     '- **Clear** starts a fresh conversation; the assistant forgets the earlier questions. Until then, closing this panel and opening it again keeps the conversation.',
     '- **Stop** cancels the answer in progress; your next message continues the same conversation.',
     '### Results in Jasper',
-    '- With **Show results in Jasper (if possible)** ticked, a list of methods or classes, or a regular-expression search, opens in GemStone Search instead of filling the chat. A blue banner gives the count and a **Show GemStone Search** button.',
+    "- With **Show results in Jasper (if possible)** ticked, lists open in the **Assistant Results** panel, one tab each, instead of in the chat, with the question it answers. The **Clear Assistant Results** button in the panel's title bar closes them all. Your GemStone Search is left alone.",
+    '- A regular-expression search opens in GemStone Search instead.',
+    '- A blue banner in the chat gives the count, with a button that brings up the panel.',
     '- Lists, the Explorer and example Workspaces change when the answer is finished, all at once. A regular-expression search shows straight away.',
-    '- A class the assistant creates, or one you ask to see, opens in the GemStone Explorer with its definition; the methods it created follow in GemStone Search.',
-    '- When it creates several classes at once, they are listed in GemStone Search instead, each with its methods under it, and the Explorer opens on the one you would use first.',
-    '- Ask how something works, and the assistant lists the methods to read, in order, in GemStone Search, each with a note on its part. A card under the first step explains it; **Next** and **Back** walk the steps, and **Open** opens one in an editor.',
+    '- A class the assistant creates, or one you ask to see, opens in the GemStone Explorer with its definition; the methods it created follow in Assistant Results.',
+    '- When it creates several classes at once, they are listed in Assistant Results instead, each with its methods under it, and the Explorer opens on the one you would use first.',
+    '- Ask how something works, and the assistant lists the methods to read, in order, in Assistant Results, each with a note on its part. A card under the first step explains it; **Next** and **Back** walk the steps, and **Open** opens one in an editor.',
     '- A method written like `Class>>selector` in an answer is a link: click it to open the method. After creating a class, the assistant lists where to start reading it.',
     '- After creating classes, the assistant also opens a new Workspace with a short example of using them. Put the cursor on an expression and Display It or Inspect It to see what it answers. Jasper compiles the example first, without running it, so it will not hold a typo or a message nothing implements. It cannot tell what an expression does when run, so read each one before running it.',
-    '- Press **Esc** in the GemStone Search box to close the list and return to the normal search.',
+    '- In Assistant Results, **Esc** clears the filter.',
     '- A method list stops at the `gemstone.omniSearch.maxServerScan` setting; the answer says when more match.',
     '- Untick the box to get every answer as text in the chat.',
     '### If it cannot reach GemStone',
@@ -224,15 +233,16 @@
         '<span>🔎</span><span class="headline">' +
         escapeHtml(text) +
         '</span>' +
-        (NOT_IN_SEARCH.has(card.dataset.tool)
-          ? ''
-          : '<button type="button">Show GemStone Search</button>') +
+        (REVEAL_BUTTON[card.dataset.tool]
+          ? '<button type="button">' + REVEAL_BUTTON[card.dataset.tool].label + '</button>'
+          : '') +
         (input.pattern
           ? '<span class="pattern">Pattern: <code>' + escapeHtml(input.pattern) + '</code></span>'
           : '');
       const reveal = banner.querySelector('button');
       if (reveal) {
-        reveal.addEventListener('click', () => vscode.postMessage({ command: 'revealSearch' }));
+        const command = REVEAL_BUTTON[card.dataset.tool].command;
+        reveal.addEventListener('click', () => vscode.postMessage({ command }));
       }
       card.after(banner);
       scrollToEnd();

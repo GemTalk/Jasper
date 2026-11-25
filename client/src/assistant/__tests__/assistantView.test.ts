@@ -14,12 +14,14 @@ const PAGE =
   '<form id="composer"><textarea id="input"></textarea><button id="newConversation"></button>' +
   '<button id="stop" hidden></button><button id="send"></button></form>';
 
-function mount(): void {
+function mount(): { postMessage: ReturnType<typeof vi.fn> } {
   document.body.innerHTML = PAGE;
   const view = (
     window as unknown as { JasperAssistantView: { init: (d: Document, v: unknown) => void } }
   ).JasperAssistantView;
-  view.init(document, { postMessage: vi.fn(), getState: () => undefined, setState: vi.fn() });
+  const vscode = { postMessage: vi.fn(), getState: () => undefined, setState: vi.fn() };
+  view.init(document, vscode);
+  return vscode;
 }
 
 function post(data: Record<string, unknown>): void {
@@ -77,5 +79,53 @@ describe('a reopened assistant panel', () => {
     post(once);
 
     expect(document.querySelectorAll('#log .msg.user').length).toBe(1);
+  });
+});
+
+describe('the banner under a result shown in Jasper', () => {
+  function showResult(tool: string): HTMLButtonElement | null {
+    post({
+      command: 'event',
+      event: {
+        type: 'assistant',
+        message: {
+          content: [{ type: 'tool_use', id: 't1', name: `mcp__jasper__${tool}`, input: {} }],
+        },
+      },
+    });
+    post({
+      command: 'event',
+      event: {
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'Showing 3.' }] },
+      },
+    });
+    return document.querySelector<HTMLButtonElement>('.gui-result button');
+  }
+
+  it('brings up Assistant Results for a list', () => {
+    const vscode = mount();
+
+    const button = showResult('show_trail_in_search')!;
+    button.click();
+
+    expect(button.textContent).toBe('Show Assistant Results');
+    expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'revealResults' });
+  });
+
+  it('brings up GemStone Search for a regular-expression search', () => {
+    mount();
+
+    const button = showResult('show_regex_source_search');
+
+    expect(button!.textContent).toBe('Show GemStone Search');
+  });
+
+  it('has no button for what opens in the Explorer', () => {
+    mount();
+
+    const button = showResult('show_class_in_explorer');
+
+    expect(button).toBeNull();
   });
 });

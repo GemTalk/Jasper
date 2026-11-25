@@ -16,6 +16,7 @@ import { spawn, ChildProcessWithoutNullStreams } from 'child_process';
 import { readWebviewScript } from '../webviewAssets';
 import { McpReport } from '../mcpWindowStatus';
 import { OMNI_VIEW_ID } from '../omniSearch/omniSearchViewProvider';
+import { ASSISTANT_RESULTS_VIEW_ID } from '../omniSearch/assistantResultsView';
 import { HeldDisplay } from './heldDisplay';
 
 const assistantViewJs = readWebviewScript('assistantView.js', 'assistant');
@@ -71,7 +72,8 @@ type Inbound =
   | { command: 'claimMcp' }
   | { command: 'setGuiUpdates'; on: boolean }
   | { command: 'openMethod'; className: string; isMeta: boolean; selector: string }
-  | { command: 'revealSearch' };
+  | { command: 'revealSearch' }
+  | { command: 'revealResults' };
 
 export class AssistantPanel {
   static readonly viewType = 'jasperAssistant';
@@ -166,6 +168,9 @@ export class AssistantPanel {
       case 'revealSearch':
         await vscode.commands.executeCommand(`${OMNI_VIEW_ID}.focus`);
         return;
+      case 'revealResults':
+        await vscode.commands.executeCommand(`${ASSISTANT_RESULTS_VIEW_ID}.focus`);
+        return;
     }
   }
 
@@ -183,7 +188,7 @@ export class AssistantPanel {
       return;
     }
     const line = { type: 'user', message: { role: 'user', content: text } };
-    this.deps.heldDisplay.hold();
+    this.deps.heldDisplay.hold(text);
     child.stdin.write(JSON.stringify(line) + '\n');
   }
 

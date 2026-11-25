@@ -589,6 +589,11 @@
           "id": "gemstoneOmniSearchPanel",
           "title": "GemStone Search",
           "icon": "$(search)"
+        },
+        {
+          "id": "jasperAssistantResultsPanel",
+          "title": "Assistant Results",
+          "icon": "$(list-tree)"
         }
       ]
     },
@@ -598,6 +603,15 @@
           "id": "gemstoneOmniSearchView",
           "name": "GemStone Search",
           "contextualTitle": "GemStone Search",
+          "type": "webview",
+          "when": "gemstone.hasActiveSession"
+        }
+      ],
+      "jasperAssistantResultsPanel": [
+        {
+          "id": "jasperAssistantResultsView",
+          "name": "Assistant Results",
+          "contextualTitle": "Assistant Results",
           "type": "webview",
           "when": "gemstone.hasActiveSession"
         }
@@ -1286,6 +1300,12 @@
         "title": "Refresh GemStone Search from the Stone",
         "category": "GemStone",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "gemstone.assistantResults.clear",
+        "title": "Clear Assistant Results",
+        "category": "GemStone",
+        "icon": "$(clear-all)"
       },
       {
         "command": "gemstone.findMethodInClass",
@@ -2750,6 +2770,11 @@
         {
           "command": "gemstone.search.refresh",
           "when": "view == gemstoneOmniSearchView",
+          "group": "navigation@0"
+        },
+        {
+          "command": "gemstone.assistantResults.clear",
+          "when": "view == jasperAssistantResultsView",
           "group": "navigation@0"
         },
         {

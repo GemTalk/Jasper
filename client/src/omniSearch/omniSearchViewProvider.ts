@@ -27,6 +27,7 @@
  */
 import { MethodNote, methodNoteKey } from '../assistant/queries/startingPoints';
 import type { FoundStep } from '../assistant/queries/trail';
+import { AssistantResultsView } from './assistantResultsView';
 import * as vscode from 'vscode';
 import { codePointMatchesToUtf16 } from '../matchOffsets';
 import {
@@ -118,7 +119,11 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
   private viewHeight = 0;
   private onViewHeight: (() => void) | undefined;
 
-  constructor(private readonly resolveContext: () => Promise<OmniViewContext | null>) {}
+  constructor(
+    private readonly resolveContext: () => Promise<OmniViewContext | null>,
+    /** Where the lists the assistant shows go; without it they are refused. */
+    private readonly results?: AssistantResultsView,
+  ) {}
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
@@ -356,7 +361,7 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
   }
 
   /** Show a list of methods someone else found (the MCP tool the Jasper Assistant uses), under
-   *  `title`, as a reference pivot is shown. The preview marks sends of each `highlight` selector;
+   *  `title`, in a tab of its own (showListOnBehalf). The preview marks sends of each `highlight` selector;
    *  a row's note (`notes`, keyed by methodNoteKey) follows its dictionary name, with its tip on hover. */
   async showMethodList(
     title: string,
@@ -407,23 +412,19 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     );
   }
 
+  /** Open `toResults` in a tab of its own in the Assistant Results view, leaving this view's search
+   *  alone. */
   private async showListOnBehalf(
     title: string,
     target: string | undefined,
     toResults: (sessionId: number) => OmniResult[],
   ): Promise<{ shownCount: number } | { error: string }> {
-    await this.focus();
-    await this.growTo(ASSISTANT_RESULTS_MIN_HEIGHT);
-    if (!(await this.ensureEngine()) || this.builtForSession === undefined) {
-      return { error: NO_SESSION_MESSAGE };
-    }
-    const results = toResults(this.builtForSession);
-    // Empty the box, and the search behind the list with it, so neither the box nor Esc back out
-    // of the list shows a term these results have nothing to do with.
-    await this.engine!.search('');
-    const view = this.engine!.showList({ title, target, results });
-    this.showOnBehalf(view, '');
-    return { shownCount: view.shownCount };
+    const ctx = await this.resolveContext();
+    if (!ctx) return { error: NO_SESSION_MESSAGE };
+    if (!this.results) return { error: 'This window has no Assistant Results view.' };
+    const results = toResults(ctx.sessionId);
+    await this.results.open(ctx.deps, { title, target, results });
+    return { shownCount: results.length };
   }
 
   /** Put a view up now, or once the webview is ready to take it; `pattern` also goes in the box. */
