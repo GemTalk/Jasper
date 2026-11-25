@@ -46,6 +46,7 @@ import {
 import type { NavigationViewState } from '../../explorerNavigationView';
 import { landingPath, type ExplorerLanding } from '../../explorerNavigationHistory';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
+import { onDidChangeMethods } from '../../methodsChanged';
 
 const classesInDict = getClassesWithCategory as ReturnType<typeof vi.fn>;
 const classEnvs = getClassEnvironments as ReturnType<typeof vi.fn>;
@@ -377,6 +378,7 @@ function register() {
         onDidExpandElement: vi.fn(),
         reveal: vi.fn(),
         dispose: vi.fn(),
+        selection: [],
       }) as never,
   );
   const context = {
@@ -403,6 +405,43 @@ function register() {
   }
   return { handlers, handle };
 }
+
+describe("the Explorer's Refresh", () => {
+  it('announces that methods changed, so senders and implementors counts are taken again', () => {
+    const { handlers } = register();
+    const listener = vi.fn();
+    const subscription = onDidChangeMethods(listener);
+
+    handlers.get('gemstone.explorer.refresh')!();
+    subscription.dispose();
+
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('an Abort', () => {
+  it('announces that methods changed, since uncommitted ones are gone', () => {
+    const { handle } = register();
+    const listener = vi.fn();
+    const subscription = onDidChangeMethods(listener);
+
+    handle.onSessionAborted(1);
+    subscription.dispose();
+
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it('announces it for a session the Explorer is not showing too', () => {
+    const { handle } = register();
+    const listener = vi.fn();
+    const subscription = onDidChangeMethods(listener);
+
+    handle.onSessionAborted(2);
+    subscription.dispose();
+
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('the navigation commands are actually registered, not just contributed', () => {
   // explorerNavigationView.test.ts asserts the pane's buttons name commands the

@@ -22,6 +22,7 @@ import {
 } from '../../autoCommit/autoCommitState';
 import { setAutoCommitFailureHandler } from '../../autoCommit/autoCommitRunner';
 import { fakeActiveSession } from '../../__tests__/fakeActiveSession';
+import { onDidChangeMethods } from '../../methodsChanged';
 
 /**
  * The shared post-apply notice (#434). This is where an applied refactoring joins Jasper's
@@ -133,6 +134,17 @@ describe('notifyRefactoringApplied — announcing the change to the UI', () => {
       REFACTORING_APPLIED_COMMAND,
       expect.anything(),
     );
+  });
+
+  it('announces that methods changed, so senders and implementors are counted again', () => {
+    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(false));
+    const listener = vi.fn();
+    const subscription = onDidChangeMethods(listener);
+
+    notifyRefactoringApplied(session, 'Renamed.');
+    subscription.dispose();
+
+    expect(listener).toHaveBeenCalledTimes(1);
   });
 
   it('does not fail the refactoring when nothing is listening', async () => {

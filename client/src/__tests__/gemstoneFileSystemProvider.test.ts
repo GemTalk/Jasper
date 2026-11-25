@@ -106,6 +106,7 @@ import { captureMethodSlots } from '../undo/queries/methodSlotQueries';
 import { captureClassSlots } from '../undo/queries/classSlotQueries';
 import { peekUndoEntry, popUndoEntry, resetUndoStacks } from '../undo/undoStack';
 import { fakeActiveSession } from './fakeActiveSession';
+import { onDidChangeMethods } from '../methodsChanged';
 
 // `clearAllMocks` clears recorded CALLS without removing an implementation, so a
 // `mockReturnValue` set anywhere in this file stays in force for every test that runs after
@@ -1440,6 +1441,43 @@ describe('GemStoneFileSystemProvider', () => {
       expect(event.uri.toString()).toBe(
         'gemstone://1/Globals/Array/instance/accessing/newSelector',
       );
+    });
+
+    it('announces that methods changed when a method is saved', async () => {
+      const methodUri = Uri.parse('gemstone://1/Globals/Array/instance/accessing/at%3A');
+      vi.mocked(queries.compileMethod).mockReturnValueOnce('Compiled: Array >> at:');
+      // An earlier test's save announces on the next turn; let it land before listening.
+      await new Promise((resolve) => setImmediate(resolve));
+      const listener = vi.fn();
+      const subscription = onDidChangeMethods(listener);
+
+      provider.writeFile(methodUri, encode('at: i\n  ^self basicAt: i'), {
+        create: false,
+        overwrite: true,
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      subscription.dispose();
+
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not announce that methods changed when a method fails to compile', async () => {
+      const methodUri = Uri.parse('gemstone://1/Globals/Array/instance/accessing/at%3A');
+      vi.mocked(queries.compileMethod).mockReturnValueOnce('Error: expected a primary');
+      // An earlier test's save announces on the next turn; let it land before listening.
+      await new Promise((resolve) => setImmediate(resolve));
+      const listener = vi.fn();
+      const subscription = onDidChangeMethods(listener);
+
+      try {
+        provider.writeFile(methodUri, encode('at: i\n  ^'), { create: false, overwrite: true });
+      } catch {
+        // The compile error itself is covered elsewhere.
+      }
+      await new Promise((resolve) => setImmediate(resolve));
+      subscription.dispose();
+
+      expect(listener).not.toHaveBeenCalled();
     });
 
     it('trims trailing whitespace from the selector when building the compiled method uri', async () => {

@@ -37,6 +37,7 @@ import {
   refreshMethodHistoryPanel,
 } from '../methodHistory/methodHistoryPanel';
 import { Uri, window } from '../__mocks__/vscode';
+import { onDidChangeMethods } from '../methodsChanged';
 import type { SessionManager, ActiveSession } from '../sessionManager';
 
 const SESSION = { id: 1 } as ActiveSession;
@@ -168,6 +169,38 @@ describe('live refresh of an open method-history panel', () => {
     ctl.onExternalMethodCompiled(2, 'Array');
 
     expect(refreshMethodHistoryPanel).not.toHaveBeenCalled();
+  });
+});
+
+describe('restoring a version from method history', () => {
+  type Handlers = { restore(index: number): Promise<unknown> };
+  const handlersOf = () => vi.mocked(showMethodHistoryPanel).mock.calls[0][2] as Handlers;
+
+  it('announces that methods changed', async () => {
+    const ctl = makeController();
+    await ctl.openMethodHistory(SESSION, 'Array', 'at:', false, 1);
+    const listener = vi.fn();
+    const subscription = onDidChangeMethods(listener);
+
+    await handlersOf().restore(1);
+    subscription.dispose();
+
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it('announces nothing when the version fails to compile', async () => {
+    const ctl = makeController();
+    await ctl.openMethodHistory(SESSION, 'Array', 'at:', false, 1);
+    vi.mocked(queries.compileMethod).mockImplementationOnce(() => {
+      throw new Error('expected a primary');
+    });
+    const listener = vi.fn();
+    const subscription = onDidChangeMethods(listener);
+
+    await handlersOf().restore(1);
+    subscription.dispose();
+
+    expect(listener).not.toHaveBeenCalled();
   });
 });
 

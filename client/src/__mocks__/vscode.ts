@@ -182,7 +182,11 @@ export class EventEmitter<T> {
 
   event = (listener: (e: T) => void) => {
     this.listeners.push(listener);
-    return { dispose: () => {} };
+    return {
+      dispose: () => {
+        this.listeners = this.listeners.filter((l) => l !== listener);
+      },
+    };
   };
 
   fire(data: T): void {

@@ -36,6 +36,7 @@ import { UNDO_COMMAND } from '../undo/undoUi';
 import { logInfo } from '../gciLog';
 import { autoCommitAfterWrite } from '../autoCommit/autoCommitRunner';
 import { REFACTORING_APPLIED_COMMAND } from './refactoringAppliedEvent';
+import { announceMethodsChanged } from '../methodsChanged';
 
 /** How to tell the user when there is nothing to undo: a transient status-bar
  *  message (the quiet default the in-editor refactorings use) or a toast (what the
@@ -85,6 +86,7 @@ export function notifyRefactoringApplied(
   // take back (docs/explanation/auto-commit.md).
   if (session) autoCommitAfterWrite(session, 'refactoring');
   const message = typeof notice === 'function' ? notice() : notice;
+  announceMethodsChanged();
 
   // An open method-history panel refreshes itself after a Save, and must do the same after a
   // refactoring — a method changed either way, and having to close and reopen the panel to see the

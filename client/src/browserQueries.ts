@@ -393,8 +393,8 @@ export class StoppedByBreakError extends BrowserQueryError {}
 
 /**
  * Whether `e` is a query refused because a call already held the session.
- * Such a refusal says nothing about the answer, so a caller that remembers
- * answers shouldn't remember it; any other failure answers the same next time.
+ * Such a refusal says nothing about the answer and passes once the session is
+ * free, so a caller that remembers answers shouldn't remember it.
  */
 export function isBusyRefusal(e: unknown): boolean {
   return e instanceof BrowserQueryError && e.gciErrorNumber === GCI_ERR_OP_IN_PROGRESS;

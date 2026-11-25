@@ -25,13 +25,22 @@ vi.mock('../browserQueries', async (importOriginal) => {
 });
 
 import { EventEmitter, Uri } from 'vscode';
+import { __resetConfig, __setConfig } from '../__mocks__/vscode';
+import { announceMethodsChanged } from '../methodsChanged';
 import type { TextDocument, CodeLens } from 'vscode';
 import { CODE_LENS_SELECTORS, GemStoneCodeLensProvider } from '../gemstoneCodeLensProvider';
 import { SessionManager, ActiveSession } from '../sessionManager';
 import * as queries from '../browserQueries';
 import { SMALLTALK_LANGUAGE } from '../languageIds';
-import { GCI_ERR_OP_IN_PROGRESS } from '../gciConstants';
-import { fakeActiveSession } from './fakeActiveSession';
+import {
+  GCI_ERR_BAD_SESSION_ID,
+  GCI_ERR_OP_IN_PROGRESS,
+  GS_ERR_HALT,
+  GS_ERR_SESSION_SHUTDOWN,
+  NET_ERROR,
+} from '../gciConstants';
+import { GciLibraryError } from '../gciLibraryError';
+import { fakeActiveSession, sessionOn } from './fakeActiveSession';
 
 function busyRefusal(): Error {
   return new queries.BrowserQueryError('Session is busy', GCI_ERR_OP_IN_PROGRESS);
@@ -77,12 +86,16 @@ describe('GemStoneCodeLensProvider', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // clearAllMocks keeps a stand-in a test installed; test order is shuffled.
+    vi.mocked(queries.sendersOf).mockReset().mockReturnValue([]);
+    vi.mocked(queries.implementorsOf).mockReset().mockReturnValue([]);
     vi.useFakeTimers();
     sessionManager = new SessionManager();
     provider = new GemStoneCodeLensProvider(sessionManager);
   });
 
   afterEach(() => {
+    provider.dispose();
     vi.useRealTimers();
   });
 
@@ -711,23 +724,228 @@ foo
       });
     });
 
-    it('counts a lookup that fails for another reason as none, without asking again', () => {
-      const session = createMockSession();
-      sessionManager.getSelectedSession = () => session;
-      (queries.sendersOf as ReturnType<typeof vi.fn>).mockImplementation(() => {
-        throw new queries.BrowserQueryError('Selector not found');
-      });
-      const doc = createMockDocument(`method: MyClass
+    // A broken connection to the gem fails this way, and `0 senders` would read as an answer.
+    describe('when a lookup fails for a reason other than a busy session', () => {
+      const doc = () =>
+        createMockDocument(`method: MyClass
 foo
   ^ 42
 %`);
-      const lens = methodLenses(provider.provideCodeLenses(doc))[0];
-      resolveCount(lens);
+      let session: ActiveSession;
 
-      const again = resolveCount(lens);
+      beforeEach(() => {
+        session = createMockSession();
+        sessionManager.getSelectedSession = () => session;
+      });
 
-      expect(again.command?.title).toBe('0 senders');
-      expect(queries.sendersOf).toHaveBeenCalledTimes(1);
+      afterEach(() => {
+        __resetConfig();
+      });
+
+      // Through the real lookups and the real wrapping of a GCI failure, so a
+      // cause the wrapping turned into a busy refusal (or lost) would show here.
+      describe.each(['senders', 'implementors'] as const)('the %s lens', (kind) => {
+        const lookup = kind === 'senders' ? queries.sendersOf : queries.implementorsOf;
+        let actual: typeof import('../browserQueries');
+
+        beforeEach(async () => {
+          actual = await vi.importActual<typeof import('../browserQueries')>('../browserQueries');
+          vi.mocked(queries.sendersOf).mockImplementation(actual.sendersOf);
+          vi.mocked(queries.implementorsOf).mockImplementation(actual.implementorsOf);
+        });
+
+        function sessionFailingWith(error: Error): ActiveSession {
+          return sessionOn({
+            executeAndFetchString: vi.fn(() => {
+              throw error;
+            }),
+            logout: () => ({ sessionFreed: true }),
+          });
+        }
+
+        function lensOf(): CodeLens {
+          const lenses = methodLenses(provider.provideCodeLenses(doc()));
+          return lenses[kind === 'senders' ? 0 : 1];
+        }
+
+        it.each([
+          ['the connection to the gem is lost', NET_ERROR, 'network error, peer closed'],
+          ['the stone shut the session down', GS_ERR_SESSION_SHUTDOWN, 'session shut down'],
+          ['the session is no longer valid', GCI_ERR_BAD_SESSION_ID, 'invalid session id'],
+          ['the lookup raises a Smalltalk error', 2010, 'a Foo does not understand #bar'],
+          ['the lookup stops at a halt', GS_ERR_HALT, 'halt encountered'],
+        ])('shows no count, and says why, when %s', (_cause, number, message) => {
+          const error = GciLibraryError.fromGciError({ number, message });
+          session = sessionFailingWith(error);
+
+          const lens = resolveCount(lensOf());
+
+          expect(lens.command?.title).toBe(kind);
+          expect(lens.command?.tooltip).toBe(`Count unavailable: ${error.message}`);
+        });
+
+        it('shows no count, and says why, when the library refuses the call itself', () => {
+          session = sessionFailingWith(GciLibraryError.withMessage('No GCI library is loaded'));
+
+          const lens = resolveCount(lensOf());
+
+          expect(lens.command?.tooltip).toBe('Count unavailable: No GCI library is loaded');
+        });
+
+        it('shows no count, and says why, when the session was logged out', () => {
+          session = sessionFailingWith(new Error('never reached'));
+          session.logout();
+
+          const lens = resolveCount(lensOf());
+
+          expect(lens.command?.tooltip).toBe(
+            'Count unavailable: The GemStone session is logged out.',
+          );
+        });
+
+        it('does not ask the stone again after a failure', () => {
+          session = sessionFailingWith(
+            GciLibraryError.fromGciError({ number: NET_ERROR, message: 'lost' }),
+          );
+          const lens = lensOf();
+          resolveCount(lens);
+
+          resolveCount(lens);
+
+          expect(lookup).toHaveBeenCalledTimes(1);
+        });
+
+        it('treats the stone saying a call is in progress as busy, not as a failure', () => {
+          session = sessionFailingWith(
+            GciLibraryError.fromGciError({ number: GCI_ERR_OP_IN_PROGRESS, message: 'busy' }),
+          );
+
+          const lens = resolveCount(lensOf());
+
+          expect(lens.command?.title).toBe(kind);
+          expect(lens.command?.tooltip).toBeUndefined();
+        });
+      });
+
+      function failSenders(): void {
+        (queries.sendersOf as ReturnType<typeof vi.fn>).mockImplementation(() => {
+          throw new queries.BrowserQueryError('The connection to the gem was lost');
+        });
+      }
+
+      it('shows no count', () => {
+        failSenders();
+
+        const lens = resolveCount(methodLenses(provider.provideCodeLenses(doc()))[0]);
+
+        expect(lens.command?.title).toBe('senders');
+      });
+
+      it('stays clickable, since the list runs its own lookup', () => {
+        failSenders();
+
+        const lens = resolveCount(methodLenses(provider.provideCodeLenses(doc()))[0]);
+
+        expect(lens.command?.command).toBe('gemstone.sendersOfSelector');
+      });
+
+      it('says why the count is unavailable when the lens is hovered', () => {
+        failSenders();
+
+        const lens = resolveCount(methodLenses(provider.provideCodeLenses(doc()))[0]);
+
+        expect(lens.command?.tooltip).toBe('Count unavailable: The connection to the gem was lost');
+      });
+
+      it('says what was thrown when it is not an Error', () => {
+        (queries.sendersOf as ReturnType<typeof vi.fn>).mockImplementation(() => {
+          throw 'gem gone';
+        });
+
+        const lens = resolveCount(methodLenses(provider.provideCodeLenses(doc()))[0]);
+
+        expect(lens.command?.tooltip).toBe('Count unavailable: gem gone');
+      });
+
+      it('gives the first failure when several environments fail', () => {
+        __setConfig('gemstone', 'maxEnvironment', 1);
+        (queries.sendersOf as ReturnType<typeof vi.fn>)
+          .mockImplementationOnce(() => {
+            throw new queries.BrowserQueryError('first');
+          })
+          .mockImplementationOnce(() => {
+            throw new queries.BrowserQueryError('second');
+          });
+
+        const lens = resolveCount(methodLenses(provider.provideCodeLenses(doc()))[0]);
+
+        expect(lens.command?.tooltip).toBe('Count unavailable: first');
+      });
+
+      it('does not look up again on later resolves', () => {
+        failSenders();
+        const lens = methodLenses(provider.provideCodeLenses(doc()))[0];
+        resolveCount(lens);
+
+        const again = resolveCount(lens);
+
+        expect(again.command?.title).toBe('senders');
+        expect(queries.sendersOf).toHaveBeenCalledTimes(1);
+      });
+
+      it("shows no count when one environment's lookup fails and another's succeeds", () => {
+        __setConfig('gemstone', 'maxEnvironment', 1);
+        (queries.sendersOf as ReturnType<typeof vi.fn>)
+          .mockReturnValueOnce([{}, {}])
+          .mockImplementationOnce(() => {
+            throw new queries.BrowserQueryError('The connection to the gem was lost');
+          });
+
+        const lens = resolveCount(methodLenses(provider.provideCodeLenses(doc()))[0]);
+
+        expect(lens.command?.title).toBe('senders');
+      });
+
+      it("counts again once the session frees up, when another environment's lookup was refused as busy", () => {
+        __setConfig('gemstone', 'maxEnvironment', 1);
+        (queries.sendersOf as ReturnType<typeof vi.fn>)
+          .mockImplementationOnce(() => {
+            throw busyRefusal();
+          })
+          .mockImplementationOnce(() => {
+            throw new queries.BrowserQueryError('The connection to the gem was lost');
+          })
+          .mockReturnValue([{}, {}]);
+        const lens = methodLenses(provider.provideCodeLenses(doc()))[0];
+        resolveCount(lens);
+
+        const again = resolveCount(lens);
+
+        expect(again.command?.title).toBe('4 senders');
+      });
+
+      it('counts afresh for a new login', () => {
+        failSenders();
+        resolveCount(methodLenses(provider.provideCodeLenses(doc()))[0]);
+        (queries.sendersOf as ReturnType<typeof vi.fn>).mockReturnValue([{}, {}]);
+        const newLogin = fakeActiveSession({ id: 2 });
+        sessionManager.getSelectedSession = () => newLogin;
+
+        const lens = resolveCount(methodLenses(provider.provideCodeLenses(doc()))[0]);
+
+        expect(lens.command?.title).toBe('2 senders');
+      });
+
+      it('looks up again after a refresh', () => {
+        failSenders();
+        resolveCount(methodLenses(provider.provideCodeLenses(doc()))[0]);
+        (queries.sendersOf as ReturnType<typeof vi.fn>).mockReturnValue([{}, {}]);
+        provider.refresh();
+
+        const lens = resolveCount(methodLenses(provider.provideCodeLenses(doc()))[0]);
+
+        expect(lens.command?.title).toBe('2 senders');
+      });
     });
 
     it('dispose() cancels a pending count lookup (no blocking GCI after teardown)', () => {
@@ -744,6 +962,93 @@ foo
       vi.runAllTimers(); // a still-pending timer would fire here
 
       expect(queries.sendersOf).not.toHaveBeenCalled();
+    });
+
+    it('counts again when any part of Jasper announces that methods changed', () => {
+      const session = createMockSession();
+      sessionManager.getSelectedSession = () => session;
+      const doc = createMockDocument(`method: MyClass
+foo
+  ^ 42
+%`);
+      (queries.sendersOf as ReturnType<typeof vi.fn>).mockReturnValueOnce([{}]);
+      resolveCount(methodLenses(provider.provideCodeLenses(doc))[0]);
+      (queries.sendersOf as ReturnType<typeof vi.fn>).mockReturnValue([{}, {}]);
+
+      announceMethodsChanged();
+
+      const lens = resolveCount(methodLenses(provider.provideCodeLenses(doc))[0]);
+      expect(lens.command?.title).toBe('2 senders');
+    });
+
+    describe('when methods change on the stone', () => {
+      const doc = () =>
+        createMockDocument(`method: MyClass
+foo
+  ^ 42
+%`);
+      let methodsChanged: EventEmitter<void>;
+
+      beforeEach(() => {
+        methodsChanged = new EventEmitter<void>();
+        provider.dispose();
+        provider = new GemStoneCodeLensProvider(sessionManager, methodsChanged.event);
+        const session = createMockSession();
+        sessionManager.getSelectedSession = () => session;
+      });
+
+      it('counts again', () => {
+        (queries.sendersOf as ReturnType<typeof vi.fn>).mockReturnValueOnce([{}]);
+        resolveCount(methodLenses(provider.provideCodeLenses(doc()))[0]);
+        (queries.sendersOf as ReturnType<typeof vi.fn>).mockReturnValue([{}, {}]);
+
+        methodsChanged.fire();
+
+        const lens = resolveCount(methodLenses(provider.provideCodeLenses(doc()))[0]);
+        expect(lens.command?.title).toBe('2 senders');
+      });
+
+      it('looks up again a count that could not be had', () => {
+        (queries.sendersOf as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
+          throw new queries.BrowserQueryError('The connection to the gem was lost');
+        });
+        resolveCount(methodLenses(provider.provideCodeLenses(doc()))[0]);
+        (queries.sendersOf as ReturnType<typeof vi.fn>).mockReturnValue([{}, {}]);
+
+        methodsChanged.fire();
+
+        const lens = resolveCount(methodLenses(provider.provideCodeLenses(doc()))[0]);
+        expect(lens.command?.title).toBe('2 senders');
+      });
+
+      it('counts once when methods change while a count is waiting to run', () => {
+        const lens = methodLenses(provider.provideCodeLenses(doc()))[0];
+        provider.resolveCodeLens(lens); // schedules the lookup
+
+        methodsChanged.fire();
+        provider.resolveCodeLens(methodLenses(provider.provideCodeLenses(doc()))[0]);
+        vi.runAllTimers();
+
+        expect(queries.sendersOf).toHaveBeenCalledTimes(1);
+      });
+
+      it('redraws the lenses', () => {
+        let redraws = 0;
+        provider.onDidChangeCodeLenses(() => redraws++);
+
+        methodsChanged.fire();
+
+        expect(redraws).toBe(1);
+      });
+
+      it('stops listening for method changes once disposed', () => {
+        const release = vi.fn();
+        const lens = new GemStoneCodeLensProvider(sessionManager, () => ({ dispose: release }));
+
+        lens.dispose();
+
+        expect(release).toHaveBeenCalledTimes(1);
+      });
     });
 
     it('refresh() clears the count cache (so a recompile can recount)', () => {
