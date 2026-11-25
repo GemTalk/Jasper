@@ -242,7 +242,8 @@ jobs:
     # with a 15:00 limit took 8:28-14:09. 15 is only ~1.4x the median, below
     # the ratio above: #928 should shorten every leg, and the limit can be
     # revisited then.
-    timeout-minutes: ${{ fromJSON('{"ubuntu-latest":9,"windows-latest":12,"macos-latest":15}')[matrix.platform] }}
+    # PROBE (issue 1002): legs run the probe for 9 minutes alongside the suite.
+    timeout-minutes: 45
     name: ${{ matrix.platform }} ${{ matrix.gemstone-version }}${{ matrix.node-version && format(' (Node {0})', matrix.node-version) || '' }}
     needs: prepare
     if: needs.prepare.outputs.already-tested != 'true'
@@ -281,6 +282,12 @@ jobs:
       # unaffected. Harmless on the macOS and Windows hosts, which don't use
       # glibc.
       GLIBC_TUNABLES: glibc.rtld.execstack=2
+      # PROBE (issue 1002)
+      PROBE_SCENARIO: break,press
+      PROBE_BUDGET_MS: '540000'
+      PROBE_N: '100000'
+      PROBE_PAR: '2'
+      PROBE_OUT: ${{ github.workspace }}/probe1002-${{ matrix.platform }}-${{ matrix.gemstone-version }}-${{ matrix.node-version || 'nvmrc' }}.txt
       # lintSupplyChain.test.ts runs once in the lint job, not per leg.
       JASPER_SKIP_SUPPLY_CHAIN_TEST: '1'
       # Queue only: a failing client test gets one retry, so a flake doesn't
@@ -288,12 +295,13 @@ jobs:
       # The retry-report steps test this, not the event, so they follow it.
       VITEST_RETRY: ${{ github.event_name == 'merge_group' && '1' || '0' }}
     strategy:
+      fail-fast: false
       matrix:
         # macOS is deliberately absent from this axis — it gets a single
         # leg via the `include` below instead of the full version sweep.
         platform: [ubuntu-latest, windows-latest]
         gemstone-version: ${{ fromJson(needs.prepare.outputs.versions) }}
-        node-version: ['']            # empty ⇒ dev jobs resolve Node from .nvmrc (node-version-file); floor include overrides
+        node-version: [''] # empty ⇒ dev jobs resolve Node from .nvmrc (node-version-file); floor include overrides
         # node-version's declared axis value is only '' (which falls back to
         # the .nvmrc Node version); '22.15.1' isn't one of the declared
         # values, so GitHub can't merge this into an existing combination —
@@ -330,7 +338,7 @@ jobs:
             node-version: '' # resolve Node from .nvmrc, like the dev legs above
           - platform: ubuntu-latest # smoke test only cares about the Node floor, not the OS-specific WSL/GCI-DLL path
             gemstone-version: ${{ needs.prepare.outputs.oldest-version }}
-            node-version: '22.15.1'   # pin the floor for the smoke-test
+            node-version: '22.15.1' # pin the floor for the smoke-test
 
     steps:
       - name: Checkout code
@@ -531,6 +539,17 @@ jobs:
         with:
           name: ${{ env.SKIP_REPORT_PLUGIN_NAME }}
           path: ${{ env.SKIP_REPORT_PLUGIN_PATH }}
+          if-no-files-found: ignore
+      - name: PROBE output (issue 1002)
+        if: always()
+        shell: bash
+        run: cat "$PROBE_OUT" || echo "no probe output"
+      - name: PROBE upload (issue 1002)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: probe1002-${{ matrix.platform }}-${{ matrix.gemstone-version }}-${{ matrix.node-version || 'nvmrc' }}
+          path: ${{ env.PROBE_OUT }}*
           if-no-files-found: ignore
       # A native GCI crash on Windows (SEH exception inside gcits.dll,
       # e.g. "GciWindowsExceptionFilter called ...") doesn't fail a test —
