@@ -921,6 +921,17 @@ export function stoppedRunCleared(session: ActiveSession): Promise<void> {
   return (clearHolds(session) && draining.get(session.id)) || Promise.resolve();
 }
 
+/**
+ * Settles once a stopped run has let go of the session: its background collection and then the
+ * clean-up that collection hands over to, each bounded as it is. {@link stoppedRunCleared} waits
+ * for the clean-up alone, and {@link whenSessionFree} refuses a call at the hand-over.
+ */
+export async function stoppedRunLetGo(session: ActiveSession): Promise<void> {
+  for (let pending = draining.get(session.id); pending; pending = draining.get(session.id)) {
+    await pending;
+  }
+}
+
 /** Whether the session is held by a stopped run's clean-up rather than by a run. */
 export function clearHolds(session: ActiveSession): boolean {
   return clearing.has(session.id);
@@ -1396,6 +1407,41 @@ export async function runNbCall<T>(
     () => beginNbCall(session, start, onReady, opts),
     opts.stopWhileWaitingForSession,
   );
+}
+
+/** What {@link stopOnCancel} gives one call: pass the first two into its {@link NbRunOptions}. */
+export interface StopOnCancel {
+  onStart: NonNullable<NbRunOptions['onStart']>;
+  stopWhileWaitingForSession: AbortSignal;
+  /** Call once the call has settled, so a later cancel can't reach the session's next call. */
+  dispose: () => void;
+}
+
+/**
+ * Lets a VS Code cancellation token stop one call. Cancelled before the call starts, it is never
+ * sent; cancelled while it runs, it gets one soft break, as from the notice's Cancel. Nothing is
+ * sent if a stop was already asked for, because a second press stops waiting at once.
+ */
+export function stopOnCancel(token: vscode.CancellationToken): StopOnCancel {
+  const beforeStart = new AbortController();
+  let stopCall: (() => void) | undefined;
+  const listener = token.onCancellationRequested(() => {
+    beforeStart.abort();
+    stopCall?.();
+  });
+  if (token.isCancellationRequested) beforeStart.abort();
+  return {
+    stopWhileWaitingForSession: beforeStart.signal,
+    onStart: (cancel, stopRequested) => {
+      stopCall = () => {
+        if (!stopRequested()) cancel();
+      };
+    },
+    dispose: () => {
+      stopCall = undefined;
+      listener.dispose();
+    },
+  };
 }
 
 function beginNbCall<T>(

@@ -73,6 +73,7 @@ describe('GemStoneReferenceProvider', () => {
       expect.objectContaining({ id: 1 }),
       'recursiveSize',
       0,
+      undefined,
     );
     expect(results.map((l) => l.uri.toString())).toEqual([
       expect.stringMatching(/^gemstone:\/\/1\/Globals\/Object\/instance\/Accessing\//),
@@ -155,6 +156,20 @@ describe('GemStoneReferenceProvider', () => {
 
     expect(mockSendersOf).toHaveBeenCalledTimes(1);
     expect(results).toEqual([]);
+  });
+
+  it('hands VS Code’s cancellation to each query, so a cancelled search stops the one running', async () => {
+    const token = { isCancellationRequested: false } as unknown as vscode.CancellationToken;
+    const provider = new GemStoneReferenceProvider(makeSessionManager(true), resolving('size'));
+
+    await provider.provideReferences(document(), pos(2, 12), { includeDeclaration: true }, token);
+
+    expect(mockSendersOf).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 1 }),
+      'size',
+      0,
+      token,
+    );
   });
 
   it('keeps what earlier environments found, and asks no more, once one fails', async () => {

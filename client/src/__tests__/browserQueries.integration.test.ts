@@ -1,6 +1,7 @@
 import { describe, it, expect, onTestFinished, vi } from 'vitest';
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
+import * as vscode from 'vscode';
 import { GciLibrary } from '../gciLibrary';
 import { GCI_ERR_OP_IN_PROGRESS, OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
 import {
@@ -63,6 +64,25 @@ describe('browser queries (integration)', () => {
     const { session: transient, err } = reportedTransientLogin(session());
     if (!transient) throw new Error(`Transient login failed: ${err.message}`);
     return transient;
+  }
+
+  function loggedInSession(): ActiveSession {
+    const transient = transientSession();
+    onTestFinished(() => {
+      transient.logout();
+    });
+    return transient;
+  }
+
+  function leftBehindIn(transient: ActiveSession): number {
+    return countPureExportSetMembersSatisfying(
+      (code) => queries.executeFetchString(transient, code),
+      '[:each | (each isKindOf: GsProcess) or: [each isKindOf: Break]]',
+    );
+  }
+
+  async function sessionLetGo(transient: ActiveSession): Promise<void> {
+    await vi.waitFor(() => expect(stoppedRunHolds(transient)).toBe(false), { timeout: 15_000 });
   }
 
   function runFor(on: ActiveSession, seconds: number): Promise<unknown> {
@@ -625,14 +645,6 @@ describe('browser queries (integration)', () => {
   });
 
   describe('a query that does not block the extension host', () => {
-    function loggedInSession(): ActiveSession {
-      const transient = transientSession();
-      onTestFinished(() => {
-        transient.logout();
-      });
-      return transient;
-    }
-
     it('answers its result as a string', async () => {
       const transient = loggedInSession();
 
@@ -655,17 +667,6 @@ describe('browser queries (integration)', () => {
 
       await expect(query).rejects.toBeInstanceOf(NbCancelledError);
     });
-
-    function leftBehindIn(transient: ActiveSession): number {
-      return countPureExportSetMembersSatisfying(
-        (code) => queries.executeFetchString(transient, code),
-        '[:each | (each isKindOf: GsProcess) or: [each isKindOf: Break]]',
-      );
-    }
-
-    async function sessionLetGo(transient: ActiveSession): Promise<void> {
-      await vi.waitFor(() => expect(stoppedRunHolds(transient)).toBe(false), { timeout: 15_000 });
-    }
 
     it('leaves nothing of a cancelled query behind in the session', async () => {
       const transient = loggedInSession();
@@ -745,14 +746,6 @@ describe('browser queries (integration)', () => {
   });
 
   describe('queries that wait their turn', () => {
-    function loggedInSession(): ActiveSession {
-      const transient = transientSession();
-      onTestFinished(() => {
-        transient.logout();
-      });
-      return transient;
-    }
-
     it('answers queries that overlap on one session', async () => {
       const execute = queries.queuedNbQueryExecutorUsing(loggedInSession());
 
@@ -812,5 +805,123 @@ describe('browser queries (integration)', () => {
         expect(outside).resolves.toBe('outside'),
       ]);
     });
+  });
+
+  // The gem may answer the soft break, or ignore it (see resendSoftBreak) and leave the runner to
+  // give up on the call. A SLOW query rejects as cancelled either way; it would answer 'late' only
+  // if the cancel did nothing.
+  describe('a query VS Code cancels', () => {
+    const SLOW = `(Delay forSeconds: 5) wait. 'late'`;
+
+    // Shorter than the wait a query queued behind a cancelled one gets, so a gem that ignores the
+    // break still lets the next query in: the break mostly lands, exercising the clean-up hand-over.
+    const BRIEF = `(Delay forMilliseconds: 1500) wait. 'late'`;
+
+    it('rejects as cancelled instead of answering', async () => {
+      const transient = loggedInSession();
+      const source = new vscode.CancellationTokenSource();
+      const query = queries.queuedNbQueryExecutorUsing(transient, undefined, source.token)(SLOW);
+      expect(isRunning(transient)).toBe(true);
+
+      source.cancel();
+
+      await expect(query).rejects.toBeInstanceOf(NbCancelledError);
+      await sessionLetGo(transient);
+    }, 30_000);
+
+    it('leaves the session answering queries, with nothing left behind', async () => {
+      const transient = loggedInSession();
+      const source = new vscode.CancellationTokenSource();
+      const query = queries.queuedNbQueryExecutorUsing(transient, undefined, source.token)(SLOW);
+      source.cancel();
+      await expect(query).rejects.toBeInstanceOf(NbCancelledError);
+      await sessionLetGo(transient);
+
+      const next = queries.queuedNbQueryExecutorUsing(transient)(`'next'`);
+
+      await expect(next).resolves.toBe('next');
+      expect(leftBehindIn(transient)).toBe(0);
+    }, 30_000);
+
+    it('never sends a query still waiting its turn', async () => {
+      const transient = loggedInSession();
+      const first = queries.queuedNbQueryExecutorUsing(transient)(
+        `(Delay forMilliseconds: 300) wait. 'first'`,
+      );
+      const source = new vscode.CancellationTokenSource();
+      const waiting = queries.queuedNbQueryExecutorUsing(
+        transient,
+        undefined,
+        source.token,
+      )(`UserGlobals at: #JasperIssue992 put: true. 'sent'`);
+      onTestFinished(() => {
+        queries.executeFetchString(
+          transient,
+          `UserGlobals removeKey: #JasperIssue992 ifAbsent: []. ''`,
+        );
+      });
+
+      source.cancel();
+
+      await expect(waiting).rejects.toBeInstanceOf(NbCancelledError);
+      await expect(first).resolves.toBe('first');
+      expect(
+        queries.executeFetchString(
+          transient,
+          `(UserGlobals includesKey: #JasperIssue992) printString`,
+        ),
+      ).toBe('false');
+    });
+
+    it('does not stop the next query when cancelled after its own query answered', async () => {
+      const transient = loggedInSession();
+      const source = new vscode.CancellationTokenSource();
+      await expect(
+        queries.queuedNbQueryExecutorUsing(transient, undefined, source.token)(`'done'`),
+      ).resolves.toBe('done');
+      const next = queries.queuedNbQueryExecutorUsing(transient)(
+        `(Delay forMilliseconds: 300) wait. 'next'`,
+      );
+
+      source.cancel();
+
+      await expect(next).resolves.toBe('next');
+    });
+
+    it('answers a search started straight after a cancel the runner gave up waiting on', async () => {
+      const transient = loggedInSession();
+      const source = new vscode.CancellationTokenSource();
+      const cancelled = queries.queuedNbQueryExecutorUsing(
+        transient,
+        undefined,
+        source.token,
+      )(BRIEF);
+      source.cancel();
+      cancelRunOn(transient); // a second press stops waiting at once, as a slow gem would
+
+      const again = queries.queuedNbQueryExecutorUsing(transient)(`'again'`);
+
+      await expect(cancelled).rejects.toBeInstanceOf(NbCancelledError);
+      await expect(again).resolves.toBe('again');
+      await sessionLetGo(transient);
+    }, 30_000);
+
+    it('answers a search started straight after the cancel', async () => {
+      const transient = loggedInSession();
+      const source = new vscode.CancellationTokenSource();
+      const cancelled = queries.queuedNbQueryExecutorUsing(
+        transient,
+        undefined,
+        source.token,
+      )(BRIEF);
+      source.cancel();
+
+      const again = queries.queuedNbQueryExecutorUsing(transient)(`'again'`);
+
+      const outcome = await cancelled.catch((e: unknown) => e);
+      expect(outcome).toSatisfy((o) => o instanceof NbCancelledError || o === 'late');
+      await expect(again).resolves.toBe('again');
+      await sessionLetGo(transient);
+    }, 30_000);
   });
 });

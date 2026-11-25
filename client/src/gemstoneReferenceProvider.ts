@@ -44,7 +44,7 @@ export class GemStoneReferenceProvider implements vscode.ReferenceProvider {
     const all = await sweepEnvironmentsAsync(async (env) => {
       if (failed) return [];
       try {
-        return await queries.sendSitesOfAsync(session, sel, env);
+        return await queries.sendSitesOfAsync(session, sel, env, token);
       } catch (e) {
         failed = true;
         // A query failure is logged where it is raised, and a cancel needs no word.

@@ -33,6 +33,8 @@ import {
   stoppedRunCleared,
   sayStillRunningUnlessItEnds,
   sayWhatHolds,
+  stopOnCancel,
+  stoppedRunLetGo,
 } from '../nbRunner';
 import {
   GCI_ERR_BAD_SESSION_ID,
@@ -3230,6 +3232,55 @@ describe('clearing a stopped run in the background', () => {
     }
   });
 
+  it('waits through a drain and the clean-up it hands over to, for a caller that will not be refused', async () => {
+    vi.useFakeTimers();
+    try {
+      const { session, gci } = makeSession([{ result: 0 }]);
+      const poll = gci.GciTsNbPoll as ReturnType<typeof vi.fn>;
+      poll.mockReturnValue({ result: 0, err: noErr });
+      let finish: (v: unknown) => void = () => {};
+      gci.GciTsClearStackAsync.mockReturnValueOnce(
+        new Promise((resolve) => (finish = resolve)) as never,
+      );
+      let cancel: (() => void) | undefined;
+      const run = runNbCall(
+        session,
+        () => ({ success: true, err: noErr as never }),
+        () => 'x',
+        {
+          suppressNotification: true,
+          onStart: (c) => (cancel = c),
+          onAbandonedCollected: () => void clearInBackground(session, 0x4242n),
+        },
+      );
+      run.catch(() => {});
+      cancel!();
+      cancel!();
+      await vi.advanceTimersByTimeAsync(SETTLE_MS);
+      let letGo = false;
+      const waiting = stoppedRunLetGo(session).then(() => (letGo = true));
+
+      poll.mockReturnValue({ result: 1, err: noErr });
+      await vi.advanceTimersByTimeAsync(200);
+      expect(gci.GciTsClearStackAsync).toHaveBeenCalled();
+      expect(letGo).toBe(false);
+
+      finish({ success: true, err: noErr });
+      await waiting;
+      const start = vi.fn(() => 'started');
+      expect(whenSessionFree(session, start)).toBe('started');
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('lets go at once when no stopped run holds the session', async () => {
+    const { session } = makeSession([]);
+
+    await expect(stoppedRunLetGo(session)).resolves.toBeUndefined();
+  });
+
   it('lets go of the session, logging it, when the clear itself fails in any way', async () => {
     // Including an answer it cannot read: nothing may be left rejecting unhandled.
     const { session, gci } = makeSession([]);
@@ -3290,5 +3341,102 @@ describe('clearing a stopped run in the background', () => {
     expect(gci.GciTsClearStackAsync).not.toHaveBeenCalled();
     expect(then).toHaveBeenCalledTimes(1);
     expect(() => ensureSessionFree(session)).not.toThrow();
+  });
+});
+
+describe('a call a VS Code cancellation token can stop', () => {
+  /** A call that never answers on its own, stoppable by `source`'s token. */
+  function callStoppedBy(source: vscode.CancellationTokenSource) {
+    const { session, gci, handle } = makeSession([{ result: 0 }]);
+    const stop = stopOnCancel(source.token);
+    const start = vi.fn(() => ({ success: true, err: noErr as never }));
+    let settled = false;
+    const run = runNbCall(session, start, () => 'answer', {
+      suppressNotification: true,
+      onStart: stop.onStart,
+      stopWhileWaitingForSession: stop.stopWhileWaitingForSession,
+    }).finally(() => {
+      settled = true;
+      stop.dispose();
+    });
+    run.catch(() => {});
+    return { session, gci, handle, start, run, settled: () => settled };
+  }
+
+  /** Let a stopped call give up and its drain finish, so no later test finds the session held. */
+  async function letItGo(): Promise<void> {
+    await vi.advanceTimersByTimeAsync(STOP_WAITING_AFTER_MS + 3000);
+    vi.clearAllTimers();
+  }
+
+  it('sends the running call one soft break when the token is cancelled', async () => {
+    vi.useFakeTimers();
+    try {
+      const source = new vscode.CancellationTokenSource();
+      const { gci, handle, run } = callStoppedBy(source);
+
+      source.cancel();
+
+      expect(gci.GciTsBreak).toHaveBeenCalledTimes(1);
+      expect(gci.GciTsBreak).toHaveBeenCalledWith(sameObject(handle), false);
+      await letItGo();
+      await expect(run).rejects.toBeInstanceOf(NbCancelledError);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never sends a call whose token was cancelled before it started', async () => {
+    const source = new vscode.CancellationTokenSource();
+    source.cancel();
+
+    const { gci, start, run } = callStoppedBy(source);
+
+    await expect(run).rejects.toBeInstanceOf(NbCancelledError);
+    expect(start).not.toHaveBeenCalled();
+    expect(gci.GciTsBreak).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing for a cancel that comes after the call has answered', async () => {
+    const source = new vscode.CancellationTokenSource();
+    const { session, gci } = makeSession([{ result: 1 }]);
+    const stop = stopOnCancel(source.token);
+    await runNbCall(
+      session,
+      () => ({ success: true, err: noErr as never }),
+      () => 'answer',
+      { onStart: stop.onStart, stopWhileWaitingForSession: stop.stopWhileWaitingForSession },
+    );
+    stop.dispose();
+    const next = runNbCall(
+      session,
+      () => ({ success: true, err: noErr as never }),
+      () => 'next',
+      { suppressNotification: true },
+    );
+
+    source.cancel();
+
+    expect(gci.GciTsBreak).not.toHaveBeenCalled();
+    await expect(next).resolves.toBe('next');
+  });
+
+  it('does not stop waiting early when the call was already being stopped another way', async () => {
+    vi.useFakeTimers();
+    try {
+      const source = new vscode.CancellationTokenSource();
+      const { session, gci, settled } = callStoppedBy(source);
+      cancelRunOn(session);
+
+      source.cancel();
+      await vi.advanceTimersByTimeAsync(0);
+
+      // A second press would have given up on the call at once.
+      expect(gci.GciTsBreak).toHaveBeenCalledTimes(1);
+      expect(settled()).toBe(false);
+      await letItGo();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
