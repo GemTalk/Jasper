@@ -52,7 +52,7 @@ runs:
         UNZIP_DEB: ${{ runner.temp }}\ubuntu-debs\unzip_6.0-26ubuntu3.2_amd64.deb
         WSLENV: UNZIP_DEB/p
       shell: wsl-bash {0}
-      run: dpkg -i "$UNZIP_DEB" && unzip -v | head -1
+      run: dpkg -i "$UNZIP_DEB" && command -v unzip
     - name: Cache GemStone Windows client download
       # The client build is always native Windows (this action only ever
       # runs on windows-latest), so there's only ever one platform's archive
