@@ -3,6 +3,7 @@ import { SessionManager, ActiveSession } from './sessionManager';
 import { parseTopazDocument } from './topazFileIn';
 import { extractSelector } from './methodPattern';
 import * as queries from './browserQueries';
+import { onDidChangeMethods } from './methodsChanged';
 import { SMALLTALK_LANGUAGE } from './languageIds';
 
 /**
@@ -115,17 +116,16 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
    * ANY CodeLens provider on that document fires a change — e.g. the debugger's
    * inline-values toggle — so without this cache every such toggle re-counted
    * senders/implementors (seconds for a method like `initialize`). Keyed by
-   * kind|selector|class|meta|session|maxEnv; cleared on `refresh()`. Counts are
-   * already effectively static between refreshes (this provider doesn't re-fire on
-   * recompile today), so caching introduces no new staleness.
+   * kind|selector|class|meta|session|maxEnv; cleared on `refresh()`, which runs
+   * whenever the extension says methods changed on the stone.
    */
   private countCache = new Map<string, number>();
 
   /**
    * Counts whose last lookup a busy session refused, keyed like
    * {@link countCache}, each mapped to the id of the session that refused it.
-   * A refusal isn't cached as a count (that would show `0 senders` until the
-   * next refresh). The next resolve shows the lens without a number and forgets
+   * A refusal isn't cached as a count (that would show `0 senders` until
+   * methods next change). The next resolve shows the lens without a number and forgets
    * the key; the resolve after that looks up again. Retrying straight away
    * would loop while the session stays busy: the change fired after a lookup is
    * itself what makes VS Code re-resolve.
@@ -137,6 +137,15 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
    * fire again. Only the refused keys go; the counts that succeeded stay.
    */
   private uncounted = new Map<string, number>();
+
+  /**
+   * Counts whose lookup failed for a reason other than a busy session (a lost
+   * connection, say), keyed like {@link countCache}, each mapped to the error.
+   * Shown without a number, with the error as tooltip, and not looked up again
+   * until methods change: a lens resolves on every scroll and edit, and each
+   * retry would flash the spinner and log the failure again.
+   */
+  private unavailable = new Map<string, string>();
 
   /**
    * Counts currently being computed (keyed like {@link countCache}). The
@@ -156,13 +165,20 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
    * freeing up would recount lenses another, still busy, session refused.
    */
   private refusedBy = new Set<number>();
-  private freedSubscription: vscode.Disposable;
+  private subscriptions: vscode.Disposable[];
 
   /** Per session id, the wait for that session to stay free (see {@link RECOUNT_AFTER_FREE_MS}). */
   private recountTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
-  constructor(private sessionManager: SessionManager) {
-    this.freedSubscription = sessionManager.onDidFreeSession((id) => this.recountOnceStillFree(id));
+  /** @param methodsChanged fires when methods may have changed on the stone, so every count is stale. */
+  constructor(
+    private sessionManager: SessionManager,
+    methodsChanged: vscode.Event<unknown> = onDidChangeMethods,
+  ) {
+    this.subscriptions = [
+      sessionManager.onDidFreeSession((id) => this.recountOnceStillFree(id)),
+      methodsChanged(() => this.refresh()),
+    ];
   }
 
   /**
@@ -202,8 +218,12 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
   }
 
   refresh(): void {
+    // A count waiting to run would run again for the resolve this refresh asks for.
+    for (const timer of this.countTimers) clearTimeout(timer);
+    this.countTimers.clear();
     this.countCache.clear();
     this.uncounted.clear();
+    this.unavailable.clear();
     this.refusedBy.clear();
     this.clearRecountTimers();
     this.pending.clear();
@@ -311,6 +331,14 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
       codeLens.command = this.countCommand(undefined, data, session.id);
       return codeLens;
     }
+    const failure = this.unavailable.get(cacheKey);
+    if (failure !== undefined) {
+      codeLens.command = {
+        ...this.countCommand(undefined, data, session.id),
+        tooltip: `Count unavailable: ${failure}`,
+      };
+      return codeLens;
+    }
 
     // Not counted yet: show a spinner and compute on a later tick (see
     // `pending`). When the count lands, scheduleCount fires a change so VS Code
@@ -323,7 +351,8 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
 
   /**
    * The resolved link (singular/plural + click command); without a count when
-   * the lookup was refused, still clickable since the list runs its own lookup.
+   * the lookup was refused or failed, still clickable since the list runs its
+   * own lookup.
    */
   private countCommand(
     count: number | undefined,
@@ -357,6 +386,7 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
       if (this.disposed) return; // editor/extension torn down before the timer fired
       let count = 0;
       let refused = false;
+      let failure: string | undefined;
       for (let env = 0; env <= maxEnv; env++) {
         try {
           count += queries.quietly(() =>
@@ -365,15 +395,17 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
               : queries.implementorsOf(session, data.selector, env).length,
           );
         } catch (e) {
-          // A busy session's refusal leaves the count unknown. Any other
-          // failure would fail again, so this env counts as none and the total
-          // is cached, sparing a re-count on every resolve.
+          // Either way the total is unknown, not zero. A refusal wins: the
+          // session freeing up gives it a recount that may succeed.
           if (queries.isBusyRefusal(e)) refused = true;
+          else failure ??= e instanceof Error ? e.message : String(e);
         }
       }
       if (refused) {
         this.uncounted.set(cacheKey, session.id);
         this.refusedBy.add(session.id);
+      } else if (failure !== undefined) {
+        this.unavailable.set(cacheKey, failure);
       } else {
         this.countCache.set(cacheKey, count);
       }
@@ -389,10 +421,11 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
     for (const timer of this.countTimers) clearTimeout(timer);
     this.countTimers.clear();
     this.uncounted.clear();
+    this.unavailable.clear();
     this.pending.clear();
     this.refusedBy.clear();
     this.clearRecountTimers();
-    this.freedSubscription.dispose();
+    for (const subscription of this.subscriptions) subscription.dispose();
     this._onDidChangeCodeLenses.dispose();
   }
 }

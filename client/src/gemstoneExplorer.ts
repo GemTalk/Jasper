@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { announceMethodsChanged } from './methodsChanged';
 import { REFACTORING_APPLIED_COMMAND } from './refactoring/refactoringAppliedEvent';
 import {
   beginMethodDeletion,
@@ -2174,6 +2175,8 @@ export class ExplorerController {
   // view of the repository, so the Explorer's cached listing can be stale.
   // Reload in place (keeping the selection) when it's OUR current session.
   onSessionAborted(sessionId: number): void {
+    // Its uncommitted methods are gone, and it may now see others' commits.
+    announceMethodsChanged();
     const session = this.session();
     if (!session || session.id !== sessionId) return;
     // Reload in place but DON'T reveal — the abort was pressed from another view,
@@ -5325,6 +5328,7 @@ export class ExplorerController {
           } catch (e: unknown) {
             return { versions: current, error: e instanceof Error ? e.message : String(e) };
           }
+          announceMethodsChanged();
           current = parseMethodHistory(
             queries.getMethodHistory(session, className, selector, isMeta, dict),
           );
@@ -9750,11 +9754,12 @@ export function registerGemStoneExplorer(
       ctl.history.setActiveSession(id === null ? undefined : id);
     }),
     // The manual Refresh button reloads in place, keeping the user's selection
-    // (a full reset only happens on a session switch, below).
-    vscode.commands.registerCommand(
-      'gemstone.explorer.refresh',
-      () => void ctl.refreshRetainingSelection(),
-    ),
+    // (a full reset only happens on a session switch, below). File In and Undo run it too,
+    // after changing methods, so it says they changed.
+    vscode.commands.registerCommand('gemstone.explorer.refresh', () => {
+      announceMethodsChanged();
+      void ctl.refreshRetainingSelection();
+    }),
     // The undo stack moved, or the selected session changed under it. Internal, and
     // deliberately not contributed in package.json: the Actions & Navigation pane's Undo
     // button carries the verb and the change in its tooltip, so it has to be redrawn

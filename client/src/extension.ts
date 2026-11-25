@@ -244,6 +244,7 @@ import { getLogpointChannel, showLogpointChannel } from './debugger/logpointChan
 import { getGciLog, logError, logWarning } from './gciLog';
 import { commitFailureMessage, isCommitConflict } from './commitFailure';
 import { CODE_LENS_SELECTORS, GemStoneCodeLensProvider } from './gemstoneCodeLensProvider';
+import { announceMethodsChanged } from './methodsChanged';
 import * as queries from './browserQueries';
 import { dropCachedClassOrganizer } from './classOrganizerCache';
 import { dedupeMethodResults } from './queries/methodSearch';
@@ -599,6 +600,20 @@ export function announceSessionAction(
     getGciLog().show(true);
     logWarning(`${sessionDescription}: ${action} ${result.verb ?? 'failed'}.\n${details}`);
   });
+}
+
+/** The Refresh Browser command: drops everything read from the stone and held client-side. */
+export async function dropStoneCaches(deps: {
+  symbolProvider: { invalidateCache(): void };
+  completionProvider: { invalidateCache(): void };
+  exportManager: { refreshSession(session: ActiveSession): Promise<void> };
+  sessionManager: { getSelectedSession(): ActiveSession | undefined };
+}): Promise<void> {
+  deps.symbolProvider.invalidateCache();
+  deps.completionProvider.invalidateCache();
+  announceMethodsChanged();
+  const session = deps.sessionManager.getSelectedSession();
+  if (session) await deps.exportManager.refreshSession(session);
 }
 
 export async function handleMethodCompiled(event: MethodCompiledEvent) {
@@ -1286,10 +1301,11 @@ export function activate(context: vscode.ExtensionContext) {
       new GemStoneReferenceProvider(sessionManager, selectorResolver),
     ),
     vscode.languages.registerHoverProvider(GCI_PROVIDER_SELECTORS, hoverProvider),
+    hoverProvider, // dispose() stops it listening for method changes
     vscode.languages.registerCompletionItemProvider(GCI_PROVIDER_SELECTORS, completionProvider),
     completionProvider, // dispose() cancels a prime still waiting out its debounce
     vscode.languages.registerCodeLensProvider(CODE_LENS_SELECTORS, codeLensProvider),
-    codeLensProvider, // dispose() cancels pending count lookups + releases the emitter
+    codeLensProvider, // dispose() cancels pending count lookups, stops listening for method changes
     vscode.languages.registerCodeLensProvider(WORKSPACE_SESSION_SELECTORS, workspaceSessionLens),
     workspaceSessionLens,
     // Hosts the RB family under the native "Refactor…" menu in a saved
@@ -2983,21 +2999,9 @@ export function activate(context: vscode.ExtensionContext) {
       },
     ),
 
-    // Drops everything read from the stone and held client-side: the workspace symbol
-    // corpus, completion's three caches, and the export manager's session state. Was
-    // titled "Refresh Browser", after the System Browser, which is no longer how anyone
-    // reaches this — and while it was the ONLY caller of the completion provider's
-    // invalidateCache, that name was also the only name for the fix to stale
-    // completion. The Explorer's own Refresh and the compile hooks cover that now, so
-    // this is the blunt instrument rather than the only instrument.
-    vscode.commands.registerCommand('gemstone.refreshBrowser', async () => {
-      symbolProvider.invalidateCache();
-      completionProvider.invalidateCache();
-      const session = sessionManager.getSelectedSession();
-      if (session) {
-        await exportManager.refreshSession(session);
-      }
-    }),
+    vscode.commands.registerCommand('gemstone.refreshBrowser', () =>
+      dropStoneCaches({ symbolProvider, completionProvider, exportManager, sessionManager }),
+    ),
 
     vscode.commands.registerCommand('gemstone.refreshTests', () => {
       sunitTestController.refresh();

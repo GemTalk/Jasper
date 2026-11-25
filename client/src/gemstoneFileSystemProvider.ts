@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { announceMethodsChanged } from './methodsChanged';
 import { ActiveSession, SessionManager } from './sessionManager';
 import * as queries from './browserQueries';
 import { BrowserQueryError } from './browserQueries';
@@ -1082,13 +1083,14 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     // process the completed save and mark the document clean. Firing synchronously
     // here — before writeFile returns — means the tab is still dirty when
     // closeTextEditorOn runs, which triggers a "save before closing?" dialog.
-    setImmediate(() =>
+    setImmediate(() => {
       this._onMethodCompiled.fire({
         uri: newMethodUri,
         previousUri: uri,
         previousUriIsTemplate: parsedMethodUri.kind === 'new-method',
-      }),
-    );
+      });
+      announceMethodsChanged();
+    });
   }
 
   private compileClassDefinition(

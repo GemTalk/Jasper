@@ -38,6 +38,7 @@ import { InFlightGuard } from '../inFlightGuard';
 import { DEFAULT_LOGIN } from '../loginTypes';
 import { _resetGciLogForTests, getGciLog } from '../gciLog';
 import { fakeActiveSession } from './fakeActiveSession';
+import { onDidChangeMethods } from '../methodsChanged';
 
 /** Let the toast's `.then` run: it is a microtask, and announceSessionAction returns void. */
 const flushMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -1055,5 +1056,53 @@ describe('maybeOpenGettingStarted', () => {
     extension.maybeOpenGettingStarted(context);
 
     expect(walkthroughOpenings()).toHaveLength(1);
+  });
+});
+
+describe('Refresh Browser', () => {
+  function caches(session = fakeActiveSession({ id: 1 })) {
+    return {
+      symbolProvider: { invalidateCache: vi.fn() },
+      completionProvider: { invalidateCache: vi.fn() },
+      exportManager: { refreshSession: vi.fn(async () => {}) },
+      sessionManager: { getSelectedSession: vi.fn(() => session) },
+    };
+  }
+
+  it('drops the symbols and completions read from the stone', async () => {
+    const deps = caches();
+
+    await extension.dropStoneCaches(deps);
+
+    expect(deps.symbolProvider.invalidateCache).toHaveBeenCalledTimes(1);
+    expect(deps.completionProvider.invalidateCache).toHaveBeenCalledTimes(1);
+  });
+
+  it('announces that methods changed, so senders and implementors are counted again', async () => {
+    const listener = vi.fn();
+    const subscription = onDidChangeMethods(listener);
+
+    await extension.dropStoneCaches(caches());
+    subscription.dispose();
+
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes the selected session's exported files", async () => {
+    const session = fakeActiveSession({ id: 1 });
+    const deps = caches(session);
+
+    await extension.dropStoneCaches(deps);
+
+    expect(deps.exportManager.refreshSession).toHaveBeenCalledWith(session);
+  });
+
+  it('refreshes no exported files with no session selected', async () => {
+    const deps = caches();
+    deps.sessionManager.getSelectedSession.mockReturnValue(undefined as never);
+
+    await extension.dropStoneCaches(deps);
+
+    expect(deps.exportManager.refreshSession).not.toHaveBeenCalled();
   });
 });

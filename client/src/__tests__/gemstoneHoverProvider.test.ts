@@ -1,9 +1,11 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 const quiet = vi.hoisted(() => ({ on: false }));
-vi.mock('../browserQueries', () => ({
+vi.mock('../browserQueries', async (importOriginal) => ({
+  BrowserQueryError: (await importOriginal<typeof import('../browserQueries')>()).BrowserQueryError,
+  isBusyRefusal: (await importOriginal<typeof import('../browserQueries')>()).isBusyRefusal,
   quietly: <T>(query: () => T): T => {
     quiet.on = true;
     try {
@@ -19,6 +21,7 @@ vi.mock('../browserQueries', () => ({
 }));
 
 import {
+  EventEmitter,
   Position,
   Range,
   MarkdownString,
@@ -27,11 +30,33 @@ import {
   __resetConfig,
 } from '../__mocks__/vscode';
 import type * as vscode from 'vscode';
-import { GemStoneHoverProvider } from '../gemstoneHoverProvider';
+import { GemStoneHoverProvider as RealHoverProvider } from '../gemstoneHoverProvider';
 import { SelectorResolver } from '../selectorProviders';
 import { SessionManager } from '../sessionManager';
-import { implementorsOf, sendersOf, getAllClassNames, getClassComment } from '../browserQueries';
+import {
+  BrowserQueryError,
+  implementorsOf,
+  sendersOf,
+  getAllClassNames,
+  getClassComment,
+} from '../browserQueries';
+import { GCI_ERR_OP_IN_PROGRESS } from '../gciConstants';
 import { fakeActiveSession } from './fakeActiveSession';
+import { announceMethodsChanged } from '../methodsChanged';
+
+// Each provider listens for method changes; disposed after each test so none outlives it.
+const providers: RealHoverProvider[] = [];
+class GemStoneHoverProvider extends RealHoverProvider {
+  constructor(...args: ConstructorParameters<typeof RealHoverProvider>) {
+    super(...args);
+    providers.push(this);
+  }
+}
+afterEach(() => {
+  providers.splice(0).forEach((p) => p.dispose());
+});
+
+const busyRefusal = () => new BrowserQueryError('Session is busy', GCI_ERR_OP_IN_PROGRESS);
 
 const mockImplementorsOf = vi.mocked(implementorsOf);
 const mockSendersOf = vi.mocked(sendersOf);
@@ -275,7 +300,7 @@ describe('GemStoneHoverProvider', () => {
       expect(md.value).toContain('`String` (accessing)');
     });
 
-    it('keeps what the other environments found when one of them throws', async () => {
+    it('lists what the other environments found, but shows no counts, when one of them throws', async () => {
       // The guard sits inside the sweep, not around it: a throw in the last environment used
       // to discard the rows the earlier ones had already returned.
       __setConfig('gemstone', 'maxEnvironment', 2);
@@ -301,35 +326,120 @@ describe('GemStoneHoverProvider', () => {
       const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
 
       const md = result!.contents as unknown as MarkdownString;
-      expect(md.value).toContain('2 implementors](command:gemstone.implementorsOfSelector?');
-      expect(md.value).toContain('6 senders](command:gemstone.sendersOfSelector?');
+      expect(md.value).toContain('$(symbol-method) implementors](command:');
+      expect(md.value).toContain('$(references) senders](command:');
       expect(md.value).toContain('`Array` (accessing)');
       expect(md.value).toContain('`String` (accessing)');
     });
 
-    it('does not cache a senders count an environment failed to contribute to', async () => {
-      // Nothing clears the cache short of a new session, so a count taken while one
-      // environment was throwing would stick — the hover would keep under-reporting senders
-      // for that selector long after the stone was healthy again.
+    it('does not ask for senders again after a failure, until methods change', async () => {
+      const methodsChanged = new EventEmitter<void>();
       __setConfig('gemstone', 'maxEnvironment', 1);
       let failing = true;
       mockSendersOf.mockImplementation((_session, _selector, env) => {
-        if (env === 1 && failing) throw new Error('session busy');
+        if (env === 1 && failing) throw new Error('The connection to the gem was lost');
         return Array.from({ length: 2 }, () => ({}) as never);
+      });
+      const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
+      const provider = new GemStoneHoverProvider(
+        makeSessionManager(true),
+        resolver,
+        methodsChanged.event,
+      );
+      await provider.provideHover(makeDocument('self size'), pos(0, 5));
+      failing = false;
+
+      const again = await provider.provideHover(makeDocument('self size'), pos(0, 5));
+      expect((again!.contents as unknown as MarkdownString).value).toContain(
+        '$(references) senders](command:gemstone.sendersOfSelector?',
+      );
+      expect(mockSendersOf).toHaveBeenCalledTimes(2);
+
+      methodsChanged.fire();
+      const after = await provider.provideHover(makeDocument('self size'), pos(0, 5));
+      expect((after!.contents as unknown as MarkdownString).value).toContain(
+        '4 senders](command:gemstone.sendersOfSelector?',
+      );
+    });
+
+    it('shows nothing while the session is busy', async () => {
+      mockImplementorsOf.mockImplementation(() => {
+        throw busyRefusal();
+      });
+      mockSendersOf.mockImplementation(() => {
+        throw busyRefusal();
       });
       const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
       const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
 
-      const first = await provider.provideHover(makeDocument('self size'), pos(0, 5));
-      expect((first!.contents as unknown as MarkdownString).value).toContain(
+      expect(await provider.provideHover(makeDocument('self size'), pos(0, 5))).toBeNull();
+    });
+
+    it('shows nothing when only the senders lookup is refused as busy', async () => {
+      mockImplementorsOf.mockReturnValue([
+        {
+          dictName: 'Globals',
+          className: 'Array',
+          isMeta: false,
+          selector: 'size',
+          category: 'accessing',
+          environmentId: 0,
+        },
+      ]);
+      mockSendersOf.mockImplementation(() => {
+        throw busyRefusal();
+      });
+      const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
+      const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
+
+      expect(await provider.provideHover(makeDocument('self size'), pos(0, 5))).toBeNull();
+    });
+
+    it('asks for senders again once the busy session frees up', async () => {
+      mockSendersOf
+        .mockImplementationOnce(() => {
+          throw busyRefusal();
+        })
+        .mockReturnValue([{}, {}] as never);
+      const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
+      const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
+      await provider.provideHover(makeDocument('self size'), pos(0, 5));
+
+      const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
+
+      expect((result!.contents as unknown as MarkdownString).value).toContain(
         '2 senders](command:gemstone.sendersOfSelector?',
       );
+    });
 
-      failing = false;
-      const second = await provider.provideHover(makeDocument('self size'), pos(0, 5));
-      expect((second!.contents as unknown as MarkdownString).value).toContain(
-        '4 senders](command:gemstone.sendersOfSelector?',
+    it('counts senders again once methods change on the stone', async () => {
+      const methodsChanged = new EventEmitter<void>();
+      mockSendersOf.mockReturnValueOnce([{} as never]).mockReturnValue([{}, {}] as never);
+      const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
+      const provider = new GemStoneHoverProvider(
+        makeSessionManager(true),
+        resolver,
+        methodsChanged.event,
       );
+      await provider.provideHover(makeDocument('self size'), pos(0, 5));
+
+      methodsChanged.fire();
+      const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
+
+      expect((result!.contents as unknown as MarkdownString).value).toContain(
+        '2 senders](command:gemstone.sendersOfSelector?',
+      );
+    });
+
+    it('stops listening for method changes once disposed', () => {
+      const release = vi.fn();
+      const provider = new GemStoneHoverProvider(makeSessionManager(true), undefined, () => ({
+        dispose: release,
+      }));
+
+      provider.dispose();
+
+      expect(release).toHaveBeenCalledTimes(1);
     });
 
     it('names the environment on an implementor found above 0', async () => {
@@ -355,7 +465,7 @@ describe('GemStoneHoverProvider', () => {
       expect(md.value).toContain('- `Array` (accessing) · env 1\n');
     });
 
-    it('survives implementorsOf throwing — degrades to senders-only, does not kill the hover', async () => {
+    it('still shows the senders count when the implementors lookup throws', async () => {
       // A thrown GCI query (busy session, browser/RB plugin absent) must not reject
       // the whole hover and silently show nothing.
       mockImplementorsOf.mockImplementation(() => {
@@ -369,7 +479,120 @@ describe('GemStoneHoverProvider', () => {
       expect(result).not.toBeNull();
       const md = result!.contents as unknown as MarkdownString;
       expect(md.value).toContain('4 senders](command:gemstone.sendersOfSelector?');
-      expect(md.value).toContain('0 implementors](command:gemstone.implementorsOfSelector?');
+      expect(md.value).toContain('$(symbol-method) implementors](command:');
+    });
+
+    it("says in a link's tooltip why its count is unavailable", async () => {
+      mockImplementorsOf.mockReturnValue([]);
+      mockSendersOf.mockImplementation(() => {
+        throw new Error('The connection to the gem was lost');
+      });
+      const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
+      const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
+      const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
+
+      const md = result!.contents as unknown as MarkdownString;
+      expect(md.value).toMatch(
+        /senders\]\(command:gemstone\.sendersOfSelector\?\S+ "Count unavailable: The connection to the gem was lost"\)/,
+      );
+    });
+
+    it("says in the implementors link's tooltip why its count is unavailable", async () => {
+      mockImplementorsOf.mockImplementation(() => {
+        throw new Error('The connection to the gem was lost');
+      });
+      const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
+      const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
+      const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
+
+      const md = result!.contents as unknown as MarkdownString;
+      expect(md.value).toMatch(
+        /implementors\]\(command:gemstone\.implementorsOfSelector\?\S+ "Count unavailable: The connection to the gem was lost"\)/,
+      );
+    });
+
+    it('keeps the link whole when the error has quote marks in it', async () => {
+      mockSendersOf.mockImplementation(() => {
+        throw new Error('a "Foo" does not understand #bar');
+      });
+      const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
+      const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
+      const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
+
+      const md = result!.contents as unknown as MarkdownString;
+      expect(md.value).toMatch(
+        /senders\]\(command:gemstone\.sendersOfSelector\?\S+ "Count unavailable: a \\"Foo\\" does not understand #bar"\)/,
+      );
+    });
+
+    it('keeps the link whole when the error spans lines or ends in a backslash', async () => {
+      mockSendersOf.mockImplementation(() => {
+        throw new Error('line one\n\nline two \\');
+      });
+      const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
+      const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
+      const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
+
+      const md = result!.contents as unknown as MarkdownString;
+      expect(md.value).toContain('"Count unavailable: line one line two \\\\")');
+    });
+
+    it('says what was thrown when it is not an Error', async () => {
+      mockSendersOf.mockImplementation(() => {
+        throw 'gem gone';
+      });
+      const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
+      const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
+      const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
+
+      expect((result!.contents as unknown as MarkdownString).value).toContain(
+        '"Count unavailable: gem gone"',
+      );
+    });
+
+    it('gives the first failure when several environments fail', async () => {
+      __setConfig('gemstone', 'maxEnvironment', 1);
+      mockSendersOf.mockImplementation((_session, _selector, env) => {
+        throw new Error(env === 0 ? 'first' : 'second');
+      });
+      const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
+      const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
+      const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
+
+      expect((result!.contents as unknown as MarkdownString).value).toContain(
+        '"Count unavailable: first"',
+      );
+    });
+
+    it('counts senders again when any part of Jasper announces that methods changed', async () => {
+      mockSendersOf.mockReturnValueOnce([{} as never]).mockReturnValue([{}, {}] as never);
+      const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
+      const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
+      await provider.provideHover(makeDocument('self size'), pos(0, 5));
+
+      announceMethodsChanged();
+      const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
+
+      expect((result!.contents as unknown as MarkdownString).value).toContain(
+        '2 senders](command:gemstone.sendersOfSelector?',
+      );
+    });
+
+    it('shows the links without counts, rather than nothing, when both lookups fail', async () => {
+      mockImplementorsOf.mockImplementation(() => {
+        throw new Error('The connection to the gem was lost');
+      });
+      mockSendersOf.mockImplementation(() => {
+        throw new Error('The connection to the gem was lost');
+      });
+      const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
+      const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
+      const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
+
+      expect(result).not.toBeNull();
+      const md = result!.contents as unknown as MarkdownString;
+      expect(md.value).toContain('$(references) senders](command:');
+      expect(md.value).toContain('$(symbol-method) implementors](command:');
     });
 
     it('shows singular "implementor" for one result', async () => {
