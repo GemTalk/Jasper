@@ -396,9 +396,14 @@ export interface StoneSessionCommandDeps {
 export const STOP_SESSION = 'Stop Session';
 export const KILL = 'Kill';
 
-/** `text` ending in one full stop. An explained login failure already ends in ".)". */
+/**
+ * `text` ending in one closing mark, with no trailing whitespace (raw `kill`
+ * stderr ends in a newline). An explained login failure already ends in ".)".
+ */
 function asSentence(text: string): string {
-  return /\.\)?$/.test(text) ? text : `${text}.`;
+  const trimmed = text.trimEnd();
+  if (!trimmed) return 'no reason was given.';
+  return /[.?!]\)?$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }
 
 /**

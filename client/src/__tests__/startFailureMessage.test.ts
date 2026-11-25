@@ -168,6 +168,24 @@ describe('explainMissingKeyFile', () => {
     expect(message).not.toContain('community.starter.key');
   });
 
+  it('says it could not check for a free key file, rather than that there is none, when the check fails', () => {
+    const message = explainMissingKeyFile(
+      'Starting stone gs64stone',
+      MISSING_KEY_OUTPUT,
+      () => {
+        throw new Error('WSL timed out');
+      },
+      asGiven,
+    );
+
+    expect(message).toMatch(/its key file \/db\/conf\/gemstone.key does not exist/);
+    expect(message).toContain(
+      'Jasper could not check whether this GemStone install has a free key file ' +
+        '(sys/community.starter.key). If it has none, get one from GemTalk Systems.',
+    );
+    expect(message).not.toContain('has no free key file to copy');
+  });
+
   it("recognises 3.6.2's wording of the same failure", () => {
     const output =
       '|     ERROR: Unable to stat() key file /db/conf/gemstone.key:\n' +
