@@ -58,6 +58,9 @@
     // re-render (typing to filter the list) keeps them folded; a list under another title does not.
     var collapsedGroups = {};
     var collapsedForTitle = null;
+    // The trail card (see showCoach): closed with its ×, open again on a click on a step.
+    var coachEl = null;
+    var coachClosed = false;
     var activeIndex = -1;
     var inPivot = false;
     var previewTimer = null;
@@ -312,11 +315,94 @@
       activeIndex = Math.max(0, Math.min(rows.length - 1, index));
       var el = rows[activeIndex];
       el.classList.add('active');
+      showCoach();
       if (scroll !== false && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
       // A new left-row selection dismisses a sticky references list — the pane goes back to source.
       previewMode = 'source';
       requestPreview();
       refreshRefIndicator();
+    }
+
+    /** Under the selected step of a trail, a card with its note, so the reader sees where to start
+     *  and what each step is for without hovering. Back and Next move the selection, and the
+     *  preview pane follows it, as an arrow key would. */
+    function showCoach() {
+      if (coachEl && coachEl.parentNode) coachEl.parentNode.removeChild(coachEl);
+      coachEl = null;
+      var row = rows[activeIndex];
+      if (coachClosed || !row || !row.coachText) return;
+      var steps = [];
+      for (var i = 0; i < rows.length; i++) if (rows[i].coachText) steps.push(i);
+      var at = steps.indexOf(activeIndex);
+      coachEl = doc.createElement('li');
+      coachEl.className = 'coach';
+      var head = doc.createElement('div');
+      head.className = 'coach-head';
+      head.textContent = 'Step ' + (at + 1) + ' of ' + steps.length;
+      var close = doc.createElement('button');
+      close.type = 'button';
+      close.className = 'coach-close';
+      close.textContent = '×';
+      close.title = 'Hide the guide. Click a step to show it again.';
+      close.setAttribute('aria-label', close.title);
+      close.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        coachClosed = true;
+        showCoach();
+      });
+      head.appendChild(close);
+      coachEl.appendChild(head);
+      var text = doc.createElement('div');
+      text.className = 'coach-text';
+      text.textContent = row.coachText;
+      coachEl.appendChild(text);
+      var buttons = doc.createElement('div');
+      buttons.className = 'coach-buttons';
+      function button(label, title, onClick) {
+        var b = doc.createElement('button');
+        b.type = 'button';
+        b.textContent = label;
+        b.title = title;
+        b.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          onClick();
+        });
+        buttons.appendChild(b);
+        return b;
+      }
+      var id = activeRowId();
+      button('Open', 'Open this method in an editor', function () {
+        post('activate', { id: id, side: false });
+      }).className = 'secondary';
+      if (at > 0) {
+        button('Back', 'The step before', function () {
+          setActive(steps[at - 1]);
+          focusCoachButton('Back');
+        }).className = 'secondary';
+      }
+      if (at < steps.length - 1) {
+        button('Next', 'The next step', function () {
+          setActive(steps[at + 1]);
+          focusCoachButton('Next');
+        });
+      } else {
+        button('Done', 'Hide the guide. Click a step to show it again.', function () {
+          coachClosed = true;
+          showCoach();
+        });
+      }
+      coachEl.appendChild(buttons);
+      row.parentNode.insertBefore(coachEl, row.nextSibling);
+    }
+
+    /** Keep the focus on Back or Next as the card moves, so the keyboard can go on stepping. */
+    function focusCoachButton(label) {
+      if (!coachEl) return;
+      var bs = coachEl.querySelectorAll('.coach-buttons button');
+      for (var i = 0; i < bs.length; i++) {
+        if (bs[i].textContent === label) return bs[i].focus();
+      }
+      if (bs.length) bs[bs.length - 1].focus();
     }
 
     function activeRowId() {
@@ -397,6 +483,7 @@
       if (groupTitle !== collapsedForTitle) {
         collapsedGroups = {};
         collapsedForTitle = groupTitle;
+        coachClosed = false;
       }
       var groups = [];
       var parent = null;
@@ -474,8 +561,10 @@
         li.appendChild(ref);
       }
 
+      if (row.coach) li.coachText = row.coach;
       var idx = rows.length;
       li.addEventListener('click', function () {
+        coachClosed = false;
         setActive(idx);
       });
       li.addEventListener('dblclick', function () {

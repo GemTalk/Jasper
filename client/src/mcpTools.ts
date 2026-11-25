@@ -24,6 +24,7 @@ import { MethodNote, startingPointNotes, startingPoints } from './assistant/quer
 import { classesFromCode } from './assistant/queries/classesFromCode';
 import { checkExample } from './assistant/queries/checkExample';
 import { classMethodsCode } from './assistant/queries/classMethodsCode';
+import { FoundStep, matchTrail, trailCode } from './assistant/queries/trail';
 import type { ClassNameEntry } from './queries/getAllClassNames';
 
 /** More classes than this, and a class list with methods leaves out where reading starts. */
@@ -49,6 +50,8 @@ export interface McpUiHooks {
     methods?: MethodSearchResult[],
     notes?: ReadonlyMap<string, MethodNote>,
   ): Promise<string>;
+  /** The methods to read, in order, to see how something works, each with its note. */
+  showTrail(title: string, steps: FoundStep[]): Promise<string>;
   showClass(className: string, dictName?: string): Promise<string>;
   /** Open a new Workspace holding `code`, an example of using `className`. */
   showExample(className: string, code: string): Promise<string>;
@@ -947,6 +950,56 @@ export function registerMcpTools(
             ? `${shown} Only the first ${limit} of their methods are listed ` +
                 '(gemstone.omniSearch.maxServerScan).'
             : shown;
+        })(),
+    );
+
+    server.tool(
+      'show_trail_in_search',
+      "Show the methods to read, in order, to see how something works, as a numbered list in Jasper's " +
+        'GemStone Search pane, each with a note on what it does there. Use it when the user asks how ' +
+        'something works or where something happens: follow the real sends, from where it starts ' +
+        'to where the work is done, usually 3 to 12 steps. Afterwards reply with one or two ' +
+        'sentences; do not repeat the steps.',
+      {
+        title: z.string().min(1).describe('What the trail shows, e.g. "How an order is priced"'),
+        steps: z
+          .array(
+            z.object({
+              className: z.string().min(1).describe('The class that implements it, e.g. "Order"'),
+              dictionary: z
+                .string()
+                .optional()
+                .describe('Its dictionary, if the name is ambiguous'),
+              classSide: z.boolean().optional().describe('True for a class-side method'),
+              selector: z.string().min(1).describe('e.g. "priceWith:"'),
+              note: z
+                .string()
+                .min(1)
+                .describe('Its part in the trail, under 60 characters, e.g. "adds the tax"'),
+            }),
+          )
+          .min(1)
+          .max(30),
+      },
+      async (args) =>
+        await uiTool(async () => {
+          const session = getSession();
+          if (!session) throw new Error('No active GemStone session. Ask the user to log in.');
+          const { methods } = methodsFromCode(
+            (code) => executeString(session, code),
+            trailCode(args.steps),
+            args.steps.length,
+          );
+          const { found, missing } = matchTrail(args.steps, methods);
+          if (found.length === 0) {
+            return 'None of the steps names a method that exists, so nothing was shown.';
+          }
+          const shown = await ui.showTrail(args.title, found);
+          if (missing.length === 0) return shown;
+          const names = missing.map(
+            (s) => `${s.className}${s.classSide ? ' class' : ''}>>${s.selector}`,
+          );
+          return `${shown} Left out, since no such method exists: ${names.join(', ')}.`;
         })(),
     );
 

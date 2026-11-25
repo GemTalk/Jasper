@@ -3751,6 +3751,14 @@ export function activate(context: vscode.ExtensionContext) {
           return `Showing ${outcome.shownCount} methods ${where}.`;
         }, `Will show ${methods.length} methods ${where}, ${whenAnswered}.`);
       },
+      showTrail: async (title, steps) => {
+        const where = `in the GemStone Search pane, titled "${title}"`;
+        return await heldDisplay.show(async () => {
+          const outcome = await omniSearch.showTrail(title, steps);
+          if ('error' in outcome) throw new Error(outcome.error);
+          return `Showing ${outcome.shownCount} steps ${where}.`;
+        }, `Will show ${steps.length} steps ${where}, ${whenAnswered}.`);
+      },
       showClass: async (className, dictName) => {
         const where = `${className} in the GemStone Explorer, with its definition open`;
         return await heldDisplay.show(async () => {

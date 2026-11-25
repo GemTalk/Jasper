@@ -105,6 +105,8 @@ export interface OmniResult {
   detail?: string;
   /** Shown indented, as part of the row above it: a method listed under its class. */
   nested?: boolean;
+  /** A step of a guided trail: shown in a card under the row while it is selected. */
+  coach?: string;
   /** Ranking score from the matcher (higher = better). */
   score: number;
   /** Matched ranges in `label` (for future highlighting). */

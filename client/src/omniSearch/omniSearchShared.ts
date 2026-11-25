@@ -511,6 +511,23 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
     .preview-empty { color: var(--vscode-descriptionForeground); font-style: italic; }
     .row { display: flex; align-items: baseline; gap: 8px; padding: 3px 8px 3px 10px; border-radius: 4px; cursor: pointer; }
     .row.nested { padding-left: 30px; }
+    .coach {
+      list-style: none; margin: 2px 8px 8px 22px; padding: 8px 10px;
+      background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+      border: 1px solid var(--vscode-editorWidget-border, var(--vscode-focusBorder, #007acc));
+      border-left: 3px solid var(--vscode-focusBorder, #007acc); border-radius: 4px;
+    }
+    .coach-head { display: flex; justify-content: space-between; align-items: center; font-size: 0.85em; color: var(--vscode-descriptionForeground); }
+    .coach-close { background: none; border: none; color: inherit; cursor: pointer; font-size: 1.1em; padding: 0 2px; }
+    .coach-text { margin: 4px 0 8px; white-space: normal; }
+    .coach-buttons { display: flex; gap: 6px; justify-content: flex-end; }
+    .coach-buttons button {
+      background: var(--vscode-button-background); color: var(--vscode-button-foreground);
+      border: none; border-radius: 2px; padding: 3px 10px; cursor: pointer; font: inherit;
+    }
+    .coach-buttons button:hover { background: var(--vscode-button-hoverBackground); }
+    .coach-buttons button.secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+    .coach-buttons button.secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
     .row .twisty { background: none; border: none; color: inherit; padding: 0 2px; margin-left: -4px; cursor: pointer; font: inherit; line-height: 1; }
     .row:hover { background: var(--vscode-list-hoverBackground); }
     /* The active row's background is theme-dependent and can be faint (and webviews don't get VS

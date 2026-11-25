@@ -9,6 +9,7 @@
     'show_regex_source_search',
     'show_methods_in_search',
     'show_classes_in_search',
+    'show_trail_in_search',
     'show_class_in_explorer',
     'show_example_in_workspace',
   ]);
@@ -32,6 +33,7 @@
     '- Lists, the Explorer and example Workspaces change when the answer is finished, all at once. A regular-expression search shows straight away.',
     '- A class the assistant creates, or one you ask to see, opens in the GemStone Explorer with its definition; the methods it created follow in GemStone Search.',
     '- When it creates several classes at once, they are listed in GemStone Search instead, each with its methods under it, and the Explorer opens on the one you would use first.',
+    '- Ask how something works, and the assistant lists the methods to read, in order, in GemStone Search, each with a note on its part. A card under the first step explains it; **Next** and **Back** walk the steps, and **Open** opens one in an editor.',
     '- A method written like `Class>>selector` in an answer is a link: click it to open the method. After creating a class, the assistant lists where to start reading it.',
     '- After creating classes, the assistant also opens a new Workspace with a short example of using them. Put the cursor on an expression and Display It or Inspect It to see what it answers. Jasper compiles the example first, without running it, so it will not hold a typo or a message nothing implements. It cannot tell what an expression does when run, so read each one before running it.',
     '- Press **Esc** in the GemStone Search box to close the list and return to the normal search.',

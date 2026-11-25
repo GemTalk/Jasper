@@ -263,6 +263,83 @@ describe('GemStone Search view — results rendering (flat, no grouping)', () =>
     });
   });
 
+  describe('the card that guides a reader through a trail', () => {
+    const trail = (over: Record<string, unknown> = {}) =>
+      resultsMsg({
+        rows: [
+          row(0, '1. Library>>lend:to:', { coach: 'checks the book is in, then records the loan' }),
+          row(1, '2. Book>>isOnLoan', { coach: 'a book is out while it has a borrower' }),
+          row(2, '3. Member>>canBorrow', { coach: 'fewer than three loans' }),
+        ],
+        shownCount: 3,
+        pivot: true,
+        pivotTitle: 'How lending works',
+        ...over,
+      });
+    const card = () => document.querySelector<HTMLElement>('#results .coach');
+    const cardButton = (label: string) =>
+      [...card()!.querySelectorAll<HTMLButtonElement>('button')].find(
+        (b) => b.textContent === label,
+      );
+
+    it('opens at the first step, under it, without hovering', () => {
+      const { handle } = mount();
+
+      handle.renderResults(trail());
+
+      expect(card()!.textContent).toContain('Step 1 of 3');
+      expect(card()!.textContent).toContain('checks the book is in, then records the loan');
+      expect(card()!.previousElementSibling!.querySelector('.label')!.textContent).toBe(
+        '1. Library>>lend:to:',
+      );
+    });
+
+    it('moves one step at a time with Next and Back, and the selection with it', () => {
+      const { handle } = mount();
+      handle.renderResults(trail());
+
+      cardButton('Next')!.click();
+      const afterNext = [handle.activeRowId(), card()!.textContent];
+      cardButton('Back')!.click();
+
+      expect(afterNext[0]).toBe(1);
+      expect(afterNext[1]).toContain('Step 2 of 3');
+      expect(handle.activeRowId()).toBe(0);
+      expect(cardButton('Back')).toBeUndefined();
+    });
+
+    it('ends with Done, which hides the card until a step is clicked', () => {
+      const { handle } = mount();
+      handle.renderResults(trail());
+      handle.setActive(2);
+
+      cardButton('Done')!.click();
+      const hidden = card();
+      document.querySelectorAll<HTMLElement>('#results .row')[1].click();
+
+      expect(hidden).toBeNull();
+      expect(card()!.textContent).toContain('Step 2 of 3');
+    });
+
+    it('opens the step it is on in an editor', () => {
+      const { handle, vscode } = mount();
+      handle.renderResults(trail());
+      cardButton('Next')!.click();
+
+      cardButton('Open')!.click();
+
+      expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'activate', id: 1, side: false });
+    });
+
+    it('shows no card for a list that is not a trail', () => {
+      const { handle } = mount();
+
+      handle.renderResults(resultsMsg({ rows: [row(0, 'Library')], shownCount: 1 }));
+
+      expect(card()).toBeNull();
+    });
+  });
+
   it('indents a row that belongs to the one above it', () => {
     const { handle } = mount();
 

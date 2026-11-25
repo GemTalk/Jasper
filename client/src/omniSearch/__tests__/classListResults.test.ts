@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
-import { classListResults } from '../omniSearchViewProvider';
+import { classListResults, trailResults } from '../omniSearchViewProvider';
 import type { MethodSearchResult } from '../../queries/methodSearch';
 import { methodNoteKey } from '../../assistant/queries/startingPoints';
 
@@ -69,5 +69,26 @@ describe('a list of classes with their methods', () => {
       ['addBook:', 'no senders in Library', 'why'],
       ['books', undefined, undefined],
     ]);
+  });
+});
+
+describe('a trail of methods to read', () => {
+  it('numbers each step in order, with its note in the row and in its card', () => {
+    const steps = [
+      { method: method('Library', 'lend:to:'), note: 'checks the book is in' },
+      { method: method('Book', 'isOnLoan'), note: 'asks the borrower' },
+    ];
+
+    const rows = trailResults(steps, 7);
+
+    expect(rows.map((r) => [r.label, r.description, r.coach])).toEqual([
+      ['1. Library>>lend:to:', 'checks the book is in', 'checks the book is in'],
+      ['2. Book>>isOnLoan', 'asks the borrower', 'asks the borrower'],
+    ]);
+    expect(rows[1].action).toMatchObject({
+      kind: 'openMethod',
+      className: 'Book',
+      selector: 'isOnLoan',
+    });
   });
 });

@@ -28,6 +28,7 @@ const GUI_TOOLS = [
   'mcp__jasper__show_regex_source_search',
   'mcp__jasper__show_methods_in_search',
   'mcp__jasper__show_classes_in_search',
+  'mcp__jasper__show_trail_in_search',
   'mcp__jasper__show_class_in_explorer',
   'mcp__jasper__show_example_in_workspace',
 ];
@@ -42,6 +43,7 @@ Write a method as \`Class>>selector\` or \`Class class>>selector\`, in backticks
 After you create or redefine one class, show it with show_class_in_explorer; then, if you created methods, show them with show_methods_in_search, titled for example "Methods created in OrderLine". End your answer with "Start reading at:" and the methods find_starting_points gives.
 When one request creates several classes, show them instead with show_classes_in_search and withMethods, titled for example "Classes created for order entry", then show the one the user would call first with show_class_in_explorer.
 After creating classes and showing them, open one example with show_example_in_workspace, using the class the user would call first, and say the user can try it in that Workspace.
+When the user asks how something works or where something happens, trace the real sends and show them with show_trail_in_search, titled for example "How an order is priced", one note per step.
 Keep answers short. When you show Smalltalk, use fenced code blocks.`;
 
 export interface AssistantPanelDeps {

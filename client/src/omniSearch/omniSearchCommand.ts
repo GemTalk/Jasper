@@ -481,6 +481,8 @@ export interface OmniSearchRegistration extends vscode.Disposable {
   showMethodList: OmniSearchViewProvider['showMethodList'];
   /** Show a list of classes in the docked view; see OmniSearchViewProvider.showClassList. */
   showClassList: OmniSearchViewProvider['showClassList'];
+  /** Show a trail of methods in the docked view; see OmniSearchViewProvider.showTrail. */
+  showTrail: OmniSearchViewProvider['showTrail'];
 }
 
 export function registerOmniSearch(
@@ -612,9 +614,10 @@ export function registerOmniSearch(
     // empty, and the entry drops out — no full corpus re-enumeration for a delete.
     notifyClassRemoved: (sessionId, className) => foldClassChange(sessionId, className),
     showRegexSearch: (pattern) => viewProvider.showRegexSearch(pattern),
-    showClassList: (title, classes, methods) => viewProvider.showClassList(title, classes, methods),
-    showMethodList: (title, methods, highlight, notes) =>
-      viewProvider.showMethodList(title, methods, highlight, notes),
+    // Spread, not named: a parameter added later then cannot be dropped here unnoticed.
+    showClassList: (...args) => viewProvider.showClassList(...args),
+    showMethodList: (...args) => viewProvider.showMethodList(...args),
+    showTrail: (...args) => viewProvider.showTrail(...args),
     notifySessionSynced: (sessionId) => {
       void viewProvider.onSessionSynced(sessionId);
       OmniSearchPanel.onSessionSynced(sessionId);

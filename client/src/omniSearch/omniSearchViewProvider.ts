@@ -26,6 +26,7 @@
  * never on the hidden path itself.
  */
 import { MethodNote, methodNoteKey } from '../assistant/queries/startingPoints';
+import type { FoundStep } from '../assistant/queries/trail';
 import * as vscode from 'vscode';
 import { codePointMatchesToUtf16 } from '../matchOffsets';
 import {
@@ -395,6 +396,17 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     );
   }
 
+  /** Show the methods to read, in order, to see how something works: each row is numbered and
+   *  carries its step's note. See trailResults. */
+  async showTrail(
+    title: string,
+    steps: readonly FoundStep[],
+  ): Promise<{ shownCount: number } | { error: string }> {
+    return await this.showListOnBehalf(title, undefined, (sessionId) =>
+      trailResults(steps, sessionId),
+    );
+  }
+
   private async showListOnBehalf(
     title: string,
     target: string | undefined,
@@ -679,5 +691,19 @@ export function classListResults(
       };
     });
     return [classRow, ...methodRows];
+  });
+}
+
+/** A numbered row per step, in order, its note in place of the dictionary name and again in the
+ *  step's card, since a long note is cut short in the row. */
+export function trailResults(steps: readonly FoundStep[], sessionId: number): OmniResult[] {
+  return steps.map((step, i) => {
+    const [row] = methodRowsToResults(
+      [step.method],
+      sessionId,
+      'methods',
+      step.method.environmentId,
+    );
+    return { ...row, label: `${i + 1}. ${row.label}`, description: step.note, coach: step.note };
   });
 }
