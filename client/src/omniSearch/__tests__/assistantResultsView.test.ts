@@ -250,13 +250,15 @@ describe('what Ask about this tells the assistant', () => {
     expect(context).toContain('They have "Library>>isOnLoan" selected.');
   });
 
-  it('asks for a new trail into a method the user asks about', () => {
+  it('asks for a trail into a method only when the question is about the whole method', () => {
     const { context } = askAboutContext(
       { label: 'Results 1', title: 'How lending works', results: steps },
       steps[0],
     );
 
     expect(context).toContain('show a trail into it with show_trail_in_search');
+    expect(context).toContain('Only if their question is about how that method works as a whole');
+    expect(context).toContain('A question about one detail of it');
     expect(context).toContain('"Inside Library>>lend:to:"');
   });
 
@@ -292,7 +294,7 @@ describe('what Ask about this tells the assistant', () => {
     );
 
     expect(context).toContain('  - Library>>addBook:');
-    expect(context).not.toContain('their question');
+    expect(context).not.toContain('It answered');
   });
 
   it('sends at most a hundred rows, and says how many more there are', () => {

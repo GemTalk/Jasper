@@ -620,6 +620,12 @@
       if (row.depth) li.style.paddingLeft = 10 + 20 * row.depth + 'px';
       var idx = rows.length;
       li.addEventListener('click', function () {
+        // A click on the step whose card is showing folds the card away; another click opens it.
+        if (idx === activeIndex && li.coachText) {
+          coachClosed = !coachClosed;
+          showCoach();
+          return;
+        }
         coachClosed = false;
         setActive(idx);
       });

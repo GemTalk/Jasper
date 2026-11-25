@@ -172,3 +172,14 @@ describe('asking about a row of Assistant Results', () => {
     expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'clearAbout' });
   });
 });
+
+describe('the cursor in the chat', () => {
+  it('goes to the box whenever the panel gets the focus', () => {
+    mount();
+    (document.getElementById('send') as HTMLButtonElement).focus();
+
+    window.dispatchEvent(new FocusEvent('focus'));
+
+    expect(document.activeElement).toBe(document.getElementById('input'));
+  });
+});

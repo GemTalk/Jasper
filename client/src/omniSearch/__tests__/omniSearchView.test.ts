@@ -321,6 +321,19 @@ describe('GemStone Search view — results rendering (flat, no grouping)', () =>
       expect(card()!.textContent).toContain('Step 2 of 3');
     });
 
+    it('folds the card away when its step is clicked, and opens it on the next click', () => {
+      const { handle } = mount();
+      handle.renderResults(trail());
+      const first = document.querySelectorAll<HTMLElement>('#results .row')[0];
+
+      first.click();
+      const folded = card();
+      first.click();
+
+      expect(folded).toBeNull();
+      expect(card()!.textContent).toContain('Step 1 of 3');
+    });
+
     it('opens the step it is on in an editor', () => {
       const { handle, vscode } = mount();
       handle.renderResults(trail());

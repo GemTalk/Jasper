@@ -42,7 +42,7 @@
     '- Lists, the Explorer and example Workspaces change when the answer is finished, all at once. A regular-expression search shows straight away.',
     '- A class the assistant creates, or one you ask to see, opens in the GemStone Explorer with its definition; the methods it created follow in Assistant Results.',
     '- When it creates several classes at once, they are listed in Assistant Results instead, each with its methods under it, and the Explorer opens on the one you would use first.',
-    '- Ask how something works, and the assistant lists the methods to read, in order, in Assistant Results, each with a note on its part. A card under the first step explains it; **Next** and **Back** walk the steps, **Open** opens one in an editor, and **Ask about this** brings you back here to ask about that step; the answer comes with a new trail into it.',
+    '- Ask how something works, and the assistant lists the methods to read, in order, in Assistant Results, each with a note on its part. A card under the first step explains it; **Next** and **Back** walk the steps, **Open** opens one in an editor, and **Ask about this** brings you back here to ask about that step; asking how it works as a whole also brings a new trail into it.',
     '- A method written like `Class>>selector` in an answer is a link: click it to open the method. After creating a class, the assistant lists where to start reading it.',
     '- After creating classes, the assistant also opens a new Workspace with a short example of using them. Put the cursor on an expression and Display It or Inspect It to see what it answers. Jasper compiles the example first, without running it, so it will not hold a typo or a message nothing implements. It cannot tell what an expression does when run, so read each one before running it.',
     '- A method list stops at the `gemstone.omniSearch.maxServerScan` setting; the answer says when more match.',
@@ -504,6 +504,11 @@
           return;
       }
     }
+    // VS Code focuses the panel, not what is in it: put the cursor in the box whenever the panel
+    // gets the focus (Ask about this, a click on its tab), so typing starts at once. Focusing the
+    // box from a message alone is not enough, since the message can arrive before the panel has
+    // the focus.
+    doc.defaultView.addEventListener('focus', () => input.focus());
     input.focus();
   }
 

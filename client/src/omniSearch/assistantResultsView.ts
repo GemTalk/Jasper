@@ -290,9 +290,12 @@ export function askAboutContext(
     `They have "${rowName(selected)}" selected. Answer about that, reading its source with your tools as needed.`,
     ...(selected.action.kind === 'openMethod'
       ? [
-          `Then show a trail into it with show_trail_in_search, titled for example "Inside ${rowName(selected)}": ` +
-            'start at that method and follow the methods it sends, into other classes too, so the user can go a ' +
-            'level deeper. If it sends nothing worth following (only primitives or basic messages), say so instead.',
+          'Only if their question is about how that method works as a whole (for example "tell me more ' +
+            `about this" or "how does this work"), then show a trail into it with show_trail_in_search, titled ` +
+            `for example "Inside ${rowName(selected)}": start at that method and follow the methods it sends, ` +
+            'into other classes too, so the user can go a level deeper; if it sends nothing worth following ' +
+            '(only primitives or basic messages), say so instead. A question about one detail of it (a ' +
+            'variable, a line, a value) gets an answer in the chat and no trail.',
         ]
       : []),
   ];
