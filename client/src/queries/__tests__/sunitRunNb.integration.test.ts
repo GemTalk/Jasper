@@ -117,8 +117,9 @@ describe('SUnit non-blocking runs (integration)', () => {
    *   always synchronous.
    * - the short sleep, because a break that arrives before the gem has picked the
    *   call up is documented as ignored. 250ms is far more than it needs: the gem
-   *   reaches the test's setUp in about 1 ms. It takes the break only at its own
-   *   2-second tick, so when the stop lands is the gem's choice, not this wait's.
+   *   reaches the test's setUp within ~20 ms, even on a busy CI runner. It takes
+   *   the break only at its own 2-second tick (measured on 3.6.2), so when the
+   *   stop lands is the gem's choice, not this wait's.
    */
   async function startSlowRun(): Promise<{
     run: ReturnType<typeof runTestMethodNb>;
@@ -332,6 +333,14 @@ describe('SUnit non-blocking runs (integration)', () => {
     } catch (e) {
       if (!(e instanceof NbSessionBusyError) || !/still cleaning up/.test(e.message)) throw e;
       stopTrace.add('refused while the stopped run is cleared; waiting for the clear');
+      // The test passes from here, so this line is the only sign the late start
+      // happened. Vitest drops a passing test's console output, locally and in
+      // CI, so it goes straight to stdout; in GitHub Actions the prefix also
+      // makes it one of the run's annotations.
+      const annotation = process.env.GITHUB_ACTIONS ? '::warning title=Absorbed flake::' : '';
+      process.stdout.write(
+        `${annotation}[absorbed flake #983] second press refused while the stopped run was cleared; retried\n`,
+      );
       await stoppedRunCleared(session());
       return await runPassing();
     }
