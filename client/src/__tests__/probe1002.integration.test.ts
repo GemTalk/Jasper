@@ -22,7 +22,12 @@ import type { GciLibrary } from '../gciLibrary';
 import type { ActiveSession } from '../activeSession';
 import { NbCancelledError, runNbCall, stoppedRunHolds } from '../nbRunner';
 import { OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
-import { reportedTransientLogin, reportedSerialOf, reportSessionClosed } from './sessionGateClient';
+import {
+  reportedTransientLogin,
+  reportedSerialOf,
+  reportSessionClosed,
+  waitForRoomToLogIn,
+} from './sessionGateClient';
 import { armForceStop, forceStop } from '../forceStop';
 
 const N = Number(process.env.PROBE_N ?? 20);
@@ -61,6 +66,8 @@ function gemDiagnostics(pid: string | undefined): string {
         ? []
         : [
             `ps -L -o pid,lwp,stat,%cpu,time,wchan:30 -p ${pid}`,
+            `for t in /proc/${pid}/task/*; do echo "$t $(cat $t/comm) syscall: $(sudo -n cat $t/syscall 2>&1)"; done`,
+            `sudo -n ls -l /proc/${pid}/fd 2>&1 | tail -n +2`,
             `sudo -n gdb -p ${pid} -batch -ex 'thread apply all bt 25' 2>&1 | grep -v '^\\[New LWP' | head -150`,
           ];
   if (process.platform === 'win32') return '  (no process tools on Windows: the gem runs in WSL)';
@@ -70,7 +77,7 @@ function gemDiagnostics(pid: string | undefined): string {
       ? `$(lsof -a -p ${pid} -d cwd -Fn | sed -n 's/^n//p')`
       : `$(readlink /proc/${pid}/cwd)`;
   cmds.push(
-    `d=${cwd}; grep -l "${pid}" "$d"/*.log 2>/dev/null | head -3 | while read f; do echo "== $f"; tail -40 "$f"; done`,
+    `d=${cwd}; grep -l "${pid}" "$d"/*.log 2>/dev/null | head -3 | while read f; do echo "== $f"; tail -12 "$f"; done; for f in "$d"/../../data/*-stone.log; do echo "== $f"; tail -25 "$f"; done`,
   );
   return cmds
     .map((c) => {
@@ -95,26 +102,39 @@ describe('probe 1002', () => {
   );
   const admin = (): ActiveSession => testActiveSession(gci, handle);
 
-  // Times each part of a Force Stop: the login (session gate wait included) and the signal.
-  let phases: { login?: number; signal?: number; logout?: number } = {};
-  const deps = {
-    loginTransient: (from: ActiveSession) => {
-      const t = Date.now();
-      const { session: sender, err } = reportedTransientLogin(from);
-      phases.login = Date.now() - t;
-      if (!sender) throw new Error(`Login failed: ${err.message}`);
-      const exec = sender.executeAndFetchString.bind(sender);
-      sender.executeAndFetchString = (...a: Parameters<typeof exec>) => {
-        const t2 = Date.now();
-        try {
-          return exec(...a);
-        } finally {
-          phases.signal = Date.now() - t2;
-        }
-      };
-      return { session: sender, logout: () => void sender.logout() };
-    },
-  };
+  // Times each part of a Force Stop's signal step, per call: the session gate's
+  // wait for room, the login, the signal itself, and the logout.
+  type Phases = { gate?: number; login?: number; signal?: number; logout?: number };
+  function timedDeps(phases: Phases) {
+    return {
+      loginTransient: (from: ActiveSession) => {
+        let t = Date.now();
+        waitForRoomToLogIn();
+        phases.gate = Date.now() - t;
+        t = Date.now();
+        const { session: sender, err } = reportedTransientLogin(from);
+        phases.login = Date.now() - t;
+        if (!sender) throw new Error(`Login failed: ${err.message}`);
+        const exec = sender.executeAndFetchString.bind(sender);
+        sender.executeAndFetchString = (...a: Parameters<typeof exec>) => {
+          const t2 = Date.now();
+          try {
+            return exec(...a);
+          } finally {
+            phases.signal = Date.now() - t2;
+          }
+        };
+        return {
+          session: sender,
+          logout: () => {
+            const t3 = Date.now();
+            void sender.logout();
+            phases.logout = Date.now() - t3;
+          },
+        };
+      },
+    };
+  }
 
   function login(): ActiveSession {
     const { session: s, err } = reportedTransientLogin(admin());
@@ -123,8 +143,14 @@ describe('probe 1002', () => {
     return s;
   }
 
-  async function endGem(s: ActiveSession): Promise<number> {
+  async function endGem(s: ActiveSession, tag: string): Promise<number> {
     const serial = reportedSerialOf(s);
+    let fakePid: string | undefined;
+    if (process.env.PROBE_FAKE_LINGER && tag.includes('#0 ')) {
+      fakePid = s.executeAndFetchString('System gemProcessId printString');
+      execSync(`kill -STOP ${fakePid}`);
+      setTimeout(() => execSync(`kill -CONT ${fakePid}`), 16_500);
+    }
     admin().executeAndFetchString(
       `| now | now := (System descriptionOfSessionSerialNum: ${serial}) at: 10. now > 0 ifTrue: [System stopSession: now]. 'ok'`,
     );
@@ -140,7 +166,51 @@ describe('probe 1002', () => {
     const desc = admin().executeAndFetchString(
       `(System descriptionOfSessionSerialNum: ${serial}) printString`,
     );
-    say(`LINGER serial ${serial}: ${desc}\n${gemDiagnostics(desc.split(',')[1]?.trim())}`);
+    const pid = desc.split(',')[1]?.trim();
+    say(`LINGER after ${tag}, serial ${serial}: ${desc}\n${gemDiagnostics(pid)}`);
+    // Send stopSession again while the gem's system calls are traced: does the
+    // stop byte reach the gem, and what does it do with it?
+    if (pid && process.platform !== 'win32') {
+      const cp = await import('child_process');
+      const out = `${OUT ?? '/tmp/probe1002'}.linger.${serial}`;
+      const tracer =
+        process.platform === 'linux'
+          ? process.env.CI
+            ? cp.spawn('sudo', ['-n', 'strace', '-f', '-tt', '-p', pid, '-o', out], {
+                stdio: 'ignore',
+              })
+            : cp.spawn('strace', ['-f', '-tt', '-p', pid, '-o', out], { stdio: 'ignore' })
+          : cp.spawn('bash', ['-c', `sudo -n sample ${pid} 3 -file ${out}`], { stdio: 'ignore' });
+      await sleep(700);
+      const t = Date.now();
+      admin().executeAndFetchString(
+        `| now | now := (System descriptionOfSessionSerialNum: ${serial}) at: 10. now > 0 ifTrue: [System stopSession: now]. 'ok'`,
+      );
+      let left = false;
+      while (Date.now() - t < 3000) {
+        left =
+          admin().executeAndFetchString(
+            `(((System descriptionOfSessionSerialNum: ${serial}) at: 10) > 0) printString`,
+          ) === 'false';
+        if (left) break;
+        await sleep(50);
+      }
+      say(
+        `  stopSession sent again at +${t % 100_000}: ${left ? `gem left after ${Date.now() - t} ms` : 'still on the stone 3 s later'}`,
+      );
+      await sleep(500);
+      tracer.kill('SIGINT');
+      execSync(`sudo -n pkill -INT -f "strace -f -tt -p ${pid}" || true`, { shell: '/bin/bash' });
+      await sleep(500);
+      try {
+        say(
+          `  trace of the gem around it (${out}):\n${execSync(`${process.env.CI ? 'sudo -n ' : ''}tail -c 6000 ${out}`, { encoding: 'utf8', shell: '/bin/bash' })}`,
+        );
+      } catch (e) {
+        say(`  no trace: ${(e as Error).message.slice(0, 200)}`);
+      }
+      if (!left) execSync(`kill -9 ${pid} || true`, { shell: '/bin/bash' });
+    }
     return -1;
   }
 
@@ -190,15 +260,15 @@ describe('probe 1002', () => {
       if (!(e instanceof NbCancelledError)) throw e;
       outcome = 'abandoned';
     }
-    phases = {};
-    note('forceStop begins');
+    const phases: Phases = {};
+    note(`[Session ${s.id}] forceStop begins`);
     const fsStart = Date.now();
-    const free = await forceStop(s, deps);
+    const free = await forceStop(s, timedDeps(phases));
     const fsMs = Date.now() - fsStart;
     forceStopMs.push(fsMs);
     if (fsMs > 1200)
       say(
-        `w${w} #${i} SLOW forceStop ${fsMs}ms: login ${phases.login}ms, signal ${phases.signal}ms, logout ${phases.logout}ms, rest (poll) ${fsMs - (phases.login ?? 0) - (phases.signal ?? 0) - (phases.logout ?? 0)}ms\n    ${trace.join('\n    ')}`,
+        `w${w} #${i} SLOW forceStop ${fsMs}ms: gate wait ${phases.gate}ms, login ${phases.login}ms, signal ${phases.signal}ms, logout ${phases.logout}ms, rest (poll) ${fsMs - (phases.gate ?? 0) - (phases.login ?? 0) - (phases.signal ?? 0) - (phases.logout ?? 0)}ms\n    ${trace.join('\n    ')}`,
       );
     const deadline = Date.now() + 10_000;
     while (stoppedRunHolds(s) && Date.now() < deadline) await sleep(50);
@@ -326,7 +396,7 @@ describe('probe 1002', () => {
             say(`w${w} #${i} ${o}`);
           }
           counts[o] = (counts[o] ?? 0) + 1;
-          const left = await endGem(s);
+          const left = await endGem(s, `w${w} #${i} ${o}`);
           linger.push(left);
         }
       }),

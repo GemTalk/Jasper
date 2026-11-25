@@ -286,7 +286,7 @@ jobs:
       PROBE_SCENARIO: break,press
       PROBE_BUDGET_MS: '540000'
       PROBE_N: '100000'
-      PROBE_PAR: '2'
+      PROBE_PAR: '1'
       PROBE_OUT: ${{ github.workspace }}/probe1002-${{ matrix.platform }}-${{ matrix.gemstone-version }}-${{ matrix.node-version || 'nvmrc' }}.txt
       # lintSupplyChain.test.ts runs once in the lint job, not per leg.
       JASPER_SKIP_SUPPLY_CHAIN_TEST: '1'
@@ -477,6 +477,10 @@ jobs:
         env:
           GEMSTONE_VERSION: ${{ matrix.gemstone-version }}
         run: npm run test:server:start -- "$GEMSTONE_VERSION"
+      - name: PROBE tools (issue 1002)
+        if: runner.os == 'Linux'
+        timeout-minutes: 4
+        run: sudo apt-get install -y --no-install-recommends strace gdb || (sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends strace gdb) || true
       - name: Run tests (without server plugin)
         env:
           VITEST_JSON_OUTPUT: ${{ env.SKIP_REPORT_BARE_PATH }}
