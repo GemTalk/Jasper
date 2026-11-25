@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from './sessionManager';
 import * as queries from './browserQueries';
+import { sessionForDocument } from './selectorProviders';
 
 /** How long a class selection settles before its completions are fetched. Clicking
  *  through classes is a navigation gesture, so a prime must not fire once per row
@@ -121,7 +122,7 @@ export class GemStoneCompletionProvider implements vscode.CompletionItemProvider
   }
 
   provideCompletionItems(document: vscode.TextDocument): vscode.CompletionItem[] {
-    const session = this.sessionManager.getSelectedSession();
+    const session = sessionForDocument(this.sessionManager, document);
     if (!session) return [];
 
     const items: vscode.CompletionItem[] = [];

@@ -145,8 +145,17 @@ export class SysadminStorage {
   }
 
   /**
+   * Whether a GemStone server can run on this machine. GemStone has no Windows server
+   * build, so on Windows only WSL gives it one. Without one, no installed server is
+   * looked for on disk.
+   */
+  hasLocalServer(): boolean {
+    return this.getPlatformKey() !== undefined;
+  }
+
+  /**
    * Returns the platform key used to enumerate available versions.
-   * On Windows without WSL we have no local server platform, but we still want
+   * Without a local server (see {@link hasLocalServer}) we still want
    * to list versions so users can download the Windows client distribution.
    * Fall back to the x86_64.Linux listing as the authoritative catalog.
    */
@@ -159,13 +168,21 @@ export class SysadminStorage {
     return process.platform === 'darwin' ? 'dmg' : 'zip';
   }
 
-  /** Returns the product directory suffix, e.g. "-arm64.Darwin" */
+  /**
+   * Returns the product directory suffix, e.g. "-arm64.Darwin". Throws without a local server
+   * (see {@link hasLocalServer}), where there is no such folder, rather than answer "-undefined".
+   */
   getPlatformSuffix(): string {
-    return `-${this.getPlatformKey()}`;
+    const key = this.getPlatformKey();
+    if (key === undefined) {
+      throw new Error('No GemStone server can run on this machine: on Windows it needs WSL.');
+    }
+    return `-${key}`;
   }
 
   /** Get the GEMSTONE path for a given version */
   getGemstonePath(version: string): string | undefined {
+    if (!this.hasLocalServer()) return undefined;
     const suffix = this.getPlatformSuffix();
     const dir = path.join(this.getRootPath(), `GemStone64Bit${version}${suffix}`);
     return wslExistsSync(dir) ? dir : undefined;
@@ -251,6 +268,7 @@ export class SysadminStorage {
   isLocalVersion(version: string): boolean {
     const match = this.getExtractedVersionInfos().find((v) => v.version === version);
     if (match) return match.isLocal;
+    if (!this.hasLocalServer()) return false;
     // Not in the extracted list — fall back to a direct check.
     const suffix = this.getPlatformSuffix();
     const dir = path.join(this.getRootPath(), `GemStone64Bit${version}${suffix}`);
@@ -280,6 +298,7 @@ export class SysadminStorage {
   private extractedCache?: { value: ExtractedVersionInfo[]; at: number };
 
   private loadExtractedVersionInfos(): ExtractedVersionInfo[] {
+    if (!this.hasLocalServer()) return [];
     const suffix = this.getPlatformSuffix();
     const prefix = 'GemStone64Bit';
     const pattern = `${prefix}*${suffix}`;
@@ -498,6 +517,7 @@ export class SysadminStorage {
 
   /** Get downloaded files in the root path (batched to a single WSL call). */
   getDownloadedFiles(): Map<string, number> {
+    if (!this.hasLocalServer()) return new Map();
     const ext = this.getDownloadExtension();
     const suffix = this.getPlatformSuffix();
     const prefix = 'GemStone64Bit';
