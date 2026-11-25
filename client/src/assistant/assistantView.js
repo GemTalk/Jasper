@@ -42,7 +42,7 @@
     '- Lists, the Explorer and example Workspaces change when the answer is finished, all at once. A regular-expression search shows straight away.',
     '- A class the assistant creates, or one you ask to see, opens in the GemStone Explorer with its definition; the methods it created follow in Assistant Results.',
     '- When it creates several classes at once, they are listed in Assistant Results instead, each with its methods under it, and the Explorer opens on the one you would use first.',
-    '- Ask how something works, and the assistant lists the methods to read, in order, in Assistant Results, each with a note on its part. A card under the first step explains it; **Next** and **Back** walk the steps, and **Open** opens one in an editor.',
+    '- Ask how something works, and the assistant lists the methods to read, in order, in Assistant Results, each with a note on its part. A card under the first step explains it; **Next** and **Back** walk the steps, **Open** opens one in an editor, and **Ask about this** brings you back here to ask about that step; the answer comes with a new trail into it.',
     '- A method written like `Class>>selector` in an answer is a link: click it to open the method. After creating a class, the assistant lists where to start reading it.',
     '- After creating classes, the assistant also opens a new Workspace with a short example of using them. Put the cursor on an expression and Display It or Inspect It to see what it answers. Jasper compiles the example first, without running it, so it will not hold a typo or a message nothing implements. It cannot tell what an expression does when run, so read each one before running it.',
     '- A method list stops at the `gemstone.omniSearch.maxServerScan` setting; the answer says when more match.',
@@ -143,6 +143,9 @@
     const stopBtn = doc.getElementById('stop');
     const newBtn = doc.getElementById('newConversation');
     const guiUpdates = doc.getElementById('guiUpdates');
+    const about = doc.getElementById('about');
+    const aboutLabel = doc.getElementById('aboutLabel');
+    const aboutClear = doc.getElementById('aboutClear');
 
     const working = doc.getElementById('working');
     const workingLabel = doc.getElementById('workingLabel');
@@ -193,6 +196,22 @@
       log.appendChild(el);
       scrollToEnd();
       return el;
+    }
+
+    /** A message the user sent, under what it asked about (Ask about this), if anything. */
+    function appendUser(text, aboutText) {
+      append(
+        'user',
+        (aboutText ? '<div class="about-line">About: ' + escapeHtml(aboutText) + '</div>' : '') +
+          escapeHtml(text),
+      );
+    }
+
+    /** Show what the next question is about over the input, or nothing for null. */
+    function showAbout(label) {
+      if (!about) return;
+      about.hidden = !label;
+      aboutLabel.textContent = label || '';
     }
 
     function dropLive() {
@@ -375,7 +394,8 @@
         vscode.postMessage({ command: 'newConversation' });
         return;
       }
-      append('user', escapeHtml(text));
+      appendUser(text, about && !about.hidden ? aboutLabel.textContent : undefined);
+      showAbout(null);
       if (history[history.length - 1] !== text) history.push(text);
       historyIndex = history.length;
       vscode.setState({ history: history.slice(-100) });
@@ -422,6 +442,13 @@
     });
     stopBtn.addEventListener('click', () => vscode.postMessage({ command: 'stop' }));
     newBtn.addEventListener('click', () => vscode.postMessage({ command: 'newConversation' }));
+    if (aboutClear) {
+      aboutClear.addEventListener('click', () => {
+        showAbout(null);
+        vscode.postMessage({ command: 'clearAbout' });
+        input.focus();
+      });
+    }
     guiUpdates.addEventListener('change', () =>
       vscode.postMessage({ command: 'setGuiUpdates', on: guiUpdates.checked }),
     );
@@ -440,7 +467,11 @@
           setBusy(false);
           return;
         case 'user':
-          append('user', escapeHtml(msg.text));
+          appendUser(msg.text, msg.about);
+          return;
+        case 'about':
+          showAbout(msg.label);
+          if (msg.label) input.focus();
           return;
         case 'event':
           onEvent(msg.event);
@@ -469,6 +500,7 @@
           setBusy(false);
           toolCards.clear();
           log.innerHTML = '';
+          showAbout(null);
           return;
       }
     }

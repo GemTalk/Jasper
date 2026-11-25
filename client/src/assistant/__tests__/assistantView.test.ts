@@ -9,6 +9,7 @@ beforeAll(() => {
 
 const PAGE =
   '<div id="status" class="status" hidden></div><main id="log"></main>' +
+  '<div id="about" hidden><span id="aboutLabel"></span><button id="aboutClear"></button></div>' +
   '<div id="working" hidden><span id="workingLabel"></span><span id="workingTime"></span></div>' +
   '<input type="checkbox" id="guiUpdates" checked>' +
   '<form id="composer"><textarea id="input"></textarea><button id="newConversation"></button>' +
@@ -127,5 +128,47 @@ describe('the banner under a result shown in Jasper', () => {
     const button = showResult('show_class_in_explorer');
 
     expect(button).toBeNull();
+  });
+});
+
+describe('asking about a row of Assistant Results', () => {
+  const about = () => document.getElementById('about')!;
+
+  it('shows what the next question is about over the input', () => {
+    mount();
+
+    post({ command: 'about', label: 'Results 2: SortedCollection>>resort' });
+
+    expect(about().hidden).toBe(false);
+    expect(about().textContent).toContain('Results 2: SortedCollection>>resort');
+  });
+
+  it('shows it with the question once sent, and then not over the input', () => {
+    const vscode = mount();
+    post({ command: 'about', label: 'Results 2: SortedCollection>>resort' });
+    const input = document.getElementById('input') as HTMLTextAreaElement;
+    input.value = 'Tell me more about this';
+
+    document.getElementById('send')!.click();
+
+    const sent = document.querySelector('#log .msg.user')!;
+    expect(sent.textContent).toBe(
+      'About: Results 2: SortedCollection>>resortTell me more about this',
+    );
+    expect(about().hidden).toBe(true);
+    expect(vscode.postMessage).toHaveBeenCalledWith({
+      command: 'send',
+      text: 'Tell me more about this',
+    });
+  });
+
+  it('lets the user ask without it', () => {
+    const vscode = mount();
+    post({ command: 'about', label: 'Results 2: SortedCollection>>resort' });
+
+    document.getElementById('aboutClear')!.click();
+
+    expect(about().hidden).toBe(true);
+    expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'clearAbout' });
   });
 });

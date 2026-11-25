@@ -47,6 +47,8 @@ export interface OmniViewRow {
   detail?: string;
   nested?: boolean;
   coach?: string;
+  depth?: number;
+  highlight?: string;
   /** Which category produced this row — the webview shows it as a small per-row tag (the flat list
    *  drops category grouping, so this is how you still see what a row is). */
   categoryId: OmniCategoryId;
@@ -366,6 +368,8 @@ function buildView(
       detail: r.detail,
       nested: r.nested,
       coach: r.coach,
+      depth: r.depth,
+      highlight: r.highlight,
       categoryId: r.categoryId,
       categoryLabel: CATEGORY_TAG[r.categoryId],
       icon: cat ? cat.icon : 'symbol-misc',

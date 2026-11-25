@@ -59,7 +59,7 @@ export interface AssistantPanelDeps {
 
 /** What the chat shows, as posted to the webview: kept so a reopened panel can show it again. */
 type LogMessage =
-  | { command: 'user'; text: string }
+  | { command: 'user'; text: string; about?: string }
   | { command: 'event'; event: unknown }
   | { command: 'error'; text: string }
   | { command: 'stopped' };
@@ -73,7 +73,20 @@ type Inbound =
   | { command: 'setGuiUpdates'; on: boolean }
   | { command: 'openMethod'; className: string; isMeta: boolean; selector: string }
   | { command: 'revealSearch' }
-  | { command: 'revealResults' };
+  | { command: 'revealResults' }
+  | { command: 'clearAbout' };
+
+/** What the next question is about (Ask about this, in Assistant Results): `label` is shown over
+ *  the chat's input; `context` goes to Claude in front of the question. */
+export interface AskAbout {
+  label: string;
+  context: string;
+}
+
+/** What Claude is sent for a question typed in the chat, with what it is about in front. */
+export function messageFor(about: AskAbout | undefined, question: string): string {
+  return about ? `${about.context}\n\nTheir question: ${question}` : question;
+}
 
 export class AssistantPanel {
   static readonly viewType = 'jasperAssistant';
@@ -91,6 +104,8 @@ export class AssistantPanel {
   // The running process was started with the other GUI-updates setting; restart it before the
   // next message so the change applies.
   private restartBeforeNextSend = false;
+  // Set by Ask about this, until the next message is sent or the user removes it.
+  private about: AskAbout | undefined;
 
   static show(deps: AssistantPanelDeps): void {
     if (AssistantPanel.current) {
@@ -104,6 +119,17 @@ export class AssistantPanel {
       { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] },
     );
     AssistantPanel.current = new AssistantPanel(panel, deps);
+  }
+
+  /** Open the chat ready for a question about `about`. */
+  static askAbout(deps: AssistantPanelDeps, about: AskAbout): void {
+    AssistantPanel.show(deps);
+    AssistantPanel.current?.setAbout(about);
+  }
+
+  private setAbout(about: AskAbout | undefined): void {
+    this.about = about;
+    this.post({ command: 'about', label: about?.label ?? null });
   }
 
   /** Redraw the MCP status line; called wherever the MCP Server tab is told ownership changed. */
@@ -132,12 +158,23 @@ export class AssistantPanel {
         if (AssistantPanel.conversation.log.length > 0) {
           this.post({ command: 'replay', log: AssistantPanel.conversation.log });
         }
+        if (this.about) this.post({ command: 'about', label: this.about.label });
         return;
-      case 'send':
+      case 'send': {
         this.postMcpStatus();
+        const about = this.about;
+        this.about = undefined;
         // The webview shows the message itself; kept only for a reopened panel.
-        AssistantPanel.conversation.log.push({ command: 'user', text: msg.text });
-        this.send(msg.text);
+        AssistantPanel.conversation.log.push({
+          command: 'user',
+          text: msg.text,
+          about: about?.label,
+        });
+        this.send(messageFor(about, msg.text), msg.text);
+        return;
+      }
+      case 'clearAbout':
+        this.about = undefined;
         return;
       case 'stop':
         this.killChild();
@@ -145,6 +182,7 @@ export class AssistantPanel {
         return;
       case 'newConversation':
         this.killChild();
+        this.about = undefined;
         AssistantPanel.conversation = { log: [] };
         this.post({ command: 'cleared' });
         return;
@@ -178,7 +216,8 @@ export class AssistantPanel {
     return this.deps.memento.get<boolean>(GUI_UPDATES_KEY, true);
   }
 
-  private send(text: string): void {
+  /** Send `text` to Claude; `question` is what the user typed, for Assistant Results. */
+  private send(text: string, question: string): void {
     if (this.restartBeforeNextSend) {
       this.restartBeforeNextSend = false;
       this.killChild();
@@ -188,7 +227,7 @@ export class AssistantPanel {
       return;
     }
     const line = { type: 'user', message: { role: 'user', content: text } };
-    this.deps.heldDisplay.hold(text);
+    this.deps.heldDisplay.hold(question);
     child.stdin.write(JSON.stringify(line) + '\n');
   }
 
@@ -380,6 +419,7 @@ export class AssistantPanel {
     <span class="spinner"></span><span id="workingLabel"></span><span id="workingTime" class="time"></span>
   </div>
   <label class="option"><input type="checkbox" id="guiUpdates" checked> Show results in Jasper (if possible)</label>
+  <div id="about" class="about" hidden><span>About:</span><span id="aboutLabel"></span><button type="button" id="aboutClear" title="Ask without it" aria-label="Ask without it">×</button></div>
   <form id="composer" class="composer">
     <textarea id="input" rows="3" placeholder="Ask about your GemStone code, or ask for new classes. Enter sends, Shift+Enter for a new line, /help for more."></textarea>
     <div class="buttons">
@@ -468,6 +508,11 @@ code.mlink { color: var(--vscode-textLink-foreground); cursor: pointer; text-dec
 .gui-result .headline { font-weight: 600; }
 .gui-result .pattern { color: var(--muted); flex-basis: 100%; }
 .gui-result button { margin-left: auto; }
+.about { margin: .4rem 1rem 0; padding: .2rem .5rem; display: flex; gap: .4rem; align-items: center; border-left: 3px solid var(--vscode-focusBorder); background: var(--vscode-editorWidget-background); color: var(--muted); }
+.about[hidden] { display: none; }
+.about #aboutLabel { color: var(--vscode-foreground); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.about button { background: none; border: none; color: inherit; cursor: pointer; padding: 0 .2rem; }
+.msg .about-line { color: var(--muted); font-size: .9em; margin-bottom: .2rem; }
 .composer { border-top: 1px solid var(--line); padding: .6rem 1rem; display: flex; gap: .5rem; align-items: flex-end; }
 textarea {
   flex: 1; resize: vertical; font-family: inherit; font-size: inherit;

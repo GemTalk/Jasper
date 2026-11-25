@@ -107,6 +107,11 @@ export interface OmniResult {
   nested?: boolean;
   /** A step of a guided trail: shown in a card under the row while it is selected. */
   coach?: string;
+  /** How far a trail step is indented: 0 for a main step, 1 for a method it sends, and so on. */
+  depth?: number;
+  /** Selectors, space-separated, whose sends the row's source preview marks: in a trail, the sends
+   *  that lead to the next steps. */
+  highlight?: string;
   /** Ranking score from the matcher (higher = better). */
   score: number;
   /** Matched ranges in `label` (for future highlighting). */

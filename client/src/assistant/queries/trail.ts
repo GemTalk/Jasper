@@ -7,11 +7,14 @@ export interface TrailStep {
   classSide?: boolean;
   selector: string;
   note: string;
+  /** 0 for a main step; one more than the step above for a method that step sends. */
+  depth?: number;
 }
 
 export interface FoundStep {
   method: MethodSearchResult;
   note: string;
+  depth?: number;
 }
 
 /** Smalltalk answering each step's method, for methodsFromCode, in step order. A step whose class
@@ -41,7 +44,7 @@ export function matchTrail(
     const m = methods[next];
     // Not the side: a class-side step can find an inherited instance method (`new` in Class).
     if (m && m.selector === step.selector) {
-      found.push({ method: m, note: step.note });
+      found.push({ method: m, note: step.note, depth: step.depth });
       next++;
     } else {
       missing.push(step);

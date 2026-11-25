@@ -960,7 +960,9 @@ export function registerMcpTools(
       'Show the methods to read, in order, to see how something works, as a numbered list in a new ' +
         "tab of Jasper's Assistant Results panel, each with a note on what it does there. Use it when the user asks how " +
         'something works or where something happens: follow the real sends, from where it starts ' +
-        'to where the work is done, usually 3 to 12 steps. Afterwards reply with one or two ' +
+        'to where the work is done, usually 3 to 12 steps. Give the main steps depth 0; where you ' +
+        'follow a step into the methods it sends, list those right after it at depth 1 (2 for ' +
+        'deeper), so the main steps stand out. Afterwards reply with one or two ' +
         'sentences; do not repeat the steps.',
       {
         title: z.string().min(1).describe('What the trail shows, e.g. "How an order is priced"'),
@@ -978,6 +980,13 @@ export function registerMcpTools(
                 .string()
                 .min(1)
                 .describe('Its part in the trail, under 60 characters, e.g. "adds the tax"'),
+              depth: z
+                .number()
+                .int()
+                .min(0)
+                .max(4)
+                .optional()
+                .describe('0 for a main step; 1 for a method the step above it sends; and so on'),
             }),
           )
           .min(1)

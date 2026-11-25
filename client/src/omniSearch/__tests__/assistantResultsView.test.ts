@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 import * as vscode from 'vscode';
-import { AssistantResultsView } from '../assistantResultsView';
+import { AssistantResultsView, askAboutContext } from '../assistantResultsView';
 import { OMNI_DEFAULTS } from '../omniConfig';
 import type { OmniPanelDeps } from '../omniSearchPanel';
 import type { OmniResult } from '../omniTypes';
@@ -55,6 +55,8 @@ function mount() {
   };
   const view = { webview, show: vi.fn(), onDidDispose: () => ({ dispose() {} }) };
   results.resolveWebviewView(view as never);
+  // Tall enough that showing a list never waits to grow the panel.
+  void handler({ command: 'viewHeight', px: 1000 });
   const posted = (): Msg[] => webview.postMessage.mock.calls.map((c) => c[0] as Msg);
   const last = (command: string) =>
     posted()
@@ -209,5 +211,99 @@ describe('the Assistant Results view', () => {
 
     expect(whileOpen).toEqual(['Results 2', 'Results 3']);
     expect(tabs().tabs.map((t) => t.label)).toEqual(['Results 1']);
+  });
+
+  it('opens the chat to ask about the selected row', async () => {
+    const { results, send } = mount();
+    await results.open(deps(), trail);
+
+    await send({ command: 'askAbout', id: 0 });
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'jasper.askAbout',
+      expect.objectContaining({ label: 'Results 1: Library>>lend:to:' }),
+    );
+  });
+});
+
+describe('what Ask about this tells the assistant', () => {
+  const steps = [
+    { ...method('lend:to:'), label: '1. Library>>lend:to:', coach: 'checks the book is in' },
+    { ...method('isOnLoan'), label: '2. Library>>isOnLoan', coach: 'asks the borrower' },
+  ];
+
+  it('sends the whole list with its notes, its question, and the row the user is on', () => {
+    const { label, context } = askAboutContext(
+      {
+        label: 'Results 2',
+        title: 'How lending works',
+        question: 'How does lending work?',
+        results: steps,
+      },
+      steps[1],
+    );
+
+    expect(label).toBe('Results 2: Library>>isOnLoan');
+    expect(context).toContain('titled "How lending works"');
+    expect(context).toContain('their question: "How does lending work?"');
+    expect(context).toContain('- Library>>lend:to: — checks the book is in');
+    expect(context).toContain('They have "Library>>isOnLoan" selected.');
+  });
+
+  it('asks for a new trail into a method the user asks about', () => {
+    const { context } = askAboutContext(
+      { label: 'Results 1', title: 'How lending works', results: steps },
+      steps[0],
+    );
+
+    expect(context).toContain('show a trail into it with show_trail_in_search');
+    expect(context).toContain('"Inside Library>>lend:to:"');
+  });
+
+  it('asks for no trail into a class', () => {
+    const cls = {
+      categoryId: 'classes' as const,
+      label: 'Library',
+      score: 0,
+      ranges: [],
+      action: {
+        kind: 'openClass' as const,
+        sessionId: 1,
+        dictName: 'UserGlobals',
+        className: 'Library',
+        dictIndex: 1,
+      },
+    };
+
+    const { context } = askAboutContext(
+      { label: 'Results 1', title: 'Classes created', results: [cls] },
+      cls,
+    );
+
+    expect(context).not.toContain('show_trail_in_search');
+  });
+
+  it('names a method listed under its class with that class', () => {
+    const nested = { ...method('addBook:'), label: 'addBook:', nested: true };
+
+    const { context } = askAboutContext(
+      { label: 'Results 1', title: 'Classes created', results: [nested] },
+      nested,
+    );
+
+    expect(context).toContain('  - Library>>addBook:');
+    expect(context).not.toContain('their question');
+  });
+
+  it('sends at most a hundred rows, and says how many more there are', () => {
+    const many = Array.from({ length: 130 }, (_, i) => method(`m${i}`));
+
+    const { context } = askAboutContext(
+      { label: 'Results 1', title: 'Many', results: many },
+      many[0],
+    );
+
+    expect(context).toContain('(and 30 more)');
+    expect(context).not.toContain('Library>>m100');
   });
 });

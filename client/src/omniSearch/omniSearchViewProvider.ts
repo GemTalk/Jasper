@@ -28,6 +28,7 @@
 import { MethodNote, methodNoteKey } from '../assistant/queries/startingPoints';
 import type { FoundStep } from '../assistant/queries/trail';
 import { AssistantResultsView } from './assistantResultsView';
+import { ASSISTANT_RESULTS_MIN_HEIGHT, ViewGrower } from './viewGrower';
 import * as vscode from 'vscode';
 import { codePointMatchesToUtf16 } from '../matchOffsets';
 import {
@@ -53,12 +54,6 @@ import {
 } from './omniSearchShared';
 
 export const OMNI_VIEW_ID = 'gemstoneOmniSearchView';
-
-// How tall `showRegexSearch` makes the pane, in CSS pixels: room for the search chrome plus several
-// result rows. VS Code has no way to set a panel's size, only to resize the active part a step at a
-// time; see growTo.
-const ASSISTANT_RESULTS_MIN_HEIGHT = 320;
-const MAX_GROW_STEPS = 16;
 
 /** How long `focus()` waits for the workbench to instantiate the view before reporting that the reveal
  *  did not land. This is a give-up bound for REPORTING, not an estimate of how long a reveal takes: the
@@ -120,8 +115,7 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
   // replaced engine (another session, a settings change) is never put back.
   private lastView: { engine: OmniEngine; view: OmniViewData } | undefined;
   // The webview's height as it last reported it, and a waiter for the next report.
-  private viewHeight = 0;
-  private onViewHeight: (() => void) | undefined;
+  private readonly grower = new ViewGrower();
 
   constructor(
     private readonly resolveContext: () => Promise<OmniViewContext | null>,
@@ -351,7 +345,7 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     pattern: string,
   ): Promise<{ shownCount: number; exact: boolean; notice?: string } | { error: string }> {
     await this.focus();
-    await this.growTo(ASSISTANT_RESULTS_MIN_HEIGHT);
+    await this.grower.growTo(ASSISTANT_RESULTS_MIN_HEIGHT);
     if (!(await this.ensureEngine())) return { error: NO_SESSION_MESSAGE };
     const engine = this.engine!;
     if (!engine.state().regex) {
@@ -450,39 +444,6 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     this.postView(view);
   }
 
-  /** Grow the panel until the view is at least `minPx` tall. The step commands act on whichever part
-   *  VS Code counts as active, which after a reveal can still be the editor area: there "increase"
-   *  grows the editor and shrinks this panel. So each step is checked, and a step that shrank the
-   *  view switches to the opposite command, which then grows it. Stops when a step changes nothing
-   *  (the panel is as tall as the window lets it be) or no height report comes back. */
-  private async growTo(minPx: number): Promise<void> {
-    if (this.viewHeight === 0) await this.nextViewHeight();
-    let command = 'workbench.action.increaseViewHeight';
-    for (let step = 0; step < MAX_GROW_STEPS && this.viewHeight < minPx; step++) {
-      const before = this.viewHeight;
-      await vscode.commands.executeCommand(command);
-      await this.nextViewHeight();
-      if (this.viewHeight < before && command === 'workbench.action.increaseViewHeight') {
-        command = 'workbench.action.decreaseViewHeight';
-        continue;
-      }
-      if (this.viewHeight <= before) return;
-    }
-  }
-
-  /** Settles on the webview's next height report, or after a short wait if none comes. */
-  private nextViewHeight(): Promise<void> {
-    return new Promise<void>((resolve) => {
-      const done = (): void => {
-        clearTimeout(timer);
-        this.onViewHeight = undefined;
-        resolve();
-      };
-      const timer = setTimeout(done, 250);
-      this.onViewHeight = done;
-    });
-  }
-
   private post(msg: Record<string, unknown>): void {
     this.view?.webview.postMessage(msg);
   }
@@ -579,8 +540,7 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
         return;
       }
       if (m.command === 'viewHeight') {
-        this.viewHeight = m.px ?? 0;
-        this.onViewHeight?.();
+        this.grower.report(m.px ?? 0);
         return;
       }
       if (!this.engine && !(await this.ensureEngine())) return;
@@ -733,13 +693,44 @@ export function classListResults(
 /** A numbered row per step, in order, its note in place of the dictionary name and again in the
  *  step's card, since a long note is cut short in the row. */
 export function trailResults(steps: readonly FoundStep[], sessionId: number): OmniResult[] {
-  return steps.map((step, i) => {
+  // Numbered as an outline (2, then 2.1, 2.2 for the methods step 2 sends), so the main steps read
+  // at a glance. A step is never more than one deeper than the one above, even when the step
+  // between was left out for not existing.
+  const counts: number[] = [];
+  const depths: number[] = [];
+  const rows = steps.map((step) => {
+    const depth = Math.max(0, Math.min(step.depth ?? 0, counts.length));
+    depths.push(depth);
+    counts.length = depth + 1;
+    counts[depth] = (counts[depth] ?? 0) + 1;
     const [row] = methodRowsToResults(
       [step.method],
       sessionId,
       'methods',
       step.method.environmentId,
     );
-    return { ...row, label: `${i + 1}. ${row.label}`, description: step.note, coach: step.note };
+    return {
+      ...row,
+      label: `${counts.join('.')}. ${row.label}`,
+      description: step.note,
+      coach: step.note,
+      depth,
+    };
   });
+  return rows.map((row, i) => {
+    const sent = nextStepsSent(depths, i).map((j) => steps[j].method.selector);
+    return sent.length ? { ...row, highlight: sent.join(' ') } : row;
+  });
+}
+
+/** The steps that step `i`'s method sends, so its preview can mark where each is called: the steps
+ *  just under it, or in a trail of main steps only, the next one. A step under another is called
+ *  by that one, so it is not marked in its sibling. */
+function nextStepsSent(depths: readonly number[], i: number): number[] {
+  const children: number[] = [];
+  for (let j = i + 1; j < depths.length && depths[j] > depths[i]; j++) {
+    if (depths[j] === depths[i] + 1) children.push(j);
+  }
+  if (children.length) return children;
+  return depths[i] === 0 && depths[i + 1] === 0 ? [i + 1] : [];
 }

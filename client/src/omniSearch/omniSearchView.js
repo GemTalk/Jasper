@@ -338,7 +338,11 @@
       coachEl.className = 'coach';
       var head = doc.createElement('div');
       head.className = 'coach-head';
-      head.textContent = 'Step ' + (at + 1) + ' of ' + steps.length;
+      // A step inside another (2.1) keeps its outline number, and still says how far along it is.
+      var outline = /^(\d+(?:\.\d+)+)\. /.exec(row.coachLabel || '');
+      head.textContent = outline
+        ? 'Step ' + outline[1] + ' · ' + (at + 1) + ' of ' + steps.length
+        : 'Step ' + (at + 1) + ' of ' + steps.length;
       var close = doc.createElement('button');
       close.type = 'button';
       close.className = 'coach-close';
@@ -371,6 +375,9 @@
         return b;
       }
       var id = activeRowId();
+      button('Ask about this', 'Ask the Jasper Assistant about this step', function () {
+        post('askAbout', { id: id });
+      }).className = 'secondary';
       button('Open', 'Open this method in an editor', function () {
         post('activate', { id: id, side: false });
       }).className = 'secondary';
@@ -604,7 +611,13 @@
         li.appendChild(ref);
       }
 
-      if (row.coach) li.coachText = row.coach;
+      if (row.coach) {
+        li.coachText = row.coach;
+        li.coachLabel = row.label;
+      }
+      if (row.highlight) li.highlightTerm = row.highlight;
+      // Inline: a trail can go deeper than the one level `.nested` styles.
+      if (row.depth) li.style.paddingLeft = 10 + 20 * row.depth + 'px';
       var idx = rows.length;
       li.addEventListener('click', function () {
         coachClosed = false;
@@ -1241,9 +1254,9 @@
      */
     // A pivot's target can name several selectors, space-separated (a list the Jasper Assistant
     // showed, e.g. methods sending both size and add:). Null when none of them is a selector.
-    function pivotSendRanges(src) {
+    function pivotSendRanges(src, target) {
       var all = null;
-      var terms = pivotHighlightTerm.split(' ');
+      var terms = (target || pivotHighlightTerm).split(' ');
       for (var k = 0; k < terms.length; k++) {
         var found = terms[k] ? sendRanges(src, terms[k]) : null;
         if (found) all = (all || []).concat(found);
@@ -1570,7 +1583,10 @@
       // (`on:do:`), which no source ever spells that way. So while pivoted the pane marks the send,
       // exactly as an expanded row does in the sticky-list mode (see sendRanges).
       var firstHit;
-      var pivotRanges = pivotHighlightTerm ? pivotSendRanges(source) : null;
+      // A trail step marks the sends that lead to the next steps, in place of the list's target.
+      var rowTarget = rows[activeIndex] && rows[activeIndex].highlightTerm;
+      var target = rowTarget || pivotHighlightTerm;
+      var pivotRanges = target ? pivotSendRanges(source, target) : null;
       if (pivotRanges) firstHit = highlightRanges(pre, source, pivotRanges);
       else if (Array.isArray(matches) && matches.length)
         firstHit = highlightRanges(pre, source, markableRanges(matches, source.length));

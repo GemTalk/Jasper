@@ -4,6 +4,7 @@ import { OmniResult } from './omniTypes';
 import { createOmniEngine, OmniEngine, OmniViewData, ReferenceView } from './omniEngine';
 import { OmniPanelDeps } from './omniSearchPanel';
 import { configMessage, renderOmniHtml, resultsMessage } from './omniSearchShared';
+import { ASSISTANT_RESULTS_MIN_HEIGHT, ViewGrower } from './viewGrower';
 
 export const ASSISTANT_RESULTS_VIEW_ID = 'jasperAssistantResultsView';
 
@@ -15,7 +16,14 @@ export async function showAssistantResultsTab(): Promise<void> {
   await vscode.commands.executeCommand('setContext', ASSISTANT_STARTED_CONTEXT, true);
 }
 
-type Inbound = { command: string; value?: string; id?: number; refId?: number; tab?: number };
+type Inbound = {
+  command: string;
+  value?: string;
+  id?: number;
+  refId?: number;
+  tab?: number;
+  px?: number;
+};
 
 const FILTER_PLACEHOLDER = 'Filter these results';
 
@@ -32,6 +40,8 @@ interface ResultTab {
   filter: string;
   /** The question the list answers, when it came from the Jasper Assistant's chat. */
   question?: string;
+  /** The whole list, for Ask about this, whatever the filter shows. */
+  results: readonly OmniResult[];
 }
 
 /**
@@ -48,6 +58,7 @@ export class AssistantResultsView implements vscode.WebviewViewProvider {
   /** Counts again from 1 once no tab is left, so the names say how far back a list is. */
   private nextNumber = 1;
   private questionSource: () => string | undefined = () => undefined;
+  private readonly grower = new ViewGrower();
 
   /** Where to learn the question being answered when a list arrives. */
   setQuestionSource(source: () => string | undefined): void {
@@ -71,7 +82,10 @@ export class AssistantResultsView implements vscode.WebviewViewProvider {
     });
   }
 
-  /** Add `list` as a new tab, show it, and bring the view up without taking the focus. */
+  /** Add `list` as a new tab and show it, bringing the view up without taking the focus (except the
+   *  first time, when only focusing it makes VS Code create it). The first list in an empty view
+   *  also makes the panel tall enough to see, so the change is noticed; after that, a height the
+   *  user chose is left alone. */
   async open(deps: OmniPanelDeps, list: ReferenceView): Promise<void> {
     const engine = createOmniEngine(deps);
     engine.showList(list);
@@ -83,6 +97,7 @@ export class AssistantResultsView implements vscode.WebviewViewProvider {
       engine,
       filter: '',
       question: this.questionSource(),
+      results: list.results,
     };
     this.tabs.push(tab);
     this.activeId = tab.id;
@@ -95,6 +110,8 @@ export class AssistantResultsView implements vscode.WebviewViewProvider {
       // Resolving the view sends `ready`, which shows the active tab.
       await vscode.commands.executeCommand(`${ASSISTANT_RESULTS_VIEW_ID}.focus`);
     }
+    // A view still loading reports its height late, so wait longer for it.
+    if (this.tabs.length === 1) await this.grower.growTo(ASSISTANT_RESULTS_MIN_HEIGHT, 3000);
   }
 
   private active(): ResultTab | undefined {
@@ -153,6 +170,7 @@ export class AssistantResultsView implements vscode.WebviewViewProvider {
 
   private async onMessage(m: Inbound): Promise<void> {
     if (m.command === 'ready') return await this.showActive();
+    if (m.command === 'viewHeight') return this.grower.report(m.px ?? 0);
     if (m.command === 'selectTab') {
       if (this.tabs.some((t) => t.id === m.tab)) this.activeId = m.tab;
       return await this.showActive();
@@ -223,6 +241,12 @@ export class AssistantResultsView implements vscode.WebviewViewProvider {
         this.post({ command: 'referenceSource', refId: m.refId, source });
         return;
       }
+      case 'askAbout': {
+        const result = engine.resultFor(m.id ?? -1);
+        if (!result) return;
+        await vscode.commands.executeCommand(ASK_ABOUT_COMMAND, askAboutContext(tab, result));
+        return;
+      }
       case 'openReference': {
         const result = engine.referenceResultFor(m.refId ?? -1);
         if (result) await deps.activate(result, { beside: false, preserveFocus: true });
@@ -230,6 +254,49 @@ export class AssistantResultsView implements vscode.WebviewViewProvider {
       }
     }
   }
+}
+
+/** Opens the Jasper Assistant ready for a question about a row (registered in extension.ts). */
+export const ASK_ABOUT_COMMAND = 'jasper.askAbout';
+
+/** A row as the assistant should read it: a method as Class>>selector, whatever its row shows (a
+ *  step number, or only the selector under its class). */
+function rowName(r: OmniResult): string {
+  if (r.action.kind === 'openMethod') {
+    return `${r.action.className}${r.action.isMeta ? ' class' : ''}>>${r.action.selector}`;
+  }
+  return r.label;
+}
+
+/** The most rows of a list sent with a question about it; the assistant can look up the rest. */
+const MAX_ROWS_ASKED_ABOUT = 100;
+
+/** What Ask about this tells the assistant: the list, its question, and the row the user is on. */
+export function askAboutContext(
+  tab: Pick<ResultTab, 'label' | 'title' | 'question' | 'results'>,
+  selected: OmniResult,
+): { label: string; context: string } {
+  const rows = tab.results.slice(0, MAX_ROWS_ASKED_ABOUT).map((r) => {
+    const note = r.coach ? ` — ${r.coach}` : '';
+    return `${'  '.repeat(r.depth ?? (r.nested ? 1 : 0))}- ${rowName(r)}${note}`;
+  });
+  const more = tab.results.length - rows.length;
+  const lines = [
+    `The user is asking about a list you showed in Jasper's Assistant Results panel, titled "${tab.title}".`,
+    ...(tab.question ? [`It answered their question: "${tab.question}".`] : []),
+    'Its rows:',
+    ...rows,
+    ...(more > 0 ? [`(and ${more} more)`] : []),
+    `They have "${rowName(selected)}" selected. Answer about that, reading its source with your tools as needed.`,
+    ...(selected.action.kind === 'openMethod'
+      ? [
+          `Then show a trail into it with show_trail_in_search, titled for example "Inside ${rowName(selected)}": ` +
+            'start at that method and follow the methods it sends, into other classes too, so the user can go a ' +
+            'level deeper. If it sends nothing worth following (only primitives or basic messages), say so instead.',
+        ]
+      : []),
+  ];
+  return { label: `${tab.label}: ${rowName(selected)}`, context: lines.join('\n') };
 }
 
 /** The source to preview, or none when it cannot be read: a preview is not worth an error. */

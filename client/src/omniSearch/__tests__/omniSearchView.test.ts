@@ -331,6 +331,62 @@ describe('GemStone Search view — results rendering (flat, no grouping)', () =>
       expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'activate', id: 1, side: false });
     });
 
+    it('indents a step inside another, and gives its outline number on its card', () => {
+      const { handle } = mount();
+      handle.renderResults(
+        trail({
+          rows: [
+            row(0, '1. Library>>lend:to:', { coach: 'a' }),
+            row(1, '1.1. Book>>isOnLoan', { coach: 'b', depth: 1 }),
+          ],
+          shownCount: 2,
+        }),
+      );
+
+      cardButton('Next')!.click();
+
+      const inner = document.querySelectorAll<HTMLElement>('#results .row')[1];
+      expect(inner.style.paddingLeft).toBe('30px');
+      expect(card()!.textContent).toContain('Step 1.1 · 2 of 2');
+    });
+
+    it("marks in a step's source the sends that lead to the next steps", () => {
+      const { handle } = mount();
+      handle.renderResults(
+        trail({
+          rows: [
+            row(0, '1. Regex>>run', { coach: 'a', highlight: 'pattern:ignoreCase: spansLines:' }),
+            row(1, '1.1. Regex class>>pattern:ignoreCase:', { coach: 'b', depth: 1 }),
+          ],
+          shownCount: 2,
+          pivotTarget: undefined,
+        }),
+      );
+
+      handle.onMessage({
+        data: {
+          command: 'preview',
+          id: 0,
+          source:
+            'run\n  m := Regex pattern: p ignoreCase: true.\n  w := Regex spansLines: p.\n  ^m size',
+          title: 'Regex>>run',
+        },
+      });
+
+      const marked = [...document.querySelectorAll('#preview mark')].map((m) => m.textContent);
+      expect(marked).toEqual(['pattern:', 'ignoreCase:', 'spansLines:']);
+    });
+
+    it('asks the assistant about the step it is on', () => {
+      const { handle, vscode } = mount();
+      handle.renderResults(trail());
+      cardButton('Next')!.click();
+
+      cardButton('Ask about this')!.click();
+
+      expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'askAbout', id: 1 });
+    });
+
     it('shows no card for a list that is not a trail', () => {
       const { handle } = mount();
 

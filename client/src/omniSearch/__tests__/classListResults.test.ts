@@ -91,4 +91,69 @@ describe('a trail of methods to read', () => {
       selector: 'isOnLoan',
     });
   });
+
+  it('numbers the methods a step dives into under it, as an outline, and indents them', () => {
+    const steps = [
+      { method: method('Library', 'lend:to:'), note: 'a', depth: 0 },
+      { method: method('Book', 'isOnLoan'), note: 'b', depth: 1 },
+      { method: method('Book', 'borrower'), note: 'c', depth: 2 },
+      { method: method('Member', 'canBorrow'), note: 'd', depth: 1 },
+      { method: method('Library', 'return:'), note: 'e', depth: 0 },
+    ];
+
+    const rows = trailResults(steps, 7);
+
+    expect(rows.map((r) => [r.label, r.depth])).toEqual([
+      ['1. Library>>lend:to:', 0],
+      ['1.1. Book>>isOnLoan', 1],
+      ['1.1.1. Book>>borrower', 2],
+      ['1.2. Member>>canBorrow', 1],
+      ['2. Library>>return:', 0],
+    ]);
+  });
+
+  it('never indents a step more than one deeper than the step above it', () => {
+    const steps = [
+      { method: method('Library', 'lend:to:'), note: 'a', depth: 0 },
+      { method: method('Book', 'borrower'), note: 'c', depth: 3 },
+    ];
+
+    const rows = trailResults(steps, 7);
+
+    expect(rows.map((r) => [r.label, r.depth])).toEqual([
+      ['1. Library>>lend:to:', 0],
+      ['1.1. Book>>borrower', 1],
+    ]);
+  });
+
+  it("marks in each step's source where the steps under it are sent", () => {
+    const steps = [
+      { method: method('Library', 'lend:to:'), note: 'a', depth: 0 },
+      { method: method('Book', 'isOnLoan'), note: 'b', depth: 1 },
+      { method: method('Book', 'borrower'), note: 'c', depth: 2 },
+      { method: method('Member', 'canBorrow'), note: 'd', depth: 1 },
+      { method: method('Library', 'return:'), note: 'e', depth: 0 },
+    ];
+
+    const rows = trailResults(steps, 7);
+
+    expect(rows.map((r) => r.highlight)).toEqual([
+      'isOnLoan canBorrow',
+      'borrower',
+      undefined,
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it('marks the next step in a trail of main steps only', () => {
+    const steps = [
+      { method: method('Library', 'lend:to:'), note: 'a' },
+      { method: method('Book', 'isOnLoan'), note: 'b' },
+    ];
+
+    const rows = trailResults(steps, 7);
+
+    expect(rows.map((r) => r.highlight)).toEqual(['isOnLoan', undefined]);
+  });
 });

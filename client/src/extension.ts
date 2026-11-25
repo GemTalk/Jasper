@@ -285,8 +285,8 @@ import { backupFolderInServer } from './queries/extentBackup';
 import { ProcessManager } from './manager/processManager';
 import { openMcpInspector } from './openMcpInspector';
 import { McpSocketServer, proxyScriptPath, writeClaudeDesktopMcpConfig } from './mcpSocketServer';
-import { AssistantPanel } from './assistant/assistantPanel';
-import { showAssistantResultsTab } from './omniSearch/assistantResultsView';
+import { AssistantPanel, AssistantPanelDeps, AskAbout } from './assistant/assistantPanel';
+import { ASK_ABOUT_COMMAND, showAssistantResultsTab } from './omniSearch/assistantResultsView';
 import { CLASSES_FROM_CODE_LIMIT } from './assistant/queries/classesFromCode';
 import { readOmniConfig } from './omniSearch/omniConfig';
 import type { McpUiHooks } from './mcpTools';
@@ -3736,6 +3736,14 @@ export function activate(context: vscode.ExtensionContext) {
       (message) => void vscode.window.showWarningMessage(message),
     );
     omniSearch.setQuestionSource(() => heldDisplay.question);
+    const assistantDeps = (): AssistantPanelDeps => ({
+      extensionPath: context.extensionPath,
+      socketPath: () => mcpSocketServer.socketPath,
+      proxyScriptPath: proxyScriptPath(context.extensionPath),
+      mcpReport: () => mcpReport(mcpOwnership()),
+      memento: context.globalState,
+      heldDisplay,
+    });
     const whenAnswered = 'when your answer is finished';
     const mcpUi: McpUiHooks = {
       showRegexSearch: async (pattern) => {
@@ -4023,15 +4031,11 @@ export function activate(context: vscode.ExtensionContext) {
       }),
       vscode.commands.registerCommand('jasper.openAssistant', () => {
         void showAssistantResultsTab();
-        AssistantPanel.show({
-          extensionPath: context.extensionPath,
-          socketPath: () => mcpSocketServer.socketPath,
-          proxyScriptPath: proxyScriptPath(context.extensionPath),
-          mcpReport: () => mcpReport(mcpOwnership()),
-          memento: context.globalState,
-          heldDisplay,
-        });
+        AssistantPanel.show(assistantDeps());
       }),
+      vscode.commands.registerCommand(ASK_ABOUT_COMMAND, (about: AskAbout) =>
+        AssistantPanel.askAbout(assistantDeps(), about),
+      ),
       vscode.commands.registerCommand('jasper.installMcpTlsCertificate', async () => {
         if (!certPathForTrust) {
           vscode.window.showWarningMessage(
