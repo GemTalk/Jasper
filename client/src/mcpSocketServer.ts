@@ -112,6 +112,7 @@ export interface McpSocketServerOptions {
  */
 export class McpSocketServer {
   private server: net.Server | undefined;
+  private readonly clients = new Set<net.Socket>();
   private _isOwner = false;
   private claimedAtIso = '';
   /**
@@ -232,6 +233,7 @@ export class McpSocketServer {
   }
 
   private handleConnection(socket: net.Socket): void {
+    this.clients.add(socket);
     appendSysadmin('MCP client connected');
     const mcpServer = new McpServer({ name: MCP_SERVER_NAME, version: '1.0.0' });
     registerMcpTools(
@@ -247,6 +249,7 @@ export class McpSocketServer {
     });
 
     socket.on('close', () => {
+      this.clients.delete(socket);
       appendSysadmin('MCP client disconnected');
     });
 
@@ -261,16 +264,16 @@ export class McpSocketServer {
     const wasOwner = this._isOwner;
     this._isOwner = false;
     if (!server) return;
-    await new Promise<void>((resolve) => {
+    // close() itself removes the socket file, before it lets go of the path.
+    // Unlinking the path again afterwards would delete the file of a window
+    // that claimed it in the meantime.
+    const closed = new Promise<void>((resolve) => {
       server.close(() => resolve());
     });
-    if (wasOwner && !isWindows() && fs.existsSync(this.socketPath)) {
-      try {
-        fs.unlinkSync(this.socketPath);
-      } catch {
-        /* ignore */
-      }
-    }
+    // close() calls back only once every client has gone, and an MCP client
+    // stays connected for as long as it runs.
+    for (const client of this.clients) client.destroy();
+    await closed;
     if (wasOwner) {
       deleteOwnerSidecar(process.pid, this.sidecarPath);
     }

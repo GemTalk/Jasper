@@ -54,6 +54,10 @@ import {
  *  callers' catch degrades to "saw nothing", which is the safe direction. */
 const PS_TIMEOUT_MS = 5000;
 
+/** How long the WSL look for the free key file may block the editor before
+ *  Jasper says it could not check. */
+const STARTER_KEY_CHECK_TIMEOUT_MS = 5000;
+
 /** A stone or NetLDI found running out of a product tree, with everything
  *  registering it as a database needs: its name, where it registers, and the
  *  configuration it was started with. See `discoverServersUnder`. */
@@ -983,7 +987,16 @@ export class ProcessManager {
       const missingKey = explainMissingKeyFile(
         `Starting stone ${db.config.stoneName}`,
         output,
-        () => this.starterKeyIn(gsPath),
+        () => {
+          try {
+            return this.starterKeyIn(gsPath);
+          } catch (lookFailure) {
+            appendSysadmin(
+              `Could not check for the free key file: ${lookFailure instanceof Error ? lookFailure.message : String(lookFailure)}`,
+            );
+            throw lookFailure;
+          }
+        },
         inBothPathForms,
       );
       if (missingKey) throw new Error(missingKey, { cause: e });
@@ -997,16 +1010,23 @@ export class ProcessManager {
   }
 
   /** The install's free key file, when it has one. `gsPath` is the path the
-   *  stone runs with, which on Windows is inside WSL, so it is checked there. */
+   *  stone runs with, which on Windows is inside WSL, so it is checked there.
+   *  Throws when WSL can't say either way. */
   private starterKeyIn(gsPath: string): string | undefined {
     const key = `${gsPath}/${STARTER_KEY_FILE}`;
     if (!needsWsl()) return fs.existsSync(key) ? key : undefined;
-    try {
-      wslExecSync(`test -e ${shellQuote(key)}`);
-      return key;
-    } catch {
-      return undefined;
-    }
+    // The answer comes back as text, so that only the check itself can say
+    // "absent": a WSL failure throws or prints something else. The last line
+    // counts, since WSL may print a notice of its own first.
+    const output = wslExecSync(
+      `test -e ${shellQuote(key)} && echo found || echo absent`,
+      undefined,
+      { timeout: STARTER_KEY_CHECK_TIMEOUT_MS },
+    );
+    const answer = output.trim().split(/\r?\n/).pop()?.trim();
+    if (answer === 'found') return key;
+    if (answer === 'absent') return undefined;
+    throw new Error(`WSL gave no answer about ${key}: ${output.trim()}`);
   }
 
   /** Stop a stone cleanly via `stopstone`, which authenticates as DataCurator.

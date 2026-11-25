@@ -2336,6 +2336,101 @@ describe('ProcessManager', () => {
       expect(error.message).toMatch(/its key file \/db-1\/conf\/gemstone.key does not exist/);
       expect(error.message).toContain('has no free key file to copy');
     });
+
+    describe('on Windows, where the free key file is looked for inside WSL', () => {
+      const starterKey = '/gs/3.7.4/sys/community.starter.key';
+
+      beforeEach(() => {
+        vi.mocked(wslBridge.needsWsl).mockReturnValue(true);
+        vi.mocked(wslBridge.wslExecSync).mockReset();
+      });
+
+      afterEach(() => vi.mocked(wslBridge.needsWsl).mockReturnValue(false));
+
+      async function failedWslStart(): Promise<Error> {
+        const proc = makeChildProcess(3);
+        mockSpawnReturn(proc);
+        const promise = new ProcessManager(makeWslStorage()).startStone(makeDatabase());
+        proc.emitStderr(MISSING_KEY);
+        proc.finish();
+        return (await promise.catch((e: Error) => e)) as Error;
+      }
+
+      it('names the free key file when WSL finds it', async () => {
+        vi.mocked(wslBridge.wslExecSync).mockReturnValue('found\n');
+
+        const error = await failedWslStart();
+
+        expect(error.message).toContain(`The free one is ${starterKey}.`);
+      });
+
+      it('names the free key file when WSL prints a notice of its own first', async () => {
+        vi.mocked(wslBridge.wslExecSync).mockReturnValue(
+          'wsl: Detected localhost proxy configuration but not mirrored into WSL.\r\nfound\r\n',
+        );
+
+        const error = await failedWslStart();
+
+        expect(error.message).toContain(`The free one is ${starterKey}.`);
+      });
+
+      it('gives WSL a time limit, so a hung WSL cannot freeze the editor', async () => {
+        vi.mocked(wslBridge.wslExecSync).mockReturnValue('found\n');
+
+        await failedWslStart();
+
+        expect(vi.mocked(wslBridge.wslExecSync)).toHaveBeenCalledWith(
+          expect.stringContaining(starterKey),
+          undefined,
+          { timeout: expect.any(Number) },
+        );
+      });
+
+      it('writes why it could not check to the GemStone Admin log', async () => {
+        vi.mocked(appendSysadmin).mockClear();
+        vi.mocked(wslBridge.wslExecSync).mockImplementation(() => {
+          throw new Error('spawnSync wsl.exe ETIMEDOUT');
+        });
+
+        await failedWslStart();
+
+        expect(appendSysadmin).toHaveBeenCalledWith(
+          'Could not check for the free key file: spawnSync wsl.exe ETIMEDOUT',
+        );
+      });
+
+      it('says there is none only when WSL answers that it is absent', async () => {
+        vi.mocked(wslBridge.wslExecSync).mockReturnValue('absent\n');
+
+        const error = await failedWslStart();
+
+        expect(error.message).toContain('has no free key file to copy');
+      });
+
+      it.each([
+        [
+          'WSL fails',
+          () => {
+            throw Object.assign(new Error('Command failed'), { status: 1, stderr: '' });
+          },
+        ],
+        [
+          'WSL times out',
+          () => {
+            throw Object.assign(new Error('spawnSync wsl.exe ETIMEDOUT'), { code: 'ETIMEDOUT' });
+          },
+        ],
+        ['WSL answers something else', () => 'wsl: an unknown error occurred\n'],
+      ])('says it could not check, rather than that there is none, when %s', async (_, answer) => {
+        vi.mocked(wslBridge.wslExecSync).mockImplementation(answer);
+
+        const error = await failedWslStart();
+
+        expect(error.message).toMatch(/its key file \/db-1\/conf\/gemstone.key does not exist/);
+        expect(error.message).toContain('Jasper could not check whether this GemStone install');
+        expect(error.message).not.toContain('has no free key file to copy');
+      });
+    });
   });
 
   describe('findExtentHolders', () => {

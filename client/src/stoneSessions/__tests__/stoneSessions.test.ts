@@ -303,6 +303,28 @@ describe('Stop Session', () => {
         'An administrator can end it with: System stopSession: 7',
     );
   });
+
+  it.each([
+    ['a trailing newline', 'the stone went away\n', 'the stone went away.'],
+    ['a question mark', 'is the stone running?', 'is the stone running?'],
+    ['an exclamation mark', 'the stone went away!', 'the stone went away!'],
+    ['nothing at all', '', 'no reason was given.'],
+    ['only whitespace', '\n', 'no reason was given.'],
+  ])('ends a failure ending in %s with one closing mark', async (_, message, sentence) => {
+    vi.mocked(window.showWarningMessage).mockResolvedValueOnce(STOP_SESSION);
+
+    await stopStoneSessionCommand(
+      row,
+      deps(async () => {
+        throw new Error(message);
+      }),
+    );
+
+    expect(window.showWarningMessage).toHaveBeenLastCalledWith(
+      `GemStone session 7 could not be stopped: ${sentence} ` +
+        'An administrator can end it with: System stopSession: 7',
+    );
+  });
 });
 
 describe('Kill', () => {
@@ -406,6 +428,20 @@ describe('Kill', () => {
 
     expect(window.showWarningMessage).toHaveBeenLastCalledWith(
       `GemStone session 7 could not be killed: ${EXPLAINED_REFUSAL} ` +
+        'Someone allowed to end process 39811 on stonehost.example can run: kill -9 39811',
+    );
+  });
+
+  it("ends kill's raw complaint, which ends in a newline, with one period", async () => {
+    vi.mocked(window.showWarningMessage).mockResolvedValueOnce(KILL);
+    const d = deps(async () => {
+      throw new Error('kill: (39811) - Operation not permitted\n');
+    });
+
+    await killStoneSessionCommand(row, d);
+
+    expect(window.showWarningMessage).toHaveBeenLastCalledWith(
+      'GemStone session 7 could not be killed: kill: (39811) - Operation not permitted. ' +
         'Someone allowed to end process 39811 on stonehost.example can run: kill -9 39811',
     );
   });

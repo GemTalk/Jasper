@@ -111,9 +111,10 @@ export const STARTER_KEY_FILE = 'sys/community.starter.key';
  * `findStarterKey` gives the install's free key file, only when it exists:
  * database creation leaves the key missing exactly when it isn't there, and
  * pointing the user at it would send them to the file creation just reported
- * missing. It is called only once the output is known to be a missing key,
- * because on Windows it is a synchronous call into WSL. `showPath` writes each
- * path as the user should see it.
+ * missing. It throws when it can't tell, and the message then says so rather
+ * than claim the install has none. It is called only once the output is known
+ * to be a missing key, because on Windows it is a synchronous call into WSL.
+ * `showPath` writes each path as the user should see it.
  */
 export function explainMissingKeyFile(
   label: string,
@@ -123,10 +124,19 @@ export function explainMissingKeyFile(
 ): string | undefined {
   const keyFile = MISSING_KEY_FILE.exec(output)?.[1];
   if (!keyFile) return undefined;
-  const starterKey = findStarterKey();
-  const whereToGetOne = starterKey
-    ? `The free one is ${showPath(starterKey)}.`
-    : 'This GemStone install has no free key file to copy, so get one from GemTalk Systems.';
+  let starterKey: string | undefined;
+  let checked = true;
+  try {
+    starterKey = findStarterKey();
+  } catch {
+    checked = false;
+  }
+  const whereToGetOne = !checked
+    ? `Jasper could not check whether this GemStone install has a free key file ` +
+      `(${STARTER_KEY_FILE}). If it has none, get one from GemTalk Systems.`
+    : starterKey
+      ? `The free one is ${showPath(starterKey)}.`
+      : 'This GemStone install has no free key file to copy, so get one from GemTalk Systems.';
   return (
     `${label} failed: its key file ${showPath(keyFile)} does not exist, and a stone can't start ` +
     `without one. Put a GemStone key file there and start it again. ${whereToGetOne} ` +

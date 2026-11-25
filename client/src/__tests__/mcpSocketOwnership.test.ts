@@ -13,6 +13,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import * as net from 'net';
 import { McpSocketServer } from '../mcpSocketServer';
 import { temporarySidecarPath, withTemporaryFileDo } from './support/file';
 import { temporarySocketPath } from './support/socket';
@@ -245,6 +246,48 @@ describe('McpSocketServer ownership', () => {
       expect(fs.existsSync(socketPath)).toBe(false);
     });
 
+    it('a window letting go of the server leaves the socket of the window that takes it over', async () => {
+      const socketPath = temporarySocketPath();
+      const departing = newServer(socketPath);
+      await departing.start();
+      const next = newServer(socketPath);
+      servers.push(next);
+
+      // Have the next window claim the path the moment the departing one has
+      // stopped listening, before dispose() goes on.
+      const listener = (departing as unknown as { server: net.Server }).server;
+      const close = listener.close.bind(listener);
+      vi.spyOn(listener, 'close').mockImplementation((done) =>
+        close(() => void next.start().finally(() => done?.())),
+      );
+
+      await departing.dispose();
+
+      expect(next.isOwner).toBe(true);
+      expect(fs.existsSync(socketPath)).toBe(true);
+      await expect(connectsTo(socketPath)).resolves.toBe(true);
+    });
+
+    it('a window lets go of the server while an MCP client is still connected', async () => {
+      const socketPath = temporarySocketPath();
+      const owner = newServer(socketPath);
+      await owner.start();
+      const client = net.connect(socketPath);
+      await new Promise((resolve) => client.once('connect', resolve));
+      const clientClosed = new Promise((resolve) => client.once('close', resolve));
+
+      const outcome = await Promise.race([
+        owner.dispose().then(() => 'released'),
+        new Promise((resolve) => setTimeout(() => resolve('still waiting'), 2000)),
+      ]);
+
+      expect(outcome).toBe('released');
+      await clientClosed;
+      const next = newServer(socketPath);
+      servers.push(next);
+      expect(await next.start()).toBe(true);
+    });
+
     it('creates the parent directory if missing', async () => {
       const dir = path.join(os.tmpdir(), `jasper-mcp-dir-${crypto.randomBytes(6).toString('hex')}`);
       const socketPath = path.join(dir, 'mcp.sock');
@@ -276,3 +319,14 @@ describe('McpSocketServer ownership', () => {
     });
   });
 });
+
+function connectsTo(socketPath: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect(socketPath);
+    socket.once('connect', () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once('error', () => resolve(false));
+  });
+}
