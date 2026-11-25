@@ -10,7 +10,8 @@ import { NbCancelledError } from './nbRunner';
 import { logError } from './gciLog';
 
 /**
- * VS Code's Find All References on a selector: the stone's senders of it, one location per method.
+ * VS Code's Find All References on a selector: the stone's senders of it, one location per method,
+ * at its first send (for a selector the compiler inlines, where the source first names it).
  * GemStone Search's references are separate (`resolveReferencesUsing`) and still block.
  */
 export class GemStoneReferenceProvider implements vscode.ReferenceProvider {
@@ -43,7 +44,7 @@ export class GemStoneReferenceProvider implements vscode.ReferenceProvider {
     const all = await sweepEnvironmentsAsync(async (env) => {
       if (failed) return [];
       try {
-        return await queries.sendersOfAsync(session, sel, env);
+        return await queries.sendSitesOfAsync(session, sel, env);
       } catch (e) {
         failed = true;
         // A query failure is logged where it is raised, and a cancel needs no word.
@@ -57,11 +58,13 @@ export class GemStoneReferenceProvider implements vscode.ReferenceProvider {
       }
     }, token);
     if (token?.isCancellationRequested) return [];
+    // A keyword message is marked at its first keyword, where the stone places the send.
+    const marked = sel.includes(':') ? sel.slice(0, sel.indexOf(':') + 1) : sel;
     return dedupeMethodResults(all).map(
-      (r) =>
+      ({ line, character, ...r }) =>
         new vscode.Location(
           buildMethodUri({ kind: 'method', sessionId: session.id, ...r }),
-          new vscode.Position(0, 0),
+          new vscode.Range(line, character, line, character + marked.length),
         ),
     );
   }

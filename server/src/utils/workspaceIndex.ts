@@ -1,3 +1,5 @@
+import * as fs from 'fs';
+import { fileURLToPath } from 'url';
 import { parseTopazDocument } from '../topaz/topazParser';
 import { parseTonelDocument } from '../tonel/tonelParser';
 import { Lexer } from '../lexer/lexer';
@@ -68,8 +70,8 @@ export class WorkspaceIndex {
 
   /**
    * Index a file from an already-parsed document (for open editors). A method opened from the
-   * stone (`gemstone:`) is skipped: the stone answers for it, and its entries would outlive its
-   * tab, listing it once for each time it was opened.
+   * stone (`gemstone:`) is skipped: the stone answers for it, so its entries would only list it
+   * a second time.
    */
   updateFromParsedDocument(doc: ParsedDocument): void {
     if (doc.uri.startsWith('gemstone:')) return;
@@ -104,6 +106,25 @@ export class WorkspaceIndex {
         pushTo(this.senders, sent, method);
       }
     }
+  }
+
+  /**
+   * Drops what an editor held once it closes. A file the workspace scan covers (`scanned`) is
+   * indexed again as saved, or leaves the index if it was deleted meanwhile; any other file
+   * leaves it, since nothing would update its entries again. The file watcher can't do this:
+   * it ignores a change to a file that is open.
+   */
+  indexClosedDocument(uri: string, scanned: boolean): void {
+    let saved: string | undefined;
+    if (scanned) {
+      try {
+        saved = fs.readFileSync(fileURLToPath(uri), 'utf-8');
+      } catch {
+        // Deleted, or unreadable: either way it no longer has methods to list.
+      }
+    }
+    if (saved === undefined) this.removeFile(uri);
+    else this.indexFileFromDisk(uri, saved);
   }
 
   /** Remove all entries for a file. */

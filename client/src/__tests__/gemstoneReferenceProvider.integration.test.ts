@@ -62,4 +62,77 @@ describe('GemStoneReferenceProvider (integration)', () => {
     ]);
     expect(found.every((l) => l.uri.authority === String(session.id))).toBe(true);
   });
+
+  it('puts each reference at its send, counting lines the way the editor does', async () => {
+    const session: ActiveSession = testActiveSession(gci, handle);
+    q.compileClassDefinition(
+      session,
+      `Object subclass: '${CLS}' instVarNames: #() classVars: #() ` +
+        'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+    );
+    q.compileMethod(session, CLS, false, 'accessing', `${SELECTOR}: a with: b\n\t^a`);
+    // A CR LF pair is one line break to the editor; a lone CR is one too.
+    q.compileMethod(
+      session,
+      CLS,
+      false,
+      'accessing',
+      `sendsIt\r\n\t| x |\r\tx := 1.\n\t^self ${SELECTOR}: x with: x`,
+    );
+    const sessions = {
+      getSelectedSession: () => session,
+      getSessions: () => [session],
+    } as unknown as SessionManager;
+    const provider = new GemStoneReferenceProvider(sessions, {
+      getSelector: async () => `${SELECTOR}:with:`,
+    });
+    const document = {
+      uri: Uri.parse(`gemstone://${session.id}/UserGlobals/${CLS}/instance/accessing/sendsIt`),
+    } as unknown as vscode.TextDocument;
+
+    const [found] = await provider.provideReferences(
+      document,
+      new Position(3, 8) as unknown as vscode.Position,
+    );
+
+    expect(found.range.start).toMatchObject({ line: 3, character: 7 });
+    expect(found.range.end).toMatchObject({ line: 3, character: 7 + `${SELECTOR}:`.length });
+  });
+
+  it('finds the senders of a selector the compiler inlines, at their first use of it', async () => {
+    // The stone keeps no send position for an inlined selector, so the reference is placed
+    // where the method's source first names it.
+    const session: ActiveSession = testActiveSession(gci, handle);
+    q.compileClassDefinition(
+      session,
+      `Object subclass: '${CLS}' instVarNames: #() classVars: #() ` +
+        'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+    );
+    q.compileMethod(
+      session,
+      CLS,
+      false,
+      'accessing',
+      'sendsIt\n\t| x |\n\tx := true.\n\t^x ifFalse: [1] ifTrue: [2]',
+    );
+    const sessions = {
+      getSelectedSession: () => session,
+      getSessions: () => [session],
+    } as unknown as SessionManager;
+    const provider = new GemStoneReferenceProvider(sessions, {
+      getSelector: async () => 'ifFalse:ifTrue:',
+    });
+    const document = {
+      uri: Uri.parse(`gemstone://${session.id}/UserGlobals/${CLS}/instance/accessing/sendsIt`),
+    } as unknown as vscode.TextDocument;
+
+    const found = await provider.provideReferences(
+      document,
+      new Position(3, 6) as unknown as vscode.Position,
+    );
+
+    const ours = found.find((l) => l.uri.path.includes(`/${CLS}/`));
+    expect(ours?.range.start).toMatchObject({ line: 3, character: 4 });
+    expect(ours?.range.end).toMatchObject({ line: 3, character: 4 + 'ifFalse:'.length });
+  });
 });

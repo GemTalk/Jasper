@@ -15,9 +15,9 @@ import {
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { fileURLToPath, pathToFileURL } from 'url';
 import * as fs from 'fs';
-import * as path from 'path';
 import { DocumentManager } from './utils/documentManager';
 import { WorkspaceIndex, detectFormat } from './utils/workspaceIndex';
+import { findFiles, isScannedFile } from './utils/workspaceFiles';
 import { toDiagnostics } from './services/diagnostics';
 import { getDocumentSymbols } from './services/documentSymbols';
 import { getCompletions } from './services/completion';
@@ -135,26 +135,6 @@ function scanWorkspace(): void {
   }
 }
 
-function findFiles(dir: string, extensions: string[]): string[] {
-  const results: string[] = [];
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return results;
-  }
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
-      results.push(...findFiles(fullPath, extensions));
-    } else if (extensions.some((ext) => entry.name.endsWith(ext))) {
-      results.push(fullPath);
-    }
-  }
-  return results;
-}
-
 // ── Document Lifecycle ──────────────────────────────────────
 
 documents.onDidChangeContent((change) => {
@@ -176,6 +156,9 @@ documents.onDidChangeContent((change) => {
 
 documents.onDidClose((event) => {
   documentManager.remove(event.document.uri);
+  const { uri } = event.document;
+  const folderUris = workspaceFolders.map((folder) => folder.uri);
+  workspaceIndex.indexClosedDocument(uri, isScannedFile(uri, folderUris, SMALLTALK_EXTENSIONS));
   void connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
 });
 
