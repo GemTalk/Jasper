@@ -18,3 +18,22 @@ export function highlightMoveHeldBack(view: {
   view.reveal.mockImplementation(() => held);
   return { finish };
 }
+
+/**
+ * Collects the promise rejections nothing handled while a test runs. `stop()` detaches the
+ * listener; call it in `afterEach`.
+ */
+export function unhandledRejections() {
+  const seen: unknown[] = [];
+  const listener = (reason: unknown) => seen.push(reason);
+  process.on('unhandledRejection', listener);
+  return { seen, stop: () => process.off('unhandledRejection', listener) };
+}
+
+/**
+ * How VS Code hands back a refused document read: the document provider's error crosses to
+ * the editor and back, so `openTextDocument` rejects with a plain Error that keeps only its
+ * message.
+ */
+export const refusedOpen = (message: string) =>
+  new Error(`cannot open gemstone://1/x. Detail: ${message}`);

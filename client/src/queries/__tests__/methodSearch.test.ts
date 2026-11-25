@@ -4,6 +4,7 @@ import {
   searchMethodSource,
   sendersOf,
   sendersOfAsync,
+  sendSitesOfAsync,
   implementorsOf,
   referencesToObject,
   referencesToClassInDict,
@@ -293,6 +294,58 @@ describe('sendersOfAsync', () => {
 
     expect(rows).toEqual(sendersOf(blocking, ['at:', 'size'], 2));
     expect(nonBlocking.mock.calls[0][0]).toBe(blocking.mock.calls[0][0]);
+  });
+});
+
+describe('where each sender first sends a selector', () => {
+  it('places a sender whose position the stone did not give at its first line', async () => {
+    const execute = vi.fn<NbQueryExecutor>(async () => 'Globals\tArray\t0\tfoo\taccessing\t0\n');
+
+    const [site] = await sendSitesOfAsync(execute, 'size', 0);
+
+    expect(site).toMatchObject({ selector: 'foo', line: 0, character: 0 });
+  });
+
+  it('places a sender of an inlined selector where its source first names the selector', async () => {
+    const execute = vi.fn<NbQueryExecutor>(async () => '');
+
+    await sendSitesOfAsync(execute, 'ifFalse:ifTrue:', 0);
+
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('i <= offsets size');
+    expect(code).toContain("findString: 'ifFalse:' startingAt: 1");
+  });
+
+  it('counts a character outside the Basic Multilingual Plane as two columns, as the editor does', async () => {
+    const execute = vi.fn<NbQueryExecutor>(async () => '');
+
+    await sendSitesOfAsync(execute, 'size', 0);
+
+    expect(execute.mock.calls[0][0]).toContain('codePoint > 16rFFFF');
+  });
+
+  it('reads where each method sends the selector first, after its row', async () => {
+    const execute = vi.fn<NbQueryExecutor>(
+      async () => 'Globals\tArray\t0\tfoo\taccessing\t2\t3\t5\n',
+    );
+
+    const sites = await sendSitesOfAsync(execute, 'at:put:', 2);
+
+    expect(sites).toEqual([
+      {
+        dictName: 'Globals',
+        className: 'Array',
+        isMeta: false,
+        selector: 'foo',
+        category: 'accessing',
+        environmentId: 2,
+        line: 3,
+        character: 5,
+      },
+    ]);
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain("sendersOf: #'at:put:'");
+    expect(code).toContain('environmentId: 2');
   });
 });
 

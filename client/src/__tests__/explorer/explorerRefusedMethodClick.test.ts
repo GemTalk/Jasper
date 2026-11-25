@@ -8,6 +8,8 @@ vi.mock('../../gciLog', async (orig) => ({
 }));
 
 import { ExplorerController, MethodItem } from '../../gemstoneExplorer';
+import { logWarning } from '../../gciLog';
+import { RUN_IN_PROGRESS_MESSAGE } from '../../nbRunner';
 import { window, workspace } from '../../__mocks__/vscode';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 import { fakeViews } from '../helpers/explorerContainerFocus';
@@ -45,7 +47,7 @@ async function clickNewRow(
   order: Order = 'selection first',
 ) {
   if (order === 'command first') ctl.handleMethodClick(node);
-  const selected = ctl.clickMethod(node);
+  const selected = ctl.openClickedMethod(node);
   if (order === 'selection first') ctl.handleMethodClick(node);
   await selected;
   await settle();
@@ -58,7 +60,8 @@ async function clickHighlightedRow(ctl: ExplorerController, node: MethodItem) {
 }
 
 let sessionBusy = false;
-const busy = () => new Error('session busy');
+// How a refused read comes back through openTextDocument.
+const busy = () => new Error(`Unable to read file: ${RUN_IN_PROGRESS_MESSAGE}`);
 
 // Holds the next source read until the test refuses it.
 function nextReadHeldBack() {
@@ -232,5 +235,31 @@ describe('a method click when nothing is refused', () => {
     await click;
 
     expect(visited(ctl)).toEqual([]);
+  });
+});
+
+describe('what a refused method open reports', () => {
+  for (const order of ['selection first', 'command first'] as const) {
+    it(`logs nothing for a refusal the busy notice already explained (${order})`, async () => {
+      const ctl = controllerOnClass();
+      sessionBusy = true;
+
+      await clickNewRow(ctl, method('balance'), order);
+
+      expect(logWarning).not.toHaveBeenCalled();
+    });
+  }
+
+  it('tells another open of the same method that it failed when the read it shares is refused', async () => {
+    const ctl = controllerOnClass();
+    const { refuse } = nextReadHeldBack();
+    const click = ctl.openClickedMethod(method('balance'));
+    const sharing = ctl.openMethod(method('balance'));
+
+    refuse();
+
+    await expect(sharing).rejects.toThrow(RUN_IN_PROGRESS_MESSAGE);
+    expect(await click).toBe(false);
+    expect(openedSelectors()).toEqual(['balance']);
   });
 });
