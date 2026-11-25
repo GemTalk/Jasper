@@ -264,7 +264,7 @@ export class VersionManager {
    */
   versionsFrom(catalog: CatalogEntry[]): GemStoneVersion[] {
     const versions: GemStoneVersion[] = [];
-    const hasLocalServer = this.storage.getPlatformKey() !== undefined;
+    const hasLocalServer = this.storage.hasLocalServer();
     const downloaded = hasLocalServer
       ? this.storage.getDownloadedFiles()
       : new Map<string, number>();
@@ -321,7 +321,9 @@ export class VersionManager {
     // loop is the only place a downloaded row is otherwise produced, so without
     // this the version, and its no-network "Install (extract)" action, silently
     // vanish offline. Extracted versions are already covered by the loops above.
-    const archiveSuffix = `${this.storage.getPlatformSuffix()}.${this.storage.getDownloadExtension()}`;
+    const archiveSuffix = hasLocalServer
+      ? `${this.storage.getPlatformSuffix()}.${this.storage.getDownloadExtension()}`
+      : '';
     for (const [version, size] of downloaded) {
       if (catalogVersions.has(version)) continue;
       if (extractedMap.has(version)) continue;

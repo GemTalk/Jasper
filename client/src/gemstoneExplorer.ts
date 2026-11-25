@@ -30,7 +30,8 @@ import * as crypto from 'crypto';
 import { SessionManager, ActiveSession } from './sessionManager';
 import * as queries from './browserQueries';
 import { unboundHierarchyMarker, unboundHierarchyTooltip } from './hierarchyBinding';
-import { NbCancelledError } from './nbRunner';
+import { isRunning, NbCancelledError, RUN_IN_PROGRESS_MESSAGE, stoppedRunHolds } from './nbRunner';
+import { SESSION_BUSY_MESSAGE } from './gciLibraryError';
 import { ALL_METHODS_CATEGORY, SESSION_METHODS_CATEGORY } from './systemBrowser';
 import {
   escapeSelectorSlashes,
@@ -1106,6 +1107,13 @@ function logClickFailure(e: unknown, sessionLeft: boolean): void {
     return;
   logWarning(`Explorer click failed: ${e instanceof Error ? e.message : String(e)}`);
 }
+
+/** How a refused or cancelled read reads once VS Code has passed it back to `openTextDocument`. */
+const QUIET_OPEN_FAILURES = [
+  SESSION_BUSY_MESSAGE,
+  RUN_IN_PROGRESS_MESSAGE,
+  new NbCancelledError().message,
+];
 
 function hierarchyFrom(entries: queries.ClassHierarchyEntry[]): ClassHierarchy {
   const supers = entries.filter((e) => e.kind === 'superclass');
@@ -2884,13 +2892,44 @@ export class ExplorerController {
     // Settled, a click that left its class unselected (refused while busy, dropped, or
     // replaced by another dictionary's selection) opens nothing, and is withdrawn so the
     // next click on the class can't pair with it.
-    void selected.then(() => {
-      if (this.state.className !== className || this.state.dictIndex !== dictIndex) {
-        click.withdraw();
+    this.openFromExplorer(
+      selected.then(() => {
+        if (this.state.className !== className || this.state.dictIndex !== dictIndex) {
+          click.withdraw();
+          return;
+        }
+        if (click.completesPair) return this.openClassDefinition(new ClassItem(className));
+      }),
+    );
+  }
+
+  // Opens an editor for an Explorer click or row button. VS Code hands a failed open back as a
+  // plain Error that keeps only its message, so a refused or cancelled read, which has already
+  // said so, is recognised by its wording. For the other ways a run holds a session only the
+  // session's state is known, which can't tell a refusal from a real failure, so those get a
+  // plain log line rather than a warning; a run that ended in between can still leave one
+  // needless warning.
+  private openFromExplorer(open: Promise<void>): void {
+    const openedIn = this.session();
+    void open.catch((e: unknown) => {
+      if (this.session() !== openedIn) return;
+      if (queries.isBusyRefusal(e) || e instanceof NbCancelledError) return;
+      const message = e instanceof Error ? e.message : String(e);
+      if (QUIET_OPEN_FAILURES.some((quiet) => message.includes(quiet))) return;
+      if (openedIn && (isRunning(openedIn) || stoppedRunHolds(openedIn))) {
+        logInfo(`Explorer could not open the editor while a run held the session: ${message}`);
         return;
       }
-      if (click.completesPair) return this.openClassDefinition(new ClassItem(className));
+      logWarning(`Explorer could not open the editor: ${message}`);
     });
+  }
+
+  openClickedMethod(node: MethodItem, mode: OpenSourceMode = 'preview'): void {
+    this.openFromExplorer(this.openMethod(node, mode));
+  }
+
+  openClickedDefinition(item?: ClassItem, pin = false): void {
+    this.openFromExplorer(this.openClassDefinition(item, pin));
   }
 
   // Same manual double-click detection for the Methods pane: a single click
@@ -2900,7 +2939,7 @@ export class ExplorerController {
   private readonly methodClicks = new DoubleClickDetector(500);
   handleMethodClick(node: MethodItem): void {
     if (this.methodClicks.register(`${node.isMeta}:${node.info.selector}`)) {
-      void this.openMethod(node, 'keep');
+      this.openClickedMethod(node, 'keep');
     }
   }
 
@@ -9590,7 +9629,7 @@ export function registerGemStoneExplorer(
     // side is the title-bar toggle now, not a selectable row.
     if (node instanceof MethodItem) {
       ctl.recordMethodContext(node.isMeta, node.info.category);
-      void ctl.openMethod(node);
+      ctl.openClickedMethod(node);
     } else if (node instanceof MethodCategoryItem) {
       ctl.recordMethodContext(node.isMeta, node.computed ? undefined : node.category);
     }
@@ -9702,7 +9741,7 @@ export function registerGemStoneExplorer(
       },
     ),
     vscode.commands.registerCommand('gemstone.explorer.openMethodToSide', (node: MethodItem) => {
-      if (node instanceof MethodItem) void ctl.openMethod(node, 'pin');
+      if (node instanceof MethodItem) ctl.openClickedMethod(node, 'pin');
     }),
     // The inline ▶ on a test method row. Runs through the same command the System
     // Browser uses, so the result lands in the Testing view like every other run.
@@ -9793,7 +9832,7 @@ export function registerGemStoneExplorer(
     // pass the tree selection, so read it from the view here.
     vscode.commands.registerCommand('gemstone.explorer.openSelectedMethodToSide', () => {
       const node = methodView.selection[0];
-      if (node instanceof MethodItem) void ctl.openMethod(node, 'pin');
+      if (node instanceof MethodItem) ctl.openClickedMethod(node, 'pin');
     }),
     // Find Class: cascade the panes to a class by name (from the Classes pane
     // title button or the command palette). The optional sessionId lets a caller (GemStone Search) target
@@ -9848,15 +9887,11 @@ export function registerGemStoneExplorer(
     ),
     // Open a class's definition editor (inline button / menu on the class row —
     // a plain class click no longer auto-opens it; a double-click does).
-    vscode.commands.registerCommand(
-      'gemstone.explorer.openDefinition',
-      (item?: ClassItem) =>
-        void ctl.openClassDefinition(item instanceof ClassItem ? item : undefined),
+    vscode.commands.registerCommand('gemstone.explorer.openDefinition', (item?: ClassItem) =>
+      ctl.openClickedDefinition(item instanceof ClassItem ? item : undefined),
     ),
-    vscode.commands.registerCommand(
-      'gemstone.explorer.openDefinitionToSide',
-      (item?: ClassItem) =>
-        void ctl.openClassDefinition(item instanceof ClassItem ? item : undefined, true),
+    vscode.commands.registerCommand('gemstone.explorer.openDefinitionToSide', (item?: ClassItem) =>
+      ctl.openClickedDefinition(item instanceof ClassItem ? item : undefined, true),
     ),
     // Open a class's editable comment as a preview tab (inline button on the class
     // row / Classes-pane toolbar). A class comment is often the first place a
