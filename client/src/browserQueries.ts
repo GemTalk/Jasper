@@ -307,6 +307,7 @@ import {
   searchMethodSourceAsync as sharedSearchMethodSourceAsync,
   sendersOf as sharedSendersOf,
   sendersOfAsync as sharedSendersOfAsync,
+  sendSitesOfAsync as sharedSendSitesOfAsync,
   MethodSearchResult,
   SourceScanMode,
 } from './queries/methodSearch';
@@ -2693,9 +2694,21 @@ export function sendersOfAsync(
   session: ActiveSession,
   selector: string | readonly string[],
   environmentId: number,
-  token?: CancellationToken,
 ) {
   return sharedSendersOfAsync(
+    queuedNbQueryExecutorUsing(session, 'GemStone: Finding references…'),
+    selector,
+    environmentId,
+  );
+}
+
+export function sendSitesOfAsync(
+  session: ActiveSession,
+  selector: string,
+  environmentId: number,
+  token?: CancellationToken,
+) {
+  return sharedSendSitesOfAsync(
     queuedNbQueryExecutorUsing(session, 'GemStone: Finding references…', token),
     selector,
     environmentId,

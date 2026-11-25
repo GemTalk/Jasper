@@ -1,4 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { pathToFileURL } from 'url';
 import { indexFile, WorkspaceIndex, detectFormat } from '../workspaceIndex';
 import { DocumentManager } from '../documentManager';
 
@@ -285,5 +289,73 @@ describe('WorkspaceIndex.updateFromParsedDocument', () => {
 
     expect(idx.findSenders('size')).toEqual([]);
     expect(idx.findImplementors('orderCount')).toEqual([]);
+  });
+});
+
+describe('an editor that closes', () => {
+  let dir: string | undefined;
+  afterEach(() => {
+    if (dir) fs.rmSync(dir, { recursive: true, force: true });
+    dir = undefined;
+  });
+
+  // A file on disk holding `saved`, opened in an editor that now holds `edited`.
+  function fileEditedInEditor(saved: string, edited: string) {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jasper-close-'));
+    const file = path.join(dir, 'customer.gs');
+    fs.writeFileSync(file, saved);
+    const uri = pathToFileURL(file).toString();
+    const idx = new WorkspaceIndex();
+    idx.indexFileFromDisk(uri, saved);
+    idx.updateFromParsedDocument(new DocumentManager().update(uri, 2, edited, detectFormat(uri)));
+    return { idx, uri, file };
+  }
+
+  it('puts a workspace file closed with unsaved edits back to what is saved on disk', () => {
+    const { idx, uri } = fileEditedInEditor(
+      'method: Foo\nsaved\n  ^items size\n%',
+      'method: Foo\nunsaved\n  ^items first\n%',
+    );
+
+    idx.indexClosedDocument(uri, true);
+
+    expect(idx.findImplementors('unsaved')).toEqual([]);
+    expect(idx.findSenders('first')).toEqual([]);
+    expect(idx.findImplementors('saved').map((m) => m.uri)).toEqual([uri]);
+    expect(idx.findSenders('size').map((m) => m.uri)).toEqual([uri]);
+  });
+
+  it('takes a workspace file deleted while it was open out of the index', () => {
+    const { idx, uri, file } = fileEditedInEditor(
+      'method: Foo\nsaved\n  ^self\n%',
+      'method: Foo\nsaved\n  ^self\n%',
+    );
+    fs.rmSync(file);
+
+    idx.indexClosedDocument(uri, true);
+
+    expect(idx.findImplementors('saved')).toEqual([]);
+  });
+
+  it('takes a file the workspace scan does not cover out of the index, though it is on disk', () => {
+    const { idx, uri } = fileEditedInEditor(
+      'method: Foo\nsaved\n  ^self\n%',
+      'method: Foo\nsaved\n  ^self\n%',
+    );
+
+    idx.indexClosedDocument(uri, false);
+
+    expect(idx.findImplementors('saved')).toEqual([]);
+  });
+
+  it('leaves the other files in the index alone', () => {
+    const idx = new WorkspaceIndex();
+    idx.indexFileFromDisk('file:///project/other.gs', 'method: Bar\nkept\n  ^self\n%');
+    idx.indexFileFromDisk('file:///tmp/scratch.gs', 'method: Foo\ndraft\n  ^self\n%');
+
+    idx.indexClosedDocument('file:///tmp/scratch.gs', false);
+
+    expect(idx.findImplementors('kept').map((m) => m.uri)).toEqual(['file:///project/other.gs']);
+    expect(idx.findImplementors('draft')).toEqual([]);
   });
 });

@@ -53,6 +53,8 @@ function makeSessions(hasSession: boolean, selectedId = 1): FakeSessions {
     // Answers for any id asked for, so a test can pin which session the provider
     // looked up rather than only which one was selected.
     getSession: vi.fn((id: number) => (hasSession ? session(id) : undefined)),
+    // Session 2 is logged in alongside the selected one.
+    getSessions: vi.fn(() => (hasSession ? [session(selectedId), session(2)] : [])),
     onDidChangeSelection: vi.fn((l: () => void) => {
       listeners.selection.push(l);
       return { dispose: () => {} };
@@ -160,6 +162,32 @@ describe('GemStoneCompletionProvider', () => {
 
       expect(first).toEqual(['Array']);
       expect(second).toEqual(['Bag']);
+    });
+  });
+
+  describe('which session answers', () => {
+    it('completes from the session a stone method was opened from, not the selected one', () => {
+      const provider = new GemStoneCompletionProvider(makeSessionManager(true));
+
+      provider.provideCompletionItems(
+        makeDocument('gemstone://2/Globals/Array/instance/accessing/size'),
+      );
+
+      for (const query of [mockGetAllClassNames, mockGetInstVarNames, mockGetAllSelectors]) {
+        expect(query).toHaveBeenCalled();
+        expect(query.mock.calls.every(([s]) => s.id === 2)).toBe(true);
+      }
+    });
+
+    it('offers nothing for a stone method whose session has logged out', () => {
+      const provider = new GemStoneCompletionProvider(makeSessionManager(true));
+
+      const result = provider.provideCompletionItems(
+        makeDocument('gemstone://3/Globals/Array/instance/accessing/size'),
+      );
+
+      expect(result).toEqual([]);
+      expect(mockGetAllClassNames).not.toHaveBeenCalled();
     });
   });
 

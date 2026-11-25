@@ -1,9 +1,18 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 // The controller pulls in browserQueries (→ native GCI). Stub it; these tests only
 // exercise openMethod and the syncToEditor guards, which never reach a query.
-vi.mock('../../browserQueries', () => ({}));
+vi.mock('../../browserQueries', () => ({ isBusyRefusal: () => false }));
+vi.mock('../../nbRunner', async (orig) => ({
+  ...(await orig<typeof import('../../nbRunner')>()),
+  isRunning: vi.fn(() => false),
+}));
+vi.mock('../../gciLog', async (orig) => ({
+  ...(await orig()),
+  logWarning: vi.fn(),
+  logInfo: vi.fn(),
+}));
 
 import type * as vscode from 'vscode';
 import { ExplorerController, MethodItem, shouldHintKeepMethodsOpen } from '../../gemstoneExplorer';
@@ -12,6 +21,9 @@ import { Uri, window, commands, workspace, languages } from '../../__mocks__/vsc
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 import { METHOD_LANGUAGE } from '../../languageIds';
 import { isExplorerRowUri } from '../../activeEditorDecoration';
+import { logInfo, logWarning } from '../../gciLog';
+import { isRunning, RUN_IN_PROGRESS_MESSAGE } from '../../nbRunner';
+import { refusedOpen, settle, unhandledRejections } from '../helpers/explorerClicks';
 
 // Structural mirror of the (unexported) SelectorInfo the tree items carry.
 type SelectorInfo = {
@@ -285,6 +297,118 @@ describe('ExplorerController.handleMethodClick', () => {
     ctl.handleMethodClick(methodItem({ selector: 'size' }));
 
     expect(open).not.toHaveBeenCalled();
+  });
+});
+
+describe('a method clicked while a run holds the session', () => {
+  let rejections: ReturnType<typeof unhandledRejections>;
+  beforeEach(() => (rejections = unhandledRejections()));
+  afterEach(() => {
+    rejections.stop();
+    vi.mocked(isRunning).mockReturnValue(false);
+  });
+
+  const clicks = {
+    'a single click': (ctl: ExplorerController, node: MethodItem) => ctl.openClickedMethod(node),
+    'a double-click': (ctl: ExplorerController, node: MethodItem) => {
+      ctl.handleMethodClick(node);
+      ctl.handleMethodClick(node);
+    },
+    'the open-to-the-side button': (ctl: ExplorerController, node: MethodItem) =>
+      ctl.openClickedMethod(node, 'pin'),
+  };
+
+  for (const [gesture, click] of Object.entries(clicks)) {
+    it(`drops the refused open from ${gesture} without an error nothing handles, or a log line`, async () => {
+      vi.mocked(isRunning).mockReturnValue(true);
+      openTextDocument.mockRejectedValueOnce(refusedOpen(RUN_IN_PROGRESS_MESSAGE));
+
+      click(makeController(), methodItem());
+      await settle();
+      await settle();
+
+      expect(openTextDocument).toHaveBeenCalledTimes(1);
+      expect(rejections.seen).toEqual([]);
+      expect(logWarning).not.toHaveBeenCalled();
+    });
+
+    it(`still notes, without a warning, an unexplained failure from ${gesture} while a run holds the session`, async () => {
+      vi.mocked(isRunning).mockReturnValue(true);
+      openTextDocument.mockRejectedValueOnce(new Error('no such class'));
+
+      click(makeController(), methodItem());
+      await settle();
+      await settle();
+
+      expect(rejections.seen).toEqual([]);
+      expect(logWarning).not.toHaveBeenCalled();
+      expect(logInfo).toHaveBeenCalledWith(expect.stringContaining('no such class'));
+    });
+
+    it(`logs any other failure to open the method from ${gesture}`, async () => {
+      openTextDocument.mockRejectedValueOnce(new Error('the stone went away'));
+
+      click(makeController(), methodItem());
+      await settle();
+      await settle();
+
+      expect(rejections.seen).toEqual([]);
+      expect(logWarning).toHaveBeenCalledWith(expect.stringContaining('the stone went away'));
+    });
+  }
+});
+
+describe('a method open that fails for a reason the user already knows', () => {
+  let rejections: ReturnType<typeof unhandledRejections>;
+  beforeEach(() => (rejections = unhandledRejections()));
+  afterEach(() => rejections.stop());
+
+  // Opens `node` from a click, with the read held until the test fails it.
+  function openHeld(ctl: ExplorerController) {
+    let fail!: (e: Error) => void;
+    openTextDocument.mockReturnValueOnce(new Promise((_, reject) => (fail = reject)));
+    ctl.openClickedMethod(methodItem());
+    return { fail };
+  }
+
+  it('logs nothing for a refusal from a run that ended before the refusal arrived', async () => {
+    const { fail } = openHeld(makeController());
+
+    fail(refusedOpen(RUN_IN_PROGRESS_MESSAGE));
+    await settle();
+    await settle();
+
+    expect(rejections.seen).toEqual([]);
+    expect(logWarning).not.toHaveBeenCalled();
+  });
+
+  it('logs nothing for an open the user cancelled', async () => {
+    const { fail } = openHeld(makeController());
+
+    fail(refusedOpen('GemStone operation cancelled'));
+    await settle();
+    await settle();
+
+    expect(logWarning).not.toHaveBeenCalled();
+  });
+
+  it('logs nothing for an open whose session was logged out meanwhile', async () => {
+    let current: ActiveSession | undefined = SESSION;
+    const ctl = new ExplorerController({
+      getSelectedSession: () => current,
+    } as unknown as SessionManager);
+    ctl.state.dictName = 'UserGlobals';
+    ctl.state.dictIndex = 1;
+    ctl.state.className = 'Array';
+    const { fail } = openHeld(ctl);
+
+    current = undefined;
+    fail(new Error('the session is gone'));
+    await settle();
+    await settle();
+
+    expect(rejections.seen).toEqual([]);
+    expect(logWarning).not.toHaveBeenCalled();
   });
 });
 
