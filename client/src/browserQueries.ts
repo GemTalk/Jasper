@@ -1,3 +1,4 @@
+import type { CancellationToken } from 'vscode';
 import { ActiveSession } from './sessionManager';
 import { GCI_ERR_OP_IN_PROGRESS, OOP_ILLEGAL, OOP_NIL } from './gciConstants';
 import { explainGciError, GciLibraryError, SESSION_BUSY_MESSAGE } from './gciLibraryError';
@@ -8,7 +9,10 @@ import {
   NbSessionBusyError,
   runNbCall,
   NbRunOptions,
+  sayStillRunningUnlessItEnds,
   sayWhatHolds,
+  stopOnCancel,
+  stoppedRunLetGo,
 } from './nbRunner';
 import { autoCommitAfterWrite } from './autoCommit/autoCommitRunner';
 
@@ -484,6 +488,7 @@ export async function executeFetchStringAsync(
   // Handed this call's own canceller once it starts, for a caller that stops the query from its own
   // UI. Use it rather than `cancelRunOn`, which stops whatever is running on the session.
   onStart?: NbRunOptions['onStart'],
+  stopWhileWaitingForSession?: AbortSignal,
 ): Promise<string> {
   try {
     return await runNbCall(
@@ -527,7 +532,13 @@ export async function executeFetchStringAsync(
           );
         }
       },
-      { title, disposableProcess: true, disposableResult: true, onStart },
+      {
+        title,
+        disposableProcess: true,
+        disposableResult: true,
+        onStart,
+        stopWhileWaitingForSession,
+      },
     );
   } catch (e) {
     // nbRunner has already told the user what holds the session.
@@ -554,6 +565,19 @@ export function nbQueryExecutorUsing(
   return (code) => executeFetchStringAsync(activeSession, code, title);
 }
 
+/**
+ * Lets the query behind a cancelled one wait until the session is free again. Only a query's own
+ * process is cleared, with no code of the user's to run, so this is short; a call the gem won't
+ * stop holds it only as long as the runner keeps collecting the call.
+ */
+function cleanUpAfterCancel(session: ActiveSession) {
+  return async (e: unknown): Promise<void> => {
+    if (!(e instanceof NbCancelledError)) return;
+    sayStillRunningUnlessItEnds(session);
+    await stoppedRunLetGo(session);
+  };
+}
+
 // Each session's last queued query. Keyed by id, not by ActiveSession: tests
 // wrap one login in several objects (#802).
 const queryTails = new Map<number, Promise<unknown>>();
@@ -570,30 +594,45 @@ const queryTails = new Map<number, Promise<unknown>>();
  * session (another query, Execute It, a debugger step) still refuses a queued
  * query as busy once its turn comes.
  *
- * A cancelled query can leave the session cleaning up its process for a
- * while; queued queries whose turn comes then are refused with the notice
- * that a previous run is still cleaning up, rather than waiting on it.
+ * A cancelled query leaves the session clearing its process for a moment, so
+ * the query queued behind it waits for that clean-up rather than being refused.
+ * A clean-up still going after NOTICE_GRACE_MS gets the "still cleaning up"
+ * notice, and the wait is bounded as {@link stoppedRunLetGo}'s is.
+ *
+ * Cancelling `token` stops a query still waiting its turn before it is sent, and gives the one
+ * running a soft break, as the notification's Cancel does. Either rejects with `NbCancelledError`.
  *
  * @param activeSession - The active GCI session to execute against.
  * @param title - What the notification of a query that runs long says.
+ * @param token - Stops the executor's queries when cancelled.
  * @returns An {@link NbQueryExecutor} that runs `code` in `session` after the
  * session's earlier queued queries and resolves to its String result.
  */
 export function queuedNbQueryExecutorUsing(
   activeSession: ActiveSession,
   title?: string,
+  token?: CancellationToken,
 ): NbQueryExecutor {
   const id = activeSession.id;
   return (code) => {
+    const stop = token && stopOnCancel(token);
+    const run = (): Promise<string> => {
+      // Checked here as well as by the runner, which would refuse a busy session first, with a notice.
+      if (token?.isCancellationRequested) return Promise.reject(new NbCancelledError());
+      return executeFetchStringAsync(
+        activeSession,
+        code,
+        title,
+        stop?.onStart,
+        stop?.stopWhileWaitingForSession,
+      );
+    };
     const previous = queryTails.get(id);
-    const mine = previous
-      ? previous
-          .catch(() => undefined)
-          .then(() => executeFetchStringAsync(activeSession, code, title))
-      : executeFetchStringAsync(activeSession, code, title);
+    const mine = previous ? previous.catch(cleanUpAfterCancel(activeSession)).then(run) : run();
     queryTails.set(id, mine);
     const forget = (): void => {
       if (queryTails.get(id) === mine) queryTails.delete(id);
+      stop?.dispose();
     };
     mine.then(forget, forget);
     return mine;
@@ -2654,9 +2693,10 @@ export function sendersOfAsync(
   session: ActiveSession,
   selector: string | readonly string[],
   environmentId: number,
+  token?: CancellationToken,
 ) {
   return sharedSendersOfAsync(
-    queuedNbQueryExecutorUsing(session, 'GemStone: Finding references…'),
+    queuedNbQueryExecutorUsing(session, 'GemStone: Finding references…', token),
     selector,
     environmentId,
   );
