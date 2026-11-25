@@ -3,6 +3,7 @@ vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 import { classListResults } from '../omniSearchViewProvider';
 import type { MethodSearchResult } from '../../queries/methodSearch';
+import { methodNoteKey } from '../../assistant/queries/startingPoints';
 
 function method(className: string, selector: string, isMeta = false): MethodSearchResult {
   return { dictName: 'UserGlobals', className, isMeta, selector, category: 'x', environmentId: 0 };
@@ -50,5 +51,23 @@ describe('a list of classes with their methods', () => {
     const rows = classListResults(classes.slice(0, 1), [elsewhere], 7);
 
     expect(rows.map((r) => r.label)).toEqual(['Library']);
+  });
+
+  it('marks a method where reading its class starts, with the reason on hover', () => {
+    const notes = new Map([
+      [methodNoteKey('Library', false, 'addBook:'), { text: 'no senders in Library', tip: 'why' }],
+    ]);
+
+    const rows = classListResults(
+      classes.slice(0, 1),
+      [method('Library', 'addBook:'), method('Library', 'books')],
+      7,
+      notes,
+    );
+
+    expect(rows.slice(1).map((r) => [r.label, r.description, r.detail])).toEqual([
+      ['addBook:', 'no senders in Library', 'why'],
+      ['books', undefined, undefined],
+    ]);
   });
 });

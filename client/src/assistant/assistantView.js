@@ -20,12 +20,12 @@
     'Ask in plain words about the code in the GemStone session named at the top, or ask for new classes. Answers come from the Claude Code installed on this machine, which reads your session through Jasper; the time and cost of each answer show under it.',
     '### Commands',
     '- `/help` shows this.',
-    '- `/clear` or `/new` starts a fresh conversation, the same as **New**.',
+    '- `/clear` or `/new` starts a fresh conversation, the same as **Clear**.',
     '### Keys',
     '- **Enter** sends; **Shift+Enter** starts a new line.',
     '- **Up** and **Down** bring back earlier messages (on the first or last line of the box).',
     '### Buttons',
-    '- **New** starts a fresh conversation; the assistant forgets the earlier questions.',
+    '- **Clear** starts a fresh conversation; the assistant forgets the earlier questions. Until then, closing this panel and opening it again keeps the conversation.',
     '- **Stop** cancels the answer in progress; your next message continues the same conversation.',
     '### Results in Jasper',
     '- With **Show results in Jasper (if possible)** ticked, a list of methods or classes, or a regular-expression search, opens in GemStone Search instead of filling the chat. A blue banner gives the count and a **Show GemStone Search** button.',
@@ -415,9 +415,22 @@
       vscode.postMessage({ command: 'setGuiUpdates', on: guiUpdates.checked }),
     );
 
-    window.addEventListener('message', (e) => {
-      const msg = e.data || {};
+    window.addEventListener('message', (e) => onMessage(e.data || {}));
+
+    function onMessage(msg) {
       switch (msg.command) {
+        case 'replay':
+          // A reopened panel: show the conversation so far. Its answer, if one was running, ended
+          // when the panel closed.
+          log.innerHTML = '';
+          toolCards.clear();
+          (msg.log || []).forEach(onMessage);
+          dropLive();
+          setBusy(false);
+          return;
+        case 'user':
+          append('user', escapeHtml(msg.text));
+          return;
         case 'event':
           onEvent(msg.event);
           return;
@@ -447,7 +460,7 @@
           log.innerHTML = '';
           return;
       }
-    });
+    }
     input.focus();
   }
 

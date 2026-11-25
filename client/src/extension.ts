@@ -3734,11 +3734,11 @@ export function activate(context: vscode.ExtensionContext) {
           (outcome.notice ? ` ${outcome.notice}` : '')
         );
       },
-      showClassList: async (title, classes, methods) => {
+      showClassList: async (title, classes, methods, notes) => {
         const capped = classes.length >= CLASSES_FROM_CODE_LIMIT ? ' (the most it shows)' : '';
         const where = `in the GemStone Search pane, titled "${title}"`;
         return await heldDisplay.show(async () => {
-          const outcome = await omniSearch.showClassList(title, classes, methods);
+          const outcome = await omniSearch.showClassList(title, classes, methods, notes);
           if ('error' in outcome) throw new Error(outcome.error);
           return `Showing ${outcome.shownCount} classes${capped} ${where}.`;
         }, `Will show ${classes.length} classes${capped} ${where}, ${whenAnswered}.`);

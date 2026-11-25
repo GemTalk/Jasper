@@ -26,6 +26,9 @@ import { checkExample } from './assistant/queries/checkExample';
 import { classMethodsCode } from './assistant/queries/classMethodsCode';
 import type { ClassNameEntry } from './queries/getAllClassNames';
 
+/** More classes than this, and a class list with methods leaves out where reading starts. */
+const MAX_CLASSES_NOTED = 20;
+
 /**
  * What a tool needs to change what Jasper shows. Each answers a sentence for the model. Optional
  * in registerMcpTools: without it (tests, a window with no GemStone Search) the tools are not
@@ -39,11 +42,12 @@ export interface McpUiHooks {
     highlight?: string[],
     notes?: ReadonlyMap<string, MethodNote>,
   ): Promise<string>;
-  /** With `methods`, each class's methods are listed under it. */
+  /** With `methods`, each class's methods are listed under it, with `notes` as showMethodList. */
   showClassList(
     title: string,
     classes: ClassNameEntry[],
     methods?: MethodSearchResult[],
+    notes?: ReadonlyMap<string, MethodNote>,
   ): Promise<string>;
   showClass(className: string, dictName?: string): Promise<string>;
   /** Open a new Workspace holding `code`, an example of using `className`. */
@@ -926,7 +930,19 @@ export function registerMcpTools(
             classMethodsCode(classes),
             limit,
           );
-          const shown = await ui.showClassList(args.title, classes, methods);
+          // One walk per class: withMethods is for the few classes the assistant just created.
+          const notes = new Map<string, MethodNote>();
+          if (classes.length <= MAX_CLASSES_NOTED) {
+            for (const c of classes) {
+              const found = startingPoints(
+                (code) => executeString(session, code),
+                c.className,
+                c.dictName,
+              );
+              if (found) for (const [k, v] of startingPointNotes(found)) notes.set(k, v);
+            }
+          }
+          const shown = await ui.showClassList(args.title, classes, methods, notes);
           return more
             ? `${shown} Only the first ${limit} of their methods are listed ` +
                 '(gemstone.omniSearch.maxServerScan).'

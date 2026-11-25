@@ -382,15 +382,16 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
   }
 
   /** Show a list of classes someone else found, as showMethodList does methods. Each row opens its
-   *  class, as a Classes result does. With `methods`, each class's methods follow it: see
-   *  classListResults. */
+   *  class, as a Classes result does. With `methods`, each class's methods follow it, noted as in
+   *  showMethodList: see classListResults. */
   async showClassList(
     title: string,
     classes: readonly ClassNameEntry[],
     methods?: readonly MethodSearchResult[],
+    notes?: ReadonlyMap<string, MethodNote>,
   ): Promise<{ shownCount: number } | { error: string }> {
     return await this.showListOnBehalf(title, undefined, (sessionId) =>
-      classListResults(classes, methods ?? [], sessionId),
+      classListResults(classes, methods ?? [], sessionId, notes),
     );
   }
 
@@ -642,11 +643,13 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
 }
 
 /** A row per class, each followed by its own methods from `methods`, indented and named by selector
- *  alone, since the class is the row above. */
+ *  alone, since the class is the row above. A method's note (`notes`, keyed by methodNoteKey)
+ *  follows it, with its tip on hover. */
 export function classListResults(
   classes: readonly ClassNameEntry[],
   methods: readonly MethodSearchResult[],
   sessionId: number,
+  notes?: ReadonlyMap<string, MethodNote>,
 ): OmniResult[] {
   return classes.flatMap((c) => {
     const own = methods.filter((m) => m.className === c.className && m.dictName === c.dictName);
@@ -664,12 +667,17 @@ export function classListResults(
         dictIndex: c.dictIndex,
       },
     };
-    const methodRows = methodRowsToResults(own, sessionId).map((r, i) => ({
-      ...r,
-      label: `${own[i].isMeta ? 'class ' : ''}${own[i].selector}`,
-      description: undefined,
-      nested: true,
-    }));
+    const methodRows = methodRowsToResults(own, sessionId).map((r, i) => {
+      const m = own[i];
+      const note = notes?.get(methodNoteKey(m.className, m.isMeta, m.selector));
+      return {
+        ...r,
+        label: `${m.isMeta ? 'class ' : ''}${m.selector}`,
+        description: note?.text,
+        detail: note?.tip,
+        nested: true,
+      };
+    });
     return [classRow, ...methodRows];
   });
 }

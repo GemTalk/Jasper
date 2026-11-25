@@ -54,6 +54,13 @@ export interface AssistantPanelDeps {
   heldDisplay: HeldDisplay;
 }
 
+/** What the chat shows, as posted to the webview: kept so a reopened panel can show it again. */
+type LogMessage =
+  | { command: 'user'; text: string }
+  | { command: 'event'; event: unknown }
+  | { command: 'error'; text: string }
+  | { command: 'stopped' };
+
 type Inbound =
   | { command: 'ready' }
   | { command: 'send'; text: string }
@@ -70,7 +77,9 @@ export class AssistantPanel {
 
   private readonly disposables: vscode.Disposable[] = [];
   private child: ChildProcessWithoutNullStreams | undefined;
-  private sessionId: string | undefined;
+  // The conversation outlives the panel: closing it and opening it again shows the same messages,
+  // and the next one continues the same Claude session. Only Clear (or a window reload) ends it.
+  private static conversation: { sessionId?: string; log: LogMessage[] } = { log: [] };
   private stdoutBuffer = '';
   // Processes we ended ourselves. Claude Code traps SIGTERM and exits with 143, so the exit
   // signal alone can't tell a Stop from a crash.
@@ -116,18 +125,23 @@ export class AssistantPanel {
       case 'ready':
         this.postMcpStatus();
         this.post({ command: 'guiUpdates', on: this.guiUpdates() });
+        if (AssistantPanel.conversation.log.length > 0) {
+          this.post({ command: 'replay', log: AssistantPanel.conversation.log });
+        }
         return;
       case 'send':
         this.postMcpStatus();
+        // The webview shows the message itself; kept only for a reopened panel.
+        AssistantPanel.conversation.log.push({ command: 'user', text: msg.text });
         this.send(msg.text);
         return;
       case 'stop':
         this.killChild();
-        this.post({ command: 'stopped' });
+        this.postLog({ command: 'stopped' });
         return;
       case 'newConversation':
         this.killChild();
-        this.sessionId = undefined;
+        AssistantPanel.conversation = { log: [] };
         this.post({ command: 'cleared' });
         return;
       case 'claimMcp':
@@ -174,7 +188,7 @@ export class AssistantPanel {
   private startChild(): ChildProcessWithoutNullStreams | undefined {
     // `npm run compile` (the F5 task) only type-checks the proxy; `npm run bundle` builds it.
     if (!fs.existsSync(this.deps.proxyScriptPath)) {
-      this.post({
+      this.postLog({
         command: 'error',
         text: `Jasper's MCP proxy has not been built: ${this.deps.proxyScriptPath} is missing. Run \`npm run bundle\`.`,
       });
@@ -214,8 +228,9 @@ export class AssistantPanel {
       SYSTEM_PROMPT,
       ...(this.guiUpdates() ? [] : ['--disallowedTools', ...GUI_TOOLS]),
     ];
-    if (this.sessionId) {
-      args.push('--resume', this.sessionId);
+    const { sessionId } = AssistantPanel.conversation;
+    if (sessionId) {
+      args.push('--resume', sessionId);
     }
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir();
 
@@ -223,7 +238,7 @@ export class AssistantPanel {
     try {
       child = spawn('claude', args, { cwd, env: process.env });
     } catch (err) {
-      this.post({ command: 'error', text: `Could not start Claude Code: ${String(err)}` });
+      this.postLog({ command: 'error', text: `Could not start Claude Code: ${String(err)}` });
       return undefined;
     }
     this.child = child;
@@ -241,7 +256,7 @@ export class AssistantPanel {
         err.code === 'ENOENT'
           ? 'Claude Code (`claude`) is not on the PATH VS Code was started with.'
           : `Claude Code failed: ${err.message}`;
-      this.post({ command: 'error', text });
+      this.postLog({ command: 'error', text });
     });
     child.on('close', (code, signal) => {
       if (this.child === child) {
@@ -250,7 +265,7 @@ export class AssistantPanel {
         void this.showHeld();
       }
       if (!this.killed.has(child) && signal === null && code !== 0) {
-        this.post({
+        this.postLog({
           command: 'error',
           text: `Claude Code exited with code ${code}.${stderr ? '\n' + stderr.trim() : ''}`,
         });
@@ -275,9 +290,14 @@ export class AssistantPanel {
         continue;
       }
       if (event.session_id) {
-        this.sessionId = event.session_id;
+        AssistantPanel.conversation.sessionId = event.session_id;
       }
-      this.post({ command: 'event', event });
+      // Streamed deltas and the start-up notice only matter live; the complete events replace them.
+      if (event.type === 'stream_event' || event.type === 'system') {
+        this.post({ command: 'event', event });
+      } else {
+        this.postLog({ command: 'event', event });
+      }
       if (event.type === 'result') {
         void this.showHeld();
       }
@@ -302,6 +322,11 @@ export class AssistantPanel {
       detail: report.detail,
       servedSession: report.servedSession,
     });
+  }
+
+  private postLog(message: LogMessage): void {
+    AssistantPanel.conversation.log.push(message);
+    this.post(message);
   }
 
   private post(message: unknown): void {
@@ -351,7 +376,7 @@ export class AssistantPanel {
   <form id="composer" class="composer">
     <textarea id="input" rows="3" placeholder="Ask about your GemStone code, or ask for new classes. Enter sends, Shift+Enter for a new line, /help for more."></textarea>
     <div class="buttons">
-      <button type="button" id="newConversation" class="secondary">New</button>
+      <button type="button" id="newConversation" class="secondary">Clear</button>
       <button type="button" id="stop" class="secondary" hidden>Stop</button>
       <button type="submit" id="send">Send</button>
     </div>
