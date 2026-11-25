@@ -613,7 +613,7 @@
           "name": "Assistant Results",
           "contextualTitle": "Jasper Assistant Results",
           "type": "webview",
-          "when": "gemstone.hasActiveSession"
+          "when": "gemstone.hasActiveSession && jasper.assistantStarted"
         }
       ],
       "gemstoneExplorer": [

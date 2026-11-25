@@ -7,6 +7,14 @@ import { configMessage, renderOmniHtml, resultsMessage } from './omniSearchShare
 
 export const ASSISTANT_RESULTS_VIEW_ID = 'jasperAssistantResultsView';
 
+/** The view is hidden until this is set: by opening the Jasper Assistant, or by the first list. */
+export const ASSISTANT_STARTED_CONTEXT = 'jasper.assistantStarted';
+
+/** Show the Assistant Results panel tab from now until the window reloads. */
+export async function showAssistantResultsTab(): Promise<void> {
+  await vscode.commands.executeCommand('setContext', ASSISTANT_STARTED_CONTEXT, true);
+}
+
 type Inbound = { command: string; value?: string; id?: number; refId?: number; tab?: number };
 
 const FILTER_PLACEHOLDER = 'Filter these results';
@@ -15,6 +23,8 @@ const FILTER_PLACEHOLDER = 'Filter these results';
  *  so it is never primed: no search corpus is loaded for a result. */
 interface ResultTab {
   id: number;
+  /** "Results 3": the tab's name is short; the list's own title shows above it. */
+  label: string;
   title: string;
   deps: OmniPanelDeps;
   engine: OmniEngine;
@@ -35,6 +45,8 @@ export class AssistantResultsView implements vscode.WebviewViewProvider {
   private tabs: ResultTab[] = [];
   private activeId: number | undefined;
   private nextId = 1;
+  /** Counts again from 1 once no tab is left, so the names say how far back a list is. */
+  private nextNumber = 1;
   private questionSource: () => string | undefined = () => undefined;
 
   /** Where to learn the question being answered when a list arrives. */
@@ -65,6 +77,7 @@ export class AssistantResultsView implements vscode.WebviewViewProvider {
     engine.showList(list);
     const tab: ResultTab = {
       id: this.nextId++,
+      label: `Results ${this.nextNumber++}`,
       title: list.title,
       deps,
       engine,
@@ -73,6 +86,8 @@ export class AssistantResultsView implements vscode.WebviewViewProvider {
     };
     this.tabs.push(tab);
     this.activeId = tab.id;
+    // Another Claude Code can show a list through Jasper's MCP server without the chat ever opening.
+    await showAssistantResultsTab();
     if (this.view) {
       this.view.show(true);
       await this.showActive();
@@ -91,10 +106,16 @@ export class AssistantResultsView implements vscode.WebviewViewProvider {
   }
 
   private async showActive(): Promise<void> {
+    if (this.tabs.length === 0) this.nextNumber = 1;
     const tab = this.active();
     this.post({
       command: 'resultTabs',
-      tabs: this.tabs.map((t) => ({ id: t.id, title: t.title, question: t.question })),
+      tabs: this.tabs.map((t) => ({
+        id: t.id,
+        label: t.label,
+        title: t.title,
+        question: t.question,
+      })),
       active: this.activeId,
     });
     if (!tab) {
@@ -125,7 +146,7 @@ export class AssistantResultsView implements vscode.WebviewViewProvider {
         term: tab.filter,
       }),
       // Search's "Esc to go back" has nothing to go back to here.
-      pivotHint: 'Type to filter; Esc clears the filter',
+      pivotHint: '',
       placeholder: FILTER_PLACEHOLDER,
     });
   }

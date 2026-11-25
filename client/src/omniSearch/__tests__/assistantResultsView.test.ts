@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
+import * as vscode from 'vscode';
 import { AssistantResultsView } from '../assistantResultsView';
 import { OMNI_DEFAULTS } from '../omniConfig';
 import type { OmniPanelDeps } from '../omniSearchPanel';
@@ -62,7 +63,7 @@ function mount() {
   const rows = () => (last('results').rows as { label: string }[]).map((r) => r.label);
   const tabs = () =>
     last('resultTabs') as {
-      tabs: { id: number; title: string; question?: string }[];
+      tabs: { id: number; label: string; title: string; question?: string }[];
       active: number;
     };
   return { results, view, html: webview.html, send: (m: Msg) => handler(m), posted, rows, tabs };
@@ -80,7 +81,10 @@ describe('the Assistant Results view', () => {
     await results.open(deps(), library);
     await results.open(deps(), trail);
 
-    expect(tabs().tabs.map((t) => t.title)).toEqual(['Methods in Library', 'How lending works']);
+    expect(tabs().tabs.map((t) => [t.label, t.title])).toEqual([
+      ['Results 1', 'Methods in Library'],
+      ['Results 2', 'How lending works'],
+    ]);
     expect(tabs().active).toBe(tabs().tabs[1].id);
     expect(rows()).toEqual(['Library>>lend:to:']);
     expect(view.show).toHaveBeenCalledWith(true);
@@ -178,5 +182,32 @@ describe('the Assistant Results view', () => {
     await results.open(deps(), trail);
 
     expect(tabs().tabs.map((t) => t.question)).toEqual(['What does Library do?', undefined]);
+  });
+
+  it('makes its panel tab appear, hidden until the assistant first shows something', async () => {
+    const { results } = mount();
+
+    await results.open(deps(), library);
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'setContext',
+      'jasper.assistantStarted',
+      true,
+    );
+  });
+
+  it('names tabs by number, counting from 1 again once none is left', async () => {
+    const { results, send, tabs } = mount();
+    await results.open(deps(), library);
+    await results.open(deps(), trail);
+    await send({ command: 'closeTab', tab: tabs().tabs[0].id });
+    await results.open(deps(), library);
+    const whileOpen = tabs().tabs.map((t) => t.label);
+    await results.clear();
+
+    await results.open(deps(), trail);
+
+    expect(whileOpen).toEqual(['Results 2', 'Results 3']);
+    expect(tabs().tabs.map((t) => t.label)).toEqual(['Results 1']);
   });
 });

@@ -352,8 +352,13 @@ describe('GemStone Search view — results rendering (flat, no grouping)', () =>
         command: 'resultTabs',
         active,
         tabs: [
-          { id: 1, title: 'Methods in Library', question: 'What does Library do?' },
-          { id: 2, title: 'How lending works' },
+          {
+            id: 1,
+            label: 'Results 1',
+            title: 'Methods in Library',
+            question: 'What does Library do?',
+          },
+          { id: 2, label: 'Results 2', title: 'How lending works' },
         ],
       },
     });
@@ -378,6 +383,17 @@ describe('GemStone Search view — results rendering (flat, no grouping)', () =>
 
       expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'selectTab', tab: 2 });
       expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'closeTab', tab: 2 });
+    });
+
+    it('names each tab by its number, with its title and question on hover', () => {
+      const { handle } = mount();
+      const el = strip();
+
+      handle.onMessage(tabsMsg(1));
+
+      const first = el.querySelector<HTMLElement>('.result-tab')!;
+      expect(first.textContent).toContain('Results 1');
+      expect(first.title).toBe('Methods in Library\nAsked: What does Library do?');
     });
 
     it('says what goes there when there are no lists', () => {

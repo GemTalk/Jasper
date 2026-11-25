@@ -286,6 +286,7 @@ import { ProcessManager } from './manager/processManager';
 import { openMcpInspector } from './openMcpInspector';
 import { McpSocketServer, proxyScriptPath, writeClaudeDesktopMcpConfig } from './mcpSocketServer';
 import { AssistantPanel } from './assistant/assistantPanel';
+import { showAssistantResultsTab } from './omniSearch/assistantResultsView';
 import { CLASSES_FROM_CODE_LIMIT } from './assistant/queries/classesFromCode';
 import { readOmniConfig } from './omniSearch/omniConfig';
 import type { McpUiHooks } from './mcpTools';
@@ -4020,7 +4021,8 @@ export function activate(context: vscode.ExtensionContext) {
         await vscode.env.clipboard.writeText(socketPath);
         vscode.window.showInformationMessage(`Copied MCP socket path: ${socketPath}`);
       }),
-      vscode.commands.registerCommand('jasper.openAssistant', () =>
+      vscode.commands.registerCommand('jasper.openAssistant', () => {
+        void showAssistantResultsTab();
         AssistantPanel.show({
           extensionPath: context.extensionPath,
           socketPath: () => mcpSocketServer.socketPath,
@@ -4028,8 +4030,8 @@ export function activate(context: vscode.ExtensionContext) {
           mcpReport: () => mcpReport(mcpOwnership()),
           memento: context.globalState,
           heldDisplay,
-        }),
-      ),
+        });
+      }),
       vscode.commands.registerCommand('jasper.installMcpTlsCertificate', async () => {
         if (!certPathForTrust) {
           vscode.window.showWarningMessage(

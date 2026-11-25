@@ -45,7 +45,6 @@
     '- Ask how something works, and the assistant lists the methods to read, in order, in Assistant Results, each with a note on its part. A card under the first step explains it; **Next** and **Back** walk the steps, and **Open** opens one in an editor.',
     '- A method written like `Class>>selector` in an answer is a link: click it to open the method. After creating a class, the assistant lists where to start reading it.',
     '- After creating classes, the assistant also opens a new Workspace with a short example of using them. Put the cursor on an expression and Display It or Inspect It to see what it answers. Jasper compiles the example first, without running it, so it will not hold a typo or a message nothing implements. It cannot tell what an expression does when run, so read each one before running it.',
-    '- In Assistant Results, **Esc** clears the filter.',
     '- A method list stops at the `gemstone.omniSearch.maxServerScan` setting; the answer says when more match.',
     '- Untick the box to get every answer as text in the chat.',
     '### If it cannot reach GemStone',

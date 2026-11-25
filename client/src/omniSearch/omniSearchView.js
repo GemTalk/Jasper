@@ -427,13 +427,13 @@
         b.setAttribute('aria-selected', t.id === active ? 'true' : 'false');
         b.title = t.question ? t.title + '\nAsked: ' + t.question : t.title;
         var name = doc.createElement('span');
-        name.textContent = t.title;
+        name.textContent = t.label;
         b.appendChild(name);
         var close = doc.createElement('button');
         close.type = 'button';
         close.className = 'close';
         close.textContent = '×';
-        close.title = 'Close ' + t.title;
+        close.title = 'Close ' + t.label;
         close.setAttribute('aria-label', close.title);
         close.addEventListener('click', function (ev) {
           ev.stopPropagation();
