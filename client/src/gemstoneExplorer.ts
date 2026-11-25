@@ -30,7 +30,8 @@ import * as crypto from 'crypto';
 import { SessionManager, ActiveSession } from './sessionManager';
 import * as queries from './browserQueries';
 import { unboundHierarchyMarker, unboundHierarchyTooltip } from './hierarchyBinding';
-import { NbCancelledError } from './nbRunner';
+import { isRunning, NbCancelledError, RUN_IN_PROGRESS_MESSAGE, stoppedRunHolds } from './nbRunner';
+import { SESSION_BUSY_MESSAGE } from './gciLibraryError';
 import { ALL_METHODS_CATEGORY, SESSION_METHODS_CATEGORY } from './systemBrowser';
 import {
   escapeSelectorSlashes,
@@ -195,6 +196,7 @@ import {
 } from './autoCommit/autoCommitState';
 import type { ReverseRenameKind } from './refactoring/queries/previewUndoRefactoring';
 import { explorerRowUri } from './activeEditorDecoration';
+import { compareNames } from './methodOrder';
 
 const VIEW_DICTS = 'gemstoneExplorerDicts';
 const VIEW_CATEGORIES = 'gemstoneExplorerCategories';
@@ -345,6 +347,10 @@ export class DictItem extends vscode.TreeItem {
     this.iconPath = new vscode.ThemeIcon('symbol-namespace');
     // Hosts the row's context menu (e.g. Remove Dictionary).
     this.contextValue = 'explorerDict';
+    // Fires on every click, including one on the row already highlighted, which
+    // onDidChangeSelection misses: a click refused with no dictionary selected leaves its
+    // row highlighted, and clicking it again must still select it.
+    this.command = { command: 'gemstone.explorer.dictClicked', title: '', arguments: [this] };
   }
 }
 
@@ -1102,6 +1108,13 @@ function logClickFailure(e: unknown, sessionLeft: boolean): void {
   logWarning(`Explorer click failed: ${e instanceof Error ? e.message : String(e)}`);
 }
 
+/** How a refused or cancelled read reads once VS Code has passed it back to `openTextDocument`. */
+const QUIET_OPEN_FAILURES = [
+  SESSION_BUSY_MESSAGE,
+  RUN_IN_PROGRESS_MESSAGE,
+  new NbCancelledError().message,
+];
+
 function hierarchyFrom(entries: queries.ClassHierarchyEntry[]): ClassHierarchy {
   const supers = entries.filter((e) => e.kind === 'superclass');
   const self = entries.find((e) => e.kind === 'self');
@@ -1125,6 +1138,18 @@ interface PendingClick {
   done: Promise<void>;
   /** A move-back took the pane's highlight off this click's row while it read. */
   highlightMoved?: boolean;
+}
+
+/** A method open whose source hasn't been read yet. */
+interface MethodOpening {
+  uri: string;
+  mode: OpenSourceMode;
+  /** The method selected before the first of the opens overlapping this one. */
+  selectorBefore: string | undefined;
+  /** Settles with whether the method opened; never rejects. */
+  done: Promise<boolean>;
+  /** Why it didn't open. */
+  error?: unknown;
 }
 
 /** What the Classes pane shows on each class row of a dictionary, besides its name. */
@@ -1891,7 +1916,14 @@ export class ExplorerController {
     ivarName: string,
     className: string,
   ): void {
-    if (className !== this.state.className) this.selectClass(new ClassItem(className), false);
+    if (
+      className !== this.state.className &&
+      !this.unlessBusy(() => this.selectClass(new ClassItem(className), false))
+    )
+      return;
+    // Loads the access map the filter reads before anything changes, so for the class already
+    // selected, a refusal leaves the side and the filter as they were.
+    if (!this.unlessBusy(() => this.methodIvarAccess())) return;
     this.setMethodSide(false);
     this.setFilterState(VIEW_METHODS, `${kind}:${ivarName}`);
   }
@@ -2426,6 +2458,18 @@ export class ExplorerController {
     this.commitClassSelection(item, { envLines, hierarchy }, revealHierarchy);
   }
 
+  // Runs a command's blocking read. False when a run holds the session: the refused read
+  // has already given the busy notice, so the command stops there.
+  private unlessBusy(read: () => unknown): boolean {
+    try {
+      read();
+      return true;
+    } catch (e) {
+      if (queries.isBusyRefusal(e)) return false;
+      throw e;
+    }
+  }
+
   private commitClassSelection(
     item: ClassItem,
     { envLines, hierarchy }: ClassSelection,
@@ -2587,8 +2631,9 @@ export class ExplorerController {
     };
   }
 
-  // Runs a row click, unless it repeats the one still pending (VS Code reports a class
-  // click twice, see handleClassClick) or clicks the row already selected. Clicking the
+  // Runs a row click, unless it repeats the one still pending (VS Code reports a class or
+  // dictionary click twice, once as a selection and once through the row's command) or
+  // clicks the row already selected. Clicking the
   // selected row abandons a click pending in the same pane: the user went back. One
   // pending in another pane is left alone, and so is one in the same pane while that
   // row is being highlighted again, since that highlight's selection event lands here
@@ -2840,7 +2885,8 @@ export class ExplorerController {
 
   // Manual double-click detection for the Classes pane: VS Code trees have no
   // double-click event, so a class row's `command` (fired on each click) records
-  // the click; two on the same class within the threshold open its definition.
+  // the click; two that each select the same class within the threshold open its
+  // definition.
   private readonly classClicks = new DoubleClickDetector(500);
   handleClassClick(className: string): void {
     // (Re)select the class even when VS Code's tree still shows it highlighted from
@@ -2852,25 +2898,91 @@ export class ExplorerController {
     // classView selection wiring reports the same click; selectClassFromTree reads it once.
     const { dictIndex } = this.state;
     const selected = this.selectClassFromTree(new ClassItem(className));
-    if (this.classClicks.register(className)) {
-      // Opens only once the click settles: a dropped click opens nothing, and neither
-      // does one whose class another dictionary's selection has since replaced.
-      void selected.then(() => {
-        if (this.state.className !== className || this.state.dictIndex !== dictIndex) return;
-        return this.openClassDefinition(new ClassItem(className));
-      });
-    }
+    // Recorded now, so the threshold runs from the click itself rather than from when a
+    // slow read answers.
+    const click = this.classClicks.click(className);
+    // Settled, a click that left its class unselected (refused while busy, dropped, or
+    // replaced by another dictionary's selection) opens nothing, and is withdrawn so the
+    // next click on the class can't pair with it.
+    void this.openFromExplorer(
+      selected.then(() => {
+        if (this.state.className !== className || this.state.dictIndex !== dictIndex) {
+          click.withdraw();
+          return;
+        }
+        if (click.completesPair) return this.openClassDefinition(new ClassItem(className));
+      }),
+    );
   }
 
-  // Same manual double-click detection for the Methods pane: a single click
-  // already opened the method as a preview tab (via onDidChangeSelection); a
-  // double-click on the same row promotes it to a permanent tab so a later
-  // single click elsewhere won't replace it.
+  // Opens an editor for an Explorer click or row button, answering whether it opened. VS Code
+  // hands a failed open back as a plain Error that keeps only its message, so a refused or
+  // cancelled read, which has already said so, is recognised by its wording. For the other ways
+  // a run holds a session only the session's state is known, which can't tell a refusal from a
+  // real failure, so those get a plain log line rather than a warning; a run that ended in
+  // between can still leave one needless warning.
+  private openFromExplorer(open: Promise<void>): Promise<boolean> {
+    const openedIn = this.session();
+    return open.then(
+      () => true,
+      (e: unknown) => {
+        if (this.session() !== openedIn) return false;
+        if (queries.isBusyRefusal(e) || e instanceof NbCancelledError) return false;
+        const message = e instanceof Error ? e.message : String(e);
+        if (QUIET_OPEN_FAILURES.some((quiet) => message.includes(quiet))) return false;
+        if (openedIn && (isRunning(openedIn) || stoppedRunHolds(openedIn))) {
+          logInfo(`Explorer could not open the editor while a run held the session: ${message}`);
+          return false;
+        }
+        logWarning(`Explorer could not open the editor: ${message}`);
+        return false;
+      },
+    );
+  }
+
+  // A method open the click's other report is already making, for that report to share.
+  private methodOpeningFor(node: MethodItem, mode: OpenSourceMode): MethodOpening | undefined {
+    const uri = this.methodSourceUri(node.isMeta, node.info)?.toString();
+    const opening = this.methodOpening;
+    return uri !== undefined && opening?.uri === uri && opening.mode === mode ? opening : undefined;
+  }
+
+  // Answers whether the method opened. VS Code reports one click twice, as a selection change
+  // and as the row's command (handleMethodClick), in no promised order: the second report
+  // shares the first's open, which alone reports a failure.
+  openClickedMethod(node: MethodItem, mode: OpenSourceMode = 'preview'): Promise<boolean> {
+    const opening = this.methodOpeningFor(node, mode);
+    if (opening) return opening.done;
+    return this.openFromExplorer(this.openMethod(node, mode));
+  }
+
+  openClickedDefinition(item?: ClassItem, pin = false): void {
+    void this.openFromExplorer(this.openClassDefinition(item, pin));
+  }
+
+  // Same manual double-click detection for the Methods pane: a single click opens the
+  // method as a preview tab; a double-click on the same row promotes it to a permanent
+  // tab so a later single click elsewhere won't replace it.
   private readonly methodClicks = new DoubleClickDetector(500);
   handleMethodClick(node: MethodItem): void {
-    if (this.methodClicks.register(`${node.isMeta}:${node.info.selector}`)) {
-      void this.openMethod(node, 'keep');
+    const click = this.methodClicks.click(`${node.isMeta}:${node.info.selector}`);
+    if (click.completesPair) {
+      void this.openClickedMethod(node, 'keep');
+      return;
     }
+    // Usually the click's selection change opens the method. But a refused open leaves
+    // its row highlighted, and clicking a highlighted row changes no selection, so a
+    // click on a method that isn't the selected one opens it here, as handleClassClick
+    // re-syncs a class. Either way, a click that opened nothing is withdrawn so the
+    // next one can't pair with it.
+    if (
+      !this.methodOpeningFor(node, 'preview') &&
+      this.state.selectedSelector === node.info.selector
+    )
+      return;
+    void this.openClickedMethod(node).then((ok) => {
+      if (!ok) click.withdraw();
+    });
   }
 
   // ── Hierarchy pane ──────────────────────────────────────────────────────────
@@ -5343,7 +5455,7 @@ export class ExplorerController {
     const fresh = [...this.newMethodCategories[isMeta ? 'meta' : 'instance']].filter(
       (c) => !real.includes(c),
     );
-    let combined = [...real, ...fresh].sort((a, b) => a.localeCompare(b));
+    let combined = [...real, ...fresh].sort(compareNames);
     if (lines.length === 0 && combined.length === 0) return [];
     const hasSession = lines.some(
       (l) => l.sessionMethodBits && Object.keys(l.sessionMethodBits).length > 0,
@@ -5699,14 +5811,12 @@ export class ExplorerController {
       ];
     }
 
-    return selectors
-      .sort((a, b) => a.localeCompare(b))
-      .map((sel) => ({
-        selector: sel,
-        category: realCategory[sel] || 'as yet unclassified',
-        overrideBits: overrideBits[sel] || 0,
-        sessionBit: sessionBit[sel] || 0,
-      }));
+    return selectors.sort(compareNames).map((sel) => ({
+      selector: sel,
+      category: realCategory[sel] || 'as yet unclassified',
+      overrideBits: overrideBits[sel] || 0,
+      sessionBit: sessionBit[sel] || 0,
+    }));
   }
 
   // The gemstone:// source URI for a method row — the SAME URI openMethod opens, so
@@ -5736,35 +5846,78 @@ export class ExplorerController {
     });
   }
 
+  // The latest method open still reading its source.
+  private methodOpening: MethodOpening | undefined;
+
   async openMethod(node: MethodItem, mode: OpenSourceMode = 'preview'): Promise<void> {
-    const session = this.session();
-    if (!session || this.state.dictName === undefined || this.state.className === undefined) {
+    const uri = this.methodSourceUri(node.isMeta, node.info);
+    if (!uri) return;
+    // A second open of the same method shares the read already under way.
+    const earlier = this.methodOpening;
+    if (earlier?.uri === uri.toString() && earlier.mode === mode) {
+      if (!(await earlier.done)) throw earlier.error;
       return;
     }
+    let settle!: (opened: boolean) => void;
+    const opening: MethodOpening = {
+      uri: uri.toString(),
+      mode,
+      selectorBefore: earlier ? earlier.selectorBefore : this.state.selectedSelector,
+      done: new Promise((resolve) => (settle = resolve)),
+    };
+    this.methodOpening = opening;
+    try {
+      await this.showMethod(node, uri, mode, opening);
+      settle(true);
+    } catch (e) {
+      opening.error = e;
+      settle(false);
+      throw e;
+    } finally {
+      if (this.methodOpening === opening) this.methodOpening = undefined;
+    }
+  }
+
+  private async showMethod(
+    node: MethodItem,
+    uri: vscode.Uri,
+    mode: OpenSourceMode,
+    opening: MethodOpening,
+  ): Promise<void> {
     // A row click still reading would commit over this method, clearing it while its
     // editor stays open.
     this.pendingClick = undefined;
     this.state.selectedSelector = node.info.selector;
     this.syncTitles();
-    this.recordLanding({ selector: node.info.selector, isMeta: node.isMeta });
-    // Carry the 1-based dictionary index so the method's class is resolved in the
-    // right dictionary (some dictionaries — e.g. Python — hold classes whose
-    // lookup is ambiguous by bare name). Slash-bearing selectors are escaped.
-    const uri = buildMethodUri({
-      kind: 'method',
-      sessionId: session.id,
-      dictName: this.state.dictName,
-      className: this.state.className,
+    // Taken now but recorded only once the source is read: a refused read opens nothing
+    // to come back to.
+    const recordLanding = this.landingRecorder({
+      selector: node.info.selector,
       isMeta: node.isMeta,
-      category: node.info.category,
-      selector: escapeSelectorSlashes(node.info.selector),
-      environmentId: EXPLORER_METHOD_ENVIRONMENT,
-      dictIndex: this.state.dictIndex,
     });
     // Marked so syncToEditor ignores this open instead of re-revealing the row under ALL
     // METHODS and stealing the selection from the category the user clicked.
     this.markSelfOpen(uri);
-    const doc = await vscode.workspace.openTextDocument(uri);
+    let doc: vscode.TextDocument;
+    try {
+      doc = await vscode.workspace.openTextDocument(uri);
+    } catch (e) {
+      // Nothing opened (a busy session refuses the read), so take back what this open
+      // claimed, unless a later open has claimed it since. Any failure counts: the error
+      // crosses VS Code's file-system boundary, which loses what kind it was.
+      if (this.methodOpening === opening) {
+        this.selfOpenedUris.delete(selfOpenKey(uri));
+        if (this.state.selectedSelector === node.info.selector) {
+          this.state.selectedSelector = opening.selectorBefore;
+          this.syncTitles();
+        }
+      }
+      throw e;
+    }
+    // A later open that is refused goes back to this method, which did open.
+    const later = this.methodOpening;
+    if (later && later !== opening) later.selectorBefore = node.info.selector;
+    recordLanding();
     // Assign the language BEFORE the doc enters the (reused) preview editor. A
     // gemstone doc is otherwise language-tagged asynchronously
     // (onDidOpenTextDocument → setTextDocumentLanguage) — i.e. *after* it's shown —
@@ -6639,22 +6792,36 @@ export class ExplorerController {
    * appending a duplicate entry.
    */
   private recordLanding(method?: { selector: string; isMeta: boolean }): void {
+    this.landingRecorder(method)();
+  }
+
+  // Takes the landing the panes are on now, and answers a way to record it later. The
+  // later record is skipped once the panes have left that class: the trail must follow
+  // the panes.
+  private landingRecorder(method?: { selector: string; isMeta: boolean }): () => void {
     const session = this.session();
     const { dictName, dictIndex, classCategory, className } = this.state;
     // Until the panes have a dictionary index there is no dictionary landed on to record.
-    if (!session || dictName === undefined || dictIndex === undefined) return;
-    this.history.record(
-      {
-        sessionId: session.id,
-        dictName,
-        dictIndex,
-        classCategory,
-        className,
-        selector: method?.selector,
-        isMeta: method?.isMeta,
-      },
-      { fromEditor: this.syncingToEditor },
-    );
+    if (!session || dictName === undefined || dictIndex === undefined) return () => {};
+    const landing = {
+      sessionId: session.id,
+      dictName,
+      dictIndex,
+      classCategory,
+      className,
+      selector: method?.selector,
+      isMeta: method?.isMeta,
+    };
+    const options = { fromEditor: this.syncingToEditor };
+    return () => {
+      const now = this.state;
+      const stillHere =
+        this.session()?.id === session.id &&
+        now.dictIndex === dictIndex &&
+        now.classCategory === classCategory &&
+        now.className === className;
+      if (stillHere) this.history.record(landing, options);
+    };
   }
 
   /**
@@ -8339,7 +8506,7 @@ export class ExplorerController {
       // may still be highlighted — adopt it so "New Method" acts on what the user
       // sees selected (this also reloads its methods and hierarchy).
       const fromTree = this.selectedClassInTree();
-      if (fromTree) this.selectClass(fromTree);
+      if (fromTree && !this.unlessBusy(() => this.selectClass(fromTree))) return;
     }
     if (this.state.className === undefined) {
       void vscode.window.showWarningMessage('Select a class first.');
@@ -9560,6 +9727,7 @@ export function registerGemStoneExplorer(
   commitFilterOnRowSelection(ctl, dictView, categoryView, classView, hierarchyView, methodView);
 
   dictView.onDidChangeSelection((e) => {
+    // The row's dictClicked command reports the same click; selectDictFromTree reads it once.
     const node = e.selection[0];
     if (node instanceof DictItem) void ctl.selectDictFromTree(node);
   });
@@ -9594,7 +9762,7 @@ export function registerGemStoneExplorer(
     // side is the title-bar toggle now, not a selectable row.
     if (node instanceof MethodItem) {
       ctl.recordMethodContext(node.isMeta, node.info.category);
-      void ctl.openMethod(node);
+      void ctl.openClickedMethod(node);
     } else if (node instanceof MethodCategoryItem) {
       ctl.recordMethodContext(node.isMeta, node.computed ? undefined : node.category);
     }
@@ -9706,7 +9874,7 @@ export function registerGemStoneExplorer(
       },
     ),
     vscode.commands.registerCommand('gemstone.explorer.openMethodToSide', (node: MethodItem) => {
-      if (node instanceof MethodItem) void ctl.openMethod(node, 'pin');
+      if (node instanceof MethodItem) void ctl.openClickedMethod(node, 'pin');
     }),
     // The inline ▶ on a test method row. Runs through the same command the System
     // Browser uses, so the result lands in the Testing view like every other run.
@@ -9797,7 +9965,7 @@ export function registerGemStoneExplorer(
     // pass the tree selection, so read it from the view here.
     vscode.commands.registerCommand('gemstone.explorer.openSelectedMethodToSide', () => {
       const node = methodView.selection[0];
-      if (node instanceof MethodItem) void ctl.openMethod(node, 'pin');
+      if (node instanceof MethodItem) void ctl.openClickedMethod(node, 'pin');
     }),
     // Find Class: cascade the panes to a class by name (from the Classes pane
     // title button or the command palette). The optional sessionId lets a caller (GemStone Search) target
@@ -9857,15 +10025,11 @@ export function registerGemStoneExplorer(
     ),
     // Open a class's definition editor (inline button / menu on the class row —
     // a plain class click no longer auto-opens it; a double-click does).
-    vscode.commands.registerCommand(
-      'gemstone.explorer.openDefinition',
-      (item?: ClassItem) =>
-        void ctl.openClassDefinition(item instanceof ClassItem ? item : undefined),
+    vscode.commands.registerCommand('gemstone.explorer.openDefinition', (item?: ClassItem) =>
+      ctl.openClickedDefinition(item instanceof ClassItem ? item : undefined),
     ),
-    vscode.commands.registerCommand(
-      'gemstone.explorer.openDefinitionToSide',
-      (item?: ClassItem) =>
-        void ctl.openClassDefinition(item instanceof ClassItem ? item : undefined, true),
+    vscode.commands.registerCommand('gemstone.explorer.openDefinitionToSide', (item?: ClassItem) =>
+      ctl.openClickedDefinition(item instanceof ClassItem ? item : undefined, true),
     ),
     // Open a class's editable comment as a preview tab (inline button on the class
     // row / Classes-pane toolbar). A class comment is often the first place a
@@ -9892,6 +10056,9 @@ export function registerGemStoneExplorer(
     // Per-click hook powering double-click-to-open-definition.
     vscode.commands.registerCommand('gemstone.explorer.classClicked', (className?: string) => {
       if (typeof className === 'string') ctl.handleClassClick(className);
+    }),
+    vscode.commands.registerCommand('gemstone.explorer.dictClicked', (item?: DictItem) => {
+      if (item instanceof DictItem) void ctl.selectDictFromTree(item);
     }),
     // Per-click hook powering double-click-to-promote-the-preview-tab.
     vscode.commands.registerCommand('gemstone.explorer.methodClicked', (node?: MethodItem) => {

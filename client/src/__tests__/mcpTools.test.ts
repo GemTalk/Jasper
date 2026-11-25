@@ -369,6 +369,33 @@ describe('registerMcpTools', () => {
       expect(result.content[0].text).toContain('Globals\tArray\tinstance\tsize\taccessing');
     });
 
+    it('find_implementors lists the results by class, then side, then selector', async () => {
+      const row = (className: string, isMeta: boolean, selector: string) => ({
+        dictName: 'Globals',
+        className,
+        isMeta,
+        selector,
+        category: 'misc',
+        environmentId: 0,
+      });
+      vi.mocked(queries.implementorsOf).mockReturnValue([
+        row('Zed', false, 'a'),
+        row('Array', true, 'new'),
+        row('Array', false, 'test10'),
+        row('Array', false, 'test2'),
+      ]);
+      const result = await server.getTool('find_implementors')!.handler({ selector: 'x' });
+
+      expect(
+        result.content[0].text.split('\n').map((l: string) => l.split('\t').slice(1, 4).join(' ')),
+      ).toEqual([
+        'Array instance test2',
+        'Array instance test10',
+        'Array class new',
+        'Zed instance a',
+      ]);
+    });
+
     // Default behavior (no environmentId) auto-falls-back to env 1 when env 0
     // is empty. The Python-heavy projects that drove this change have most
     // user code in env 1; the env-0-only default left agents staring at

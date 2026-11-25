@@ -5,22 +5,22 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../browserQueries', async (orig) => ({
   BrowserQueryError: (await orig<typeof import('../browserQueries')>()).BrowserQueryError,
   sendersOf: vi.fn(() => []),
-  sendersOfAsync: vi.fn(async () => []),
+  sendSitesOfAsync: vi.fn(async () => []),
 }));
 vi.mock('../gciLog', () => ({ logError: vi.fn() }));
 
-import { Position, Location, Uri, __setConfig, __resetConfig } from '../__mocks__/vscode';
+import { Position, Location, Range, Uri, __setConfig, __resetConfig } from '../__mocks__/vscode';
 import type * as vscode from 'vscode';
 import { GemStoneReferenceProvider } from '../gemstoneReferenceProvider';
 import { SelectorResolver } from '../selectorProviders';
 import { SessionManager } from '../sessionManager';
-import { BrowserQueryError, sendersOf, sendersOfAsync } from '../browserQueries';
+import { BrowserQueryError, sendersOf, sendSitesOfAsync } from '../browserQueries';
 import { logError } from '../gciLog';
 import { NbCancelledError } from '../nbRunner';
 import { fakeActiveSession } from './fakeActiveSession';
 
 const pos = (line: number, char: number) => new Position(line, char) as unknown as vscode.Position;
-const mockSendersOf = vi.mocked(sendersOfAsync);
+const mockSendersOf = vi.mocked(sendSitesOfAsync);
 
 const fakeSession = (id: number) =>
   fakeActiveSession({ id, gci: {}, handle: {}, login: { label: 'Test' }, stoneVersion: '3.7.2' });
@@ -41,13 +41,15 @@ const resolving = (selector: string | null): SelectorResolver => ({
   getSelector: vi.fn(async () => selector),
 });
 
-const sender = (className: string, environmentId = 0) => ({
+const sender = (className: string, environmentId = 0, line = 0, character = 0) => ({
   dictName: 'Globals',
   className,
   isMeta: false,
   selector: 'recursiveSizeReport',
   category: 'Accessing',
   environmentId,
+  line,
+  character,
 });
 
 describe('GemStoneReferenceProvider', () => {
@@ -78,6 +80,24 @@ describe('GemStoneReferenceProvider', () => {
     ]);
     expect(results[0]).toBeInstanceOf(Location);
     expect(sendersOf).not.toHaveBeenCalled();
+  });
+
+  it('puts each reference at the send, not at the method’s first line', async () => {
+    mockSendersOf.mockResolvedValue([sender('Object', 0, 3, 7)]);
+    const provider = new GemStoneReferenceProvider(makeSessionManager(true), resolving('size'));
+
+    const [found] = await provider.provideReferences(document(), pos(2, 12));
+
+    expect(found.range).toEqual(new Range(new Position(3, 7), new Position(3, 7 + 'size'.length)));
+  });
+
+  it('marks the first keyword of a keyword message’s send', async () => {
+    mockSendersOf.mockResolvedValue([sender('Object', 0, 1, 4)]);
+    const provider = new GemStoneReferenceProvider(makeSessionManager(true), resolving('at:put:'));
+
+    const [found] = await provider.provideReferences(document(), pos(2, 12));
+
+    expect(found.range).toEqual(new Range(new Position(1, 4), new Position(1, 4 + 'at:'.length)));
   });
 
   it('lists a method found again in another environment once per environment', async () => {

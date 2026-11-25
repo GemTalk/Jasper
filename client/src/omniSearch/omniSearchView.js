@@ -872,6 +872,7 @@
       setMatchMode(matchMode); // the chip is greyed out while regex is on
     }
 
+    // Same text as the engine's REGEX_SEARCHING_NOTICE (omniEngine.ts).
     var REGEX_SEARCHING_NOTICE = 'Searching…';
 
     function setNotice(text, isError) {
@@ -921,7 +922,8 @@
           setError('');
           if (Array.isArray(msg.excludedFromAll)) excludedFromAll = msg.excludedFromAll.slice();
           setRegex(msg.regex, msg.regexAvailable);
-          regexPending = !!msg.regexPending;
+          // An answer for a pattern the box has since moved on from leaves Enter searching.
+          regexPending = !!msg.regexPending || (regexOn && !answersField(msg.term));
           setNotice(msg.notice, msg.noticeIsError);
           if (typeof msg.matchMode === 'string') setMatchMode(msg.matchMode);
           tabCategories = msg.categories || [];
@@ -1303,8 +1305,6 @@
       return ranges;
     }
 
-    /** Fill `container` with `text`, wrapping each {start,end} range in <mark>. Ranges must be sorted
-     *  and non-overlapping. Returns the first mark (for scroll-into-view) or null. */
     // The ranges worth a mark: non-empty, inside the text, and not overlapping the one before.
     function markableRanges(ranges, length) {
       var out = [];
@@ -1318,6 +1318,8 @@
       return out;
     }
 
+    /** Fill `container` with `text`, wrapping each {start,end} range in <mark>. Ranges must be sorted
+     *  and non-overlapping. Returns the first mark (for scroll-into-view) or null. */
     function highlightRanges(container, text, ranges) {
       var first = null;
       var pos = 0;

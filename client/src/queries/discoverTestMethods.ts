@@ -1,3 +1,4 @@
+import { compareNames } from '../methodOrder';
 import { QueryExecutor } from './types';
 import { classLookupOrRaiseExpr, splitLines } from './util';
 
@@ -16,15 +17,17 @@ export function discoverTestMethods(
   const code = `| cls ws |
 ${classLookupOrRaiseExpr(className, dictName)}
 ws := WriteStream on: Unicode7 new.
-cls testSelectors asSortedCollection do: [:each |
+cls testSelectors do: [:each |
   ws nextPutAll: each;
     tab;
     nextPutAll: ((cls categoryOfSelector: each environmentId: 0) ifNil: ['']);
     lf].
 ws contents`;
   const data = execute(code);
-  return splitLines(data).map((line) => {
-    const [selector, category] = line.split('\t');
-    return { selector, category: category || '' };
-  });
+  return splitLines(data)
+    .map((line) => {
+      const [selector, category] = line.split('\t');
+      return { selector, category: category || '' };
+    })
+    .sort((a, b) => compareNames(a.selector, b.selector));
 }

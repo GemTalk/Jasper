@@ -253,8 +253,9 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
 
    `SessionManager.onDidChangeSelection` now reaches both hosts. Two decisions worth recording:
 
-   - **The webview is wiped, not just the engine.** Dropping the engine is enough for a settings change,
-     because the rows on screen are still true. Here they are not: they came from the old session, yet
+   - **The webview is wiped, not just the engine.** A settings change keeps the rows on screen,
+     because they are still true, and the rebuilt engine runs the same term again so they can still be
+     opened. Here they are not: they came from the old session, yet
      they still look live, and activating one would open a document against the session that is now
      current — a wrong answer presented as a right one. So the query, the results, any references pivot
      and the preview all go, and the scope returns to All (where the replacement engine starts).
@@ -337,7 +338,8 @@ Behaviour decisions (Eric's review of the first webview cut):
   Each row wears a small **category tag** (Class / Method / Global / …) so you still see what it is.
 - **Ties break by kind.** An `exact` row (a pasted method reference) leads everything. Below it and the prefix and first-letter-case rules, method rows (Methods / Source /
   Literals) order by **match score first**, then class A→Z, then instance side before class side, then
-  selector; everything else orders by the matcher's shorter-then-alphabetical label order. Score leads,
+  selector, then dictionary and environment, by the one method order every list shares
+  ([#973](https://github.com/GemTalk/Jasper/issues/973)); everything else orders by the matcher's shorter-then-alphabetical label order. Score leads,
   so for Methods rows — where scores differ — the class/side/selector steps only break a tie beneath
   the match quality. Method rows need their own key because Source and Literals hits match a method
   BODY, so every one of them scores 0 and there is no label match left to rank on; for those the whole
@@ -380,10 +382,17 @@ plugin, on a session without it. Availability is read from the session each time
    the one it replaced has let go of the session: the stone keeps the session until it has answered
    the soft break, and a search started at once was refused as busy by the search it had just replaced.
    Turning `.*` off waits the same way (the runner's `cancel` settles once the session is free)
-   before the plain search it runs, which would otherwise be refused as busy too.
+   before the plain search it runs, which would otherwise be refused as busy too. A search waiting
+   for another run's stopped search to let go stops waiting as soon as it is cancelled. Anything
+   that only redraws the view (a trailing space, a click on the active Source tab, a commit) leaves
+   the search for the pattern in the box running, and its answer still lands. An engine thrown away
+   (a settings change, another session, a logout, a closed Spotter) stops its search first, so it
+   never keeps the session busy out of sight. After a settings change the rebuilt engine shows the
+   same pattern again: an answered search carries its rows over (unless the cap it ran under
+   changed), and one still running runs again under the new settings.
 4. **What the user is told.** One line above the rows (`OmniViewData.notice`): "Press Enter to
    search.", "Searching…" from Enter until the answer (set by the webview, cleared by a bare
-   `busy: false` or an error), "Search stopped. Press Enter to search again." after Cancel on its
+   `busy: false` or an error, and sent by the engine when a redraw finds the search still running), "Search stopped. Press Enter to search again." after Cancel on its
    progress notice, "No methods match.", a refused pattern's reason (as an error), a busy session,
    the methods skipped because they were too long to match, those that could not be searched because of an error on the stone (counted apart, so a fault never reads as "too long"), and the cap on how many
    methods the stone keeps, which also makes the count read `200+ shown` (`moreMatch`). The cap is

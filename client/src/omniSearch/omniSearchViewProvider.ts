@@ -80,6 +80,10 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
   private engine: OmniEngine | undefined;
   /** Toggles to keep in the engine built after a settings change (`onConfigChanged`). */
   private carryOver: CarriedEngineState | undefined;
+  /** What the engine a settings change threw away was showing, for the rebuilt one to show again: the
+   *  term, re-run so its rows can be opened, and whether a regex search for it was still running, in
+   *  which case the user asked for it and it runs again on the stone under the new settings. */
+  private rerunAfterRebuild: { term: string; submit: boolean } | undefined;
   private deps: OmniPanelDeps | undefined;
   private builtForSession: number | undefined;
   // A focus() that arrives before the webview has loaded can't deliver `focusInput`; remember it and
@@ -145,10 +149,16 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
    *  live (scope tabs, case flag, limits); otherwise the next webview message rebuilds it lazily. */
   onConfigChanged(changed: (key: string) => boolean = () => false): void {
     // The engine is rebuilt from the settings; keep what the user had toggled (.*, Aa, the scope).
-    if (this.engine) this.carryOver = carriedEngineState(this.engine.state(), changed);
+    if (this.engine) {
+      const state = this.engine.state();
+      this.carryOver = carriedEngineState(state, changed, this.engine.lastRegexAnswer());
+      const submit = this.engine.dispose();
+      this.rerunAfterRebuild = state.term?.trim() ? { term: state.term, submit } : undefined;
+    }
     this.engine = undefined;
     this.deps = undefined;
-    this.builtForSession = undefined;
+    // `builtForSession` stays: a session change before the rebuild must still reset the panel and drop
+    // what was carried for this session.
     this.syncPending = false; // the replacement engine primes from scratch
     this.refreshPending = false;
     if (this.view?.visible) void this.ensureEngine();
@@ -169,7 +179,10 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
    *  avoid. */
   async onSessionSelectionChanged(): Promise<void> {
     const ctx = await this.resolveContext();
-    if (this.engine && this.builtForSession !== ctx?.sessionId) {
+    if (this.builtForSession !== undefined && this.builtForSession !== ctx?.sessionId) {
+      this.engine?.dispose();
+      this.carryOver = undefined;
+      this.rerunAfterRebuild = undefined;
       this.engine = undefined;
       this.deps = undefined;
       this.builtForSession = undefined;
@@ -479,6 +492,9 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
   private async ensureEngine(): Promise<boolean> {
     const ctx = await this.resolveContext();
     if (!ctx) {
+      this.engine?.dispose();
+      this.carryOver = undefined;
+      this.rerunAfterRebuild = undefined;
       this.engine = undefined;
       this.deps = undefined;
       this.builtForSession = undefined;
@@ -489,6 +505,7 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     }
     if (this.engine && this.builtForSession === ctx.sessionId) return true;
     this.deps = ctx.deps;
+    this.engine?.dispose();
     this.engine = createOmniEngine({ ...ctx.deps, carryOver: this.carryOver });
     this.carryOver = undefined;
     this.builtForSession = ctx.sessionId;
@@ -496,8 +513,26 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     this.post({ command: 'error', message: '' }); // clear any prior "log in" notice
     this.post(configMessage(ctx.deps.config, false, this.engine.state()));
     this.webviewNeedsConfig = false; // just pushed it
-    await this.engine.prime(ctx.deps.onError);
+    const engine = this.engine;
+    await engine.prime(ctx.deps.onError);
+    // Only the engine still in use runs it: one replaced while it primed must not take it.
+    if (this.engine === engine && this.rerunAfterRebuild !== undefined) {
+      const rerun = this.rerunAfterRebuild;
+      this.rerunAfterRebuild = undefined;
+      void this.rerun(engine, rerun);
+    }
     return true;
+  }
+
+  private async rerun(engine: OmniEngine, r: { term: string; submit: boolean }): Promise<void> {
+    let view: OmniViewData | null = null;
+    try {
+      view = await (r.submit ? engine.submit(r.term) : engine.search(r.term));
+    } catch (e: unknown) {
+      this.deps?.onError?.(e instanceof Error ? e.message : String(e));
+    }
+    if (view) this.postView(view);
+    else this.post({ command: 'busy', on: false });
   }
 
   private postView(view: OmniViewData): void {

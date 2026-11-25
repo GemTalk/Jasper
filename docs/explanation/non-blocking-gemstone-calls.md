@@ -153,7 +153,8 @@ structural edits, hover, completion, CodeLens and the MCP server all still block
 
 Every non-blocking Smalltalk evaluation goes through `runNbCall` in `nbRunner.ts`:
 
-1. Wait until the session is free, or refuse if it is busy.
+1. Wait until the session is free, or refuse if it is busy. A run stopped while it waits is
+   never started.
 2. Start the call with `GciTsNbExecute` or `GciTsNbPerform`.
 3. Wait until the result is ready: `GciTsNbPoll` on 3.7+, socket readiness on 3.6.x.
 4. Collect it with `GciTsNbResult`, in the caller's `onReady`.
@@ -477,11 +478,12 @@ groups:
   `logouts`).
 - **Stays in Jasper (UI):** the progress notification, the "Stopping…" status bar item, the
   registered command handlers and the message text.
-- **Needs a callback seam first (mixed):** `pollNbToCompletion`, `requestCancel`, `settle`,
-  `stopWaiting`. Callbacks such as "slow call started", "stop requested" and "settled" let the
+- **Needs a callback seam first (mixed):** `pollNbToCompletion`, `settle`, and `stopControl`
+  (which the conditional-breakpoint loop shares, and which raises the "still running" notice).
+  Callbacks such as "slow call started", "stop requested" and "settled" let the
   UI stay in Jasper.
 
-This inventory was taken on 2026-10-29; re-check it against `nbRunner.ts` before starting.
+This inventory was taken on 2026-10-29, with the stop logic updated on 2026-11-23; re-check it against `nbRunner.ts` before starting.
 
 Moving nbRunner's GCI layer was estimated at 1.5 to 2.5 weeks over three PRs: the poll core;
 draining and late collection; the busy gate and maps. The cost drivers: `activeSession.ts` must

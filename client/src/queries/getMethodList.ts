@@ -1,3 +1,4 @@
+import { compareNames } from '../methodOrder';
 import { QueryExecutor } from './types';
 
 export interface MethodEntry {
@@ -13,8 +14,8 @@ class := ${className}.
 { class. class class } doWithIndex: [:cls :idx |
   | isMeta |
   isMeta := idx = 2.
-  cls categoryNames asSortedCollection do: [:cat |
-    (cls sortedSelectorsIn: cat) do: [:sel |
+  cls categoryNames do: [:cat |
+    (cls selectorsIn: cat) do: [:sel |
       ws
         nextPutAll: (isMeta ifTrue: ['1'] ifFalse: ['0']); tab;
         nextPutAll: cat; tab;
@@ -32,5 +33,10 @@ ws contents`;
       selector: parts[2],
     });
   }
-  return results;
+  return results.sort(
+    (a, b) =>
+      Number(a.isMeta) - Number(b.isMeta) ||
+      compareNames(a.category, b.category) ||
+      compareNames(a.selector, b.selector),
+  );
 }

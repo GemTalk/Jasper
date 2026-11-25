@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', async (orig) => ({
@@ -9,6 +9,10 @@ vi.mock('../../browserQueries', async (orig) => ({
   getClassHierarchyAsync: vi.fn(),
   getClassesWithCategory: vi.fn(),
   getDictionaryNames: vi.fn(),
+}));
+vi.mock('../../nbRunner', async (orig) => ({
+  ...(await orig<typeof import('../../nbRunner')>()),
+  isRunning: vi.fn(() => false),
 }));
 vi.mock('../../gciLog', async (orig) => ({
   ...(await orig()),
@@ -36,7 +40,13 @@ import { logWarning } from '../../gciLog';
 import { GCI_ERR_OP_IN_PROGRESS } from '../../gciConstants';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 import { fakeViews } from '../helpers/explorerContainerFocus';
-import { highlightMoveHeldBack, settle } from '../helpers/explorerClicks';
+import {
+  highlightMoveHeldBack,
+  refusedOpen,
+  settle,
+  unhandledRejections,
+} from '../helpers/explorerClicks';
+import { isRunning, RUN_IN_PROGRESS_MESSAGE } from '../../nbRunner';
 
 const methodsOf = (className: string) => [
   { isMeta: false, envId: 0, category: `${className} methods`, selectors: ['foo'] },
@@ -63,6 +73,10 @@ beforeEach(() => {
     if (sessionBusy) throw busy();
     return hierarchyOf(className);
   });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 // Makes the panes' header update throw, the last step of a click once the new selection
@@ -169,6 +183,26 @@ describe('a class double-clicked before its click answers', () => {
     expect(selectedWhenOpened).toBe('Beta');
   });
 
+  it('opens its definition on a double-click made while an earlier, dropped click on it was still loading', async () => {
+    // Frozen so the pair falls inside the double-click window however slow the runner.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const { ctl } = controllerOnClass('Alpha');
+    const beta = methodsHeldBack('Beta');
+    ctl.handleClassClick('Beta');
+    await settle();
+    ctl.handleClassClick('Alpha');
+    await settle();
+    ctl.handleClassClick('Beta');
+    await settle();
+    beta.answer();
+    await vi.waitFor(() => expect(ctl.state.className).toBe('Beta'));
+
+    ctl.handleClassClick('Beta');
+    await settle();
+
+    expect(workspace.openTextDocument).toHaveBeenCalled();
+  });
+
   it('does not open its definition when the click is refused', async () => {
     const { ctl } = controllerOnClass('Alpha');
     const beta = methodsHeldBack('Beta');
@@ -218,6 +252,22 @@ describe('a class click while the session is busy', () => {
     expect(ctl.methodCategories(false).map((c) => c.label)).toContain('Beta methods');
   });
 
+  it('does not open its definition when the class is clicked again once the session is free', async () => {
+    // Frozen so the two clicks fall inside the double-click window however slow the runner.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const { ctl } = controllerOnClass('Alpha');
+    sessionBusy = true;
+    ctl.handleClassClick('Beta');
+    await settle();
+    sessionBusy = false;
+
+    ctl.handleClassClick('Beta');
+    await settle();
+
+    expect(ctl.state.className).toBe('Beta');
+    expect(workspace.openTextDocument).not.toHaveBeenCalled();
+  });
+
   it("keeps the previous class when only the hierarchy can't be read", async () => {
     const { ctl } = controllerOnClass('Alpha');
     vi.mocked(getClassHierarchyAsync).mockRejectedValue(busy());
@@ -235,6 +285,67 @@ describe('a class click while the session is busy', () => {
 
     expect(logWarning).not.toHaveBeenCalled();
   });
+});
+
+describe('the selected class double-clicked while a run holds the session', () => {
+  let rejections: ReturnType<typeof unhandledRejections>;
+  beforeEach(() => (rejections = unhandledRejections()));
+  afterEach(() => {
+    rejections.stop();
+    vi.mocked(isRunning).mockReturnValue(false);
+  });
+
+  async function doubleClickSelected(openFails: Error) {
+    const { ctl } = controllerOnClass('Alpha');
+    sessionBusy = true;
+    vi.mocked(workspace.openTextDocument).mockRejectedValueOnce(openFails);
+    ctl.handleClassClick('Alpha');
+    ctl.handleClassClick('Alpha');
+    await settle();
+    await settle();
+  }
+
+  it('drops the refused open without an error nothing handles, or a log line', async () => {
+    vi.mocked(isRunning).mockReturnValue(true);
+    await doubleClickSelected(refusedOpen(RUN_IN_PROGRESS_MESSAGE));
+
+    expect(workspace.openTextDocument).toHaveBeenCalledTimes(1);
+    expect(rejections.seen).toEqual([]);
+    expect(logWarning).not.toHaveBeenCalled();
+  });
+
+  it('logs any other failure to open the definition', async () => {
+    await doubleClickSelected(new Error('the stone went away'));
+
+    expect(rejections.seen).toEqual([]);
+    expect(logWarning).toHaveBeenCalledWith(expect.stringContaining('the stone went away'));
+  });
+});
+
+describe('a class definition opened from its row buttons while a run holds the session', () => {
+  let rejections: ReturnType<typeof unhandledRejections>;
+  beforeEach(() => (rejections = unhandledRejections()));
+  afterEach(() => rejections.stop());
+
+  for (const [button, toSide] of [
+    ['Open Definition', false],
+    ['Open Definition to the Side', true],
+  ] as const) {
+    it(`drops the refused open from ${button} without an error nothing handles, or a log line`, async () => {
+      const { ctl } = controllerOnClass('Alpha');
+      vi.mocked(workspace.openTextDocument).mockRejectedValueOnce(
+        refusedOpen(RUN_IN_PROGRESS_MESSAGE),
+      );
+
+      ctl.openClickedDefinition(new ClassItem('Alpha'), toSide);
+      await settle();
+      await settle();
+
+      expect(workspace.openTextDocument).toHaveBeenCalledTimes(1);
+      expect(rejections.seen).toEqual([]);
+      expect(logWarning).not.toHaveBeenCalled();
+    });
+  }
 });
 
 describe('clicks made before the previous one answers', () => {

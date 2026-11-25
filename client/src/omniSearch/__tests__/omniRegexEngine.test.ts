@@ -12,6 +12,7 @@ import {
   createOmniEngine,
   OmniEngineDeps,
   REGEX_PENDING_NOTICE,
+  REGEX_SEARCHING_NOTICE,
   REGEX_STOPPED_NOTICE,
   regexOutcomeNotice,
 } from '../omniEngine';
@@ -443,6 +444,56 @@ describe('searching with regex on', () => {
     expect(runs[0].cancel).not.toHaveBeenCalled();
   });
 
+  // Each of these redraws the view while the search for the box's pattern is still running.
+  it.each([
+    [
+      'the same pattern with a trailing space',
+      (e: ReturnType<typeof createOmniEngine>) => e.search('foo.*bar '),
+    ],
+    [
+      'a click on the Source tab, already active',
+      (e: ReturnType<typeof createOmniEngine>) => e.setScope('source'),
+    ],
+    ['a commit or abort', (e: ReturnType<typeof createOmniEngine>) => e.resync()],
+  ])('keeps the answer of a search still running through %s', async (_what, redraw) => {
+    const { engine, runs } = engineWith();
+    await engine.toggleRegex();
+    const pending = engine.submit('foo.*bar');
+
+    const meanwhile = await redraw(engine);
+    expect(meanwhile).toMatchObject({
+      rows: [],
+      notice: REGEX_SEARCHING_NOTICE,
+      regexPending: true,
+    });
+
+    runs[0].resolve(answer([sourceRow('Foo', 'bar')]));
+    expect((await pending)?.rows).toHaveLength(1);
+    expect(runs[0].cancel).not.toHaveBeenCalled();
+    expect((await engine.search('foo.*bar'))?.rows).toHaveLength(1);
+  });
+
+  it('stops its running search when the engine is thrown away, and answers nothing', async () => {
+    const { engine, runs } = engineWith();
+    await engine.toggleRegex();
+    const pending = engine.submit('foo.*bar');
+
+    expect(engine.dispose()).toBe(true); // it was searching for the pattern in the box
+
+    expect(runs[0].cancel).toHaveBeenCalled();
+    expect(await pending).toBeNull();
+  });
+
+  it('answers false from dispose when no search for the pattern in the box was running', async () => {
+    const { engine } = engineWith();
+    await engine.toggleRegex();
+    const pending = engine.submit('a');
+    await engine.search('ab'); // edited: the search for 'a' is stopped
+
+    expect(engine.dispose()).toBe(false);
+    await pending;
+  });
+
   it('Aa does not search a pattern that was never searched, whatever else ran before', async () => {
     const { engine, runs } = engineWith();
     await engine.toggleRegex();
@@ -469,6 +520,42 @@ describe('searching with regex on', () => {
 
     expect(await first).toBeNull();
     expect((await second)?.rows.map((r) => r.label)).toEqual(['B>>b']);
+  });
+
+  it('stops a search started by Enter while .* was still turning off, before the plain search', async () => {
+    // The first search lets go of the session only when the test says so.
+    let letGo!: () => void;
+    const cancels: Array<ReturnType<typeof vi.fn>> = [];
+    const runner: RegexSearchRunner = () => {
+      let settle!: (o: RegexSearchOutcome) => void;
+      const outcome = new Promise<RegexSearchOutcome>((resolve) => (settle = resolve));
+      const first = cancels.length === 0;
+      const cancel = vi.fn((): void | Promise<void> => {
+        settle({ kind: 'cancelled' });
+        return first ? new Promise<void>((resolve) => (letGo = resolve)) : undefined;
+      });
+      cancels.push(cancel);
+      return { outcome, cancel };
+    };
+    const source = spyProvider('source');
+    const engine = createOmniEngine({
+      providers: [spyProvider('classes'), source],
+      config: cfg(),
+      regexSearch: runner,
+    });
+    await engine.toggleRegex();
+    void engine.submit('(a+)+b');
+
+    const turningOff = engine.toggleRegex();
+    await Promise.resolve();
+    void engine.submit('(a+)+c'); // Enter again before the stone let go of the first
+    await Promise.resolve();
+    expect(cancels).toHaveLength(2);
+    letGo();
+    await turningOff;
+
+    expect(cancels[1]).toHaveBeenCalled();
+    expect(engine.state().regex).toBe(false);
   });
 
   it('stops a running search when regex is turned off', async () => {
@@ -510,6 +597,31 @@ describe('searching with regex on', () => {
     });
   });
 
+  it('says so when the search failed with something other than an Error', async () => {
+    const { engine, runs } = engineWith();
+    await engine.toggleRegex();
+    const pending = engine.submit('a');
+    runs[0].reject('the stone hung up');
+
+    expect(await pending).toMatchObject({
+      notice: 'Regex search failed: the stone hung up',
+      noticeIsError: true,
+    });
+  });
+
+  it('drops an answer that arrives after the pattern was edited', async () => {
+    const { engine, runs } = engineWith();
+    await engine.toggleRegex();
+    const pending = engine.submit('a');
+
+    runs[0].resolve(answer([sourceRow('Foo', 'bar')]));
+    const edited = engine.search('ab'); // before the answer is read
+
+    expect(await pending).toBeNull();
+    expect(await edited).toMatchObject({ rows: [], notice: REGEX_PENDING_NOTICE });
+    expect((await engine.search('a'))?.rows).toEqual([]);
+  });
+
   it('says how many methods were skipped and that the rows were capped', async () => {
     const { engine, runs } = engineWith();
     await engine.toggleRegex();
@@ -540,6 +652,20 @@ describe('searching with regex on', () => {
     await pending;
     void engine.refresh();
     await vi.waitFor(() => expect(runs).toHaveLength(2));
+  });
+
+  it('does not run an edited pattern on refresh before Enter', async () => {
+    const { engine, runs } = engineWith();
+    await engine.toggleRegex();
+    const pending = engine.submit('a');
+    runs[0].resolve(answer([]));
+    await pending;
+    await engine.search('ab');
+
+    const view = await engine.refresh();
+
+    expect(runs).toHaveLength(1);
+    expect(view).toMatchObject({ notice: REGEX_PENDING_NOTICE, regexPending: true });
   });
 
   it('leaves the view alone on a class compile', async () => {
@@ -690,6 +816,60 @@ describe('after a settings change rebuilds the engine', () => {
       { enabledCategories: ['methods', 'source'] },
     );
 
+    expect(engine.state().scopeId).toBeNull();
+  });
+
+  it('keeps the answer on screen, so its rows can still be opened', async () => {
+    const { engine: before, runs } = engineWith();
+    await before.toggleRegex();
+    const pending = before.submit('foo');
+    runs[0].resolve(answer([sourceRow('Foo', 'bar')]));
+    await pending;
+
+    const { engine, runs: after } = engineWith({
+      carryOver: carriedEngineState(before.state(), () => false, before.lastRegexAnswer()),
+    });
+    const view = await engine.search('foo');
+
+    expect(view?.rows).toHaveLength(1);
+    expect(engine.resultFor(0)?.label).toBe('Foo>>bar');
+    expect(after).toHaveLength(0); // shown again, not searched again
+  });
+
+  it('drops the answer when the cap it was found under changed, so the pattern waits for Enter', async () => {
+    const { engine: before, runs } = engineWith();
+    await before.toggleRegex();
+    const pending = before.submit('foo');
+    runs[0].resolve(answer([sourceRow('Foo', 'bar')]));
+    await pending;
+
+    const { engine } = engineWith({
+      carryOver: carriedEngineState(
+        before.state(),
+        (key) => key === 'maxServerScan',
+        before.lastRegexAnswer(),
+      ),
+    });
+
+    expect(await engine.search('foo')).toMatchObject({ rows: [], notice: REGEX_PENDING_NOTICE });
+  });
+
+  it('goes back to All when .* is turned off, if the scope it came from is no longer enabled', async () => {
+    const { engine: before } = engineWith();
+    await before.setScope('classes');
+    await before.toggleRegex();
+
+    const { engine } = engineWith(
+      { carryOver: carriedEngineState(before.state(), () => false) },
+      { enabledCategories: ['methods', 'source'] },
+    );
+    expect(engine.state()).toMatchObject({
+      regex: true,
+      scopeId: 'source',
+      scopeBeforeRegex: null,
+    });
+
+    await engine.toggleRegex();
     expect(engine.state().scopeId).toBeNull();
   });
 });

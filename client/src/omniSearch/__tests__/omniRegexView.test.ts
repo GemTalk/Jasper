@@ -30,6 +30,7 @@ function mount(state: { regex?: boolean; regexAvailable?: boolean } = {}) {
   });
 }
 
+/** An answer from the host, by default for the pattern now in the box (the host echoes its term). */
 function results(view: ReturnType<typeof mount>['view'], over: Record<string, unknown> = {}) {
   view.onMessage({
     data: {
@@ -39,6 +40,7 @@ function results(view: ReturnType<typeof mount>['view'], over: Record<string, un
       scopeId: 'source',
       regex: true,
       regexAvailable: true,
+      term: field().value,
       ...over,
     },
   });
@@ -182,6 +184,35 @@ describe('Enter while regex is on', () => {
     pressEnter();
 
     expect(posted.at(-1)).toEqual({ command: 'submit', value: 'xy' });
+  });
+
+  it.each(['altKey', 'ctrlKey', 'metaKey', 'shiftKey'])(
+    'leaves Enter with %s to its usual meaning, rather than searching',
+    (modifier) => {
+      const { view, posted } = mount({ regex: true });
+      results(view, { regexPending: true, notice: 'Press Enter to search.' });
+      field().value = 'x';
+
+      field().dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, [modifier]: true }),
+      );
+
+      expect(posted.some((m) => m.command === 'submit')).toBe(false);
+    },
+  );
+
+  it('searches, rather than doing nothing, when an older pattern is answered after typing', () => {
+    const { view, posted } = mount({ regex: true });
+    field().value = 'foo';
+    pressEnter();
+    field().value = 'foox';
+    field().dispatchEvent(new Event('input'));
+
+    results(view, { rows: [row(0, 'A>>a')], regexPending: false, term: 'foo' });
+    view.setActive(0);
+    pressEnter();
+
+    expect(posted.at(-1)).toEqual({ command: 'submit', value: 'foox' });
   });
 
   it('does nothing for an empty box', () => {

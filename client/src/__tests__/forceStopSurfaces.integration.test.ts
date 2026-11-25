@@ -142,12 +142,13 @@ describe('Force Stop from notebooks, the Explorer and saves (integration)', () =
       });
     const hasMethod = () =>
       own.executeAndFetchString(`(${CLASS} includesSelector: #jasperBusySave) printString`);
-    let cancel: (() => void) | undefined;
+    // Left to end by itself, not stopped: a stop sent before the gem has begun
+    // the run can be ignored until the code ends.
     const run = runNbCall(
       own,
       () =>
         own.GciTsNbExecute(
-          '(Delay forSeconds: 30) wait',
+          '(Delay forMilliseconds: 500) wait',
           OOP_CLASS_UTF8,
           OOP_ILLEGAL,
           OOP_NIL,
@@ -155,17 +156,13 @@ describe('Force Stop from notebooks, the Explorer and saves (integration)', () =
           0,
         ),
       () => own.GciTsNbResult(),
-      { suppressNotification: true, disposableProcess: true, onStart: (c) => (cancel = c) },
+      { suppressNotification: true },
     );
     run.catch(() => {});
 
     expect(save).toThrow(SESSION_BUSY_MESSAGE);
 
-    cancel!();
-    await run.catch(() => {});
-    // On a loaded machine the stopped run, or the clean-up after it, can still be
-    // going.
-    await vi.waitFor(() => expect(stoppedRunHolds(own)).toBe(false), { timeout: 10_000 });
+    await run;
     expect(hasMethod()).toBe('false');
     save();
     expect(hasMethod()).toBe('true');

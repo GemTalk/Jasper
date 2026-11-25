@@ -226,6 +226,7 @@ export class OmniSearchPanel {
   private rebindTo(deps: OmniPanelDeps): void {
     this.deps = deps;
     this.title.setSession(deps.sessionId);
+    this.engine?.dispose();
     this.engine = createOmniEngine(deps);
     this.reset();
     this.panel.webview.postMessage(configMessage(deps.config, this.pinned, this.engine.state()));
@@ -244,6 +245,7 @@ export class OmniSearchPanel {
    *  very failure this hook exists to prevent, just reached through a logout instead of a switch. So the
    *  engine goes too, and `onMessage` shows the notice until a login rebinds us. */
   private clearSession(): void {
+    this.engine?.dispose();
     this.engine = undefined;
     this.reset();
     this.panel.webview.postMessage({ command: 'error', message: NO_SESSION_MESSAGE });
@@ -429,6 +431,7 @@ export class OmniSearchPanel {
 
   private dispose(): void {
     if (OmniSearchPanel.current === this) OmniSearchPanel.current = undefined;
+    this.engine?.dispose();
     this.panel.dispose();
     for (const d of this.disposables) d.dispose();
   }

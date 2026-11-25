@@ -35,8 +35,8 @@ vi.mock('../../gciLog', () => ({
 
 import * as vscode from 'vscode';
 import { __resetConfig } from '../../__mocks__/vscode';
-import { ExplorerController, MethodItem, registerGemStoneExplorer } from '../../gemstoneExplorer';
-import type { SessionManager, ActiveSession } from '../../sessionManager';
+import { ExplorerController, MethodItem } from '../../gemstoneExplorer';
+import { registeredExplorerCommand } from '../helpers/explorerCommands';
 
 const REMOVE_ROW = 'gemstone.explorer.removeMethod';
 const REMOVE_SELECTION = 'gemstone.explorer.removeMethods';
@@ -47,36 +47,6 @@ function row(selector: string, isMeta = false): MethodItem {
     { selector, category: 'accessing', overrideBits: 0, sessionBit: 0 },
     'accessing',
   );
-}
-
-function handler(command: string): (...a: unknown[]) => unknown {
-  vi.mocked(vscode.window.createTreeView).mockImplementation(
-    () =>
-      ({
-        onDidChangeVisibility: vi.fn(),
-        onDidChangeCheckboxState: vi.fn(),
-        onDidChangeSelection: vi.fn(),
-        onDidCollapseElement: vi.fn(),
-        onDidExpandElement: vi.fn(),
-        reveal: vi.fn(),
-        dispose: vi.fn(),
-      }) as never,
-  );
-  const context = {
-    subscriptions: [] as { dispose?: () => void }[],
-    globalState: { get: vi.fn(), update: vi.fn(async () => {}), keys: () => [] },
-    extensionPath: '/x',
-  } as unknown as vscode.ExtensionContext;
-  const sessionManager = {
-    getSelectedSession: () => ({ id: 1 }) as ActiveSession,
-    resolveSession: () => Promise.resolve({ id: 1 } as ActiveSession),
-    onDidChangeSelection: vi.fn(() => ({ dispose: vi.fn() })),
-    onDidRemoveSession: vi.fn(() => ({ dispose: vi.fn() })),
-  } as unknown as SessionManager;
-  registerGemStoneExplorer(context, sessionManager);
-  const call = vi.mocked(vscode.commands.registerCommand).mock.calls.find((c) => c[0] === command);
-  expect(call, `${command} has no handler`).toBeDefined();
-  return call![1] as (...a: unknown[]) => unknown;
 }
 
 let removeMethod: ReturnType<typeof vi.fn>;
@@ -98,7 +68,7 @@ describe("the row's trash button", () => {
     // Clicking the trash on one of four selected rows is about that row.
     const [a, b, c, d] = [row('addMember:'), row('lead'), row('members'), row('name')];
 
-    handler(REMOVE_ROW)(a, [a, b, c, d]);
+    registeredExplorerCommand(REMOVE_ROW)(a, [a, b, c, d]);
 
     expect(removeMethod).toHaveBeenCalledTimes(1);
     expect(removeMethod).toHaveBeenCalledWith(a);
@@ -108,7 +78,7 @@ describe("the row's trash button", () => {
   it('removes its own row when it is not part of the selection', () => {
     const [a, b, c] = [row('a'), row('b'), row('c')];
 
-    handler(REMOVE_ROW)(c, [a, b]);
+    registeredExplorerCommand(REMOVE_ROW)(c, [a, b]);
 
     expect(removeMethod).toHaveBeenCalledWith(c);
     expect(removeMethods).not.toHaveBeenCalled();
@@ -117,13 +87,13 @@ describe("the row's trash button", () => {
   it('removes its own row with nothing else selected', () => {
     const a = row('a');
 
-    handler(REMOVE_ROW)(a, [a]);
+    registeredExplorerCommand(REMOVE_ROW)(a, [a]);
 
     expect(removeMethod).toHaveBeenCalledWith(a);
   });
 
   it('does nothing when handed no method row', () => {
-    handler(REMOVE_ROW)(undefined, [row('a')]);
+    registeredExplorerCommand(REMOVE_ROW)(undefined, [row('a')]);
 
     expect(removeMethod).not.toHaveBeenCalled();
     expect(removeMethods).not.toHaveBeenCalled();
@@ -132,7 +102,7 @@ describe("the row's trash button", () => {
   it('reports a removal that throws instead of dropping it', async () => {
     removeMethod.mockRejectedValue(new Error('session gone'));
 
-    handler(REMOVE_ROW)(row('a'));
+    registeredExplorerCommand(REMOVE_ROW)(row('a'));
 
     await vi.waitFor(() =>
       expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
@@ -146,7 +116,7 @@ describe('Remove… on the context menu', () => {
   it('passes the whole selection in one call', () => {
     const [a, b, c] = [row('a'), row('b'), row('c', true)];
 
-    handler(REMOVE_SELECTION)(a, [a, b, c]);
+    registeredExplorerCommand(REMOVE_SELECTION)(a, [a, b, c]);
 
     expect(removeMethods).toHaveBeenCalledTimes(1);
     expect(removeMethods).toHaveBeenCalledWith([a, b, c]);
@@ -156,7 +126,7 @@ describe('Remove… on the context menu', () => {
   it('removes just the clicked row on a one-argument call', () => {
     const a = row('a');
 
-    handler(REMOVE_SELECTION)(a);
+    registeredExplorerCommand(REMOVE_SELECTION)(a);
 
     expect(removeMethods).toHaveBeenCalledWith([a]);
   });
@@ -165,7 +135,7 @@ describe('Remove… on the context menu', () => {
     // VS Code right-clicks a row outside the selection without selecting it.
     const [a, b, c] = [row('a'), row('b'), row('c')];
 
-    handler(REMOVE_SELECTION)(c, [a, b]);
+    registeredExplorerCommand(REMOVE_SELECTION)(c, [a, b]);
 
     expect(removeMethods).toHaveBeenCalledWith([c]);
   });
@@ -173,13 +143,13 @@ describe('Remove… on the context menu', () => {
   it('ignores anything in the selection that is not a method row', () => {
     const [a, b] = [row('a'), row('b')];
 
-    handler(REMOVE_SELECTION)(a, [a, { label: 'ALL METHODS' }, b]);
+    registeredExplorerCommand(REMOVE_SELECTION)(a, [a, { label: 'ALL METHODS' }, b]);
 
     expect(removeMethods).toHaveBeenCalledWith([a, b]);
   });
 
   it('does nothing when handed no method row at all', () => {
-    handler(REMOVE_SELECTION)(undefined, []);
+    registeredExplorerCommand(REMOVE_SELECTION)(undefined, []);
 
     expect(removeMethods).not.toHaveBeenCalled();
   });
@@ -188,7 +158,7 @@ describe('Remove… on the context menu', () => {
     removeMethods.mockRejectedValue(new Error('session gone'));
     const a = row('a');
 
-    handler(REMOVE_SELECTION)(a, [a, row('b')]);
+    registeredExplorerCommand(REMOVE_SELECTION)(a, [a, row('b')]);
 
     await vi.waitFor(() =>
       expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(

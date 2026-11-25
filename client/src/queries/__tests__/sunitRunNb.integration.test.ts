@@ -10,14 +10,49 @@
 // Fully transient: the probe fixture is installed inside each test's own
 // transaction, so the harness's per-test abort cleans it up. Nothing commits.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
+
+// What a stop did, step by step, for a test to print when it fails: a stop's
+// failures are rare and timing-bound, so the failure has to say what the gem answered.
+const stopTrace = vi.hoisted(() => {
+  let startedAt = 0;
+  let lines: string[] | undefined;
+  return {
+    start(): void {
+      startedAt = performance.now();
+      lines = [];
+    },
+    stop(): void {
+      lines = undefined;
+    },
+    add(line: string): void {
+      lines?.push(`+${Math.round(performance.now() - startedAt)}ms ${line}`);
+    },
+    attachTo(e: unknown): unknown {
+      if (e instanceof Error && lines) {
+        e.message += `\n\nWhat the stop did:\n${lines.map((l) => `  ${l}`).join('\n')}`;
+      }
+      return e;
+    },
+  };
+});
+vi.mock('../../gciLog', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../gciLog')>();
+  return {
+    ...real,
+    logInfo: (message: string) => {
+      stopTrace.add(message);
+      real.logInfo(message);
+    },
+  };
+});
 
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
 import type { ActiveSession } from '../../sessionManager';
-import { NbCancelledError } from '../../nbRunner';
+import { NbCancelledError, NbSessionBusyError, stoppedRunCleared } from '../../nbRunner';
 import { runTestClassNb, runTestMethodNb } from '../../sunitQueries';
 import { discoverTestClasses } from '../discoverTestClasses';
 import { discoverTestMethods } from '../discoverTestMethods';
@@ -82,8 +117,9 @@ describe('SUnit non-blocking runs (integration)', () => {
    *   always synchronous.
    * - the short sleep, because a break that arrives before the gem has picked the
    *   call up is documented as ignored. 250ms is far more than it needs: the gem
-   *   reports its own elapsed time as ~250ms when a break lands right after this
-   *   wait, i.e. it started executing essentially at once.
+   *   reaches the test's setUp within ~20 ms, even on a busy CI runner. It takes
+   *   the break only at its own 2-second tick (measured on 3.6.2), so when the
+   *   stop lands is the gem's choice, not this wait's.
    */
   async function startSlowRun(): Promise<{
     run: ReturnType<typeof runTestMethodNb>;
@@ -222,6 +258,7 @@ describe('SUnit non-blocking runs (integration)', () => {
       sent.push(hard);
       return realBreak(h, hard);
     });
+    traceAnswersAndClears();
 
     // Tracked as a flag rather than by testing `originalFailure` for truthiness:
     // a block that throws a falsy value (an undefined rejection, an empty
@@ -231,6 +268,7 @@ describe('SUnit non-blocking runs (integration)', () => {
     let originalFailure: unknown;
     try {
       const { run, cancel } = await startSlowRun();
+      stopTrace.start();
       cancel(); // soft break
       cancel(); // stop waiting
 
@@ -250,17 +288,20 @@ describe('SUnit non-blocking runs (integration)', () => {
     // Unconditional, and outside the try/finally above: an abandoned GciTsNb
     // op left on the session would otherwise fail every later test in this file
     // via assertCommitGuardIsStillArmed, burying the one real failure.
+    // The marker splits the stopped run's answers from this run's; a refusal
+    // isn't logged, so it is also the nearest time to one.
+    stopTrace.add('next run starts');
     try {
-      await expect(
-        runTestMethodNb(session(), SUNIT_PROBE_TEST_CLASS, SUNIT_PROBE_PASSING_SELECTOR),
-      ).resolves.toMatchObject({ status: 'passed' });
+      await expect(runPassingTestOnceTheStopIsCleared()).resolves.toMatchObject({
+        status: 'passed',
+      });
     } catch (drainErr) {
       // Only swallowed when the gesture above already failed — the drain
       // couldn't recover a session already left in a bad state by that
       // failure, which is expected and shouldn't bury the original error.
       // On the happy path a drain failure is itself the real bug and must
       // surface normally.
-      if (!gestureFailed) throw drainErr;
+      if (!gestureFailed) throw stopTrace.attachTo(drainErr);
 
       // Demoted, not discarded. The gesture may have failed for something
       // trivial (a legal ending missing from STOPPED_ENDINGS) while this one
@@ -271,8 +312,77 @@ describe('SUnit non-blocking runs (integration)', () => {
       else console.warn('sunitRunNb: drain failed after the gesture failed:', drainErr);
     }
 
-    if (gestureFailed) throw originalFailure;
+    if (gestureFailed) throw stopTrace.attachTo(originalFailure);
   }, 120_000);
+
+  /**
+   * Run the passing test, waiting out the stopped run's clean-up if that refuses
+   * it. A gem that takes the stop before the run code's handlers exist answers
+   * with a raw Break, whose process is then cleared in the background, and a run
+   * started meanwhile is refused as "still cleaning up" by design (#809; how the
+   * gem gets there is in #916). Only that refusal is waited out: any other one is
+   * still a failure.
+   */
+  async function runPassingTestOnceTheStopIsCleared(): Promise<
+    Awaited<ReturnType<typeof runTestMethodNb>>
+  > {
+    const runPassing = () =>
+      runTestMethodNb(session(), SUNIT_PROBE_TEST_CLASS, SUNIT_PROBE_PASSING_SELECTOR);
+    try {
+      return await runPassing();
+    } catch (e) {
+      if (!(e instanceof NbSessionBusyError) || !/still cleaning up/.test(e.message)) throw e;
+      stopTrace.add('refused while the stopped run is cleared; waiting for the clear');
+      // The test passes from here, so this line is the only sign the late start
+      // happened. Vitest drops a passing test's console output, locally and in
+      // CI, so it goes straight to stdout; in GitHub Actions the prefix also
+      // makes it one of the run's annotations.
+      const annotation = process.env.GITHUB_ACTIONS ? '::warning title=Absorbed flake::' : '';
+      process.stdout.write(
+        `${annotation}[absorbed flake #983] second press refused while the stopped run was cleared; retried\n`,
+      );
+      await stoppedRunCleared(session());
+      return await runPassing();
+    }
+  }
+
+  /**
+   * Add each answer the session collects, and each clear of a stopped run's
+   * process, to {@link stopTrace}, until the test ends. A clear is what makes the
+   * next run be refused as "still cleaning up". That refusal starts at the answer
+   * whose context is a process (the runner starts the clear right after collecting
+   * it), not at the "clearing" line, which can wait behind a drain; it ends at the
+   * "cleared" line.
+   */
+  function traceAnswersAndClears(): void {
+    const s = session();
+    const collect = s.GciTsNbResult.bind(s);
+    const answers = vi.spyOn(s, 'GciTsNbResult').mockImplementation(() => {
+      const answer = collect();
+      const { number, context, message } = answer.err;
+      stopTrace.add(
+        `answer: error ${number}, context ${String(context)}` + (message ? `, "${message}"` : ''),
+      );
+      return answer;
+    });
+    const clear = s.GciTsClearStackAsync.bind(s);
+    const clears = vi.spyOn(s, 'GciTsClearStackAsync').mockImplementation(async (gsProcess) => {
+      stopTrace.add(`clearing process ${String(gsProcess)}`);
+      let ending = 'threw';
+      try {
+        const cleared = await clear(gsProcess);
+        ending = `error ${cleared.err.number}`;
+        return cleared;
+      } finally {
+        stopTrace.add(`cleared process ${String(gsProcess)}: ${ending}`);
+      }
+    });
+    onTestFinished(() => {
+      answers.mockRestore();
+      clears.mockRestore();
+      stopTrace.stop();
+    });
+  }
 
   it('discovers the probe class, and its methods carry the category the URI needs', () => {
     const found = discoverTestClasses(exec).find(

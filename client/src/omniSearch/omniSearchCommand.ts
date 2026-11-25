@@ -155,6 +155,18 @@ export function buildOmniHandlers(openOptions?: OmniOpenOptions): OmniActionHand
  *  search starts anyway, and nbRunner refuses it as busy with its usual notice (which offers Stop). */
 export const REGEX_STOP_WAIT_MS = 20_000;
 
+/** Wait, up to REGEX_STOP_WAIT_MS, for a stopped run to let go of the session, or until `cancelled`
+ *  answers true: a search stopped while it waits has nothing to wait for. */
+async function stoneLetsGo(
+  session: ActiveSession,
+  cancelled: () => boolean = () => false,
+): Promise<void> {
+  for (const since = Date.now(); stoppedRunHolds(session) && !cancelled();) {
+    if (Date.now() - since > REGEX_STOP_WAIT_MS) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
 /** Regex search over method source, run by the server plugin's regex support without blocking
  *  VS Code. A search that runs past ~2s shows the usual progress notification with Cancel. A busy
  *  session is refused, with the notice nbRunner shows for that (it offers Stop).
@@ -162,14 +174,6 @@ export const REGEX_STOP_WAIT_MS = 20_000;
  *  Each search waits for the one before it to finish stopping. Replacing a search cancels it, but
  *  the stone keeps the session until it has answered the soft break, so a search started at once
  *  was refused as busy by the search it had just replaced. */
-/** Wait, up to REGEX_STOP_WAIT_MS, for a stopped run to let go of the session. */
-async function stoneLetsGo(session: ActiveSession): Promise<void> {
-  for (const since = Date.now(); stoppedRunHolds(session);) {
-    if (Date.now() - since > REGEX_STOP_WAIT_MS) return;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-}
-
 export function regexSearchUsing(session: ActiveSession): RegexSearchRunner {
   let previous: Promise<unknown> = Promise.resolve();
   return (pattern, ignoreCase, limit) => {
@@ -179,7 +183,7 @@ export function regexSearchUsing(session: ActiveSession): RegexSearchRunner {
     const outcome = (async (): Promise<RegexSearchOutcome> => {
       try {
         await prior.catch(() => undefined);
-        await stoneLetsGo(session);
+        await stoneLetsGo(session, () => cancelled);
         if (cancelled) return { kind: 'cancelled' };
         const answer = await searchMethodSourceRegexAsync(
           (code) =>

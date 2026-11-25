@@ -6,7 +6,9 @@
  *
  * On connect (`maybeOfferServerSupport`), per that setting:
  *  - `never`  → do nothing.
- *  - `always` → install whatever is missing, silently.
+ *  - `always` → install whatever is missing, silently. When SystemUser can't log
+ *               in with the default password, one warning instead, offering to
+ *               install with a password prompt, or to stop asking for this stone.
  *  - `ask`    → show one modal (Install / Not Now / Always / Never) that installs
  *               the missing supports, or none. "Always"/"Never" remember the
  *               choice; "Not Now" (also Escape / the window-close control) asks
@@ -40,6 +42,10 @@ import { uninstallRefactoringFeature } from './refactoring/refactoringUninstallC
 import { installRegexFeature } from './regex/regexInstallCommand';
 import { uninstallRegexFeature } from './regex/regexUninstallCommand';
 import { SEARCH_RESYNC_COMMAND } from './undo/afterUndo';
+import { defaultSystemUserLoginRefusal } from './serverPlugin/systemUserAuth';
+import { stoneNrsFor } from './loginTypes';
+import { logInfo, logWarning } from './gciLog';
+import { messageOf } from './serverPlugin/installHelpers';
 
 export type AutoInstallMode = 'ask' | 'always' | 'never';
 
@@ -202,6 +208,7 @@ export async function maybeOfferServerSupport(
   base: ActiveSession,
   sessionManager: SessionManager,
   extensionPath: string,
+  memento: vscode.Memento,
   features: readonly ServerSupportFeature[] = SERVER_SUPPORT_FEATURES,
 ): Promise<void> {
   const missing = missingFeatures(base, features);
@@ -210,7 +217,12 @@ export async function maybeOfferServerSupport(
   const mode = getAutoInstallMode();
   if (mode === 'never') return;
   if (mode === 'always') {
-    await installFeatures(base, sessionManager, extensionPath, false, missing);
+    const refusal = defaultSystemUserLoginRefusal(base);
+    if (refusal === undefined) {
+      await installFeatures(base, sessionManager, extensionPath, false, missing);
+    } else {
+      warnNotAutoInstalled(base, sessionManager, extensionPath, memento, missing, refusal);
+    }
     return;
   }
 
@@ -256,6 +268,46 @@ export async function maybeOfferServerSupport(
 }
 
 /**
+ * `always` could not install the missing support: SystemUser can't log in with the default
+ * password, usually because it has another. Without this, each feature warned on its own at
+ * every login, with no way to stop it. Not awaited: a toast left open must not hold up the
+ * rest of the login.
+ */
+function warnNotAutoInstalled(
+  base: ActiveSession,
+  sessionManager: SessionManager,
+  extensionPath: string,
+  memento: vscode.Memento,
+  missing: ServerSupportFeature[],
+  refusal: string,
+): void {
+  const key = `gemstone.serverSupportNotAutoInstalled:${stoneNrsFor(base.login)}`;
+  const ids = missing.map((f) => f.id).join(',');
+  if (memento.get<string>(key) === ids) return;
+
+  const INSTALL = 'Install…';
+  const DONT_ASK = "Don't Ask Again";
+  const names = missing.map((f) => f.label).join(' and ');
+  void vscode.window
+    .showWarningMessage(
+      `${names} could not be installed on "${base.login.stone}" automatically: SystemUser ` +
+        `could not log in with the default password (${refusal}). Install asks for the password.`,
+      INSTALL,
+      DONT_ASK,
+    )
+    .then(async (choice) => {
+      if (choice === INSTALL) {
+        await installFeatures(base, sessionManager, extensionPath, true, missing);
+      } else if (choice === DONT_ASK) {
+        await memento.update(key, ids);
+      }
+    })
+    .then(undefined, (e: unknown) =>
+      logWarning(`Installing the missing server support failed: ${messageOf(e)}`),
+    );
+}
+
+/**
  * Command Palette entry: install (or reinstall) every optional support that
  * applies to the selected stone's version. Returns the session so callers can
  * read the refreshed availability flags (e.g. the Explorer's rename pencil).
@@ -283,15 +335,22 @@ export async function runInstallServerSupport(
  * Replace the server support named by `featureIds` with this Jasper's, without
  * asking: what `always` does for a stone whose support is not the one this Jasper
  * ships (`noticeDifferentServerSupport`). Says what it replaced, and why.
+ * Answers false, having changed nothing, when SystemUser can't log in with the
+ * default password: the caller then warns once, rather than each feature failing on its own.
  */
 export async function updateServerSupport(
   base: ActiveSession,
   sessionManager: SessionManager,
   extensionPath: string,
   featureIds: readonly string[],
-): Promise<void> {
+): Promise<boolean> {
   const features = SERVER_SUPPORT_FEATURES.filter((f) => featureIds.includes(f.id));
-  if (features.length === 0) return;
+  if (features.length === 0) return true;
+  const refusal = defaultSystemUserLoginRefusal(base);
+  if (refusal !== undefined) {
+    logInfo(`Did not replace the server support on "${base.login.stone}": ${refusal}`);
+    return false;
+  }
   const names = features.map((f) => f.label).join(' and ');
   await installFeatures(
     base,
@@ -302,6 +361,27 @@ export async function updateServerSupport(
     `Updated the server support on "${base.login.stone}" (${names}) to the one this Jasper ships, ` +
       'because gemstone.serverSupport.autoInstall is "always".',
   );
+  return true;
+}
+
+/**
+ * The login's two server-support steps, one after the other so `always` never runs two
+ * installs on the stone at once. A failure in the first is logged, and the second still runs.
+ */
+export async function checkServerSupportAtLogin(
+  offerMissing: () => Promise<void>,
+  noticeDifferent: () => Promise<void>,
+): Promise<void> {
+  try {
+    await offerMissing();
+  } catch (e: unknown) {
+    logWarning(`Offering the missing server support failed: ${messageOf(e)}`);
+  }
+  try {
+    await noticeDifferent();
+  } catch (e: unknown) {
+    logWarning(`Checking the installed server support failed: ${messageOf(e)}`);
+  }
 }
 
 async function uninstallFeatures(

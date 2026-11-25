@@ -241,6 +241,28 @@ describe('SunitTestController', () => {
       ctrl.dispose();
     });
 
+    it('keeps test methods in method-list order in the Test Explorer, which otherwise re-sorts them by name', async () => {
+      vi.mocked(sunit.discoverTestMethods).mockReturnValueOnce([
+        { selector: 'test2', category: 'unit tests' },
+        { selector: 'test10', category: 'unit tests' },
+      ]);
+      const sm = makeSessionManager(true);
+      const ctrl = new SunitTestController(sm);
+      const mockController = createdController();
+      await mockController.resolveHandler(undefined);
+      const classItem = mockController.createTestItem.mock.results[0].value;
+      await mockController.resolveHandler(classItem);
+
+      const methodItems = mockController.createTestItem.mock.results
+        .map((r: { value: { label: string; sortText?: string } }) => r.value)
+        .filter((item: { label: string }) => item.label.startsWith('test'));
+      const bySortText = [...methodItems]
+        .reverse()
+        .sort((a, b) => (a.sortText ?? '').localeCompare(b.sortText ?? ''));
+      expect(bySortText.map((item) => item.label)).toEqual(['test2', 'test10']);
+      ctrl.dispose();
+    });
+
     it('shows error message when discovery fails', async () => {
       vi.mocked(sunit.discoverTestClasses).mockImplementationOnce(() => {
         throw new Error('TestCase not found');

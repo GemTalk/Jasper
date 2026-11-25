@@ -118,6 +118,10 @@ export interface OmniViewData {
  *  half-typed pattern is often not a valid one. */
 export const REGEX_PENDING_NOTICE = 'Press Enter to search.';
 
+/** Shown while the regex search for the pattern in the box is still running on the stone. The panel
+ *  shows the same text from the moment Enter is pressed (omniSearchView.js). */
+export const REGEX_SEARCHING_NOTICE = 'Searching…';
+
 /** Shown when a regex search was stopped (Cancel on its progress notice) and nothing replaced it. */
 export const REGEX_STOPPED_NOTICE = 'Search stopped. Press Enter to search again.';
 
@@ -192,14 +196,18 @@ export interface CarriedEngineState {
   matchMode?: MatchMode;
   excludedFromAll?: OmniCategoryId[];
   regex?: boolean;
+  /** The regex search answer on screen, so its rows can still be opened in the rebuilt engine. */
+  regexAnswer?: RegexAnswer;
 }
 
 /** What to carry from `state` into the engine built after a settings change. `changed` says whether
  *  a `gemstone.omniSearch.<key>` setting changed: a toggle whose own setting changed takes the new
- *  setting instead (with `.*`, the scope goes with it). */
+ *  setting instead (with `.*`, the scope goes with it). The regex answer on screen goes too, unless
+ *  the cap it was found under changed: then the pattern waits for Enter again. */
 export function carriedEngineState(
   state: ReturnType<OmniEngine['state']>,
   changed: (key: string) => boolean,
+  regexAnswer: RegexAnswer | null = null,
 ): CarriedEngineState {
   const carry: CarriedEngineState = {};
   if (!changed('caseSensitive')) carry.caseSensitive = state.caseSensitive;
@@ -209,6 +217,7 @@ export function carriedEngineState(
     carry.regex = state.regex;
     carry.scopeId = state.scopeId;
     carry.scopeBeforeRegex = state.scopeBeforeRegex;
+    if (regexAnswer && !changed('maxServerScan')) carry.regexAnswer = regexAnswer;
   }
   return carry;
 }
@@ -422,6 +431,12 @@ export interface OmniEngine {
   referenceResultFor(refId: number): OmniResult | undefined;
   /** The `OmniResult` for a row id in the CURRENT view (for activation), or undefined. */
   resultFor(rowId: number): OmniResult | undefined;
+  /** The regex search answer on screen, for `carriedEngineState`. */
+  lastRegexAnswer(): RegexAnswer | null;
+  /** The engine is being thrown away (a settings change, another session, a logout, a closed
+   *  Spotter): stop its regex search, which would otherwise keep the session busy out of sight.
+   *  True when that search was for the pattern in the box, so a rebuilt engine can run it again. */
+  dispose(): boolean;
   /** Current UI state the panel needs to render chrome (scope, case, pivot, All-scope exclusions). */
   state(): {
     scopeId: OmniCategoryId | null;
@@ -441,6 +456,12 @@ export interface OmniEngine {
 
 /** The footer fields a regex search's answer sets. */
 type RegexAnswerMeta = Pick<OmniViewData, 'exact' | 'notice' | 'noticeIsError' | 'moreMatch'>;
+/** A regex search's answer: what it searched for (pattern + case, see `regexKey`) and what it found. */
+export interface RegexAnswer {
+  key: string;
+  results: OmniResult[];
+  meta: RegexAnswerMeta;
+}
 
 /** What a regex search found nothing of, or left out, in words; undefined when there is nothing to say. */
 export function regexOutcomeNotice(outcome: {
@@ -536,7 +557,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
   // The last regex search: what it searched for (pattern + case), and what it answered. Kept apart
   // from `current` so returning from a pivot, or typing back to the same pattern, shows its rows again
   // without a new search.
-  let regexAnswer: { key: string; results: OmniResult[]; meta: RegexAnswerMeta } | null = null;
+  let regexAnswer: RegexAnswer | null = carry?.regexAnswer ?? null;
   // The regex search still running on the stone, and what it is searching for (pattern + case), so
   // anything that replaces it can stop it there.
   let regexInFlight: { key: string; cancel: () => void | Promise<void> } | null = null;
@@ -616,9 +637,11 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     const answered = regexAnswer !== null && regexAnswer.key === regexKey(term);
     current = answered ? regexAnswer!.results : [];
     if (term.length === 0)
-      return buildView([], { hasMore: false, exact: false, truncations: [], pivot: false }, () => ({
-        referenceable: false,
-      }));
+      return buildView(
+        [],
+        { hasMore: false, exact: false, truncations: [], pivot: false },
+        referenceInfo,
+      );
     if (!answered)
       return buildView(
         [],
@@ -635,6 +658,22 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     return buildView(
       current,
       { hasMore: false, truncations: [], pivot: false, ...regexAnswer!.meta },
+      referenceInfo,
+    );
+  }
+
+  function regexSearchingView(): OmniViewData {
+    current = [];
+    return buildView(
+      [],
+      {
+        hasMore: false,
+        exact: false,
+        truncations: [],
+        pivot: false,
+        notice: REGEX_SEARCHING_NOTICE,
+        regexPending: true,
+      },
       referenceInfo,
     );
   }
@@ -710,10 +749,12 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       lastRawValue = rawValue;
       const term = rawValue.trim();
       if (opts.runRegex && term.length > 0) return await runRegexSearch(term);
-      // Anything else (a keystroke, a case change, a commit) starts no search. A search still running
-      // for some other pattern (or case) than the box's is stopped, even when the box is back on a
-      // pattern already answered: otherwise it would keep the session busy for nothing.
-      if (regexInFlight && regexInFlight.key !== regexKey(term)) void stopRegexSearch();
+      // Anything else (a keystroke, a case change, a commit) starts no search. The search still running
+      // for the pattern in the box keeps running, and keeps the generation, so its answer still lands.
+      if (regexInFlight?.key === regexKey(term)) return regexSearchingView();
+      // One for some other pattern (or case) is stopped, even when the box is back on a pattern already
+      // answered: otherwise it would keep the session busy for nothing.
+      if (regexInFlight) void stopRegexSearch();
       ++generation;
       return regexView(term);
     }
@@ -830,8 +871,12 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     async refresh(onError) {
       recheckRegexAvailable();
       await reprimeAll(onError);
-      // A refresh is the user asking for fresh answers, so a regex search that had run runs again.
-      if (regex && !pivot) return await runSearch(lastRawValue, { runRegex: regexAnswer !== null });
+      // A refresh is the user asking for fresh answers, so a regex search that had run for the pattern
+      // in the box runs again. One that was typed but never submitted still waits for Enter.
+      if (regex && !pivot)
+        return await runSearch(lastRawValue, {
+          runRegex: regexAnswer?.key === regexKey(lastRawValue.trim()),
+        });
       if (!pivot || !pivotSource || !deps.resolveReferences) return await runSearch(lastRawValue);
       // Re-ask the stone who references the row this pivot was taken from. Superseding in-flight work
       // the way `pivot` does, and for the same reason: resolving senders of a common selector is slow,
@@ -895,7 +940,8 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
         // of a stopped regex search rather than being refused as busy. Bumping the generation first
         // keeps the stopped search from answering the panel meanwhile.
         ++generation;
-        await stopRegexSearch();
+        // An Enter pressed while this waits starts another search: stop that one too.
+        while (regexInFlight) await stopRegexSearch();
         regex = false;
         scopeId = scopeBeforeRegex;
         scopeBeforeRegex = null;
@@ -987,6 +1033,13 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     },
     referenceResultFor: (refId) => referenceRows[refId],
     resultFor: (rowId) => current[rowId],
+    lastRegexAnswer: () => regexAnswer,
+    dispose() {
+      const searching = regexInFlight?.key === regexKey(lastRawValue.trim());
+      ++generation;
+      void stopRegexSearch();
+      return searching;
+    },
     state: () => ({
       scopeId,
       caseSensitive,

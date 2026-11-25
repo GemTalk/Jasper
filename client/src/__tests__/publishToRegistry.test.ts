@@ -47,10 +47,8 @@ interface Stub {
 
 interface RunOptions extends Stub {
   registry?: string;
-  // How the CLI answers a second call, for the Marketplace's retry with a token.
-  retry?: Stub;
-  // The Marketplace token the retry needs; omit to run with none.
-  vscePat?: string;
+  // Extra environment for the script, such as a stray token.
+  env?: Record<string, string>;
   // Omit to have the case run against a .vsix that exists.
   vsix?: string;
   // Milliseconds after which to kill the script, for the hang case.
@@ -64,8 +62,7 @@ function run({
   stderr = '',
   status = 0,
   sleepSeconds = 0,
-  retry = {},
-  vscePat = '',
+  env = {},
   timeout,
 }: RunOptions) {
   return withTemporaryFolderDo((dir) => {
@@ -73,8 +70,8 @@ function run({
     fs.mkdirSync(binDir);
 
     // `npx` is resolved off PATH by the script, so a stub here is enough to stand in for
-    // both CLIs. It records the arguments of each call (argv-1, argv-2) so a case can
-    // assert which CLI was invoked, and answers a second call from the RETRY_ variables.
+    // both CLIs. It records the arguments of each call (argv-1, argv-2, …) so a case can
+    // assert which CLI was invoked, and how many times.
     const argvFile = (call: number) => path.join(dir, `argv-${call}`);
     fs.writeFileSync(
       path.join(binDir, 'npx'),
@@ -82,9 +79,6 @@ function run({
         '#!/usr/bin/env bash',
         `call=$(( $(ls ${JSON.stringify(dir)} | grep -c '^argv-') + 1 ))`,
         `printf '%s\\n' "$@" > ${JSON.stringify(dir)}/argv-$call`,
-        'if [ "$call" -gt 1 ]; then',
-        '  STUB_STDOUT=$RETRY_STDOUT STUB_STDERR=$RETRY_STDERR STUB_STATUS=$RETRY_STATUS STUB_SLEEP=0',
-        'fi',
         'if [ -n "${STUB_STDOUT:-}" ]; then printf \'%s\\n\' "$STUB_STDOUT"; fi',
         'if [ -n "${STUB_STDERR:-}" ]; then printf \'%s\\n\' "$STUB_STDERR" >&2; fi',
         'if [ "${STUB_SLEEP:-0}" != "0" ]; then sleep "$STUB_SLEEP"; fi',
@@ -108,10 +102,7 @@ function run({
         STUB_STDERR: stderr,
         STUB_STATUS: String(status),
         STUB_SLEEP: String(sleepSeconds),
-        RETRY_STDOUT: retry.stdout ?? '',
-        RETRY_STDERR: retry.stderr ?? '',
-        RETRY_STATUS: String(retry.status ?? 0),
-        VSCE_PAT: vscePat,
+        ...env,
       },
     });
 
@@ -120,7 +111,7 @@ function run({
       stdout: result.stdout,
       stderr: result.stderr,
       argv: argvOf(argvFile(1)),
-      retryArgv: argvOf(argvFile(2)),
+      secondArgv: argvOf(argvFile(2)),
     };
   });
 }
@@ -211,102 +202,20 @@ onSupportedPosixDescribe('publish-to-registry.sh', () => {
     ]);
   });
 
-  it('retries the Marketplace with the token when Trusted Publishing fails', () => {
-    const { status, stdout, stderr, retryArgv } = run({
+  it('fails after one attempt when the Marketplace refuses the Trusted Publishing sign-in', () => {
+    const { status, stdout, stderr, secondArgv } = run({
       registry: 'marketplace',
       stderr: OIDC_REJECTED,
       status: 1,
-      retry: { status: 0 },
-      vscePat: 'a-token',
+      // The removed fallback retried only when this was set, so set it to prove it's gone.
+      env: { VSCE_PAT: 'a-token' },
     });
 
-    expect(status).toBe(0);
-    expect(stdout.trim()).toBe('result: published');
-    expect(stderr).toContain('::error title=Marketplace Trusted Publishing failed::');
-    expect(retryArgv).toEqual([
-      '--no-install',
-      '@vscode/vsce',
-      'publish',
-      '--packagePath',
-      expect.stringContaining('gemstone-ide-1.9.0.vsix'),
-      '--skip-duplicate',
-    ]);
-  });
-
-  it('does not blame Trusted Publishing when the first attempt failed for another reason', () => {
-    const { status, stderr } = run({
-      registry: 'marketplace',
-      stderr: 'ERROR  Failed Request: Gateway Timeout (504)',
-      status: 1,
-      retry: { status: 0 },
-      vscePat: 'a-token',
-    });
-
-    expect(status).toBe(0);
-    expect(stderr).toContain('::error title=Marketplace publish failed::');
-    expect(stderr).not.toContain('Trusted Publishing failed');
-  });
-
-  it('counts the version as up when the token retry finds it already there', () => {
-    const { status, stdout } = run({
-      registry: 'marketplace',
-      stderr: OIDC_REJECTED,
-      status: 1,
-      retry: { stderr: VSCE_ALREADY, status: 1 },
-      vscePat: 'a-token',
-    });
-
-    expect(status).toBe(0);
-    expect(stdout.trim()).toBe('result: already-published');
-  });
-
-  it('fails with the retry status when the token is refused too', () => {
-    const { status, stdout, stderr } = run({
-      registry: 'marketplace',
-      stderr: OIDC_REJECTED,
-      status: 1,
-      retry: { stderr: 'ERROR  Failed Request: Unauthorized (401)', status: 3 },
-      vscePat: 'a-token',
-    });
-
-    expect(status).toBe(3);
+    expect(status).toBe(1);
     expect(stdout).not.toContain('result:');
     expect(stderr).toContain('the version is not up');
-  });
-
-  it('does not retry the Marketplace when no token is stored', () => {
-    const { status, retryArgv } = run({
-      registry: 'marketplace',
-      stderr: OIDC_REJECTED,
-      status: 1,
-    });
-
-    expect(status).toBe(1);
-    expect(retryArgv).toEqual([]);
-  });
-
-  it('does not retry once Trusted Publishing finds the version already there', () => {
-    const { status, retryArgv } = run({
-      registry: 'marketplace',
-      stderr: VSCE_ALREADY,
-      status: 1,
-      vscePat: 'a-token',
-    });
-
-    expect(status).toBe(0);
-    expect(retryArgv).toEqual([]);
-  });
-
-  it('never retries Open VSX with the Marketplace token', () => {
-    const { status, retryArgv } = run({
-      registry: 'openvsx',
-      stderr: 'ERROR  Unauthorized',
-      status: 1,
-      vscePat: 'a-token',
-    });
-
-    expect(status).toBe(1);
-    expect(retryArgv).toEqual([]);
+    expect(stderr).toContain('::error title=Marketplace Trusted Publishing refused::');
+    expect(secondArgv).toEqual([]);
   });
 
   // The CLI's output is the only evidence of whether an upload went out, and the publish

@@ -4,7 +4,7 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../gciLog', async (orig) => ({ ...(await orig()), logInfo: vi.fn() }));
 
 import { evalPythonInScopeNb } from '../pythonQueries';
-import { ensureSessionFree, NbSessionBusyError } from '../nbRunner';
+import { ensureSessionFree, NbCancelledError, NbSessionBusyError } from '../nbRunner';
 import { MAX_CELL_RESULT } from '../notebookCellResult';
 import { fakeActiveSession } from './fakeActiveSession';
 
@@ -59,5 +59,18 @@ describe('a Python cell that answers', () => {
 
     await expect(evalPythonInScopeNb(session, 'x = 42', 'file:///nb.ipynb')).resolves.toBe('42');
     expect(fetch).toHaveBeenCalledWith(expect.anything(), 0x77n, MAX_CELL_RESULT);
+  });
+});
+
+describe('a Python cell stopped before its run has started', () => {
+  it('is never sent to the gem', async () => {
+    const { session, gci } = stoppedCellSession(async () => ({ success: true, err: noErr }));
+    const stop = new AbortController();
+    stop.abort();
+
+    await expect(
+      evalPythonInScopeNb(session, 'x = 1', 'file:///nb.ipynb', undefined, stop.signal),
+    ).rejects.toBeInstanceOf(NbCancelledError);
+    expect(gci.GciTsNbExecute).not.toHaveBeenCalled();
   });
 });

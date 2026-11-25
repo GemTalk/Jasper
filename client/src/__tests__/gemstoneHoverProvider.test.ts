@@ -18,7 +18,14 @@ vi.mock('../browserQueries', () => ({
   getClassComment: vi.fn(() => ''),
 }));
 
-import { Position, Range, MarkdownString, __setConfig, __resetConfig } from '../__mocks__/vscode';
+import {
+  Position,
+  Range,
+  MarkdownString,
+  Uri,
+  __setConfig,
+  __resetConfig,
+} from '../__mocks__/vscode';
 import type * as vscode from 'vscode';
 import { GemStoneHoverProvider } from '../gemstoneHoverProvider';
 import { SelectorResolver } from '../selectorProviders';
@@ -33,19 +40,16 @@ const mockGetClassComment = vi.mocked(getClassComment);
 
 const pos = (line: number, char: number) => new Position(line, char) as unknown as vscode.Position;
 
-function makeSessionManager(hasSession: boolean) {
+const fakeSession = (id: number) =>
+  fakeActiveSession({ id, gci: {}, handle: {}, login: { label: 'Test' }, stoneVersion: '3.7.2' });
+
+// Session 1 is selected; `others` are logged in alongside it.
+function makeSessionManager(hasSession: boolean, others: number[] = []) {
+  const selected = hasSession ? fakeSession(1) : undefined;
+  const sessions = [...(selected ? [selected] : []), ...others.map(fakeSession)];
   return {
-    getSelectedSession: vi.fn(() =>
-      hasSession
-        ? fakeActiveSession({
-            id: 1,
-            gci: {},
-            handle: {},
-            login: { label: 'Test' },
-            stoneVersion: '3.7.2',
-          })
-        : undefined,
-    ),
+    getSelectedSession: vi.fn(() => selected),
+    getSessions: vi.fn(() => sessions),
     onDidChangeSelection: vi.fn(() => ({ dispose: () => {} })),
   } as unknown as SessionManager;
 }
@@ -91,6 +95,50 @@ describe('GemStoneHoverProvider', () => {
     });
   });
 
+  describe('which session answers', () => {
+    const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
+    const docAt = (uri: string): vscode.TextDocument =>
+      Object.assign(makeDocument('self size'), { uri: Uri.parse(uri) });
+
+    it('counts senders in the session a stone method was opened from, not the selected one', async () => {
+      mockSendersOf.mockReturnValue([{} as never]);
+      const provider = new GemStoneHoverProvider(makeSessionManager(true, [2]), resolver);
+
+      const hover = await provider.provideHover(
+        docAt('gemstone://2/Globals/Array/instance/accessing/size'),
+        pos(0, 5),
+      );
+
+      expect(mockSendersOf).toHaveBeenCalled();
+      expect(mockSendersOf.mock.calls.every(([s]) => s.id === 2)).toBe(true);
+      expect(mockImplementorsOf.mock.calls.every(([s]) => s.id === 2)).toBe(true);
+      // The Browse senders link must open the same session's list the count came from.
+      const md = hover!.contents as unknown as MarkdownString;
+      expect(decodeURIComponent(md.value)).toContain('"sessionId":2');
+    });
+
+    it('shows nothing for a stone method whose session has logged out', async () => {
+      const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
+
+      const hover = await provider.provideHover(
+        docAt('gemstone://2/Globals/Array/instance/accessing/size'),
+        pos(0, 5),
+      );
+
+      expect(hover).toBeNull();
+      expect(mockSendersOf).not.toHaveBeenCalled();
+    });
+
+    it('asks the selected session from a file on disk', async () => {
+      const provider = new GemStoneHoverProvider(makeSessionManager(true, [2]), resolver);
+
+      await provider.provideHover(docAt('file:///project/kernel.gs'), pos(0, 5));
+
+      expect(mockSendersOf).toHaveBeenCalled();
+      expect(mockSendersOf.mock.calls.every(([s]) => s.id === 1)).toBe(true);
+    });
+  });
+
   describe('selector hover', () => {
     it('shows implementors with categories, plus clickable senders/implementors links', async () => {
       mockImplementorsOf.mockReturnValue([
@@ -125,6 +173,35 @@ describe('GemStoneHoverProvider', () => {
       expect(md.isTrusted).toBe(true); // command: links only fire from a trusted hover
       expect(md.value).toContain('`Array` (accessing)');
       expect(md.value).toContain('`String` (accessing)');
+    });
+
+    it('lists implementors in the shared method order, not the order the stone found them', async () => {
+      const row = (className: string, isMeta: boolean) => ({
+        dictName: 'Globals',
+        className,
+        isMeta,
+        selector: 'size',
+        category: 'accessing',
+        environmentId: 0,
+      });
+      mockImplementorsOf.mockReturnValue([
+        row('Zed', false),
+        row('array', true),
+        row('_Private', false),
+        row('array', false),
+      ]);
+      const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
+      const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
+      const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
+
+      const md = result!.contents as unknown as MarkdownString;
+      const listed = md.value.split('\n').filter((l) => l.startsWith('- '));
+      expect(listed).toEqual([
+        '- `_Private` (accessing)',
+        '- `array` (accessing)',
+        '- `array class` (accessing)',
+        '- `Zed` (accessing)',
+      ]);
     });
 
     it('shows a hover with just a senders link when the selector has no implementors', async () => {

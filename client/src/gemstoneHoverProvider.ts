@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { SessionManager } from './sessionManager';
-import { SelectorResolver } from './selectorProviders';
+import { SelectorResolver, sessionForDocument } from './selectorProviders';
 import { dedupeMethodResults } from './queries/methodSearch';
+import { compareMethods } from './methodOrder';
 import { maxEnvironment, sweepEnvironments } from './methodEnvironments';
 import * as queries from './browserQueries';
 
@@ -43,7 +44,7 @@ export class GemStoneHoverProvider implements vscode.HoverProvider {
     document: vscode.TextDocument,
     position: vscode.Position,
   ): Promise<vscode.Hover | null> {
-    const session = this.sessionManager.getSelectedSession();
+    const session = sessionForDocument(this.sessionManager, document);
     if (!session) return null;
 
     // 1. Try selector → show implementors with categories
@@ -71,7 +72,7 @@ export class GemStoneHoverProvider implements vscode.HoverProvider {
             return [];
           }
         }),
-      );
+      ).sort(compareMethods);
 
       // Senders count (cached — sendersOf is costly and a hover fires easily).
       const sKey = `${sel}|${session.id}|${maxEnvironment()}`;

@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFile } from 'child_process';
 import * as vscode from 'vscode';
+import { disposeMatchHighlights } from './matchHighlights';
 import { openDocumentAndSyncExplorer, OpenDocumentOptions } from './openDocumentAndSyncExplorer';
 import {
   LanguageClient,
@@ -134,6 +135,7 @@ import {
   maybeOfferServerSupport,
   getAutoInstallMode,
   updateServerSupport,
+  checkServerSupportAtLogin,
   runInstallServerSupport,
   runUninstallServerSupport,
 } from './optionalSupportOffer';
@@ -879,6 +881,8 @@ export function activate(context: vscode.ExtensionContext) {
   // Relays the controller's result changes to the Explorer, which is registered first.
   const sunitResultsChanged = new vscode.EventEmitter<void>();
   context.subscriptions.push(sunitResultsChanged);
+  // Regex search's match marks in the editor: a style and listeners created on first use.
+  context.subscriptions.push({ dispose: disposeMatchHighlights });
   // Create every output channel up front — not lazily on first use — so the
   // full set is discoverable in the Output view's channel dropdown from
   // activation. (The Class Sync channel is created just after ExportManager is
@@ -2335,16 +2339,23 @@ export function activate(context: vscode.ExtensionContext) {
     // gemstone.serverSupport.autoInstall: `always` installs silently, `ask`
     // shows one Install/Always/Never modal, `never` does nothing. Then deal with
     // support that isn't this Jasper's: `always` replaces it, otherwise a warning.
-    // One after the other, so `always` never runs two installs on the stone at once.
-    void maybeOfferServerSupport(session, sessionManager, context.extensionPath).then(() =>
-      noticeDifferentServerSupport(
-        session,
-        context.extensionPath,
-        context.globalState,
-        getAutoInstallMode() === 'always'
-          ? (ids) => updateServerSupport(session, sessionManager, context.extensionPath, ids)
-          : undefined,
-      ),
+    void checkServerSupportAtLogin(
+      () =>
+        maybeOfferServerSupport(
+          session,
+          sessionManager,
+          context.extensionPath,
+          context.globalState,
+        ),
+      () =>
+        noticeDifferentServerSupport(
+          session,
+          context.extensionPath,
+          context.globalState,
+          getAutoInstallMode() === 'always'
+            ? (ids) => updateServerSupport(session, sessionManager, context.extensionPath, ids)
+            : undefined,
+        ),
     );
   }
 
