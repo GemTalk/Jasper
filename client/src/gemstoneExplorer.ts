@@ -1132,6 +1132,16 @@ interface PendingClick {
   highlightMoved?: boolean;
 }
 
+/** A method open whose source hasn't been read yet. */
+interface MethodOpening {
+  uri: string;
+  mode: OpenSourceMode;
+  /** The method selected before the first of the opens overlapping this one. */
+  selectorBefore: string | undefined;
+  /** Settles with whether the method opened; never rejects. */
+  done: Promise<boolean>;
+}
+
 /** What the Classes pane shows on each class row of a dictionary, besides its name. */
 interface ClassRowMetadata {
   definedIvarCounts: Map<string, number>;
@@ -2893,15 +2903,43 @@ export class ExplorerController {
     });
   }
 
-  // Same manual double-click detection for the Methods pane: a single click
-  // already opened the method as a preview tab (via onDidChangeSelection); a
-  // double-click on the same row promotes it to a permanent tab so a later
-  // single click elsewhere won't replace it.
+  // Same manual double-click detection for the Methods pane: a single click opens the
+  // method as a preview tab; a double-click on the same row promotes it to a permanent
+  // tab so a later single click elsewhere won't replace it.
   private readonly methodClicks = new DoubleClickDetector(500);
   handleMethodClick(node: MethodItem): void {
-    if (this.methodClicks.register(`${node.isMeta}:${node.info.selector}`)) {
-      void this.openMethod(node, 'keep');
+    const click = this.methodClicks.click(`${node.isMeta}:${node.info.selector}`);
+    if (click.completesPair) {
+      void this.clickMethod(node, 'keep');
+      return;
     }
+    // Usually the click's selection change opens the method. But a refused open leaves
+    // its row highlighted, and clicking a highlighted row changes no selection, so a
+    // click on a method that isn't the selected one opens it here, as handleClassClick
+    // re-syncs a class. Either way, a click that opened nothing is withdrawn so the
+    // next one can't pair with it.
+    const uri = this.methodSourceUri(node.isMeta, node.info)?.toString();
+    if (uri === undefined) return;
+    const opening = this.methodOpening;
+    let opened: Promise<boolean>;
+    if (opening?.uri === uri && opening.mode === 'preview') opened = opening.done;
+    else if (this.state.selectedSelector === node.info.selector) return;
+    else opened = this.clickMethod(node);
+    void opened.then((ok) => {
+      if (!ok) click.withdraw();
+    });
+  }
+
+  // Opens a method for a click in the Methods pane, answering whether it opened.
+  clickMethod(node: MethodItem, mode: OpenSourceMode = 'preview'): Promise<boolean> {
+    const session = this.session();
+    return this.openMethod(node, mode).then(
+      () => true,
+      (e) => {
+        logClickFailure(e, this.session() !== session);
+        return false;
+      },
+    );
   }
 
   // ── Hierarchy pane ──────────────────────────────────────────────────────────
@@ -5765,35 +5803,78 @@ export class ExplorerController {
     });
   }
 
+  // The latest method open still reading its source.
+  private methodOpening: MethodOpening | undefined;
+
   async openMethod(node: MethodItem, mode: OpenSourceMode = 'preview'): Promise<void> {
-    const session = this.session();
-    if (!session || this.state.dictName === undefined || this.state.className === undefined) {
+    const uri = this.methodSourceUri(node.isMeta, node.info);
+    if (!uri) return;
+    // VS Code reports one click twice, as a selection change and as the row's command
+    // (handleMethodClick), in no promised order: the second report shares the first's read.
+    const earlier = this.methodOpening;
+    if (earlier?.uri === uri.toString() && earlier.mode === mode) {
+      await earlier.done;
       return;
     }
+    let settle!: (opened: boolean) => void;
+    const opening: MethodOpening = {
+      uri: uri.toString(),
+      mode,
+      selectorBefore: earlier ? earlier.selectorBefore : this.state.selectedSelector,
+      done: new Promise((resolve) => (settle = resolve)),
+    };
+    this.methodOpening = opening;
+    try {
+      await this.showMethod(node, uri, mode, opening);
+      settle(true);
+    } catch (e) {
+      settle(false);
+      throw e;
+    } finally {
+      if (this.methodOpening === opening) this.methodOpening = undefined;
+    }
+  }
+
+  private async showMethod(
+    node: MethodItem,
+    uri: vscode.Uri,
+    mode: OpenSourceMode,
+    opening: MethodOpening,
+  ): Promise<void> {
     // A row click still reading would commit over this method, clearing it while its
     // editor stays open.
     this.pendingClick = undefined;
     this.state.selectedSelector = node.info.selector;
     this.syncTitles();
-    this.recordLanding({ selector: node.info.selector, isMeta: node.isMeta });
-    // Carry the 1-based dictionary index so the method's class is resolved in the
-    // right dictionary (some dictionaries — e.g. Python — hold classes whose
-    // lookup is ambiguous by bare name). Slash-bearing selectors are escaped.
-    const uri = buildMethodUri({
-      kind: 'method',
-      sessionId: session.id,
-      dictName: this.state.dictName,
-      className: this.state.className,
+    // Taken now but recorded only once the source is read: a refused read opens nothing
+    // to come back to.
+    const recordLanding = this.landingRecorder({
+      selector: node.info.selector,
       isMeta: node.isMeta,
-      category: node.info.category,
-      selector: escapeSelectorSlashes(node.info.selector),
-      environmentId: EXPLORER_METHOD_ENVIRONMENT,
-      dictIndex: this.state.dictIndex,
     });
     // Marked so syncToEditor ignores this open instead of re-revealing the row under ALL
     // METHODS and stealing the selection from the category the user clicked.
     this.markSelfOpen(uri);
-    const doc = await vscode.workspace.openTextDocument(uri);
+    let doc: vscode.TextDocument;
+    try {
+      doc = await vscode.workspace.openTextDocument(uri);
+    } catch (e) {
+      // Nothing opened (a busy session refuses the read), so take back what this open
+      // claimed, unless a later open has claimed it since. Any failure counts: the error
+      // crosses VS Code's file-system boundary, which loses what kind it was.
+      if (this.methodOpening === opening) {
+        this.selfOpenedUris.delete(selfOpenKey(uri));
+        if (this.state.selectedSelector === node.info.selector) {
+          this.state.selectedSelector = opening.selectorBefore;
+          this.syncTitles();
+        }
+      }
+      throw e;
+    }
+    // A later open that is refused goes back to this method, which did open.
+    const later = this.methodOpening;
+    if (later && later !== opening) later.selectorBefore = node.info.selector;
+    recordLanding();
     // Assign the language BEFORE the doc enters the (reused) preview editor. A
     // gemstone doc is otherwise language-tagged asynchronously
     // (onDidOpenTextDocument → setTextDocumentLanguage) — i.e. *after* it's shown —
@@ -6634,22 +6715,36 @@ export class ExplorerController {
    * appending a duplicate entry.
    */
   private recordLanding(method?: { selector: string; isMeta: boolean }): void {
+    this.landingRecorder(method)();
+  }
+
+  // Takes the landing the panes are on now, and answers a way to record it later. The
+  // later record is skipped once the panes have left that class: the trail must follow
+  // the panes.
+  private landingRecorder(method?: { selector: string; isMeta: boolean }): () => void {
     const session = this.session();
     const { dictName, dictIndex, classCategory, className } = this.state;
     // Until the panes have a dictionary index there is no dictionary landed on to record.
-    if (!session || dictName === undefined || dictIndex === undefined) return;
-    this.history.record(
-      {
-        sessionId: session.id,
-        dictName,
-        dictIndex,
-        classCategory,
-        className,
-        selector: method?.selector,
-        isMeta: method?.isMeta,
-      },
-      { fromEditor: this.syncingToEditor },
-    );
+    if (!session || dictName === undefined || dictIndex === undefined) return () => {};
+    const landing = {
+      sessionId: session.id,
+      dictName,
+      dictIndex,
+      classCategory,
+      className,
+      selector: method?.selector,
+      isMeta: method?.isMeta,
+    };
+    const options = { fromEditor: this.syncingToEditor };
+    return () => {
+      const now = this.state;
+      const stillHere =
+        this.session()?.id === session.id &&
+        now.dictIndex === dictIndex &&
+        now.classCategory === classCategory &&
+        now.className === className;
+      if (stillHere) this.history.record(landing, options);
+    };
   }
 
   /**
@@ -9590,7 +9685,7 @@ export function registerGemStoneExplorer(
     // side is the title-bar toggle now, not a selectable row.
     if (node instanceof MethodItem) {
       ctl.recordMethodContext(node.isMeta, node.info.category);
-      void ctl.openMethod(node);
+      void ctl.clickMethod(node);
     } else if (node instanceof MethodCategoryItem) {
       ctl.recordMethodContext(node.isMeta, node.computed ? undefined : node.category);
     }

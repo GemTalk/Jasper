@@ -256,9 +256,12 @@ describe('MethodItem click wiring', () => {
 });
 
 describe('ExplorerController.handleMethodClick', () => {
-  it('leaves the first click to the single-click preview open', () => {
+  // A row's selection change opens its method before or after the row's command
+  // reports the click, so these start with the clicked method already selected.
+  it('leaves a click on the selected method to its selection change', () => {
     const ctl = makeController();
     const open = vi.spyOn(ctl, 'openMethod').mockResolvedValue();
+    ctl.state.selectedSelector = 'at:';
 
     ctl.handleMethodClick(methodItem());
 
@@ -269,6 +272,7 @@ describe('ExplorerController.handleMethodClick', () => {
     const ctl = makeController();
     const open = vi.spyOn(ctl, 'openMethod').mockResolvedValue();
     const node = methodItem();
+    ctl.state.selectedSelector = 'at:';
 
     ctl.handleMethodClick(node);
     ctl.handleMethodClick(node);
@@ -284,7 +288,7 @@ describe('ExplorerController.handleMethodClick', () => {
     ctl.handleMethodClick(methodItem({ selector: 'at:' }));
     ctl.handleMethodClick(methodItem({ selector: 'size' }));
 
-    expect(open).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalledWith(expect.anything(), 'keep');
   });
 });
 
