@@ -30,7 +30,13 @@ import {
   drainTranscript,
   settleNbResult,
 } from '../transcriptSink';
-import { runNbCall, NbCancelledError, pollNbResultReady, stopCallsOn } from '../nbRunner';
+import {
+  runNbCall,
+  NbCancelledError,
+  pollNbResultReady,
+  stopCallsOn,
+  STOP_CALLS_WAIT_MS,
+} from '../nbRunner';
 import { expectEventLoopToRemainResponsiveDuring } from './support/timers';
 import { waitUntilOffTheStone } from './leftoverGem';
 import {
@@ -364,10 +370,10 @@ tmps := SessionTemps current.
     // the first logout to land; the pause before it lets the worker actually
     // start, since the write is reported just before the resume is queued.
     //
-    // The wait is 1s, well inside the 2s stopCallsOn waits (STOP_CALLS_WAIT_MS),
-    // because the gem now and then ignores every stop sent to a run it has just
-    // resumed and runs the code to its end (#990). Ended either way, the run
-    // hands the session back before the retry.
+    // The wait is half of STOP_CALLS_WAIT_MS, how long stopCallsOn waits,
+    // because the gem now and then ignores every stop sent to a run it has
+    // just resumed and runs the code to its end (#990). Ended either way, the
+    // run hands the session back before the retry.
     const { session: busy, err } = reportedTransientLogin(session());
     if (!busy) throw new Error(`Transient login failed: ${err.message}`);
     const gemLogin = reportedSerialOf(busy);
@@ -378,7 +384,7 @@ tmps := SessionTemps current.
     });
     const code =
       "Transcript nextPutAll: 'streaming'. " +
-      '20 timesRepeat: [(Delay forMilliseconds: 50) wait]. 42';
+      `${STOP_CALLS_WAIT_MS / 100} timesRepeat: [(Delay forMilliseconds: 50) wait]. 42`;
     startClientForwarderMode(busy, code);
     const run = runNbCall(
       busy,
