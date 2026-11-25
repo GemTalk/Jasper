@@ -1,5 +1,6 @@
 import { QueryExecutor } from '../../queries/types';
 import { classLookupExpr } from '../../queries/util';
+import { compareNames } from '../../methodOrder';
 
 export interface StartingMethod {
   isMeta: boolean;
@@ -52,7 +53,7 @@ cls := ${classLookupExpr(className, dictName)}.
   1 to: 2 do: [:i | | beh side |
     beh := sides at: i.
     side := (i - 1) printString.
-    beh selectors asSortedCollection do: [:sel | | m src offsets |
+    beh selectors do: [:sel | | m src offsets |
       m := beh compiledMethodAt: sel.
       ws nextPutAll: 'M'; tab; nextPutAll: side; tab; nextPutAll: sel; lf.
       src := m sourceString.
@@ -118,6 +119,10 @@ export function parseStartingPoints(raw: string): StartingPoints {
       callers.get(to)!.add(from);
     }
   }
+  // Sorted here, not on the stone: see methodOrder.
+  methods.sort(
+    (a, b) => Number(a.isMeta) - Number(b.isMeta) || compareNames(a.selector, b.selector),
+  );
   const count = (m: StartingMethod) => callers.get(key(m.isMeta, m.selector))?.size ?? 0;
   const uncalled = methods.filter((m) => count(m) === 0);
   if (uncalled.length > 0 || methods.length === 0) {

@@ -934,6 +934,7 @@ export function registerMcpTools(
             classMethodsCode(classes),
             limit,
           );
+          methods.sort(compareMethods);
           // One walk per class: withMethods is for the few classes the assistant just created.
           const notes = new Map<string, MethodNote>();
           if (classes.length <= MAX_CLASSES_NOTED) {

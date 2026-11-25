@@ -20,9 +20,15 @@ const manifest = JSON.parse(
 
 const allViews = Object.values(manifest.contributes.views).flat();
 
-// The containers Jasper owns outright. A view in one of these is already under a
-// "GemStone" / "GemStone Explorer" / "GemStone Search" heading, so its own name stays short.
-const OWN_CONTAINERS = ['gemstone', 'gemstoneExplorer', 'gemstoneOmniSearchPanel'];
+// The containers Jasper owns outright. A view in one of these is under Jasper's own heading
+// ("GemStone", "GemStone Explorer", "GemStone Search", "Assistant Results"), not in a pane shared
+// with other extensions, so its own name stays short.
+const OWN_CONTAINERS = [
+  'gemstone',
+  'gemstoneExplorer',
+  'gemstoneOmniSearchPanel',
+  'jasperAssistantResultsPanel',
+];
 
 describe('contributed views name themselves when moved out of their container', () => {
   it.each(allViews.map((v) => [v.id, v] as const))(

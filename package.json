@@ -611,7 +611,7 @@
         {
           "id": "jasperAssistantResultsView",
           "name": "Assistant Results",
-          "contextualTitle": "Assistant Results",
+          "contextualTitle": "Jasper Assistant Results",
           "type": "webview",
           "when": "gemstone.hasActiveSession"
         }
