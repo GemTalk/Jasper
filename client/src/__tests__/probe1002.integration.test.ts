@@ -64,14 +64,14 @@ function gemDiagnostics(pid: string | undefined): string {
             `sudo -n gdb -p ${pid} -batch -ex 'thread apply all bt 25' 2>&1 | grep -v '^\\[New LWP' | head -150`,
           ];
   if (process.platform === 'win32') return '  (no process tools on Windows: the gem runs in WSL)';
-  const globalDir =
-    (import.meta.env.VITE_GEMSTONE_GLOBAL_DIR as string | undefined) ??
-    process.env.GEMSTONE_GLOBAL_DIR;
-  const logDir = globalDir ? `${globalDir}/log` : undefined;
-  if (logDir)
-    cmds.push(
-      `grep -l "${pid}" ${logDir}/*.log 2>/dev/null | head -3 | xargs -I{} sh -c 'echo == {}; tail -40 {}'`,
-    );
+  // The NetLDI starts gems with their log directory as working directory (-D).
+  const cwd =
+    process.platform === 'darwin'
+      ? `$(lsof -a -p ${pid} -d cwd -Fn | sed -n 's/^n//p')`
+      : `$(readlink /proc/${pid}/cwd)`;
+  cmds.push(
+    `d=${cwd}; grep -l "${pid}" "$d"/*.log 2>/dev/null | head -3 | while read f; do echo "== $f"; tail -40 "$f"; done`,
+  );
   return cmds
     .map((c) => {
       try {
