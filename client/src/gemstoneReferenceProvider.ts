@@ -11,7 +11,7 @@ import { logError } from './gciLog';
 
 /**
  * VS Code's Find All References on a selector: the stone's senders of it, one location per method,
- * at its first send.
+ * at its first send (for a selector the compiler inlines, where the source first names it).
  * GemStone Search's references are separate (`resolveReferencesUsing`) and still block.
  */
 export class GemStoneReferenceProvider implements vscode.ReferenceProvider {

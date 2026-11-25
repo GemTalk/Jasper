@@ -352,16 +352,20 @@ export interface SendSite extends MethodSearchResult {
  * The senders of `selector`, each with where its first send sits. `sendersOf:` answers that
  * itself, as a 1-based offset into the source, which is turned into a line and character here
  * on the stone so no method's source has to come back. Columns are counted as the editor counts
- * them, in UTF-16 units, and a CR LF pair and a lone CR each end a line. A method with no
- * position is placed at its first line.
+ * them, in UTF-16 units, and a CR LF pair and a lone CR each end a line. For a selector the
+ * compiler inlines (`ifTrue:`, `==`, `to:do:` …) `sendersOf:` gives no offsets at all, so the
+ * source's first mention of the selector's first keyword stands in, which can be in a comment.
+ * A method with neither is placed at its first line.
  */
 export async function sendSitesOfAsync(
   execute: NbQueryExecutor,
   selector: string,
   environmentId: number,
 ): Promise<SendSite[]> {
+  const keyword = selector.includes(':') ? selector.slice(0, selector.indexOf(':') + 1) : selector;
   const position = `src := each sourceString.
-  at := (offsets at: i) ifNil: [0].
+  at := i <= offsets size ifTrue: [offsets at: i].
+  at ifNil: [at := src findString: '${escapeString(keyword)}' startingAt: 1].
   line := 0. col := 0. k := 1.
   [k < at] whileTrue: [
     ch := src at: k.

@@ -106,7 +106,7 @@ describe('SysadminStorage.isLocalVersion', () => {
     expect(storage.isLocalVersion('3.7.6')).toBe(true);
   });
 
-  it('returns false for a real directory', () => {
+  onSupportedPosixIt('returns false for a real directory', () => {
     const suffix = storage.getPlatformSuffix();
     fs.mkdirSync(path.join(tmpDir, `GemStone64Bit3.7.4${suffix}`));
 
@@ -598,6 +598,25 @@ describe('a product directory whose version number cannot be read', () => {
     const versions = manager.versionsFrom([entry('3.7.5'), entry('3.7')]);
 
     expect(versions.map((v) => v.version)).toEqual(['3.7.5']);
+  });
+
+  it('lists what the catalog offers on a machine that cannot run a server', () => {
+    const storage = new SysadminStorage();
+    vi.spyOn(storage, 'getPlatformKey').mockReturnValue(undefined);
+    const manager = new VersionManager(storage);
+    const entry = (version: string) => ({
+      version,
+      fileName: `GemStone64Bit${version}-x86_64.Linux.zip`,
+      url: '',
+      date: '01-Jan-2026',
+      size: 1,
+    });
+
+    const versions = manager.versionsFrom([entry('3.7.5')]);
+
+    expect(versions.map((v) => [v.version, v.downloaded, v.extracted])).toEqual([
+      ['3.7.5', false, false],
+    ]);
   });
 
   // The panel re-reads the disk twice onevery open and again on every refresh, so a

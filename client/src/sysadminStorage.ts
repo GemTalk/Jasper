@@ -168,9 +168,16 @@ export class SysadminStorage {
     return process.platform === 'darwin' ? 'dmg' : 'zip';
   }
 
-  /** Returns the product directory suffix, e.g. "-arm64.Darwin"; only with {@link hasLocalServer}. */
+  /**
+   * Returns the product directory suffix, e.g. "-arm64.Darwin". Throws without a local server
+   * (see {@link hasLocalServer}), where there is no such folder, rather than answer "-undefined".
+   */
   getPlatformSuffix(): string {
-    return `-${this.getPlatformKey()}`;
+    const key = this.getPlatformKey();
+    if (key === undefined) {
+      throw new Error('No GemStone server can run on this machine: on Windows it needs WSL.');
+    }
+    return `-${key}`;
   }
 
   /** Get the GEMSTONE path for a given version */
@@ -510,6 +517,7 @@ export class SysadminStorage {
 
   /** Get downloaded files in the root path (batched to a single WSL call). */
   getDownloadedFiles(): Map<string, number> {
+    if (!this.hasLocalServer()) return new Map();
     const ext = this.getDownloadExtension();
     const suffix = this.getPlatformSuffix();
     const prefix = 'GemStone64Bit';

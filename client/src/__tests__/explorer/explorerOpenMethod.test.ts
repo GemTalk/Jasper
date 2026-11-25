@@ -8,7 +8,11 @@ vi.mock('../../nbRunner', async (orig) => ({
   ...(await orig<typeof import('../../nbRunner')>()),
   isRunning: vi.fn(() => false),
 }));
-vi.mock('../../gciLog', async (orig) => ({ ...(await orig()), logWarning: vi.fn() }));
+vi.mock('../../gciLog', async (orig) => ({
+  ...(await orig()),
+  logWarning: vi.fn(),
+  logInfo: vi.fn(),
+}));
 
 import type * as vscode from 'vscode';
 import { ExplorerController, MethodItem, shouldHintKeepMethodsOpen } from '../../gemstoneExplorer';
@@ -17,7 +21,7 @@ import { Uri, window, commands, workspace, languages } from '../../__mocks__/vsc
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 import { METHOD_LANGUAGE } from '../../languageIds';
 import { isExplorerRowUri } from '../../activeEditorDecoration';
-import { logWarning } from '../../gciLog';
+import { logInfo, logWarning } from '../../gciLog';
 import { isRunning, RUN_IN_PROGRESS_MESSAGE } from '../../nbRunner';
 import { refusedOpen, settle, unhandledRejections } from '../helpers/explorerClicks';
 
@@ -326,6 +330,19 @@ describe('a method clicked while a run holds the session', () => {
       expect(openTextDocument).toHaveBeenCalledTimes(1);
       expect(rejections.seen).toEqual([]);
       expect(logWarning).not.toHaveBeenCalled();
+    });
+
+    it(`still notes, without a warning, an unexplained failure from ${gesture} while a run holds the session`, async () => {
+      vi.mocked(isRunning).mockReturnValue(true);
+      openTextDocument.mockRejectedValueOnce(new Error('no such class'));
+
+      click(makeController(), methodItem());
+      await settle();
+      await settle();
+
+      expect(rejections.seen).toEqual([]);
+      expect(logWarning).not.toHaveBeenCalled();
+      expect(logInfo).toHaveBeenCalledWith(expect.stringContaining('no such class'));
     });
 
     it(`logs any other failure to open the method from ${gesture}`, async () => {

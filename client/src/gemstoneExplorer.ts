@@ -2905,8 +2905,10 @@ export class ExplorerController {
 
   // Opens an editor for an Explorer click or row button. VS Code hands a failed open back as a
   // plain Error that keeps only its message, so a refused or cancelled read, which has already
-  // said so, is recognised by its wording or, for the other ways a run holds a session, by the
-  // session's state; a run that ended in between can still leave one needless warning.
+  // said so, is recognised by its wording. For the other ways a run holds a session only the
+  // session's state is known, which can't tell a refusal from a real failure, so those get a
+  // plain log line rather than a warning; a run that ended in between can still leave one
+  // needless warning.
   private openFromExplorer(open: Promise<void>): void {
     const openedIn = this.session();
     void open.catch((e: unknown) => {
@@ -2914,7 +2916,10 @@ export class ExplorerController {
       if (queries.isBusyRefusal(e) || e instanceof NbCancelledError) return;
       const message = e instanceof Error ? e.message : String(e);
       if (QUIET_OPEN_FAILURES.some((quiet) => message.includes(quiet))) return;
-      if (openedIn && (isRunning(openedIn) || stoppedRunHolds(openedIn))) return;
+      if (openedIn && (isRunning(openedIn) || stoppedRunHolds(openedIn))) {
+        logInfo(`Explorer could not open the editor while a run held the session: ${message}`);
+        return;
+      }
       logWarning(`Explorer could not open the editor: ${message}`);
     });
   }

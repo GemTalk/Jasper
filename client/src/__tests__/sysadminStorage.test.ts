@@ -97,6 +97,20 @@ describe('which machines can run a GemStone server', () => {
     });
   });
 
+  it('names no server folder on Windows without WSL, rather than one ending in "undefined"', () => {
+    withPlatform('win32', 'x64', () => {
+      expect(() => new SysadminStorage().getPlatformSuffix()).toThrow(/WSL/);
+    });
+  });
+
+  it('finds no downloaded server archive on Windows without WSL, whatever it is called', () => {
+    rootWithInstall('x86_64.Linux');
+    fs.writeFileSync(path.join(root!, 'GemStone64Bit3.7.5-undefined.zip'), 'zip');
+    withPlatform('win32', 'x64', () => {
+      expect(new SysadminStorage().getDownloadedFiles().size).toBe(0);
+    });
+  });
+
   onSupportedPosixIt('finds the installed server on Linux', () => {
     rootWithInstall('x86_64.Linux');
     withPlatform('linux', 'x64', () => {

@@ -306,6 +306,16 @@ describe('where each sender first sends a selector', () => {
     expect(site).toMatchObject({ selector: 'foo', line: 0, character: 0 });
   });
 
+  it('places a sender of an inlined selector where its source first names the selector', async () => {
+    const execute = vi.fn<NbQueryExecutor>(async () => '');
+
+    await sendSitesOfAsync(execute, 'ifFalse:ifTrue:', 0);
+
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('i <= offsets size');
+    expect(code).toContain("findString: 'ifFalse:' startingAt: 1");
+  });
+
   it('counts a character outside the Basic Multilingual Plane as two columns, as the editor does', async () => {
     const execute = vi.fn<NbQueryExecutor>(async () => '');
 
