@@ -4,7 +4,7 @@
 // PROBE_PAR how many sessions run it at once, PROBE_OUT a file to append to.
 import { describe, it, vi } from 'vitest';
 import { appendFileSync } from 'fs';
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 const t0 = Date.now();
@@ -39,6 +39,7 @@ const SCENARIO = SCENARIOS.join(',');
 const BUDGET_MS = Number(process.env.PROBE_BUDGET_MS ?? 0);
 const OUT = process.env.PROBE_OUT;
 const forceStopMs: number[] = [];
+const phaseMs: Record<string, number[]> = { gate: [], login: [], signal: [], logout: [], poll: [] };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const say = (s: string) => {
   console.log(`[probe1002] ${s}`);
@@ -145,36 +146,79 @@ describe('probe 1002', () => {
 
   async function endGem(s: ActiveSession, tag: string): Promise<number> {
     const serial = reportedSerialOf(s);
+    const gemPid = s.executeAndFetchString('System gemProcessId printString');
     let fakePid: string | undefined;
     if (process.env.PROBE_FAKE_LINGER && tag.includes('#0 ')) {
-      fakePid = s.executeAndFetchString('System gemProcessId printString');
+      fakePid = gemPid;
       execSync(`kill -STOP ${fakePid}`);
       setTimeout(() => execSync(`kill -CONT ${fakePid}`), 16_500);
     }
+    // Linux: trace the gem from before its first stopSession, to see whether
+    // the stop ever reaches its stone out-of-band socket.
+    const gemTrace = `${OUT ?? '/tmp/probe1002'}.gem.${serial}`;
+    let gemTracer: import('child_process').ChildProcess | undefined;
+    if (process.platform === 'linux' && process.env.PROBE_GEM_TRACE) {
+      const args = [
+        '-f',
+        '-tt',
+        '-e',
+        'trace=recvfrom,recvmsg,read,sendto,tgkill,exit_group,close',
+        '-p',
+        gemPid,
+        '-o',
+        gemTrace,
+      ];
+      gemTracer = process.env.CI
+        ? spawn('sudo', ['-n', 'strace', ...args], { stdio: 'ignore' })
+        : spawn('strace', args, { stdio: 'ignore' });
+      await sleep(300);
+    }
+    const firstStopAt = new Date().toISOString();
     admin().executeAndFetchString(
       `| now | now := (System descriptionOfSessionSerialNum: ${serial}) at: 10. now > 0 ifTrue: [System stopSession: now]. 'ok'`,
     );
+    const firstStopDone = new Date().toISOString();
     reportSessionClosed(serial);
     const start = Date.now();
     while (Date.now() - start < 15_000) {
       const on = admin().executeAndFetchString(
         `(((System descriptionOfSessionSerialNum: ${serial}) at: 10) > 0) printString`,
       );
-      if (on === 'false') return Date.now() - start;
+      if (on === 'false') {
+        if (gemTracer) {
+          await sleep(100);
+          execSync(`${process.env.CI ? 'sudo -n ' : ''}rm -f ${gemTrace}`, { shell: '/bin/bash' });
+        }
+        return Date.now() - start;
+      }
       await sleep(25);
     }
     const desc = admin().executeAndFetchString(
       `(System descriptionOfSessionSerialNum: ${serial}) printString`,
     );
     const pid = desc.split(',')[1]?.trim();
-    say(`LINGER after ${tag}, serial ${serial}: ${desc}\n${gemDiagnostics(pid)}`);
+    lingered = true;
+    if (gemTracer) say(`  gem traced since before the first stopSession: ${gemTrace}`);
+    say(
+      `LINGER after ${tag}, serial ${serial}, gem pid ${gemPid}: first stopSession sent ${firstStopAt}..${firstStopDone} (UTC): ${desc}\n${gemDiagnostics(pid)}`,
+    );
+    if (process.platform === 'linux') {
+      try {
+        say(
+          `  sockets (gem and stone):\n${execSync(`${process.env.CI ? 'sudo -n ' : ''}ss -tanpe 2>&1 | grep -E 'pid=${pid},|stoned' | head -60`, { encoding: 'utf8', shell: '/bin/bash' })}`,
+        );
+      } catch (e) {
+        say(`  no socket list: ${(e as Error).message.slice(0, 200)}`);
+      }
+    }
     // Send stopSession again while the gem's system calls are traced: does the
     // stop byte reach the gem, and what does it do with it?
     if (pid && process.platform !== 'win32') {
       const cp = await import('child_process');
-      const out = `${OUT ?? '/tmp/probe1002'}.linger.${serial}`;
-      const tracer =
-        process.platform === 'linux'
+      const out = gemTracer ? gemTrace : `${OUT ?? '/tmp/probe1002'}.linger.${serial}`;
+      const tracer = gemTracer
+        ? undefined
+        : process.platform === 'linux'
           ? process.env.CI
             ? cp.spawn('sudo', ['-n', 'strace', '-f', '-tt', '-p', pid, '-o', out], {
                 stdio: 'ignore',
@@ -199,12 +243,12 @@ describe('probe 1002', () => {
         `  stopSession sent again at +${t % 100_000}: ${left ? `gem left after ${Date.now() - t} ms` : 'still on the stone 3 s later'}`,
       );
       await sleep(500);
-      tracer.kill('SIGINT');
+      tracer?.kill('SIGINT');
       execSync(`sudo -n pkill -INT -f "strace -f -tt -p ${pid}" || true`, { shell: '/bin/bash' });
       await sleep(500);
       try {
         say(
-          `  trace of the gem around it (${out}):\n${execSync(`${process.env.CI ? 'sudo -n ' : ''}tail -c 6000 ${out}`, { encoding: 'utf8', shell: '/bin/bash' })}`,
+          `  trace of the gem around it (${out}):\n${execSync(`${process.env.CI ? 'sudo -n ' : ''}${gemTracer ? `grep -vE 'madvise|rt_sigprocmask|getpid|poll\\(NULL|Timeout' ${out} | head -120` : `tail -c 6000 ${out}`}`, { encoding: 'utf8', shell: '/bin/bash' })}`,
         );
       } catch (e) {
         say(`  no trace: ${(e as Error).message.slice(0, 200)}`);
@@ -266,6 +310,9 @@ describe('probe 1002', () => {
     const free = await forceStop(s, timedDeps(phases));
     const fsMs = Date.now() - fsStart;
     forceStopMs.push(fsMs);
+    const poll =
+      fsMs - (phases.gate ?? 0) - (phases.login ?? 0) - (phases.signal ?? 0) - (phases.logout ?? 0);
+    for (const [k, v] of Object.entries({ ...phases, poll })) phaseMs[k]?.push(v ?? 0);
     if (fsMs > 1200)
       say(
         `w${w} #${i} SLOW forceStop ${fsMs}ms: gate wait ${phases.gate}ms, login ${phases.login}ms, signal ${phases.signal}ms, logout ${phases.logout}ms, rest (poll) ${fsMs - (phases.gate ?? 0) - (phases.login ?? 0) - (phases.signal ?? 0) - (phases.logout ?? 0)}ms\n    ${trace.join('\n    ')}`,
@@ -377,7 +424,48 @@ describe('probe 1002', () => {
     return how;
   }
 
+  // Linux: trace what the stone sends, for the whole probe, so a lingering gem's
+  // first stopSession can be checked against what the stone actually sent.
+  let stoneTracer: import('child_process').ChildProcess | undefined;
+  const stoneTrace = `${OUT ?? '/tmp/probe1002'}.stone`;
+  let lingered = false;
+  function startStoneTrace(): void {
+    if (process.platform !== 'linux' || !process.env.PROBE_STONE_TRACE) return;
+    // Only the stone this run uses: a host can run other stones too.
+    const stoneName = admin().executeAndFetchString('System stoneName').split('!').pop() ?? '';
+    if (!/^[\w.-]+$/.test(stoneName)) throw new Error(`unexpected stone name ${stoneName}`);
+    const pids = execSync(`pgrep -f 'sys/stoned ${stoneName}( |$)' || true`, {
+      encoding: 'utf8',
+      shell: '/bin/bash',
+    })
+      .trim()
+      .split('\n')
+      .filter(Boolean);
+    if (pids.length !== 1) {
+      say(`stone ${stoneName}: found ${pids.length} processes (${pids.join(',')}); not tracing`);
+      return;
+    }
+    const stonePid = pids[0];
+    const args = [
+      '-f',
+      '-tt',
+      '-s',
+      '24',
+      '-e',
+      'trace=sendto,sendmsg,write,writev,shutdown,close',
+      '-p',
+      stonePid,
+      '-o',
+      stoneTrace,
+    ];
+    stoneTracer = process.env.CI
+      ? spawn('sudo', ['-n', 'strace', ...args], { stdio: 'ignore' })
+      : spawn('strace', args, { stdio: 'ignore' });
+    say(`stone ${stoneName} pid ${stonePid} traced to ${stoneTrace}`);
+  }
+
   it('repeats the scenario', async () => {
+    startStoneTrace();
     const counts: Record<string, number> = {};
     const linger: number[] = [];
     await Promise.all(
@@ -401,6 +489,18 @@ describe('probe 1002', () => {
         }
       }),
     );
+    if (stoneTracer) {
+      execSync(`${process.env.CI ? 'sudo -n ' : ''}pkill -INT -f "strace -f -tt -s 24" || true`, {
+        shell: '/bin/bash',
+      });
+      await sleep(500);
+      if (!lingered)
+        execSync(`${process.env.CI ? 'sudo -n ' : ''}rm -f ${stoneTrace}`, { shell: '/bin/bash' });
+      else
+        execSync(`${process.env.CI ? 'sudo -n ' : ''}chmod a+r ${stoneTrace}`, {
+          shell: '/bin/bash',
+        });
+    }
     const slow = linger.filter((x) => x < 0 || x > 2000).length;
     const q = (p: number) =>
       [...forceStopMs].sort((a, b) => a - b)[Math.floor(p * (forceStopMs.length - 1))];
@@ -408,6 +508,14 @@ describe('probe 1002', () => {
       say(
         `forceStop ms p50 ${q(0.5)} p90 ${q(0.9)} p99 ${q(0.99)} max ${q(1)} n ${forceStopMs.length}`,
       );
+    for (const [k, v] of Object.entries(phaseMs)) {
+      const sorted = [...v].sort((a, b) => a - b);
+      const at = (p: number) => sorted[Math.floor(p * (sorted.length - 1))];
+      if (sorted.length)
+        say(
+          `phase ${k} ms p50 ${at(0.5)} p99 ${at(0.99)} p99.9 ${at(0.999)} max ${at(1)} n ${sorted.length}`,
+        );
+    }
     say(
       `SUMMARY scenario=${SCENARIO} n=${linger.length} ${JSON.stringify(counts)} lingering=${linger.filter((x) => x < 0).length} slowLeave=${slow} maxLeave=${Math.max(...linger)}ms`,
     );
